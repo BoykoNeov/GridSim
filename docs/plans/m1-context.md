@@ -14,18 +14,25 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
 - `Manifest.toml` is **gitignored** (this is a package). Run `Pkg.instantiate()`
   after cloning.
 
-## Current state of the repo (scaffold complete)
+## Current state of the repo (M1 engine batch — steps 1–2 done)
 
+- **Deps (core):** `CommonSolve`, plus `OrdinaryDiffEq` v7.0.1 and `Observables`
+  v0.5.5 added in the M1 batch (`Pkg.add`; caret `[compat]`). No Makie in core.
 - `src/GridSim.jl` includes: `model/system_model.jl`, `events/events.jl`,
-  `engines/interface.jl`. Loads clean; 21 scaffold tests pass.
+  `engines/interface.jl`, and now `engines/frequency_response.jl`. Loads clean;
+  **35 tests pass**.
 - `model/system_model.jl`: `GeneratingUnit`, `SystemModel`, `example_system()`
   (a 4-unit, S_base=550 MVA, f0=50 Hz system).
 - `events/events.jl`: `PerturbationEvent`, `TripGenerator`, `StepLoad`.
 - `engines/interface.jl`: `SimulationEngine`; GridSim-owned generic verbs `init!`,
   `current_state`, `state_series`, `inject!` (no methods yet); `step!`/`solve!`
   imported from `CommonSolve` and re-exported (one shared generic with SciML).
-- `engines/frequency_response.jl` and `orchestration/realtime_loop.jl` are
-  **placeholders** (comments + outline), NOT yet `include`d by the module.
+  Tests now assert the same identity holds for `OrdinaryDiffEq` (both verbs) —
+  the deferred empirical check from the scaffold batch.
+- `engines/frequency_response.jl`: `aggregates(model, online) -> (; H_sys, R_eq,
+  D, Tg)` implemented + unit-tested (unexported helper). The engine struct,
+  `init!`/`step!`/`current_state`, and `inject!` are **still to come** (steps 3+).
+- `orchestration/realtime_loop.jl` is still a **placeholder** (comments + outline).
 - `ui/` is a **separate package** (`GridSimUI`, own Project.toml), empty deps.
 
 ## Key decisions (and why)
@@ -41,10 +48,13 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
 
 ## Open questions to resolve during M1
 
-- `DifferentialEquations.jl` (big, heavy precompile) vs `OrdinaryDiffEq.jl`
-  (lighter, enough for `Tsit5` + callbacks)? Lean toward `OrdinaryDiffEq` for TTFX.
+- ~~`DifferentialEquations.jl` vs `OrdinaryDiffEq.jl`?~~ **RESOLVED:** chose
+  `OrdinaryDiffEq` v7.0.1 (lighter closure, Makie-free; still bundles `Tsit5` now
+  and `Rodas5`/`Verner` for later stiff tiers). `DifferentialEquations` rejected
+  as too heavy for M1.
 - Exact mechanism for the ΔPm headroom saturation (in-RHS clamp of the derivative
-  vs a `DiscreteCallback`/`ManifoldProjection`). Decide when writing the RHS.
+  vs a `DiscreteCallback`/`ManifoldProjection`). **Decide when writing the RHS
+  (step 3, next).** Get an advisor read before committing to an approach.
 - Whether the running nadir lives in the engine state record or is derived by the
   orchestration layer. (Leaning: engine records `(t,f,RoCoF)`, nadir derived.)
 - ~~`step!`/`solve!` collide with CommonSolve's exports~~ **RESOLVED (scaffold

@@ -17,11 +17,12 @@ include("events/events.jl")
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
 
-# Concrete engines are added per milestone. M1's `FrequencyResponseEngine`
-# (engines/frequency_response.jl) and the real-time orchestration loop
-# (orchestration/realtime_loop.jl) require DifferentialEquations.jl plus
-# closed-form numerical validation, so they are implemented in the M1 code
-# batch — not scaffolded here. See docs/plans/m1-plan.md.
+# --- M1's FrequencyResponseEngine (built incrementally this batch) ---
+# Center-of-inertia aggregate frequency model. `aggregates` lands first; the
+# engine struct / init! / step! / inject! follow in later steps of the batch.
+# The real-time orchestration loop (orchestration/realtime_loop.jl) is still a
+# placeholder. See docs/plans/m1-plan.md.
+include("engines/frequency_response.jl")
 
 # --- domain model ---
 export GeneratingUnit, SystemModel, example_system
