@@ -22,9 +22,11 @@ acceptance criteria in `../SPEC.md` §7.8.
 ## M1 engine (next batch)
 
 - [ ] Add deps via `Pkg.add` (OrdinaryDiffEq vs DifferentialEquations decided).
-- [ ] When the DiffEq dep lands, assert `OrdinaryDiffEq.step! === CommonSolve.step!`
-      empirically — that's the moment the real collision would have surfaced and
-      the proof our `import CommonSolve` resolution is sound.
+- [ ] When the DiffEq dep lands, assert **both** `OrdinaryDiffEq.step! ===
+      CommonSolve.step!` *and* `OrdinaryDiffEq.solve! === CommonSolve.solve!`
+      empirically — that's the moment the real collision would have surfaced (for
+      the real-time *and* the playback verb) and the proof our `import CommonSolve`
+      resolution is sound for the whole interface.
 - [ ] `aggregates(model, online)` + unit test vs hand arithmetic.
 - [ ] Mutable, type-stable parameter struct `p`.
 - [ ] ODE RHS for `(Δω, ΔPm)` with **headroom saturation in the derivative**.
