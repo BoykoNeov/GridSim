@@ -30,6 +30,9 @@ export GeneratingUnit, SystemModel, example_system
 export PerturbationEvent, TripGenerator, StepLoad
 
 # --- engine interface ---
+# `step!`/`solve!` are CommonSolve's generics (imported in engines/interface.jl
+# so we share one generic with the SciML stack); we re-export them here alongside
+# our own verbs so `using GridSim` surfaces the whole interface.
 export SimulationEngine
 export init!, step!, solve!, current_state, state_series, inject!
 

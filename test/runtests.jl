@@ -1,5 +1,6 @@
 using GridSim
 using Test
+import CommonSolve
 
 # Scaffold-level tests: they exercise the durable contracts (data model, events,
 # engine interface) that ship at initialization. The physics validation for M1
@@ -34,6 +35,18 @@ using Test
         for f in (init!, step!, solve!, current_state, state_series, inject!)
             @test f isa Function
         end
+    end
+
+    @testset "step!/solve! share CommonSolve's generic (no collision)" begin
+        # The whole point of the fix: GridSim's exported `step!`/`solve!` ARE
+        # CommonSolve's, so once a DiffEq package (which re-exports CommonSolve's
+        # verbs) is `using`-ed in an engine module, there is one generic, not two
+        # in conflict. Two `===` exported bindings cannot raise an export-
+        # ambiguity warning.
+        @test GridSim.step! === CommonSolve.step!
+        @test GridSim.solve! === CommonSolve.solve!
+        # `init!` stays uniquely ours — CommonSolve exports `init`, not `init!`.
+        @test parentmodule(GridSim.init!) === GridSim
     end
 
 end

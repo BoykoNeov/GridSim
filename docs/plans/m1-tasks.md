@@ -11,13 +11,20 @@ acceptance criteria in `../SPEC.md` §7.8.
 - [x] Domain model: `GeneratingUnit`, `SystemModel`, `example_system`.
 - [x] Events: `PerturbationEvent`, `TripGenerator`, `StepLoad`.
 - [x] `SimulationEngine` interface (generic verbs).
-- [x] Scaffold tests green (`Pkg.test()` → 18 pass).
+- [x] `step!`/`solve!` collision resolved: added `CommonSolve` (direct dep) and
+      `import CommonSolve: step!, solve!` so we share one generic with the SciML
+      stack; `init!`/`current_state`/`state_series`/`inject!` stay GridSim-owned.
+      Regression test asserts `GridSim.step! === CommonSolve.step!`.
+- [x] Scaffold tests green (`Pkg.test()` → 21 pass).
 - [x] Separate `ui/` package; lean `CLAUDE.md`; `README`; SPEC relocated.
 - [x] Julia 1.12.6 installed (juliaup); package loads + tests pass.
 
 ## M1 engine (next batch)
 
 - [ ] Add deps via `Pkg.add` (OrdinaryDiffEq vs DifferentialEquations decided).
+- [ ] When the DiffEq dep lands, assert `OrdinaryDiffEq.step! === CommonSolve.step!`
+      empirically — that's the moment the real collision would have surfaced and
+      the proof our `import CommonSolve` resolution is sound.
 - [ ] `aggregates(model, online)` + unit test vs hand arithmetic.
 - [ ] Mutable, type-stable parameter struct `p`.
 - [ ] ODE RHS for `(Δω, ΔPm)` with **headroom saturation in the derivative**.

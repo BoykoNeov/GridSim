@@ -17,12 +17,13 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
 ## Current state of the repo (scaffold complete)
 
 - `src/GridSim.jl` includes: `model/system_model.jl`, `events/events.jl`,
-  `engines/interface.jl`. Loads clean; 18 scaffold tests pass.
+  `engines/interface.jl`. Loads clean; 21 scaffold tests pass.
 - `model/system_model.jl`: `GeneratingUnit`, `SystemModel`, `example_system()`
   (a 4-unit, S_base=550 MVA, f0=50 Hz system).
 - `events/events.jl`: `PerturbationEvent`, `TripGenerator`, `StepLoad`.
-- `engines/interface.jl`: `SimulationEngine` + the generic verbs `init!`,
-  `step!`, `solve!`, `current_state`, `state_series`, `inject!` (no methods yet).
+- `engines/interface.jl`: `SimulationEngine`; GridSim-owned generic verbs `init!`,
+  `current_state`, `state_series`, `inject!` (no methods yet); `step!`/`solve!`
+  imported from `CommonSolve` and re-exported (one shared generic with SciML).
 - `engines/frequency_response.jl` and `orchestration/realtime_loop.jl` are
   **placeholders** (comments + outline), NOT yet `include`d by the module.
 - `ui/` is a **separate package** (`GridSimUI`, own Project.toml), empty deps.
@@ -46,9 +47,11 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
   vs a `DiscreteCallback`/`ManifoldProjection`). Decide when writing the RHS.
 - Whether the running nadir lives in the engine state record or is derived by the
   orchestration layer. (Leaning: engine records `(t,f,RoCoF)`, nadir derived.)
-- `step!`/`solve!` collide with CommonSolve's exports once a DiffEq pkg loads —
-  must `import CommonSolve: step!, solve!` and extend those, not the standalone
-  generics in `engines/interface.jl`. See `m1-plan.md` Pitfalls.
+- ~~`step!`/`solve!` collide with CommonSolve's exports~~ **RESOLVED (scaffold
+  batch):** `CommonSolve` is now a direct core dep and `engines/interface.jl` does
+  `import CommonSolve: step!, solve!`, so we share one generic with the SciML
+  stack. `GridSim.step! === CommonSolve.step!` (regression test). `init!` and the
+  other verbs stay GridSim-owned. See `m1-plan.md` Pitfalls.
 
 ## Reference
 

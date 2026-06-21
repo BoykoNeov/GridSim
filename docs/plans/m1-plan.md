@@ -62,17 +62,20 @@ and nadir live. Acceptance criteria: `docs/SPEC.md` §7.8.
   exceeds `Σ headroom_i / S_base`.
 - **Mutable `p`, but type-stable.** Concrete fields; the online set changing must
   not introduce abstract containers in the RHS hot path.
-- **`step!`/`solve!` name collision with CommonSolve.** The scaffold defines
-  `step!` and `solve!` as GridSim-owned generics. `CommonSolve.jl` (re-exported
-  via SciMLBase → OrdinaryDiffEq/DifferentialEquations) *also* owns `step!` and
-  `solve!`. The moment the engine does `using OrdinaryDiffEq`, both are in scope
-  and an unqualified `step!(integrator, dt, true)` errors. Fix: in the engine
-  module `import CommonSolve: step!, solve!` and add the engine's methods to
-  **those** functions (remove the standalone `function step! end`/`solve! end`
-  from `engines/interface.jl`, or have it `import`+re-export CommonSolve's). The
-  other verbs — `init!`, `current_state`, `state_series`, `inject!` — are
-  uniquely ours and safe (CommonSolve has `init`, not `init!`). Verify the
-  resolution empirically once a DiffEq pkg is added, then wire accordingly.
+- **`step!`/`solve!` name collision with CommonSolve — RESOLVED (scaffold batch).**
+  `CommonSolve.jl` (re-exported via SciMLBase → OrdinaryDiffEq/DifferentialEquations)
+  owns `step!` and `solve!`; had we kept them as GridSim-owned generics, the moment
+  an engine did `using OrdinaryDiffEq` both would be in scope and an unqualified
+  `step!(integrator, dt, true)` would error. Fix applied: `CommonSolve` added as a
+  direct core dep (zero-dependency interface package — no heavy precompile, no
+  Makie), and `engines/interface.jl` now does `import CommonSolve: step!, solve!`
+  (the standalone `function step! end`/`solve! end` are gone). Engine methods will
+  extend **those** generics. The other verbs — `init!`, `current_state`,
+  `state_series`, `inject!` — stay uniquely ours (CommonSolve has `init`, not
+  `init!`). Proven at scaffold time by `GridSim.step! === CommonSolve.step!` (a
+  regression test); the `===` makes an export-ambiguity warning impossible. The
+  final empirical check — `OrdinaryDiffEq.step! === CommonSolve.step!` — lands when
+  the DiffEq dep is added in the M1 code batch (tracked in `m1-tasks.md`).
 - **Integrator interface, not `solve()`** — so events/redraws interleave (SPEC §6).
 - **No Makie in core** — verify the core dep closure excludes Makie (add a test).
 - Trip-sign sanity: losing generation is a *negative* injection → `ΔP_dist` goes
