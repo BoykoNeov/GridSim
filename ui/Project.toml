@@ -1,0 +1,18 @@
+name = "GridSimUI"
+uuid = "41f2851e-495f-4dee-9baa-010559e82c5b"
+authors = ["Boyko Neov <boikoneov@gmail.com>"]
+version = "0.1.0"
+
+# SEPARATE package/environment from the core on purpose. This is the structural
+# enforcement of SPEC §3.1: the core (../Project.toml) NEVER depends on a UI
+# package; the dependency points one way only — GridSimUI depends on GridSim.
+#
+# Deps are added in the UI milestone (NOT at scaffold time), via:
+#   julia --project=ui -e 'import Pkg; Pkg.develop(path=".."); Pkg.add("GLMakie")'
+# That puts a local path-dev of the core plus GLMakie here, and leaves the core's
+# dependency closure free of Makie (assert this in a test later).
+
+[deps]
+
+[compat]
+julia = "1.10"

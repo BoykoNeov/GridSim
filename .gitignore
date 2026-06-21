@@ -1,0 +1,30 @@
+# Julia ------------------------------------------------------------------
+# This is a package, so the resolved Manifest is environment-specific and is
+# NOT committed. (For a reproducible *application* you would commit it; see
+# docs/plans/m1-plan.md if we ever pin a Manifest for the ui/ app.)
+Manifest.toml
+ui/Manifest.toml
+
+# Julia build / precompile / coverage artifacts
+/deps/deps.jl
+/deps/build.log
+/docs/build/
+/docs/site/
+*.cov
+*.jl.*.cov
+*.jl.cov
+*.jl.mem
+.julia/
+
+# Editors / OS ------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local environment / secrets --------------------------------------------
+.env
+*.local

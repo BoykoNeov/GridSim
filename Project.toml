@@ -1,0 +1,22 @@
+name = "GridSim"
+uuid = "eb5af87e-af5a-4058-ac7e-47b2baa55413"
+authors = ["Boyko Neov <boikoneov@gmail.com>"]
+version = "0.1.0"
+
+# NOTE: [deps] is intentionally empty at scaffold time. Dependencies are added
+# with `Pkg.add` (which resolves the correct UUIDs) once Julia is installed —
+# UUIDs are never hand-written. See docs/plans/m1-plan.md for the M1 dependency
+# set (DifferentialEquations, Observables, SparseArrays, ...).
+# The core package MUST NOT depend on Makie or any UI/plotting package — that
+# invariant is enforced structurally by keeping UI deps in ui/Project.toml.
+
+[deps]
+
+[compat]
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
