@@ -46,6 +46,9 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
   vs a `DiscreteCallback`/`ManifoldProjection`). Decide when writing the RHS.
 - Whether the running nadir lives in the engine state record or is derived by the
   orchestration layer. (Leaning: engine records `(t,f,RoCoF)`, nadir derived.)
+- `step!`/`solve!` collide with CommonSolve's exports once a DiffEq pkg loads —
+  must `import CommonSolve: step!, solve!` and extend those, not the standalone
+  generics in `engines/interface.jl`. See `m1-plan.md` Pitfalls.
 
 ## Reference
 
