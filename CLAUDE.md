@@ -68,6 +68,7 @@ clamping of the state variable (which corrupts the integration).
 - **Commits:** Conventional Commits, small and incremental; each commit should
   load and pass tests. Don't reference "Claude"/"AI" in commit subjects (the
   `Co-Authored-By` trailer is fine).
-- **Batch end / "session end":** update memory + the relevant docs, then commit
-  and push. (Standing instruction from the user.)
+- **End of a work batch, end of planning, or "session end":** ALWAYS update
+  memory + the relevant docs, then commit and push **to `main`**. Don't ask at
+  these checkpoints — it's standing, durable authorization from the user.
 - Repo: https://github.com/BoykoNeov/GridSim (public).
