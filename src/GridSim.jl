@@ -8,6 +8,11 @@ which depends on this package, never the reverse). See `docs/SPEC.md`.
 """
 module GridSim
 
+# OrdinaryDiffEq supplies the integrator the FrequencyResponseEngine wraps
+# (`ODEProblem`, `init`, `Tsit5`, and the `step!`/`solve!` methods it re-exports
+# from CommonSolve). Imported here so `engines/frequency_response.jl` can reach it.
+import OrdinaryDiffEq
+
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
 
@@ -36,5 +41,8 @@ export PerturbationEvent, TripGenerator, StepLoad
 # our own verbs so `using GridSim` surfaces the whole interface.
 export SimulationEngine
 export init!, step!, solve!, current_state, state_series, inject!
+
+# --- M1 concrete engine ---
+export FrequencyResponseEngine
 
 end # module GridSim

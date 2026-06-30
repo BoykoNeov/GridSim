@@ -33,10 +33,14 @@ abstract type SimulationEngine end
 # --- lifecycle -----------------------------------------------------------
 
 """
-    init!(engine, model; t0=0.0, dt)
+    init!(EngineType, model; t0=0.0, dt, ...) -> engine
 
-Build the engine's problem/integrator from a domain `model`. Real-time engines
-construct a steppable integrator here.
+Build an engine's problem/integrator from a domain `model`. Real-time engines
+construct a steppable integrator here. Dispatched on the engine **type** and
+returning a freshly built instance (rather than mutating one in place): an engine
+parameterised on its concrete integrator type cannot exist before that integrator
+does, so there is no half-built instance to mutate — `init!` is the constructor of
+record. See `engines/frequency_response.jl` for the canonical implementation.
 """
 function init! end
 

@@ -50,11 +50,23 @@ acceptance criteria in `../SPEC.md` §7.8.
       for free. Unit-tested: initial-RoCoF closed form, binding, **release** (the
       test a naive clamp fails), below-ceiling ramp, `R_eq=Inf`. `@inferred` for
       type stability. **49 tests pass.**
-- [ ] `FrequencyResponseEngine`: `init!` (+ the headroom **callback/`isoutofdomain`
-      guard**), `step!`, `current_state`.
-- [ ] `inject!(::TripGenerator)` (states continuous, params recomputed).
-- [ ] `inject!(::StepLoad)` (nice-to-have).
-- [ ] Include the engine file in `GridSim.jl`.
+- [x] `FrequencyResponseEngine{I}` (parametric on the concrete integrator type for
+      a type-stable `step!` boundary): `init!(::Type{…}, model)` returns a fresh
+      fully-typed engine (resolves the build chicken-and-egg — no half-built engine
+      to mutate), `step!` (`step!(integ, dt, true)` + record + nadir), `current_state`
+      (`f=f0(1+Δω)`, `RoCoF=f0·dΔω/dt`). The headroom **`isoutofdomain` guard**
+      (`u[2] > headroom + tol`) rejects/retries oversteps — never overwrites state,
+      so it rides on the derivative saturation, not the forbidden post-hoc clamp.
+      `init` seeds an explicit initial `dt`, uses a large *finite* tspan, and turns
+      off `save_everystep`/`dense` (no unbounded real-time memory leak).
+- [x] `inject!(::TripGenerator)`: drop unit, recompute aggregates into the **shared**
+      `params` (`integrator.p === eng.params`, asserted), `ΔP_dist -= P0/S_base`;
+      `(Δω,ΔPm)` continuous. Already-offline trip is a no-op.
+- [x] `inject!(::StepLoad)` (nice-to-have): `ΔP_dist += ΔP_pu`.
+- [x] Engine file wired into `GridSim.jl` (`import OrdinaryDiffEq`; engine exported).
+      Tests: build, origin, type-stable `current_state` (`@inferred`), live trip,
+      closed-form initial RoCoF, unsaturated settling (`Δω_ss=ΔP_dist/(D+1/R_eq)`,
+      via a small G4 trip), and `max ΔPm ≤ headroom`. **72 tests pass.**
 
 ## Orchestration (next batch)
 

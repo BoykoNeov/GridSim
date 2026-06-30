@@ -146,4 +146,75 @@ import OrdinaryDiffEq
         @test du[2] == 0.0                      # (−0 − 0)/Tg = 0
     end
 
+    @testset "FrequencyResponseEngine: build, step, trip, closed-form checks" begin
+        sys = example_system()                  # S_base=550, f0=50, D=1.5, Tg=8
+
+        # --- construction via the interface verb (Type dispatch ⇒ fresh engine) ---
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        @test eng isa FrequencyResponseEngine
+        # LOAD-BEARING: the integrator must hold the SAME params object the engine
+        # mutates, or `inject!` would silently no-op the running integration.
+        @test eng.integrator.p === eng.params
+        @test eng.online == Set([:G1, :G2, :G3, :G4])
+
+        # Pre-disturbance: sitting at the origin ⇒ f=f0, RoCoF=0, ΔPm=0.
+        s0 = current_state(eng)
+        @test s0.f ≈ sys.f0
+        @test s0.Δω == 0.0
+        @test s0.RoCoF == 0.0
+        @test s0.ΔPm == 0.0
+        # The parametric design pays off: `current_state` is type-stable.
+        @inferred current_state(eng)
+
+        # Stepping with no disturbance keeps us at the origin (ΔP_dist still 0).
+        step!(eng, 0.02)
+        @test current_state(eng).f ≈ sys.f0
+
+        # --- trip G1 (P0=150) live: only G2,G3,G4 remain online ----------------
+        inject!(eng, TripGenerator(:G1))
+        @test eng.online == Set([:G2, :G3, :G4])
+        a1 = GridSim.aggregates(sys, eng.online)
+        @test eng.params.ΔP_dist ≈ -150 / 550          # lost generation, pu
+        @test eng.params.H_sys ≈ a1.H_sys              # aggregates refreshed
+        @test eng.params.headroom ≈ 110 / 550
+
+        # Closed-form INITIAL RoCoF at the trip instant (state still the origin):
+        #   RoCoF0 = f0·ΔP_dist/(2·H_sys) = 50·(−150/550)/(2·1075/550) = −7500/2150.
+        s_trip = current_state(eng)
+        @test s_trip.RoCoF ≈ 50 * (-150 / 550) / (2 * a1.H_sys)
+        @test s_trip.RoCoF ≈ -7500 / 2150
+        @test s_trip.RoCoF < 0                          # losing gen ⇒ frequency falls
+
+        # Run it out and check the saturation invariant: G1's trip leaves only
+        # 0.2 pu of headroom, which the droop demand exceeds — so ΔPm must pin at
+        # the ceiling and NEVER cross it (the post-hoc-clamp landmine).
+        for _ in 1:5000                                 # 100 s at dt=0.02
+            step!(eng, 0.02)
+        end
+        @test maximum(eng.pms) ≤ eng.params.headroom + 1e-6
+        @test eng.nadir < sys.f0                         # frequency dipped
+        @test current_state(eng).f < sys.f0              # and settles below nominal
+        # Trajectory recorded one point per step (+ the seeded origin).
+        @test length(eng.ts) == length(eng.fs) == length(eng.pms)
+        @test issorted(eng.ts)
+
+        # Tripping an already-offline unit is a no-op.
+        d_before = eng.params.ΔP_dist
+        inject!(eng, TripGenerator(:G1))
+        @test eng.params.ΔP_dist == d_before
+
+        # --- separate engine: a SMALL trip whose droop stays below headroom, so
+        # the unsaturated settling closed form applies: Δω_ss = ΔP_dist/(D+1/R_eq).
+        eng2 = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        inject!(eng2, TripGenerator(:G4))               # P0=60, small
+        a2 = GridSim.aggregates(sys, eng2.online)
+        for _ in 1:4000                                  # 80 s — well past settling
+            step!(eng2, 0.02)
+        end
+        Δω_ss = (-60 / 550) / (a2.D + 1 / a2.R_eq)
+        f_ss = sys.f0 * (1 + Δω_ss)
+        @test isapprox(current_state(eng2).f, f_ss; atol = 0.02)
+        @test current_state(eng2).ΔPm < a2.headroom      # never bound ⇒ clean settle
+    end
+
 end
