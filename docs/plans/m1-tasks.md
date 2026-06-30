@@ -36,9 +36,22 @@ acceptance criteria in `../SPEC.md` §7.8.
       in `engines/frequency_response.jl`, included in `GridSim.jl` (unexported —
       internal engine helper). Unit-tested vs hand arithmetic (all-online,
       post-G1-trip, and empty-set → `R_eq=Inf`); 35 tests pass.
-- [ ] Mutable, type-stable parameter struct `p`.
-- [ ] ODE RHS for `(Δω, ΔPm)` with **headroom saturation in the derivative**.
-- [ ] `FrequencyResponseEngine`: `init!`, `step!`, `current_state`.
+- [x] `aggregates` extended to also return `headroom = Σ(Pmaxᵢ−P0ᵢ)/S_base` — a
+      COI aggregate recomputed on every trip (a tripped unit's own reserve leaves
+      the pool too). Existing aggregates tests updated.
+- [x] Mutable, type-stable parameter struct `FRParams` (all `Float64` fields:
+      `H_sys, R_eq, D, Tg, ΔP_dist, headroom`).
+- [x] ODE RHS `fr_rhs!(du, u, p, t)` for `(Δω, ΔPm)` with **headroom saturation
+      in the derivative** (zero `dΔPm` when `ΔPm ≥ headroom && dΔPm > 0`). Decision:
+      the user's "solver callback" pick rides on top in `init!` as an
+      `isoutofdomain`/thin-callback **guard** against adaptive-step overshoot — it
+      cannot *replace* the derivative logic (a callback can only clamp the state,
+      which is the forbidden post-hoc clamp). Derivative-zeroing also gives release
+      for free. Unit-tested: initial-RoCoF closed form, binding, **release** (the
+      test a naive clamp fails), below-ceiling ramp, `R_eq=Inf`. `@inferred` for
+      type stability. **49 tests pass.**
+- [ ] `FrequencyResponseEngine`: `init!` (+ the headroom **callback/`isoutofdomain`
+      guard**), `step!`, `current_state`.
 - [ ] `inject!(::TripGenerator)` (states continuous, params recomputed).
 - [ ] `inject!(::StepLoad)` (nice-to-have).
 - [ ] Include the engine file in `GridSim.jl`.

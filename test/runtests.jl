@@ -79,6 +79,8 @@ import OrdinaryDiffEq
         @test a.R_eq ≈ 0.05
         @test a.D == 1.5            # system-wide pass-through
         @test a.Tg == 8.0
+        # headroom = Σ(Pmaxᵢ−P0ᵢ)/S_base = (50+40+30+40)/550 = 160/550.
+        @test a.headroom ≈ 160 / 550
 
         # Trip G1 (200 MVA, H=4): only G2,G3,G4 online.
         #   H_sys = (525+300+250)/550 = 1075/550.
@@ -86,14 +88,62 @@ import OrdinaryDiffEq
         b = GridSim.aggregates(sys, Set([:G2, :G3, :G4]))
         @test b.H_sys ≈ 1075 / 550
         @test b.R_eq ≈ 550 / 7000
-        # Losing inertia lowers H_sys; losing a unit lowers droop gain ⇒ raises R_eq.
+        # Tripping G1 also takes G1's own 50 MW headroom out of the pool:
+        #   headroom = (40+30+40)/550 = 110/550.
+        @test b.headroom ≈ 110 / 550
+        # Losing inertia lowers H_sys; losing a unit lowers droop gain ⇒ raises R_eq;
+        # and removes that unit's reserve ⇒ lowers headroom.
         @test b.H_sys < a.H_sys
         @test b.R_eq > a.R_eq
+        @test b.headroom < a.headroom
 
-        # No units online ⇒ zero inertia, zero droop gain (R_eq = Inf, not NaN).
+        # No units online ⇒ zero inertia, zero droop gain (R_eq = Inf, not NaN),
+        # zero reserve.
         z = GridSim.aggregates(sys, Set{Symbol}())
         @test z.H_sys == 0.0
         @test z.R_eq == Inf
+        @test z.headroom == 0.0
+    end
+
+    @testset "fr_rhs!: swing/governor RHS + headroom saturation in the derivative" begin
+        # Hand-built params (not from a system) so each scenario is isolated.
+        # H_sys=2, R_eq=0.05, D=1.5, Tg=8, a generation-loss imbalance, ceiling 0.2.
+        mk(; ΔP_dist = -0.27, headroom = 0.2) =
+            GridSim.FRParams(2.0, 0.05, 1.5, 8.0, ΔP_dist, headroom)
+        du = zeros(2)
+
+        # Initial RoCoF: at the trip instant the state is the origin, so the swing
+        # equation collapses to dΔω/dt = ΔP_dist/(2·H_sys) (closed form, SPEC §7.6).
+        p = mk()
+        GridSim.fr_rhs!(du, [0.0, 0.0], p, 0.0)
+        @test du[1] ≈ p.ΔP_dist / (2 * p.H_sys)
+        @test du[2] == 0.0                      # −0/R_eq − 0 = 0
+        # RHS is type-stable and non-allocating in the hot path.
+        @test (@inferred GridSim.fr_rhs!(du, [0.0, 0.0], p, 0.0)) === nothing
+
+        # Governor term below the ceiling, under-frequency (Δω<0) ⇒ ramp UP.
+        #   dΔPm = (−(−0.02)/0.05 − 0.1)/8 = (0.4 − 0.1)/8 = 0.0375 > 0.
+        GridSim.fr_rhs!(du, [-0.02, 0.1], mk(), 0.0)
+        @test du[2] ≈ 0.0375
+        @test du[2] > 0                         # not at the ceiling ⇒ free to rise
+
+        # SATURATION BINDS: ΔPm already at headroom and the governor wants more.
+        #   raw dΔPm = (0.4 − 0.2)/8 = 0.025 > 0 ⇒ zeroed.
+        GridSim.fr_rhs!(du, [-0.02, 0.2], mk(), 0.0)
+        @test du[2] == 0.0
+
+        # RELEASE (the test a naive state-clamp fails): at the ceiling but Δω has
+        # recovered (Δω>0), so the governor term is negative — ΔPm must be allowed
+        # to come back DOWN. raw dΔPm = (−0.2 − 0.2)/8 = −0.05 < 0 ⇒ NOT zeroed.
+        GridSim.fr_rhs!(du, [0.01, 0.2], mk(), 0.0)
+        @test du[2] ≈ -0.05
+        @test du[2] < 0
+
+        # R_eq = Inf (no droop / no online droop) ⇒ −Δω/R_eq = 0, no NaN.
+        q = GridSim.FRParams(2.0, Inf, 1.5, 8.0, -0.1, 0.2)
+        GridSim.fr_rhs!(du, [-0.01, 0.0], q, 0.0)
+        @test all(isfinite, du)
+        @test du[2] == 0.0                      # (−0 − 0)/Tg = 0
     end
 
 end
