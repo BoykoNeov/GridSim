@@ -24,6 +24,16 @@ struct GeneratingUnit
     P0::Float64        # MW  — initial output
     R::Float64         # pu  — governor droop (on unit base)
     Pmax::Float64      # MW  — max output; headroom = Pmax - P0
+
+    # Guard the headroom invariant at construction: Pmax < P0 is negative reserve,
+    # which would silently poison the aggregate `headroom` (Σ(Pmax−P0)) rather than
+    # fail loudly. Cheaper to reject the bad unit here than to debug a wrong ceiling.
+    function GeneratingUnit(id::Symbol, S_rated::Real, H::Real, P0::Real, R::Real,
+                            Pmax::Real)
+        Pmax ≥ P0 || throw(ArgumentError(
+            "GeneratingUnit $id: Pmax ($Pmax) must be ≥ P0 ($P0) — headroom < 0."))
+        return new(id, S_rated, H, P0, R, Pmax)
+    end
 end
 
 """

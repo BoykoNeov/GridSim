@@ -13,9 +13,15 @@
 # `isoutofdomain` predicate on the integrator (see `_fr_outofdomain` / `init!`
 # below): it *rejects and retries* an offending step, never overwriting the state,
 # so it is consistent with the no-post-hoc-clamp rule and rides on top of the
-# derivative saturation. It cannot stall, because the derivative is already zeroed
-# at the ceiling (`du[2]=0` there ⇒ the solution sits at `ΔPm=headroom`, which is
-# `== headroom`, not `> headroom`, so the predicate does not fire).
+# derivative saturation. During continuous integration it cannot stall, because the
+# derivative is already zeroed at the ceiling (`du[2]=0` there ⇒ the solution sits
+# at `ΔPm=headroom`, which is `== headroom`, not `> headroom`, so the predicate does
+# not fire). The one way `ΔPm` can end up *strictly above* the ceiling is a
+# discrete event: a second trip shrinks `headroom` below the current `ΔPm`, which
+# would leave every proposed step out-of-domain and collapse `dt` to an abort. So
+# `inject!` (below) re-inits the state to the new ceiling at the event boundary —
+# a physically justified discrete jump (the tripped unit's governor share vanishes
+# with it), NOT a mid-integration post-hoc clamp.
 #
 # The engine struct + init!/step!/current_state/inject! live at the bottom of this
 # file (built in the M1 code batch; see docs/plans/m1-plan.md step 4).
@@ -83,6 +89,16 @@ mutable struct FRParams
 end
 
 """
+    _dΔω(Δω, ΔPm, p::FRParams) -> Float64
+
+The swing-equation derivative `dΔω/dt = (ΔPm − D·Δω + ΔP_dist) / (2·H_sys)`.
+Factored out as the single source of truth so `fr_rhs!` (integration) and
+`current_state` (RoCoF read-out) cannot drift apart. `@inline` + concrete
+`Float64` args keep both call sites allocation-free and type-stable.
+"""
+@inline _dΔω(Δω, ΔPm, p::FRParams) = (ΔPm - p.D * Δω + p.ΔP_dist) / (2 * p.H_sys)
+
+"""
     fr_rhs!(du, u, p::FRParams, t)
 
 In-place RHS of the two-state center-of-inertia frequency model (docs/SPEC.md
@@ -105,7 +121,7 @@ negative, the condition stops firing and `ΔPm` comes off the ceiling on its own
 function fr_rhs!(du, u, p::FRParams, t)
     Δω, ΔPm = u[1], u[2]
     # Swing equation: net torque / (2·H) sets the rate of change of speed.
-    du[1] = (ΔPm - p.D * Δω + p.ΔP_dist) / (2 * p.H_sys)
+    du[1] = _dΔω(Δω, ΔPm, p)
     # Governor/turbine first-order lag toward the droop-commanded power.
     # (R_eq = Inf ⇒ −Δω/R_eq = 0; no droop response, no NaN.)
     dΔPm = (-Δω / p.R_eq - ΔPm) / p.Tg
@@ -221,9 +237,10 @@ function current_state(eng::FrequencyResponseEngine)
     Δω = eng.integrator.u[1]
     ΔPm = eng.integrator.u[2]
     p = eng.params
-    # dΔω/dt — MUST stay identical to `du[1]` in `fr_rhs!` (kept explicit rather
-    # than `get_du` so RoCoF is predictable and allocation-free).
-    dΔω = (ΔPm - p.D * Δω + p.ΔP_dist) / (2 * p.H_sys)
+    # dΔω/dt via the shared `_dΔω` helper — the single source of truth also used by
+    # `fr_rhs!`, so the RoCoF read-out cannot drift from the integrated swing eqn
+    # (kept off `get_du` so RoCoF is predictable and allocation-free).
+    dΔω = _dΔω(Δω, ΔPm, p)
     f = eng.f0 * (1 + Δω)
     RoCoF = eng.f0 * dΔω
     return (t = eng.integrator.t, f = f, Δω = Δω, RoCoF = RoCoF, ΔPm = ΔPm)
@@ -249,6 +266,14 @@ integrator's own `step!(integrator, dt, true)` (docs/plans/m1-plan.md "Pitfalls"
 """
 function step!(eng::FrequencyResponseEngine, dt::Real = eng.dt)
     step!(eng.integrator, Float64(dt), true)   # advance exactly dt
+    # Fail loud, not silent: a failed integration (e.g. `dt` collapsed to an abort)
+    # leaves `step!` a no-op that would otherwise flatline the trajectory silently.
+    # This is defense-in-depth — the `inject!` event-boundary re-init removes the
+    # known trigger (a second trip lifting ΔPm above the shrunken ceiling).
+    if !SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        error("FrequencyResponseEngine integration failed: retcode = ",
+              eng.integrator.sol.retcode, " at t = ", eng.integrator.t)
+    end
     return _record!(eng)
 end
 
@@ -274,14 +299,29 @@ end
 
 Take a unit offline live: drop it from `online`, recompute the COI aggregates into
 the **shared** `params` (so the running integrator sees them immediately), and add
-its lost generation as a persistent negative imbalance `ΔP_dist -= P0/S_base`. The
-continuous state `(Δω, ΔPm)` is deliberately untouched — at the COI fidelity only
-parameters change across a trip, so no algebraic re-init is needed (m1-plan.md).
-A trip of an already-offline unit is a no-op.
+its lost generation as a persistent negative imbalance `ΔP_dist -= P0/S_base`.
+
+Two integrator-boundary steps make this a correct *discrete event* rather than a
+silent parameter poke:
+
+  - **Re-init `ΔPm` to the new ceiling** (`u[2] = min(u[2], headroom)`). A trip
+    shrinks the aggregate headroom; if `ΔPm` was riding the *old* ceiling it is now
+    stranded above the new one, which the `isoutofdomain` guard would reject on
+    every proposed step until `dt` collapses to an abort. Capping at the boundary
+    is physically justified — the tripped unit's governor share vanishes with it —
+    and is a *discrete jump*, not the forbidden mid-integration post-hoc clamp.
+  - **`derivative_discontinuity!(integrator, true)`** so the FSAL solver discards
+    its cached (now stale, pre-trip) derivative and recomputes the RHS at the new
+    state and parameters; otherwise the first post-trip step integrates from the
+    pre-trip (equilibrium ⇒ zero) derivative and injects a small persistent error.
+
+Tripping an already-offline unit is a no-op; tripping a unit that does not exist
+throws `KeyError` (a caller bug) — the lookup happens before the online check so
+the error is reachable.
 """
 function inject!(eng::FrequencyResponseEngine, ev::TripGenerator)
-    ev.id in eng.online || return eng        # already offline ⇒ nothing to do
-    unit = _find_unit(eng.model, ev.id)
+    unit = _find_unit(eng.model, ev.id)      # throws KeyError on unknown id
+    ev.id in eng.online || return eng        # exists but already offline ⇒ no-op
     delete!(eng.online, ev.id)
     a = aggregates(eng.model, eng.online)
     p = eng.params                            # === eng.integrator.p (shared object)
@@ -291,17 +331,25 @@ function inject!(eng::FrequencyResponseEngine, ev::TripGenerator)
     p.Tg = a.Tg
     p.headroom = a.headroom
     p.ΔP_dist -= unit.P0 / eng.model.S_base   # lost generation ⇒ frequency dips
+    # Discrete event-boundary re-init: cap ΔPm at the shrunken ceiling, then tell
+    # the integrator the state+params jumped so it drops its stale FSAL derivative.
+    eng.integrator.u[2] = min(eng.integrator.u[2], p.headroom)
+    SciMLBase.derivative_discontinuity!(eng.integrator, true)
     return eng
 end
 
 """
     inject!(eng::FrequencyResponseEngine, ev::StepLoad) -> eng
 
-Apply a persistent load step (pu on `S_base`) by bumping the running imbalance.
-Aggregates are unchanged — only the disturbance moves. (Nice-to-have beyond the
-core trip scenario; docs/SPEC.md §7.4.)
+Apply a persistent step change in **load** of `ev.ΔP_pu` (pu on `S_base`) by moving
+the running imbalance. `ΔP_dist` is generation-minus-load, so *added load* is a
+*negative* imbalance: `ΔP_dist -= ΔP_pu`. Hence `StepLoad(+0.1)` adds load and
+frequency drops; `StepLoad(-0.1)` sheds load and frequency rises. Aggregates are
+unchanged — only the disturbance moves. (Nice-to-have beyond the core trip
+scenario; docs/SPEC.md §7.4.)
 """
 function inject!(eng::FrequencyResponseEngine, ev::StepLoad)
-    eng.params.ΔP_dist += ev.ΔP_pu
+    eng.params.ΔP_dist -= ev.ΔP_pu            # added load ⇒ negative imbalance
+    SciMLBase.derivative_discontinuity!(eng.integrator, true)  # params jumped ⇒ drop stale FSAL cache
     return eng
 end

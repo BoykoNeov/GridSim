@@ -2,6 +2,7 @@ using GridSim
 using Test
 import CommonSolve
 import OrdinaryDiffEq
+import SciMLBase
 
 # Scaffold-level tests: they exercise the durable contracts (data model, events,
 # engine interface) that ship at initialization. The physics validation for M1
@@ -215,6 +216,90 @@ import OrdinaryDiffEq
         f_ss = sys.f0 * (1 + Δω_ss)
         @test isapprox(current_state(eng2).f, f_ss; atol = 0.02)
         @test current_state(eng2).ΔPm < a2.headroom      # never bound ⇒ clean settle
+    end
+
+    @testset "GeneratingUnit rejects negative headroom (Pmax < P0)" begin
+        # A unit whose ceiling is below its output is negative reserve — it must
+        # fail loud at construction, not silently poison the aggregate headroom.
+        @test_throws ArgumentError GeneratingUnit(:bad, 100.0, 3.0, 80.0, 0.05, 50.0)
+        # Pmax == P0 (zero headroom) is allowed.
+        @test GeneratingUnit(:ok, 100.0, 3.0, 80.0, 0.05, 80.0) isa GeneratingUnit
+    end
+
+    @testset "inject!: tripping a non-existent unit throws (caller bug)" begin
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys)
+        # The lookup runs BEFORE the online check, so an unknown id is reachable
+        # and loud rather than a silent no-op.
+        @test_throws KeyError inject!(eng, TripGenerator(:NOPE))
+    end
+
+    @testset "StepLoad sign: positive load lowers frequency" begin
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        # StepLoad is named for LOAD: +0.1 pu adds load ⇒ negative imbalance ⇒ dip.
+        inject!(eng, StepLoad(0.1))
+        @test eng.params.ΔP_dist ≈ -0.1
+        for _ in 1:3000                                  # 60 s — well past settling
+            step!(eng, 0.02)
+        end
+        @test current_state(eng).f < sys.f0              # added load ⇒ frequency falls
+        # And shedding load raises it (mirror check on a fresh engine).
+        eng2 = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        inject!(eng2, StepLoad(-0.1))
+        for _ in 1:3000
+            step!(eng2, 0.02)
+        end
+        @test current_state(eng2).f > sys.f0
+    end
+
+    @testset "inject! invalidates the FSAL cache (no stale-derivative first step)" begin
+        # Bug: Tsit5 is FSAL — it reuses the cached RHS at the current state as the
+        # next step's first stage. If inject! mutates params without u_modified!, the
+        # first post-trip step integrates from the stale (pre-trip, ==0) derivative.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.001)
+        step!(eng, 0.001)                                # seed a live (zero) FSAL cache
+        @test current_state(eng).Δω == 0.0
+        inject!(eng, TripGenerator(:G1))                 # true dΔω/dt jumps off zero
+        a = GridSim.aggregates(sys, eng.online)
+        dΔω0 = (-150 / 550) / (2 * a.H_sys)              # closed-form derivative at trip
+        Δω0 = current_state(eng).Δω                      # still exactly 0 (state untouched)
+        step!(eng, 0.001)
+        # Realized average rate over the first post-trip step must match the true
+        # derivative to O(dt); a stale-zero cache biases it low by ~10%, which this
+        # tight rtol catches (the old atol=0.02 settling check absorbed it).
+        rate = (current_state(eng).Δω - Δω0) / 0.001
+        @test isapprox(rate, dΔω0; rtol = 2e-3)
+    end
+
+    @testset "second trip after saturation does not freeze the integrator" begin
+        # Bug: inject! shrank headroom while leaving ΔPm pinned to the OLD ceiling,
+        # so the isoutofdomain guard rejected every step until dt collapsed to an
+        # abort — and step! then silently flatlined. The event-boundary re-init
+        # (cap ΔPm to the new ceiling) plus the loud retcode check fix both halves.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        inject!(eng, TripGenerator(:G1))                 # big trip ⇒ ΔPm rides the ceiling
+        for _ in 1:3000                                  # 60 s ⇒ ΔPm pins at headroom
+            step!(eng, 0.02)
+        end
+        @test isapprox(current_state(eng).ΔPm, eng.params.headroom; atol = 1e-3)
+
+        # Second trip: new headroom (110/550 → 80/550) is BELOW the pinned ΔPm.
+        inject!(eng, TripGenerator(:G3))
+        @test eng.params.headroom ≈ 80 / 550
+        # Re-init'd down to the new ceiling at the event boundary (not left stranded).
+        @test current_state(eng).ΔPm ≤ eng.params.headroom + 1e-9
+        n = length(eng.pms)
+        t0 = eng.integrator.t
+        for _ in 1:2000                                  # must keep advancing, not abort
+            step!(eng, 0.02)
+        end
+        @test eng.integrator.t > t0 + 39.0               # ~40 s of real progress, no freeze
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        # Post-trip trajectory never crosses the new (shrunken) ceiling.
+        @test all(≤(eng.params.headroom + 1e-6), @view eng.pms[n+1:end])
     end
 
 end

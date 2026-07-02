@@ -12,6 +12,11 @@ module GridSim
 # (`ODEProblem`, `init`, `Tsit5`, and the `step!`/`solve!` methods it re-exports
 # from CommonSolve). Imported here so `engines/frequency_response.jl` can reach it.
 import OrdinaryDiffEq
+# SciMLBase is the public home of the integrator-control verbs we need at event
+# boundaries: `derivative_discontinuity!` (signal a discrete state/parameter jump so
+# the FSAL derivative cache is invalidated) and `successful_retcode` (detect an
+# aborted integration). OrdinaryDiffEq does not re-export these at top level.
+import SciMLBase
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
@@ -22,11 +27,10 @@ include("events/events.jl")
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
 
-# --- M1's FrequencyResponseEngine (built incrementally this batch) ---
-# Center-of-inertia aggregate frequency model. `aggregates` lands first; the
-# engine struct / init! / step! / inject! follow in later steps of the batch.
-# The real-time orchestration loop (orchestration/realtime_loop.jl) is still a
-# placeholder. See docs/plans/m1-plan.md.
+# --- M1's FrequencyResponseEngine ---
+# Center-of-inertia aggregate frequency model: `aggregates`, the engine struct,
+# and init! / step! / current_state / inject!. The real-time orchestration loop
+# (orchestration/realtime_loop.jl) is still a placeholder. See docs/plans/m1-plan.md.
 include("engines/frequency_response.jl")
 
 # --- domain model ---

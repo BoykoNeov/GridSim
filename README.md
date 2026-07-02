@@ -10,10 +10,12 @@ the mature Julia ecosystem (`DifferentialEquations.jl`, the NREL-Sienna stack) a
 build only the bespoke part — the orchestration layer that steps models in
 wall-clock time, injects live perturbations, and routes between fidelity tiers.
 
-> **Status: scaffolding.** The repository structure, domain model, perturbation
-> events, and the `SimulationEngine` interface are in place and load/test cleanly.
-> The first engine (real-time aggregate frequency response, Milestone 1) is
-> implemented next. See [`docs/SPEC.md`](docs/SPEC.md) and [`docs/plans/`](docs/plans/).
+> **Status: Milestone 1 engine landed.** The repository structure, domain model,
+> perturbation events, and the `SimulationEngine` interface are in place, and the
+> first engine — the real-time aggregate (center-of-inertia) frequency-response
+> model — is implemented and validated (closed-form RoCoF/settling checks). The
+> real-time orchestration loop and UI are next. See [`docs/SPEC.md`](docs/SPEC.md)
+> and [`docs/plans/`](docs/plans/).
 
 ## Design in one breath
 
@@ -66,4 +68,4 @@ GridSim/
 
 ## License
 
-[MIT](LICENSE) © 2026 Boyko Neov
+[BNCL-1.0](LICENSE) (Boyko Non-Commercial License v1.0) © 2026 Boyko Neov

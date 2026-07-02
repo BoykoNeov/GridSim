@@ -30,9 +30,12 @@ and nadir live. Acceptance criteria: `docs/SPEC.md` §7.8.
      where `f = f0·(1+Δω)` and `RoCoF = f0·dΔω/dt`.
    - `current_state(eng)` → `(t, f, Δω, RoCoF, ΔPm)`; track running nadir.
    - `inject!(eng, ::TripGenerator)` → drop unit `k` from the online set,
-     recompute `H_sys`/`R_eq`, `ΔP_dist -= P_k/S_base`. States `(Δω, ΔPm)` stay
-     continuous — only `p` changes (this is why M1 needs no algebraic re-init).
-   - `inject!(eng, ::StepLoad)` → `ΔP_dist += ΔP_pu` (nice-to-have).
+     recompute `H_sys`/`R_eq`/`headroom`, `ΔP_dist -= P_k/S_base`. `Δω` stays
+     continuous; `ΔPm` is re-init'd down to the new (shrunken) headroom if it was
+     above it, and `u_modified!` invalidates the FSAL cache — a discrete event, not
+     a bare parameter poke.
+   - `inject!(eng, ::StepLoad)` → `ΔP_dist -= ΔP_pu` (added load ⇒ negative
+     imbalance; nice-to-have), then `u_modified!`.
 5. **Orchestration** (`src/orchestration/realtime_loop.jl`, NO Makie): event
    queue + `drain!`, `run_realtime!(engine, state_obs; rtf)` with wall-clock
    pacing via `Observables`. Headless: a script can run it and collect the series.

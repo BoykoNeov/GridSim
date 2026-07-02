@@ -59,10 +59,14 @@ acceptance criteria in `../SPEC.md` §7.8.
       so it rides on the derivative saturation, not the forbidden post-hoc clamp.
       `init` seeds an explicit initial `dt`, uses a large *finite* tspan, and turns
       off `save_everystep`/`dense` (no unbounded real-time memory leak).
-- [x] `inject!(::TripGenerator)`: drop unit, recompute aggregates into the **shared**
-      `params` (`integrator.p === eng.params`, asserted), `ΔP_dist -= P0/S_base`;
-      `(Δω,ΔPm)` continuous. Already-offline trip is a no-op.
-- [x] `inject!(::StepLoad)` (nice-to-have): `ΔP_dist += ΔP_pu`.
+- [x] `inject!(::TripGenerator)`: look up unit (KeyError on unknown id), then if
+      online drop it, recompute aggregates into the **shared** `params`
+      (`integrator.p === eng.params`, asserted), `ΔP_dist -= P0/S_base`. `Δω`
+      continuous; `ΔPm` re-init'd to the shrunken headroom at the event boundary
+      (prevents a second-trip freeze), then `u_modified!` invalidates the FSAL
+      cache. Already-offline trip is a no-op.
+- [x] `inject!(::StepLoad)` (nice-to-have): `ΔP_dist -= ΔP_pu` (added load lowers
+      frequency), then `u_modified!`.
 - [x] Engine file wired into `GridSim.jl` (`import OrdinaryDiffEq`; engine exported).
       Tests: build, origin, type-stable `current_state` (`@inferred`), live trip,
       closed-form initial RoCoF, unsaturated settling (`Δω_ss=ΔP_dist/(D+1/R_eq)`,
