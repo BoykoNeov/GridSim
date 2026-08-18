@@ -131,23 +131,69 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       until damping balances it (`ω_coi → ΣPm/ΣD`, matched to 1e-4) and angles then
       drift together forever. Never call `find_fixpoint` on a post-trip state.
 
-## Step 5 — events
+## Step 5 — events (DONE)
 
 - [x] `inject!(::SwingEngine, ::TripGenerator)` — **DONE in step 3** (it is one of
       the interface verbs step 3 owed). Reuses the M1 event type; zeroes the
       machine's mechanical power and its incident branch couplings, and the state
       vector is asserted not to be resized.
-- [ ] `TripLine(from, to)` — new event; zero that branch's coupling. Template is
-      NetworkDynamics' `cascading_failure.jl` example.
-- [ ] Both paths call `derivative_discontinuity!` and `auto_dt_reset!`, and both
-      are tested for it — the M1 lesson was that a stale cached derivative injects
-      a small persistent error that no assertion catches unless one is written.
-      (The trip path calls both already; the *test* that distinguishes calling them
-      from not calling them is still owed, and belongs with `TripLine`.)
+- [x] `TripLine(from, to)` — zeroes that branch's coupling, never resizes the state.
+      Named by **bus pair, either order**, not by branch id: the pair is what
+      uniquely identifies a branch in this tier, and the parallel-circuit guard
+      already justifies itself on `TripLine` needing that. A branch-id convenience
+      constructor was considered and dropped (a second way to name a line is a
+      choice step 7 would then have to make, and it would pull `NetworkModel` into
+      an events file that has no model dependency).
+- [x] `lines_online` is **tracked, not inferred from `K == 0`** — a generator trip
+      also zeroes the coupling of every branch at its bus, and those lines are still
+      in service. Inferring would report a healthy line as tripped the moment its
+      neighbour's machine died. `is_online(eng, from, to)` is the UI read.
+- [x] **THE HEADLINE: a line trip has an equilibrium, and it is a closed form.**
+      Unlike a generator trip, `Σ Pm` is untouched, so the surviving network settles.
+      Cutting one line of the ring leaves the radial path B1–B2–B3:
+      `δ₁−δ₂ = asin(Pm₁/K₁₂)` and `δ₂−δ₃ = asin((Pm₁+Pm₂)/K₂₃)`, both read through
+      the real `branch_arrays`. **Measured to `1e-13`** with every `|ω| < 1e-15`.
+      Two wrong forms asserted outside: machine 2's own injection instead of the
+      cumulative flow (`0.19 rad` out) and the wrong branch's coupling (`1.8e-3`
+      out — the near miss that sets the `1e-9` bound).
+- [x] **Run to 240 s, not 60 — and the reason was measured, not assumed.** The
+      settling is far slower than the swing period (error `1.2e-3` at 40 s, `9.7e-5`
+      at 60 s, `1e-13` at 240 s). Asserting `1e-4` at 60 s would have looked like a
+      solver-tolerance allowance; the *same* `-9.731e-5` comes out at `reltol` `1e-3`
+      and `1e-10`, so it is settling physics. (The tolerance pass-through written to
+      establish that was removed again — unused API on speculation is what this repo
+      avoids.)
+- [x] **FINDING: the two integrator-boundary calls are not separably observable.**
+      With **both** `derivative_discontinuity!` and `auto_dt_reset!` removed the
+      realized first post-trip step comes out **9.7 % low**; with *either one* alone
+      it is correct to 0.01 %, because `auto_dt_reset!` re-evaluates the RHS as a
+      side effect. So the test asserts what is measurable (first-step rate vs the
+      analytically evaluated RHS, `rtol = 2e-3` against a 9.7 % failure) and **both
+      calls stay**, since leaning on that side effect is depending on undocumented
+      behaviour. Deliberately **not** asserted: `integrator.dt` — an OrdinaryDiffEq
+      internal whose read-back semantics a minor bump can move.
+- [x] The stale-derivative test runs over **both trip paths**, `TripGenerator` and
+      `TripLine` — which is what "both" meant here.
+- [x] **A line trip may split the grid, and the aggregate then lies.** Cutting the
+      only line of the two-machine system leaves two islands running at **+12 %** and
+      **−7.5 %** (`ωᵢ → Pmᵢ/Dᵢ`, verified to `1e-7`), reported as a single **−1 %**
+      aggregate — neither island's frequency, and non-zero only because the two
+      machines do not share an `H/D` ratio. Asserted as the derived value and as
+      *far from both islands*, because "≈ 0" would read as "nothing happened". Not
+      refused: it is a real event, and it is step 6's problem stated in advance.
+- [x] **A second, independent bite on the edge-ordering hazard.** At the instant a
+      line opens, only the machines at its two ends accelerate (`∓P/2H`, measured
+      `+2.65e-2` / `−1.27e-2`) and the third is exactly zero (`1.9e-17`). This tests
+      the mapping *through a live event*, not at construction — and V2 still cannot
+      catch it.
 - [x] A tripped machine is excluded from the aggregate frequency read-out even
       though its state keeps integrating — its inertia weight goes to zero, and the
       test checks both that it leaves the aggregate and that its own speed damps to
       rest harmlessly.
+- [x] 1093/1093 core + 33/33 UI green (1046 entering step 5). No new package and no
+      new upstream name in `src/`, so the two-resolution sweep from steps 3–4 still
+      covers this step and was not re-run; the one new named reach is `integrator.f`
+      in `test/`.
 
 ## Step 6 — the COI view, derived
 

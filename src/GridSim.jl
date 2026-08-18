@@ -92,7 +92,7 @@ export machine_arrays, branch_arrays, machine_at
 export two_machine_system, three_machine_ring
 
 # --- events ---
-export PerturbationEvent, TripGenerator, StepLoad
+export PerturbationEvent, TripGenerator, StepLoad, TripLine
 
 # --- protection ---
 export LoadShedStage, ShedLadder, shed_log, shed_total

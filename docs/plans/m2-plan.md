@@ -80,9 +80,15 @@ boundary, not a shortcut.
    running engine at **1.5909869 Hz** against the pinned **1.5911075 Hz** — the gap
    being the damping the undamped closed form omits, whose sign and size the test
    asserts rather than absorbing into a loose tolerance.
-5. **Events.** Reuse `TripGenerator` (same event type, new engine method) and add
-   `TripLine(from, to)`. Both are realised by **zeroing coupling parameters, never
-   by resizing the state vector** (see Pitfalls).
+5. **Events — DONE.** `TripGenerator` shipped with the engine in step 3;
+   `TripLine(from, to)` lands here. Both are realised by **zeroing coupling
+   parameters, never by resizing the state vector** (see Pitfalls). The headline is
+   that a *line* trip, unlike a generator trip, leaves `Σ Pm = 0` intact and so has
+   an equilibrium — on the ring a closed-form chain of `asin`s, hit to `1e-13`. Two
+   findings recorded in `m2-context.md`: the two integrator-boundary calls are not
+   separably observable (either alone suppresses the whole 9.7 % first-step bias, so
+   the test asserts omitting both), and a line trip that splits the grid leaves the
+   single aggregate read-out meaningless — +12 % / −7.5 % islands reported as −1 %.
 6. **Derive the COI view** — `coi_model(net::NetworkModel) -> SystemModel`, so M1's
    `FrequencyResponseEngine` runs on a model *compiled down from* M2's rather than
    a hand-maintained parallel copy (SPEC §3.2). The cross-fidelity comparison test

@@ -1621,6 +1621,186 @@ end
         @test eng.w[v] == 0.0
     end
 
+    @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
+        # The sharper half of step 5, and why it leads. A GENERATOR trip breaks
+        # `Σ Pm = 0` and this tier has no governors, so nothing settles (see the
+        # test above). A LINE trip changes no `Pm` at all, so the surviving network
+        # still has an equilibrium — and on the ring, cutting one line leaves a
+        # radial path B1–B2–B3 whose steady state is a chain of `asin`s:
+        #   L12 must carry everything machine 1 injects           → asin(Pm₁ / K₁₂)
+        #   L23 must carry that plus machine 2's                  → asin((Pm₁+Pm₂) / K₂₃)
+        # Both couplings are read from `branch_arrays`, i.e. through the same code
+        # path the engine integrates against — copying a hand-computed number is
+        # exactly how the D8 coupling error survived its first sitting.
+        net = three_machine_ring()
+        ma, ba = machine_arrays(net), branch_arrays(net)
+        bidx(id) = findfirst(b -> b.id === id, net.branches)
+        K12, K23, K31 = ba.K[bidx(:L12)], ba.K[bidx(:L23)], ba.K[bidx(:L31)]
+        pred12 = asin(ma.Pm[1] / K12)
+        pred23 = asin((ma.Pm[1] + ma.Pm[2]) / K23)
+
+        eng = init!(SwingEngine, net; dt = 0.05)
+        n_state = length(eng.integrator.u)
+        Pm_before = [eng.params[i] for i in eng.Pm_pidx]
+        @test is_online(eng, :B3, :B1)
+        inject!(eng, TripLine(:B3, :B1))
+
+        @test !is_online(eng, :B3, :B1)
+        @test is_online(eng, :B1, :B2) && is_online(eng, :B2, :B3)
+        @test length(eng.integrator.u) == n_state              # never resized
+        # No mechanical power moved — which is *why* an equilibrium survives.
+        @test [eng.params[i] for i in eng.Pm_pidx] == Pm_before
+        # Exactly one coupling died, and it is the one that used to be K31. (The
+        # parameter vector is in GRAPH edge order, which is not branch order — so
+        # this also re-checks the mapping the header warns about.)
+        live = [eng.params[i] for i in eng.K_pidx]
+        @test count(iszero, live) == 1
+        @test sort(filter(!iszero, live)) ≈ sort([K12, K23])
+
+        for _ in 1:4800; step!(eng, 0.05); end              # 240 s, finite by construction
+        st = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        # Every machine back at rest — not merely the aggregate, which can sit at
+        # zero while the machines run in opposite directions (see the split test).
+        @test maximum(abs, st.ω) < 1e-9
+        @test abs(st.ω_coi) < 1e-9
+        # Angle DIFFERENCES only: absolute angles are gauge-dependent.
+        @test st.δ[1] - st.δ[2] ≈ pred12 atol = 1e-9
+        @test st.δ[2] - st.δ[3] ≈ pred23 atol = 1e-9
+        # ...and the near misses, so the tolerance is doing work. Charging L23 with
+        # machine 2's own injection instead of the cumulative flow lands 0.19 rad
+        # out; using the wrong branch's coupling for the L12 leg lands 1.8e-3 out,
+        # and that near one is what makes a loose tolerance a real risk.
+        @test !isapprox(st.δ[2] - st.δ[3], asin(ma.Pm[2] / K23); atol = 1e-3)
+        @test !isapprox(st.δ[1] - st.δ[2], asin(ma.Pm[1] / K31); atol = 1e-4)
+
+        # Naming the line the other way round names the same line.
+        other = init!(SwingEngine, net; dt = 0.05)
+        inject!(other, TripLine(:B1, :B3))
+        @test [other.params[i] for i in other.K_pidx] == live
+        # Tripping it again is a no-op; a bus pair no branch joins is a caller bug;
+        # a self-loop cannot be a branch and is refused by the event itself.
+        @test inject!(eng, TripLine(:B3, :B1)) === eng
+        @test_throws KeyError inject!(eng, TripLine(:B1, :B9))
+        @test_throws ArgumentError TripLine(:B1, :B1)
+    end
+
+    @testset "SwingEngine: a line trip accelerates only its own two ends" begin
+        # The second independent bite on the edge-ordering hazard, and one V2
+        # cannot deliver: at the instant L31 opens, the machines at ITS ends jump by
+        # ∓P₃₁/2H while the third machine's acceleration is exactly zero. Zero the
+        # wrong edge and machine 2 moves. `P₃₁` is read off the fixpoint the engine
+        # actually reached, so it comes through the real code path.
+        net = three_machine_ring()
+        ma, ba = machine_arrays(net), branch_arrays(net)
+        b31 = findfirst(b -> b.id === :L31, net.branches)
+        eng = init!(SwingEngine, net; dt = 0.01)
+        δ0 = current_state(eng).δ
+        src, dst = ba.src[b31], ba.dst[b31]                 # vertex indices, B3 → B1
+        P31 = ba.K[b31] * sin(δ0[src] - δ0[dst])
+        @test abs(P31) > 0.5                                # control: it carried real power
+
+        inject!(eng, TripLine(:B3, :B1))
+        du = similar(eng.integrator.u)
+        eng.integrator.f(du, eng.integrator.u, eng.integrator.p, eng.integrator.t)
+        acc = [du[i] for i in eng.ω_idx]
+        # The end that was exporting P₃₁ keeps that power and speeds up; the end that
+        # was receiving it loses it and slows down.
+        @test acc[src] ≈ P31 / (2 * ma.H[src]) atol = 1e-12
+        @test acc[dst] ≈ -P31 / (2 * ma.H[dst]) atol = 1e-12
+        untouched = only(setdiff(1:3, [src, dst]))
+        @test abs(acc[untouched]) < 1e-12
+        # ...and that zero is not trivially small: the two ends jumped by ~1e-2.
+        @test minimum(abs, acc[[src, dst]]) > 1e-3
+    end
+
+    @testset "SwingEngine: the event boundary drops the stale derivative" begin
+        # Tsit5 is FSAL — it reuses the cached RHS at the current state as the next
+        # step's first stage. Sitting on the fixpoint that cached derivative is
+        # exactly zero, so an event that changes the system without telling the
+        # integrator makes the first post-trip step start from a stale zero. The M1
+        # version of this test is at "inject! invalidates the FSAL cache"; this is
+        # the M2 pair of it, run over BOTH trip paths.
+        #
+        # MEASURED, so the tolerance is calibrated rather than guessed: with both
+        # `derivative_discontinuity!` and `auto_dt_reset!` removed the realized first
+        # step comes out 9.7% low (9.66% at dt=1e-3, 10.1% at dt=0.02) on every
+        # machine that moves — so rtol 2e-3 separates them by a factor of ~50.
+        #
+        # RECORDED, not patched: the two calls are NOT separably observable here.
+        # `auto_dt_reset!` re-evaluates the RHS as a side effect of re-estimating the
+        # step, so either call alone suppresses the whole bias and only removing both
+        # shows up. The test therefore asserts what is measurable and both calls stay
+        # in `inject!` — see docs/plans/m2-context.md.
+        net = three_machine_ring()
+        for ev in (TripGenerator(:G1), TripLine(:B3, :B1))
+            eng = init!(SwingEngine, net; dt = 0.001)
+            step!(eng, 0.001)                       # seed a live (zero) FSAL cache
+            @test maximum(abs, current_state(eng).ω) < 1e-12
+            ω0 = copy(current_state(eng).ω)
+            inject!(eng, ev)
+            du = similar(eng.integrator.u)
+            eng.integrator.f(du, eng.integrator.u, eng.integrator.p, eng.integrator.t)
+            truth = [du[i] for i in eng.ω_idx]
+            step!(eng, 0.001)
+            rate = (current_state(eng).ω .- ω0) ./ 0.001
+            moving = findall(a -> abs(a) > 1e-3, truth)
+            @test length(moving) >= 2               # control: something has to move
+            for i in moving
+                @test isapprox(rate[i], truth[i]; rtol = 2e-3)
+                # ...and the stale-cache answer is outside that band, so the
+                # assertion above is not passing on slack.
+                @test !isapprox(0.9034 * truth[i], truth[i]; rtol = 2e-3)
+            end
+        end
+    end
+
+    @testset "SwingEngine: a line trip may split the grid, and the aggregate lies" begin
+        # Cutting the only line of the two-machine system leaves two islands. This
+        # tier does not refuse that — it is a real event — but the single COI
+        # read-out stops meaning anything: each island holds its own frequency, and
+        # `ω_coi` is an inertia-weighted average of two unrelated numbers.
+        net = two_machine_system()
+        ma = machine_arrays(net)
+        eng = init!(SwingEngine, net; dt = 0.02)
+        br = only(net.branches)
+        inject!(eng, TripLine(br.from, br.to))
+        @test !is_online(eng, br.from, br.to)
+        @test all(id -> is_online(eng, id), machine_ids(eng))   # no machine tripped
+        @test all(iszero, [eng.params[i] for i in eng.K_pidx])
+
+        for _ in 1:5000; step!(eng, 0.02); end                  # 100 s
+        st = current_state(eng)
+        # Decoupled and undriven, each machine runs until its own damping absorbs
+        # its own injection: ωᵢ → Pmᵢ/Dᵢ. Opposite signs — one island speeds up by
+        # 6% and the other slows by 3.75%, which is nothing like a power system and
+        # everything like what this tier says happens.
+        @test st.ω ≈ ma.Pm ./ ma.D atol = 1e-7
+        @test st.ω[1] > 0.05 && st.ω[2] < -0.03
+        # The aggregate is the inertia-weighted mean of those two, which is NOT zero
+        # (it would be only if both machines shared an H/D ratio) and is NOT the
+        # frequency of either island. Assert the derived value, and assert it is far
+        # from both islands, because "≈ 0" would read as "nothing happened".
+        pred = sum(ma.H .* (ma.Pm ./ ma.D)) / sum(ma.H)
+        @test st.ω_coi ≈ pred atol = 1e-7
+        @test abs(pred) > 1e-3
+        @test abs(st.ω_coi - st.ω[1]) > 0.05 && abs(st.ω_coi - st.ω[2]) > 0.05
+    end
+
+    @testset "SwingEngine: a dead generator does not take its lines out of service" begin
+        # `is_online` for a line is tracked, not inferred from "is K zero?" — because
+        # a generator trip zeroes the coupling of every branch at its bus, and those
+        # lines are still in service; they simply have nothing left to carry.
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        inject!(eng, TripGenerator(:G1))
+        @test count(iszero, [eng.params[i] for i in eng.K_pidx]) == 2
+        @test is_online(eng, :B1, :B2) && is_online(eng, :B3, :B1)
+        @test !is_online(eng, :B1, :B9)          # unknown pair is false, not a throw
+        # Tripping one of those lines afterwards is still a real state change.
+        @test !is_online(inject!(eng, TripLine(:B1, :B2)), :B1, :B2)
+    end
+
     @testset "SwingEngine: recording is bounded and the nadir is not read from it" begin
         net = two_machine_system()
         eng = init!(SwingEngine, net; dt = 0.02)

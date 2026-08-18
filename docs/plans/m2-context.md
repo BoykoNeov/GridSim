@@ -299,15 +299,16 @@ Edge *orientation*, by contrast, is harmless: `K` is symmetric and `K·sin` is
 antisymmetric, so flipping an edge's ends flips the sign of a quantity that
 `AntiSymmetric` was going to flip anyway.
 
-### The post-trip system has no equilibrium — stated so nobody "fixes" it
+### After a GENERATOR trip there is no equilibrium — stated so nobody "fixes" it
 
-`NetworkModel` enforces `Σ P0 = 0` at construction, but a trip deliberately breaks
-it, and the classical tier has no governors to make up the loss. So after a trip
-there is **no fixpoint at all**: speed falls until damping balances the shortfall
+`NetworkModel` enforces `Σ P0 = 0` at construction, but losing a machine
+deliberately breaks it, and the classical tier has no governors to make up the loss.
+So afterwards there is **no fixpoint at all**: speed falls until damping balances the shortfall
 (`ω_coi → ΣPm_remaining / ΣD`, matched to 1e-4 in `test/`), and because that limit
 is non-zero every angle then grows without bound at a common rate. Angle
 *differences* still settle. Two consequences worth carrying: never call
-`find_fixpoint` on a post-trip state, and never assert on an absolute angle.
+`find_fixpoint` on a post-trip state, and never assert on an absolute angle. A
+**line** trip is the other case and does settle — see the step 5 section below.
 
 The gauge point is separate and equally load-bearing — shifting every `δ` by the
 same constant is still an equilibrium, so the fixpoint solver returns an arbitrary
@@ -356,6 +357,123 @@ offset (on the ring it lands near 2.1 rad, nowhere near zero). The test asserts 
     the same physical quantities under the same names, so the UI reads both engines
     through one API. `machine_ids` is the new per-machine counterpart, and both new
     exported names were checked clear against GLMakie before being added.
+
+## Step 5 — events (DONE), and the two things it settled
+
+`TripGenerator` shipped with the engine in step 3. Step 5 added `TripLine` and,
+more importantly, the test that distinguishes calling the integrator-boundary
+verbs from not calling them — the item the M1 lesson left owed.
+
+`TripLine` names a branch by its **bus pair, in either order**, not by branch id.
+That is not a style choice: the pair is what uniquely identifies a branch in this
+tier, and the parallel-circuit guard in `network_model.jl` already justifies its own
+existence partly on "`TripLine` could not name one of two circuits." A convenience
+constructor taking a branch id was considered and dropped — a second way to name a
+line is a choice the UI would then have to make, and it would pull a `NetworkModel`
+dependency into an events file that has none.
+
+`lines_online` is a tracked set, not `K != 0` read back. A **generator** trip also
+zeroes the coupling of every branch at its bus, and those lines are still in
+service — they simply have nothing left to carry. Inferring the one from the other
+would report a healthy line as tripped the moment its neighbour's machine died.
+
+### A line trip HAS an equilibrium — the sharper validation
+
+This is the headline of step 5 and the reason it is worth more than the generator
+trip as a test. Losing a machine breaks `Σ Pm = 0` and nothing settles (previous
+section). Losing a **line** changes no `Pm` at all, so the surviving network still
+has a steady state: every machine returns to `ω = 0` and the angle differences move
+to a new equilibrium in which the remaining branches carry what the lost one used
+to. Cutting one line of the ring leaves the radial path B1–B2–B3, whose steady
+state is a chain of `asin`s that can be written down:
+
+    δ₁ − δ₂ = asin(Pm₁ / K₁₂)              = 0.185998944 rad
+    δ₂ − δ₃ = asin((Pm₁ + Pm₂) / K₂₃)      = 0.259628411 rad
+
+Both couplings are read from `branch_arrays`, i.e. through the code path the engine
+integrates against — the D8 finding is what a copied number costs. **Measured: both
+to `1e-13`** after 240 s of simulated time, with every `|ω| < 1e-15`.
+
+Two wrong versions are asserted to fall outside: charging L23 with machine 2's own
+injection instead of the cumulative flow misses by `0.19 rad`, and using the wrong
+branch's coupling for the L12 leg misses by `1.8e-3` — the near one, and what makes
+a loose tolerance a real risk. The bound is `1e-9`, four orders below the near miss
+and four above the measurement.
+
+**Why 240 s and not 20.** The settling is far slower than the swing period. The
+angle error is still `1.2e-2` at 20 s, `1.2e-3` at 40 s, `9.7e-5` at 60 s and only
+reaches `1e-13` around 240 s. Running to 60 s and asserting `atol = 1e-4` would
+have looked like a solver-tolerance allowance and been recorded as one; it is not.
+That was checked directly rather than assumed — the same run at `reltol` `1e-3` and
+at `1e-10` gives the *same* `-9.731e-5` error at 60 s, so the gap is settling
+physics, not integration error. (The `reltol`/`abstol` pass-through written to
+measure that was then removed: no test needed it once the answer was known, and
+unused API on speculation is what this repo avoids.)
+
+### FINDING — the two integrator-boundary calls are not separably observable
+
+`inject!` calls `derivative_discontinuity!` (drop the FSAL solver's now-stale cached
+derivative) and `auto_dt_reset!` (re-estimate the step size for the new dynamics).
+The owed test was one that fails if they are not called. Measured, by running the
+trip path with each call switched off:
+
+| `derivative_discontinuity!` | `auto_dt_reset!` | first-step error vs the true derivative |
+| --- | --- | --- |
+| on  | on  | −0.01 % |
+| off | on  | −0.01 % |
+| on  | off | −0.01 % |
+| off | off | **−9.7 %** |
+
+Either call alone suppresses the entire bias, because `auto_dt_reset!` re-evaluates
+the RHS as a side effect of re-estimating the step. So the effect test bites on
+*omitting both* and cannot separate them. Recorded rather than papered over: the
+test asserts what is measurable (realized first-step rate matches the analytically
+evaluated RHS to `rtol = 2e-3`, against a `9.7 %` failure — a factor of ~50), and
+**both calls stay in `inject!`**, because leaning on `auto_dt_reset!` to also refresh
+the derivative cache is depending on an undocumented side effect of a package that
+has already moved once under this repo's feet. What the test deliberately does not
+do is assert on `integrator.dt`: that is an OrdinaryDiffEq internal whose read-back
+semantics a minor bump can move, and a test that passes on a version's internal
+bookkeeping passes for the wrong reason.
+
+The test runs over **both** trip paths, `TripGenerator` and `TripLine`, which is
+what the checklist item meant by "both".
+
+### A line trip can split the grid, and the aggregate then lies
+
+Cutting the only line of the two-machine system leaves two islands. This tier does
+not refuse that — it is a real event, and the one the Iberian scenario is about —
+but the single COI read-out stops meaning anything. Each machine runs until its own
+damping absorbs its own injection (`ωᵢ → Pmᵢ/Dᵢ`): **+12 % and −7.5 %** on that
+system, verified to `1e-7`. The aggregate is their inertia-weighted mean, **−1 %**,
+which is neither island's frequency and is not zero either — it would be zero only
+if the two machines happened to share an `H/D` ratio. The test asserts the derived
+value and asserts it is *far* from both islands, because an assertion of "≈ 0"
+would read as "nothing happened."
+
+This is the same reason `NetworkModel` refuses to be *constructed* disconnected, now
+showing up as a runtime consequence instead of a construction guard. It is also
+step 6's problem in advance: `coi_model` compiles an aggregate view, and this is the
+disturbance for which the aggregate view is meaningless.
+
+### A second, independent bite on the edge-ordering hazard
+
+At the instant a line opens, the machines at **its two ends** jump by `∓P/2H` while
+every other machine's acceleration is exactly zero. Zero the wrong edge and the
+untouched machine moves. Measured on the ring: `+2.65e-2` and `−1.27e-2` at the two
+ends of L31, `1.9e-17` at machine 2. This is a genuinely new assertion rather than a
+restatement of step 3's, because it tests the mapping *through a live event* rather
+than at construction — and V2 still cannot catch it, for the reason recorded above.
+
+### No new dependency surface
+
+Step 5 adds no package and no new upstream name in `src/` — `derivative_discontinuity!`
+and `auto_dt_reset!` were already reached for and already swept across both
+resolutions in steps 3–4. The one new named reach is `integrator.f` in `test/`, to
+evaluate the RHS analytically at the trip instant. So the two-resolution sweep from
+step 3 still covers this step, and it was not re-run; the dev machine remains on the
+fresh resolve (`SciMLBase` 3.49.1 / `OrdinaryDiffEq` 7.6.0), which is what a clean
+clone gets.
 
 ## Key decisions (and why)
 

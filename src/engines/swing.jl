@@ -38,15 +38,27 @@
 # is handed, and the electrical power recomputed from the same wrong couplings
 # still equals `Pm`. Only a direct assertion on the mapping bites.
 #
-# NO POST-TRIP EQUILIBRIUM — do not "fix" the drift. `NetworkModel` enforces
-# `Σ P0 = 0` at construction, but a trip deliberately breaks it: the classical tier
-# has no governors, so the remaining machines cannot make up the loss. The system
-# therefore has **no fixpoint at all** after a trip. Speed falls until damping
-# balances the shortfall (`ω_coi → ΣPm_remaining / ΣD`) and, because that limit is
-# non-zero, every `δ` then grows without bound at a common rate. That is the
-# physics of this tier, not a bug and not an integration failure: angle
-# *differences* still settle. Consequences: never call `find_fixpoint` on a
-# post-trip state (it cannot converge), and never assert on an absolute angle.
+# NO EQUILIBRIUM AFTER A **GENERATOR** TRIP — do not "fix" the drift.
+# `NetworkModel` enforces `Σ P0 = 0` at construction, but losing a machine
+# deliberately breaks it: the classical tier has no governors, so the remaining
+# machines cannot make up the loss. The system therefore has **no fixpoint at all**
+# afterwards. Speed falls until damping balances the shortfall
+# (`ω_coi → ΣPm_remaining / ΣD`) and, because that limit is non-zero, every `δ` then
+# grows without bound at a common rate. That is the physics of this tier, not a bug
+# and not an integration failure: angle *differences* still settle. Consequences:
+# never call `find_fixpoint` on a post-generator-trip state (it cannot converge),
+# and never assert on an absolute angle.
+#
+# A **LINE** TRIP IS THE OTHER CASE, and the sharper test. It changes no `Pm`, so
+# `Σ Pm = 0` still holds and the surviving network *does* have an equilibrium: every
+# machine returns to `ω = 0` and the angle differences move to a new steady state in
+# which the remaining branches carry what the lost one used to. On a radial pair
+# that steady state is a closed form (`asin` of the flow over the coupling), which
+# is what step 5's validation asserts. The exception is a trip that **splits** the
+# network: each island then holds its own frequency and the single `ω_coi` read-out
+# is a weighted average of two unrelated numbers — physically real, deliberately not
+# refused here, and the reason `NetworkModel` refuses to be *constructed*
+# disconnected.
 
 const _SWING_DT0 = 0.02   # default real-time step (s), matching M1's
 
@@ -88,7 +100,11 @@ though the recorder's channel count depends on the number of machines. Built
 through `init!`/the constructor below, never by filling fields by hand.
 
 Fields worth naming: the canonical `model`; the compiled `nw`; the live `online`
-machine set; the **shared** parameter vector (`eng.params === eng.integrator.p`,
+machine set and the live `lines_online` branch set (indices into
+`model.branches`, tracked explicitly rather than inferred from "is this coupling
+zero?" — a generator trip also zeroes its incident couplings, and a line that is
+still in service beside a dead machine is not a tripped line); the **shared**
+parameter vector (`eng.params === eng.integrator.p`,
 the M1 pattern that lets an event change the system without disturbing the
 continuous state — inherited here from NetworkDynamics rather than assumed, and
 asserted in `test/`); flat index vectors into the state and parameter arrays
@@ -103,6 +119,7 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     model::NetworkModel
     nw::NW
     online::Set{Symbol}
+    lines_online::Set{Int}
     params::Vector{Float64}
     dt::Float64
     integrator::I
@@ -242,7 +259,8 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                     [Symbol("ω_", id) for id in ids], [:f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
 
-    eng = SwingEngine(net, nw, Set(ids), integrator.p, Float64(dt), integrator,
+    eng = SwingEngine(net, nw, Set(ids), Set(eachindex(net.branches)),
+                      integrator.p, Float64(dt), integrator,
                       net.f0, ω₀, ids, δ_idx, ω_idx, Pm_pidx, K_pidx,
                       branch_to_edge, incident, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)), net.f0)
@@ -425,6 +443,10 @@ parameter poke, and both are needed:
   - `auto_dt_reset!` so the step-size controller re-estimates from the new
     dynamics rather than carrying a step chosen for the pre-trip system.
 
+A machine's branches stay *in service* (`lines_online` is untouched): they are
+still there, they simply have nothing left to carry, and reporting them as tripped
+would confuse a dead generator with a dead line.
+
 **The post-trip system has no equilibrium** — see the header. Frequency falls until
 damping balances the lost generation, and the angles then drift together forever.
 That is this tier's physics (no governors), so do not call `find_fixpoint` on the
@@ -444,6 +466,74 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     end
     eng.w[v] = 0.0                           # out of the aggregate read-out...
     eng.Σw = sum(eng.w)                      # ...and out of the inertia indicator
+    SciMLBase.derivative_discontinuity!(eng.integrator, true)
+    SciMLBase.auto_dt_reset!(eng.integrator)
+    return eng
+end
+
+# Branch index (position in `model.branches`) of the line joining two buses, in
+# either order, or `nothing`. ONE pair-matching loop, shared by the read-out and by
+# the event, so "which line is this?" cannot mean two different things in the two
+# places that ask — the same reason the recorder has a single `_accept!`.
+function _find_branch(eng::SwingEngine, from::Symbol, to::Symbol)
+    for (b, br) in pairs(eng.model.branches)
+        ((br.from === from && br.to === to) ||
+         (br.from === to && br.to === from)) && return b
+    end
+    return nothing
+end
+
+# The same lookup, but a missing branch is a caller bug rather than a `false` —
+# the contract `_machine_vertex` already sets for machines.
+function _branch_index(eng::SwingEngine, from::Symbol, to::Symbol)
+    b = _find_branch(eng, from, to)
+    b === nothing && throw(KeyError((from, to)))
+    return b
+end
+
+"""
+    is_online(eng::SwingEngine, from::Symbol, to::Symbol) -> Bool
+
+Whether the branch between buses `from` and `to` is still in service. Tracked
+explicitly rather than read back as `K != 0`, because those are different
+questions: a generator trip zeroes the coupling of every branch incident to its
+bus, and those lines are still in service — they simply have nothing left to
+carry. An unknown bus pair is `false`, matching the machine method (a *button* for
+a line that does not exist is not the caller bug `inject!` throws on).
+"""
+function is_online(eng::SwingEngine, from::Symbol, to::Symbol)
+    b = _find_branch(eng, from, to)
+    return b !== nothing && b in eng.lines_online
+end
+
+"""
+    inject!(eng::SwingEngine, ev::TripLine) -> eng
+
+Take a branch out of service live: zero its coupling `K`, so it transfers no power
+from this instant on. **The state vector is never resized** and no machine's `Pm`
+changes — the discipline and the reasoning are `TripGenerator`'s.
+
+The two integrator-boundary calls are the same pair and are needed for the same
+reasons: `derivative_discontinuity!` so the FSAL solver drops its now-stale cached
+derivative instead of integrating the first post-trip step from the pre-trip one,
+and `auto_dt_reset!` so the step-size controller re-estimates from the new dynamics
+rather than carrying a step chosen for the intact network.
+
+Unlike a generator trip this **has an equilibrium** (`Σ Pm` is untouched): the
+machines swing and settle back to `ω = 0`, with the surviving branches carrying
+what the tripped one used to. See the header for the split-network exception.
+
+Tripping an already-tripped line is a no-op; naming a bus pair no branch joins
+throws `KeyError`, and the lookup happens first so that error is reachable.
+"""
+function inject!(eng::SwingEngine, ev::TripLine)
+    b = _branch_index(eng, ev.from, ev.to)   # throws KeyError on an unjoined pair
+    b in eng.lines_online || return eng      # exists but already tripped ⇒ no-op
+    delete!(eng.lines_online, b)
+    # `branch_to_edge` is the reverse of the graph's own edge ordering, which is
+    # NOT branch order (see the header). This is the one place that map is read,
+    # and `test/` asserts it is a permutation *and* that the right line goes dead.
+    eng.params[eng.K_pidx[eng.branch_to_edge[b]]] = 0.0
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return eng
