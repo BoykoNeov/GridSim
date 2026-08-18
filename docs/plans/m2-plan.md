@@ -25,8 +25,16 @@ the divergence is the lesson.
 
 M2 is the **reduced classical** tier:
 
-- Each machine is a constant voltage `E′` behind its transient reactance `X′d`;
-  the state is `(δ, ω)` per machine.
+- Each machine is a constant-magnitude voltage `E′` **at its bus**, whose angle is
+  the rotor angle; the state is `(δ, ω)` per machine. Branch coupling is
+  `K_ij = E′ᵢ·E′ⱼ / X_ij`.
+  **Corrected during step 2** (D8; write-up in `m2-context.md`): this bullet used
+  to read "`E′` *behind* `X′d`", which cannot be realised on a meshed network under
+  the two decisions below — folding the end reactances into each branch
+  double-counts the internal reactance of any machine with more than one line, and
+  folding them in correctly is the terminal-bus elimination that would build an
+  admittance matrix. `Machine.Xd′` is carried and validated for M2b, not used by
+  M2a's dynamics.
 - Network coupling is algebraic *in closed form* — no bus voltages are carried as
   unknowns. That keeps the whole system a **pure ODE** (`Tsit5` still applies).
 - The moment bus voltages become algebraic variables it is a
@@ -48,11 +56,15 @@ boundary, not a shortcut.
    dependency closure" test gained the new deps as explicit positive controls and a
    wider negative (a transitive plotting dep would violate SPEC §3.1 without
    containing the string "Makie").
-2. **Canonical network model** — `src/model/network_model.jl`: `Bus`, `Branch`,
-   `Machine`, `NetworkModel`, plus `two_machine_system()` and
-   `three_machine_ring()` examples. Engineering units at the boundary, per-unit
-   inside (SPEC §6). Numeric arrays kept separate from topology/metadata (SPEC §4,
-   the struct-of-arrays habit). Concrete field types only.
+2. **Canonical network model — DONE.** `src/model/network_model.jl`: `Bus`,
+   `Branch`, `Machine`, `NetworkModel`, the derived struct-of-arrays views
+   `machine_arrays`/`branch_arrays`, `two_machine_system()` and
+   `three_machine_ring()`. 350/350 core tests green. The batch's finding is the
+   coupling correction (D8) described in the tier section above; the per-unit split
+   (machine data on the machine's base, network data on the system base) is
+   confined to the two array functions, and the example machines are rated away
+   from `S_base` so a missing conversion changes the answer instead of hiding
+   behind a weight of 1.
 3. **The swing engine** — `src/engines/swing.jl`: the NetworkDynamics vertex model
    (one machine) and edge model (one branch), assembly into a `Network`, and
    `SwingEngine <: SimulationEngine` implementing `init!` / `step!` /
@@ -87,12 +99,16 @@ down; the numbers in `m2-context.md` are measured, not predicted.
   fixpoint, each machine's *computed electrical* power equals its *specified*
   mechanical power to `1e-8`. A sign flip in the coupling still oscillates, still
   settles, still has a nadir — this is the test that catches it.
-- **V3 — closed-form swing frequency (two machines, one line).** Linearising the
-  relative angle `Δδ = δ₁ − δ₂` about `δ₀ = asin(P/K)` gives
+- **V3 — closed-form swing frequency (two machines, one line).** With
+  `K = E′₁E′₂/X` (D8), linearising the relative angle `Δδ = δ₁ − δ₂` about
+  `δ₀ = asin(P/K)` gives
   `d²Δδ/dt² = −ω₀·K·cos δ₀·(1/(2H₁) + 1/(2H₂))·Δδ`, so
   `f_osc = sqrt(ω₀·K·cos δ₀·(1/(2H₁)+1/(2H₂))) / 2π`.
   Derived from *our own* per-unit equations, not a remembered formula — the
-  `2H/ω₀` convention is exactly where remembered formulas go wrong.
+  `2H/ω₀` convention is exactly where remembered formulas go wrong. Step 2 pinned
+  the prediction `two_machine_system` implies, computed through the real
+  `machine_arrays`/`branch_arrays`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`,
+  **`f_osc = 1.5911075 Hz`**. Step 4's job is to make the running engine hit it.
 - **V4 — cross-fidelity against the derived COI model.** Same trip, both engines.
   Assert **both** halves: the COI frequencies agree early (they must track), and
   they diverge later (they must not be identical). Asserting only the agreement

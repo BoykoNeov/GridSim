@@ -45,18 +45,31 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       a transitive plotting dep would violate SPEC §3.1 without containing the
       string "Makie".
 
-## Step 2 — canonical network model
+## Step 2 — canonical network model (DONE)
 
-- [ ] `src/model/network_model.jl`: `Bus`, `Branch`, `Machine`, `NetworkModel`.
-      Concrete field types only; numeric arrays kept separate from topology and
-      metadata (SPEC §4).
-- [ ] Field semantics chosen to map onto PowerSystems concepts, and construction
-      through a function, so `from_powersystems` can be a sibling constructor later
-      (D5).
-- [ ] `two_machine_system()` — the case with a closed form.
-- [ ] `three_machine_ring()` — the case without one.
-- [ ] Constructor guards in the spirit of `GeneratingUnit`'s headroom check: reject
-      a model that is wrong on its face rather than letting it poison a solve.
+- [x] `src/model/network_model.jl`: `Bus`, `Branch`, `Machine`, `NetworkModel`.
+      Concrete field types only (asserted with `isconcretetype`). The canonical
+      model is array-of-structs; the contiguous numeric arrays the engine
+      integrates against are **derived** (`machine_arrays` / `branch_arrays`),
+      never stored — the SPEC §4 habit without a second copy to keep in sync.
+- [x] Field semantics map onto PowerSystems concepts (mapping written down in the
+      file header), and all validation lives in the inner constructor, so
+      `from_powersystems` can be a sibling constructor that cannot bypass it (D5).
+- [x] `two_machine_system()` — the case with a closed form.
+- [x] `three_machine_ring()` — the case without one.
+- [x] Constructor guards, each with its own test asserting the *message* (so a
+      guard test cannot pass because a different guard fired): duplicate ids ·
+      unknown bus references · a bus with no machine or with two · parallel
+      circuits · disconnected network · `Σ P0 ≠ 0` · `|P0ᵢ| > Σⱼ K_ij`.
+- [x] **FINDING, recorded not patched: "E′ behind X′d" is not realisable on a
+      meshed network under D2 + D3.** Folding the end reactances into each branch
+      double-counts the internal reactance of any machine with more than one line.
+      M2a therefore puts `E′` at the bus: `K_ij = E′ᵢE′ⱼ/X_ij`, exact on every
+      topology (D8). `Machine.Xd′` stays as carried, validated data for M2b, with
+      a regression test that ×10 on every `X′d` moves no coupling. Full write-up
+      in `m2-context.md`.
+- [x] 350/350 core tests green (273 entering M2), on the fresh resolve as well as
+      the incremental one.
 
 ## Step 3 — the swing engine
 
@@ -122,19 +135,35 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
 - [ ] **Unbounded trajectory growth.** Both engines now have the same shape. Fix it
       once in a shared recording facility rather than duplicating the leak. Decide
       where it lives *before* `SwingEngine` grows its own vectors — retrofitting
-      two engines costs more than designing one.
+      two engines costs more than designing one. **This is now step 3's opening
+      item, not a background note:** step 3 is where the second copy gets written.
 - [ ] Report **Figure 3-67** as a layout target — still open, still ticks no
       acceptance criterion.
 
 ## Known hazards to check off explicitly
 
-- [ ] The two-machine closed form re-derived against the **real** code path, not
+- [x] The two-machine closed form re-derived against the **real** code path, not
       copied from the spike — the spike hard-coded its coupling, the real model
       computes it from internal voltage and reactance, and that is one more place a
-      per-unit convention can go wrong.
+      per-unit convention can go wrong. **It did go wrong** (the D8 finding), and
+      re-deriving is what caught it. Prediction now pinned in `test/` through the
+      real `machine_arrays`/`branch_arrays`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`,
+      `f_osc = 1.5911075 Hz`. Step 4 must make the *running engine* measure it.
 - [ ] Per-machine speed deviation is not M1's aggregate deviation. Check the names
       in the exported API do not invite the confusion.
-- [ ] Check new exports against `GLMakie` before writing UI code — the collision
-      hazard that cost a round in M1 (`stop!`, `timestep`, `drain!`).
+- [x] **A model that is "wrong on its face" is rejected at construction**, and each
+      guard's *message* is asserted — several invalid models violate more than one
+      rule, so "it threw" would not prove the intended guard fired.
+- [x] **The per-unit split is confined to `machine_arrays`/`branch_arrays`.** The
+      example machines are rated away from `S_base` (250/400 MVA on a 100 MVA base)
+      so a missing or inverted conversion changes the answer instead of hiding
+      behind a weight of 1, and the tests assert against the wrong conversions by
+      name rather than only asserting the right one.
+- [x] Check new exports against `GLMakie` before writing UI code — the collision
+      hazard that cost a round in M1 (`stop!`, `timestep`, `drain!`). All 14
+      candidates checked clear, including the ones later steps will need:
+      `Bus` · `Branch` · `Machine` · `NetworkModel` · `machine_arrays` ·
+      `branch_arrays` · `machine_at` · `two_machine_system` · `three_machine_ring` ·
+      `SwingEngine` · `TripLine` · `coi_model` · `buses` · `branches`.
 - [ ] Any long-running loop test self-terminates (finite duration, or a state
       stopper plus a wall-clock watchdog). A hung suite is worse than a failing one.

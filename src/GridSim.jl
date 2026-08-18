@@ -23,9 +23,19 @@ import SciMLBase
 # safe in the UI-free core. NOT `using`: the loop refers to `Observables.Observable`
 # explicitly so nothing about the seam is implicit.
 import Observables
+# Graphs supplies the plain graph type NetworkDynamics builds a `Network` on, and
+# — already at model-construction time — the connectivity check that rejects a
+# network split into islands. Imported (not `using`) so every call site says
+# `Graphs.` and nothing about the graph layer is implicit.
+import Graphs
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
+
+# --- M2's canonical network model (buses / branches / machines) ---
+# The aggregate `SystemModel` above is not replaced: at M2 step 6 it becomes a
+# compiled *view* of this one (`coi_model`), per SPEC §3.2.
+include("model/network_model.jl")
 
 # --- perturbation events (live injection) ---
 include("events/events.jl")
@@ -53,6 +63,15 @@ include("orchestration/realtime_loop.jl")
 
 # --- domain model ---
 export GeneratingUnit, SystemModel, example_system
+
+# --- M2 network model ---
+# `machine_arrays`/`branch_arrays` are the derived struct-of-arrays views the
+# engine integrates against (and the only place the per-unit conversion to the
+# system base happens). All of these names were checked clear against GLMakie's
+# exports before being added — the collision hazard that cost a round in M1.
+export Bus, Branch, Machine, NetworkModel
+export machine_arrays, branch_arrays, machine_at
+export two_machine_system, three_machine_ring
 
 # --- events ---
 export PerturbationEvent, TripGenerator, StepLoad

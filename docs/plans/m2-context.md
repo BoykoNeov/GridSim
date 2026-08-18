@@ -124,6 +124,88 @@ the sign-convention test M2 needs: each machine's computed *electrical* power
 equals its specified *mechanical* power. That check is cheap and it catches the
 one bug that otherwise hides behind a plausible-looking oscillation.
 
+## Step 2 — the canonical network model (DONE), and the finding it produced
+
+`src/model/network_model.jl`: `Bus`, `Branch`, `Machine`, `NetworkModel`, the
+derived struct-of-arrays views `machine_arrays` / `branch_arrays`, and the two
+example systems. 350 core tests green (was 273 entering M2), on the fresh resolve
+as well as the incremental one — which are now the *same* resolution
+(`OrdinaryDiffEq` 7.6.0 / `SciMLBase` 3.49.1 in both), so the two-answers hazard
+from step 1 is currently dormant rather than gone.
+
+### FINDING — "E′ behind X′d" is not realisable on a meshed network under D2 + D3
+
+The plan (and the SPEC's fidelity-tier line) describes M2 as *"each machine is a
+constant voltage `E′` behind its transient reactance `X′d`"*. Written naively,
+that becomes a per-branch coupling
+
+    K_ij = E′ᵢ·E′ⱼ / (X′dᵢ + X_ij + X′dⱼ)
+
+and the first implementation did exactly that. **It is wrong on any topology where
+a machine has more than one line.** A machine with two branches would have its one
+internal reactance counted once per incident branch — one rotor, two internal
+reactances, which is not a network that exists. It happens to be exact for
+`two_machine_system` (both machines have branch degree 1) and wrong for
+`three_machine_ring` (every machine has degree 2).
+
+Doing it correctly means eliminating the terminal buses so a machine's `X′d` is
+*shared* across all its ties — Kron reduction, which is precisely the network
+reduction D3 rules out (it builds an admittance matrix) and precisely what M2b
+owns. So under **D2** (pure ODE) and **D3** (no admittance matrix) there is no
+exact meshed "E′ behind X′d" at all.
+
+**Resolution (D8): M2a puts `E′` at the bus and does not fold `X′d` in —
+`K_ij = E′ᵢ·E′ⱼ / X_ij`, the standard network-swing form.** This is exact on every
+topology instead of exact on one. `Machine.Xd′` stays in the model as carried,
+validated data: it is real machine data, it maps onto PowerSystems, and M2b's
+terminal-bus elimination is what consumes it. `test/` pins this with a regression
+check — multiplying every `X′d` by ten must not move any coupling by one bit.
+
+Why this had to be caught *here* rather than by a downstream test: nothing
+downstream can see it. `find_fixpoint` converges on any self-consistent coupling;
+V2's injection check passes; V4 still tracks-then-diverges. It is the exact shape
+already recorded in the Iberia notes as *numbers that look like results and are
+not* — and `branch_arrays(net).K` is the literal value step 3 hands to
+NetworkDynamics.
+
+### Decision — parallel circuits are rejected, not supported
+
+Two branches between the same pair of buses were legal on ids alone, but
+`Graphs.SimpleGraph` **silently drops** the second edge — the second circuit's
+coupling would vanish with no error — and step 5's `TripLine(from, to)` could not
+name one of two circuits. Supporting them needs either a multigraph or merging
+into one equivalent reactance; both are M2b decisions. The constructor rejects the
+second branch on a pair with a message that says so.
+
+### Other things step 2 settled
+
+- **Machines are stored in bus order.** The constructor reorders whatever it is
+  handed, so one index `v` addresses the vertex, its bus and its machine
+  everywhere — the ordering step 3's `Network` will use. Tested by feeding the
+  machines in reverse.
+- **No governors in `Machine`** (no `R`, no `Pmax`): the classical tier holds
+  mechanical power constant. This decides step 6 in advance — `coi_model` compiles
+  to a *governor-free* `SystemModel` (`R = Inf`, `Pmax = P0`), which is what makes
+  V4 honest: the two models then differ by inter-machine dynamics alone rather
+  than by one of them having primary response the other lacks.
+- **Loads are machines with negative `P0`.** No load type in M2a.
+- **Constructor guards, all tested:** duplicate ids · unknown bus references ·
+  a bus with no machine or with two (the tier boundary, made a loud error) ·
+  parallel circuits · a disconnected network · `Σ P0 ≠ 0` (a lossless network with
+  net injection has *no* equilibrium, so the steady-state solve would fail or
+  drift) · `|P0ᵢ| > Σⱼ K_ij` (since `P = Σ K·sin Δδ`, an injection beyond the
+  incident coupling cannot be delivered at any angle — necessary, not sufficient).
+- **The per-unit split is the model layer's main hazard, and it is now in one
+  place.** Machine data is per-unit on the machine's own base, network data on the
+  system base — standard utility practice, and exactly where a conversion goes
+  missing. `machine_arrays`/`branch_arrays` are the only converters. The example
+  machines are deliberately rated *away* from `S_base` (250/400 MVA on a 100 MVA
+  base) so a missing or inverted conversion changes the answer instead of hiding
+  behind a weight of 1, and the tests assert against the wrong conversions by name.
+- **Export names cleared against `GLMakie` before writing any of it** — the M1
+  collision hazard. All 14 checked (including `SwingEngine`, `TripLine`,
+  `coi_model` for later steps) are clear.
+
 ## Key decisions (and why)
 
 **D1 — Build on `NetworkDynamics`, alone. Not hand-rolled, not `PowerDynamics`.**
@@ -165,6 +247,9 @@ it through a function so `from_powersystems` can later be a sibling constructor.
 **D6 — Steady state from `find_fixpoint`, not from a hand-rolled power flow.**
 SPEC §8 forbids re-deriving math the ecosystem already has. Verified above.
 
+**D8 — `E′` at the bus; `X′d` carried, not folded into the coupling.** Forced by
+D2 + D3, and the subject of the step-2 finding above. `K_ij = E′ᵢE′ⱼ/X_ij`.
+
 **D7 — Trip by zeroing coupling, never by resizing the state.** Keeps the
 integrator's continuous state intact across an event, which is the property that
 made M1's live injection clean. The tripped machine's angle and speed keep
@@ -178,10 +263,17 @@ integrating harmlessly and are excluded from the aggregate read-out.
   with the same unbounded-growth shape as M1's. It wants to be one shared
   recording facility, not two leaks — but designing that is a small refactor of
   working M1 code and should be decided, not drifted into.
-- **Does the two-machine closed form survive the real `NetworkModel`?** The spike
-  hard-coded its coupling `K`. Once `K` is computed from `E′` and reactances there
-  is one more layer where a per-unit convention can go wrong; V3 must be re-derived
-  against the real code path, not copied from the spike.
+- ~~**Does the two-machine closed form survive the real `NetworkModel`?**~~
+  **HALF-RESOLVED.** It survives, but only after the coupling itself was corrected
+  (the finding above) — which is exactly the "one more layer where a convention can
+  go wrong" this question was written to catch, and it did go wrong. The prediction
+  is now re-derived through the real `machine_arrays`/`branch_arrays` and pinned in
+  `test/`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`, **`f_osc = 1.5911075 Hz`**. The
+  remaining half is step 4: the *running engine* has to measure that number.
+- **The trajectory-buffer decision stops being deferrable at step 3.** M2's engine
+  is where the second copy of M1's unbounded-growth pattern gets written, so step 3
+  opens with deciding where the shared recording facility lives — not with writing
+  the engine.
 - **How much UI does M2 need?** Per-machine traces are clearly in scope; a network
   canvas with node positions is a different (and much larger) piece of work, and
   SPEC §3.5's render-state-is-not-simulation-state rule bites the moment it starts.

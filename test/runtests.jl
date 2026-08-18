@@ -974,4 +974,244 @@ end
                    names)
     end
 
+
+    # ================= M2 — the canonical network model =====================
+    # docs/plans/m2-tasks.md step 2. These tests carry the whole per-unit burden
+    # of the model layer: `machine_arrays`/`branch_arrays` are the only place the
+    # conversion to the system base happens, so if they are right nothing
+    # downstream has to redo it, and if they are wrong every downstream number is
+    # plausible and wrong.
+
+    # Returns the ArgumentError message a thunk throws, or a marker string. Used
+    # instead of a bare `@test_throws ArgumentError` so a guard test cannot pass
+    # because a *different* guard fired first — several of the invalid models
+    # below violate more than one rule, and "it threw" would not distinguish them.
+    argerr_msg(f) = try
+        f()
+        "NO ERROR THROWN"
+    catch e
+        e isa ArgumentError ? e.msg : "NOT-ArgumentError: $(typeof(e))"
+    end
+
+    @testset "network model: shape, ids, and bus ordering" begin
+        net = two_machine_system()
+        @test net isa NetworkModel
+        @test net.S_base == 100.0
+        @test net.f0 == 50.0
+        @test length(net.buses) == 2
+        @test length(net.machines) == 2
+        @test length(net.branches) == 1
+        @test net.bus_index == Dict(:B1 => 1, :B2 => 2)
+        # machines are stored in BUS order, so one index addresses vertex, bus and
+        # machine together — the property the engine's vertex indexing relies on.
+        @test [m.bus for m in net.machines] == [b.id for b in net.buses]
+        @test machine_at(net, :B2).id === :G2
+        @test occursin("no bus", argerr_msg(() -> machine_at(net, :NOPE)))
+
+        ring = three_machine_ring()
+        @test length(ring.buses) == 3 && length(ring.branches) == 3
+        @test [m.id for m in ring.machines] == [:G1, :G2, :G3]
+        @test [m.bus for m in ring.machines] == [b.id for b in ring.buses]
+        # +80 / +30 / −110 MW: two generators and a load, summing to zero.
+        @test sum(m.P0 for m in ring.machines) == 0.0
+        @test count(m -> m.P0 < 0, ring.machines) == 1
+
+        # The constructor reorders whatever order it is handed. Feeding the
+        # machines in reverse must produce the same model, not a transposed one —
+        # otherwise vertex 1's parameters could belong to bus 2.
+        shuffled = NetworkModel(; S_base = ring.S_base, f0 = ring.f0,
+                                buses = ring.buses, branches = ring.branches,
+                                machines = reverse(ring.machines))
+        @test [m.id for m in shuffled.machines] == [:G1, :G2, :G3]
+        @test machine_arrays(shuffled).H == machine_arrays(ring).H
+    end
+
+    @testset "machine_arrays: per-unit conversion vs hand arithmetic" begin
+        net = two_machine_system()
+        ma = machine_arrays(net)
+        # G1: 250 MVA on a 100 MVA base ⇒ power weight w = 2.5.
+        #     H 4.0·2.5 = 10.0 s;  D 2.0·2.5 = 5.0;  P 60/100 = 0.6 pu
+        #     X′d 0.25/2.5 = 0.10 pu — the INVERSE weight (impedance scales the
+        #     other way from power). This is the one line where the conversion
+        #     can be written backwards and still look reasonable.
+        @test ma.H  ≈ [10.0, 20.0]
+        @test ma.D  ≈ [5.0, 8.0]
+        @test ma.Pm ≈ [0.6, -0.6]
+        @test ma.E  ≈ [1.05, 1.02]
+        @test ma.Xd ≈ [0.10, 0.075]
+        # The inverted conversion, named explicitly so the test fails loudly
+        # rather than by a mysterious number: X′d·w instead of X′d/w.
+        @test ma.Xd ≉ [0.25 * 2.5, 0.30 * 4.0]
+        # …and the missing conversion (raw machine-base values passed through).
+        @test ma.Xd ≉ [0.25, 0.30]
+        @test ma.H  ≉ [4.0, 5.0]
+
+        # Derived on call, never stored: two calls give equal arrays that are not
+        # the same object. This is the SPEC §3.2 claim ("compiled views, not a
+        # second copy") made checkable — a cached copy could go stale, this cannot.
+        @test machine_arrays(net).H == ma.H
+        @test machine_arrays(net).H !== ma.H
+
+        # Everything is a plain contiguous Float64 vector (SPEC §4, struct-of-arrays).
+        @test all(a -> a isa Vector{Float64}, (ma.H, ma.D, ma.Pm, ma.E, ma.Xd))
+    end
+
+    @testset "branch_arrays: coupling K through the real code path" begin
+        net = two_machine_system()
+        ba = branch_arrays(net)
+        @test ba.src == [1] && ba.dst == [2]        # vertex indices, not bus ids
+        @test ba.X ≈ [0.25]                          # the branch's own reactance, as given
+        # K = E′₁·E′₂ / X, and nothing else: 1.05·1.02 / 0.25 = 1.071/0.25 = 4.284 pu.
+        @test ba.K ≈ [4.284]
+        # The two ways to get this wrong, asserted against by name. Both produce a
+        # perfectly plausible coupling, which is the whole danger.
+        # (a) folding X′d in on the SYSTEM base — 1.071/(0.10+0.25+0.075). Exact for
+        #     this radial pair, but wrong the moment a machine has two lines, which
+        #     is why M2a does not do it anywhere (see network_model.jl, tier note 2).
+        @test ba.K[1] ≉ 1.071 / 0.425
+        # (b) folding X′d in without converting it off the machine base at all.
+        @test ba.K[1] ≉ 1.071 / 0.80
+
+        # X′d is carried data in M2a, not dynamics. Changing it must not move K by
+        # one bit — this is the regression test against quietly folding it back in.
+        stiffer = NetworkModel(100.0, 50.0, net.buses, net.branches,
+                               [Machine(m.id, m.bus, m.S_rated, m.H, m.D,
+                                        10 * m.Xd′, m.E′, m.P0) for m in net.machines])
+        @test branch_arrays(stiffer).K == ba.K
+        @test machine_arrays(stiffer).Xd ≈ 10 .* machine_arrays(net).Xd   # …and it did change
+
+        ring = three_machine_ring()
+        br = branch_arrays(ring)
+        @test br.src == [1, 2, 3] && br.dst == [2, 3, 1]
+        @test br.K ≈ [1.05 * 1.03, 1.03 * 1.04, 1.04 * 1.05] ./ 0.25
+        @test length(br.K) == length(ring.branches)   # one coupling per branch, not n²
+        # Every machine in the ring has branch degree 2 — the topology on which the
+        # fold-in would have counted one rotor's internal reactance twice.
+        deg = zeros(Int, length(ring.buses))
+        for b in ring.branches
+            deg[ring.bus_index[b.from]] += 1
+            deg[ring.bus_index[b.to]] += 1
+        end
+        @test deg == [2, 2, 2]
+        # X′d is still carried, on the system base, ready for M2b: three different
+        # machine bases (0.30/300, 0.20/200, 0.50/500) all land on 0.10 pu.
+        @test machine_arrays(ring).Xd ≈ [0.10, 0.10, 0.10]
+    end
+
+    @testset "two-machine closed form: the target step 4 must hit" begin
+        # V3 (m2-plan.md) is measured against the running engine in step 4. What
+        # is pinned *here* is the prediction the example system implies, computed
+        # through the same `machine_arrays`/`branch_arrays` the engine will use —
+        # so if anyone edits `two_machine_system`'s numbers, this fails and the
+        # closed form gets re-derived instead of silently going stale.
+        net = two_machine_system()
+        ma, ba = machine_arrays(net), branch_arrays(net)
+        K, P = ba.K[1], ma.Pm[1]
+        δ₀ = asin(P / K)                       # equilibrium angle difference
+        ω₀ = 2π * net.f0
+        f_osc = sqrt(ω₀ * K * cos(δ₀) * (1 / (2ma.H[1]) + 1 / (2ma.H[2]))) / 2π
+        @test δ₀ ≈ 0.1405180 atol = 1e-6
+        @test f_osc ≈ 1.5911075 atol = 1e-6
+        # Sanity: this is an inter-machine mode, not a system-frequency swing —
+        # roughly 1–2 Hz, orders above M1's aggregate response.
+        @test 1.0 < f_osc < 2.0
+    end
+
+    @testset "network model: concrete field types (SPEC §4)" begin
+        # Abstractly-typed fields are Julia's biggest performance cliff, and the
+        # RHS reads these on every step. Asserted rather than trusted.
+        for T in (Bus, Branch, Machine, NetworkModel)
+            @test all(isconcretetype, fieldtypes(T))
+        end
+    end
+
+    @testset "network model guards: per-component" begin
+        @test occursin("V_base", argerr_msg(() -> Bus(:B, 0.0)))
+        @test occursin("S_rated", argerr_msg(() -> Machine(:G, :B, 0.0, 4.0, 2.0, 0.25, 1.05, 0.0)))
+        # H is strict because it sits in a denominator (2H), so zero is a division
+        # by zero rather than a degenerate-but-valid machine. X′d is strict even
+        # though M2a's dynamics never read it — validating carried data now is what
+        # makes it trustworthy when M2b's reduction starts consuming it.
+        @test occursin("divides by 2H", argerr_msg(() -> Machine(:G, :B, 100.0, 0.0, 2.0, 0.25, 1.05, 0.0)))
+        @test occursin("Xd′", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.0, 1.05, 0.0)))
+        @test occursin("E′", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 0.0, 0.0)))
+        @test occursin("anti-physical", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, -1.0, 0.25, 1.05, 0.0)))
+        @test occursin("self-loop", argerr_msg(() -> Branch(:L, :B1, :B1, 0.1, 500.0)))
+        @test occursin("denominator", argerr_msg(() -> Branch(:L, :B1, :B2, 0.0, 500.0)))
+        @test occursin("rating", argerr_msg(() -> Branch(:L, :B1, :B2, 0.1, 0.0)))
+        # NOTE on the H > 0 rejection: zero inertia is a real device, and M1's
+        # aggregate model does support it (see the "inverter-based resources
+        # (H=0, R=Inf)" testset above). It is rejected *here* only because a
+        # zero-inertia vertex carries no differential state, which is a different
+        # fidelity tier — not because inverters are unsupported.
+    end
+
+    @testset "network model guards: whole-model invariants" begin
+        b(id) = Bus(id, 400.0)
+        m(id, bus, P) = Machine(id, bus, 100.0, 4.0, 2.0, 0.20, 1.0, P)
+        L(id, f, t) = Branch(id, f, t, 0.50, 500.0)
+        buses = [b(:B1), b(:B2)]
+        machines = [m(:G1, :B1, 50.0), m(:G2, :B2, -50.0)]
+        branches = [L(:L12, :B1, :B2)]
+        # the baseline these mutate is itself valid, so each failure below is
+        # attributable to the one thing that was changed
+        @test NetworkModel(100.0, 50.0, buses, branches, machines) isa NetworkModel
+
+        @test occursin("S_base", argerr_msg(() -> NetworkModel(0.0, 50.0, buses, branches, machines)))
+        @test occursin("f0", argerr_msg(() -> NetworkModel(100.0, 0.0, buses, branches, machines)))
+        @test occursin("at least one bus", argerr_msg(() -> NetworkModel(100.0, 50.0, Bus[], Branch[], Machine[])))
+
+        @test occursin("duplicate bus", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, [b(:B1), b(:B1)], branches, machines)))
+        @test occursin("duplicate branch", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, [L(:L12, :B1, :B2), L(:L12, :B2, :B1)], machines)))
+        @test occursin("duplicate machine", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 50.0), m(:G1, :B2, -50.0)])))
+
+        @test occursin("not in the model", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 50.0), m(:G2, :B9, -50.0)])))
+        @test occursin("not in the model", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, [L(:L19, :B1, :B9)], machines)))
+
+        # --- the tier boundary: exactly one machine per bus ---
+        @test occursin("two machines", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches,
+                         [m(:G1, :B1, 50.0), m(:G2, :B1, -25.0), m(:G3, :B1, -25.0)])))
+        @test occursin("carries no machine", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, [b(:B1), b(:B2), b(:B3)],
+                         [L(:L12, :B1, :B2), L(:L23, :B2, :B3)], machines)))
+
+        # --- at most one branch per bus pair ---
+        # A SimpleGraph silently drops the second edge, so without this guard the
+        # second circuit's coupling would vanish with no error at all.
+        @test occursin("second circuit", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, [L(:L12, :B1, :B2), L(:L12b, :B1, :B2)], machines)))
+        # …and it is the *pair* that is rejected, in either orientation.
+        @test occursin("second circuit", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, [L(:L12, :B1, :B2), L(:L21, :B2, :B1)], machines)))
+
+        # --- one island ---
+        @test occursin("not connected", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, Branch[], [m(:G1, :B1, 0.0), m(:G2, :B2, 0.0)])))
+
+        # --- lossless network ⇒ Σ P0 = 0 ---
+        @test occursin("no equilibrium", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 60.0), m(:G2, :B2, -50.0)])))
+        # …and the tolerance is tight enough that a 1 MW slip on a 100 MVA base is
+        # caught rather than absorbed.
+        @test occursin("no equilibrium", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 51.0), m(:G2, :B2, -50.0)])))
+
+        # --- injection within reach of the incident coupling ---
+        # K here is 1.0·1.0/0.50 = 2.0 pu = 200 MW, so ±250 MW cannot be delivered
+        # at any angle: P = K·sin(Δδ) ≤ K.
+        @test occursin("exceeds the total", argerr_msg(() ->
+            NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 250.0), m(:G2, :B2, -250.0)])))
+        # …but 199 MW, just under the ceiling, is accepted — the guard rules out
+        # the impossible, it does not quietly narrow the model's range.
+        @test NetworkModel(100.0, 50.0, buses, branches,
+                           [m(:G1, :B1, 199.0), m(:G2, :B2, -199.0)]) isa NetworkModel
+    end
+
+
 end
