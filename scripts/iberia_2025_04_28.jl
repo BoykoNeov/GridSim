@@ -133,6 +133,12 @@ const T_BOUNDARY = 79.62
 Step the engine to `tend` seconds, draining the scripted events at step boundaries
 exactly as the orchestration loop would. `shed=false` disarms the defence plan, to
 isolate what the load shedding was worth.
+
+**THE DEFAULTS ARE LOAD-BEARING.** `test/runtests.jl` includes this file as a
+module and asserts against `replay()` with no arguments — the waypoint comparison,
+the shed-instant band, and the RoCoF window all read the trajectory these defaults
+produce. Changing `tend` or `dt` to explore something moves those assertions;
+explore with an explicit keyword instead.
 """
 function replay(; H_tot::Float64 = H_MID, dt::Float64 = 0.01, tend::Float64 = 80.0,
                 shed::Bool = true)

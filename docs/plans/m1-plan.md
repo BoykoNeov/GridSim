@@ -43,9 +43,22 @@ and nadir live. Acceptance criteria: `docs/SPEC.md` §7.8.
    the exact closed forms). Closed forms swept over every unit at `rtol = 1e-6`,
    plus the low-inertia lesson asserted two ways: an inertia-only isolation
    (settling frequency provably unchanged, only the undershoot deepens) and the
-   fewer-units-online demonstration. 177 tests green; per-item detail and the
-   testset names are in `m1-tasks.md`.
-7. **Headless script** in `scripts/` proving AC #1 (frequency trajectory, no Makie).
+   fewer-units-online demonstration. 177 tests green at that point; per-item
+   detail and the testset names are in `m1-tasks.md`.
+7. **Headless script** — DONE, proving AC #1 (frequency trajectory, no Makie) on
+   the real ENTSO-E Iberian scenario rather than `example_system`. It pulled three
+   mechanisms into core, in two new directories:
+   - `src/protection/load_shedding.jl` — `LoadShedStage`/`ShedLadder`, armed via
+     `init!(…; shed = stages)`; one downward-crossing `ContinuousCallback` per
+     stage, root-finding the firing instant. The **sanctioned** callback path: it
+     steps a parameter at a real discrete event, not the forbidden post-hoc clamp.
+   - `src/analysis/postprocess.jl` — `windowed_rocof`, the 500 ms sliding window
+     the ENTSO-E figures use. An *additional* read; the instantaneous value stays
+     the live readout and the closed-form validation target.
+   - Cumulative tripped **generation** on the engine, so the recorded trajectory
+     is now `ts/fs/rocofs/pms/tripped_mws` and `state_series` gains `tripped_mw`.
+   266 tests green. Detail, and the two mid-flight corrections the batch made to
+   its own claims, are in `m1-tasks.md`.
 8. **UI** in `ui/` (separate env): live `f(t)` plot + readouts + per-unit trip +
    play/pause + rtf slider, and an `H_sys` indicator. Proves AC #2, #3, #6.
 
