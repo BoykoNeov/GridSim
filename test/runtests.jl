@@ -357,7 +357,12 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
         @test isapprox(current_state(eng).t, 2.0; atol = 0.021)   # ran the sim duration
         @test obs[] == current_state(eng)                # published the latest state
         s = state_series(eng)
-        @test length(s.t) == 101                         # seed point + 100 steps of 0.02
+        # Seed point + ~100 steps of 0.02. Deliberately a *range*: whether the loop
+        # takes 100 or 101 steps turns on where 100 accumulated additions of 0.02
+        # land relative to 2.0 in Float64 — not a property worth asserting, and an
+        # exact count would fail mysteriously on an integrator bookkeeping change.
+        @test 101 ≤ length(s.t) ≤ 102
+        @test length(s.f) == length(s.t) == length(s.RoCoF) == length(s.ΔPm)
         @test minimum(s.f) < sys.f0 - 0.05               # losing 150 MW dips frequency
         @test eng.nadir == minimum(s.f)
     end
@@ -407,6 +412,21 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
         eng2 = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
         t_wall2 = @elapsed run_realtime!(eng2, nothing; rtf = 4.0, duration = 0.2)
         @test t_wall2 < t_wall
+    end
+
+    @testset "run_realtime! picks up an rtf change mid-run" begin
+        # The pacing reads control.rtf[] fresh on every pass precisely so the UI's
+        # speed slider takes effect immediately. Pin that down: start paced (slow
+        # enough to be unmistakably sleeping), then switch to Inf from a state
+        # callback — if the loop had captured rtf once at entry, the remaining steps
+        # would still crawl and the elapsed time would blow past the bound.
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
+        obs = Observables.Observable(current_state(eng))
+        ctl = RealtimeControl(; rtf = 0.1)               # 0.2 s of sim ⇒ 2 s wall-clock
+        Observables.on(_ -> (ctl.rtf[] = Inf), obs)      # …unless the first step frees it
+        t_wall = @elapsed run_realtime!(eng, obs; control = ctl, duration = 0.2)
+        @test isapprox(current_state(eng).t, 0.2; atol = 0.021)
+        @test t_wall < 1.0                               # ≫ the ~1.8 s a stale rtf would cost
     end
 
     @testset "core dependency closure is UI-free (no Makie)" begin

@@ -114,6 +114,19 @@ acceptance criteria in `../SPEC.md` §7.8.
       test/script scale; it will show up in the UI batch over a multi-minute run.
       Fix later with a ring buffer or a decimated history, not by re-designing the
       engine now.
+- [ ] **An exception inside an `@async` loop is silent.** `step!` deliberately
+      `error()`s on a bad integrator retcode ("fail loud, not silent"), but once
+      `run_realtime!` runs as `@async` with nobody calling `wait`, that throw kills
+      the task quietly — the UI would simply stop updating with no message. Only
+      bites in the async configuration, so no current test catches it. The UI batch
+      must add `Base.errormonitor` on the task, or a `try`/`catch` that publishes
+      the error into an Observable the window can display.
+- [ ] **Check the new exports against GLMakie before writing UI code.** `ui/` will
+      do `using GridSim, GLMakie`, and this batch exported `stop!`, `timestep`, and
+      `drain!` — the same collision hazard that cost a round on `step!`/`solve!`.
+      Run `julia -e 'using GLMakie; for n in (:stop!, :timestep, :drain!);
+      println(n, " => ", isdefined(GLMakie, n)); end'` and decide rename-vs-qualify
+      up front, not via an ambiguity error mid-UI-work.
 
 ## Validation tests (next batch)
 
