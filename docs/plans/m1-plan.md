@@ -39,8 +39,12 @@ and nadir live. Acceptance criteria: `docs/SPEC.md` §7.8.
 5. **Orchestration** (`src/orchestration/realtime_loop.jl`, NO Makie): event
    queue + `drain!`, `run_realtime!(engine, state_obs; rtf)` with wall-clock
    pacing via `Observables`. Headless: a script can run it and collect the series.
-6. **Validation tests** (the learning payoff, SPEC §7.6) — see Pitfalls for the
-   exact closed forms.
+6. **Validation tests** — DONE (the learning payoff, SPEC §7.6; see Pitfalls for
+   the exact closed forms). Closed forms swept over every unit at `rtol = 1e-6`,
+   plus the low-inertia lesson asserted two ways: an inertia-only isolation
+   (settling frequency provably unchanged, only the undershoot deepens) and the
+   fewer-units-online demonstration. 177 tests green; per-item detail and the
+   testset names are in `m1-tasks.md`.
 7. **Headless script** in `scripts/` proving AC #1 (frequency trajectory, no Makie).
 8. **UI** in `ui/` (separate env): live `f(t)` plot + readouts + per-unit trip +
    play/pause + rtf slider, and an `H_sys` indicator. Proves AC #2, #3, #6.

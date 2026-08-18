@@ -329,9 +329,12 @@ end
       produces a frequency trajectory with **no Makie dependency**.
 - [ ] Real-time loop plots `f(t)` live in GLMakie, paced to wall-clock.
 - [ ] Tripping a generator mid-run produces the expected dip; RoCoF and nadir update live.
-- [ ] Initial RoCoF matches the closed-form value within tolerance (unit test).
-- [ ] Settling deviation matches the closed-form value within tolerance (unit test).
+- [x] Initial RoCoF matches the closed-form value within tolerance (unit test).
+- [x] Settling deviation matches the closed-form value within tolerance (unit test).
 - [ ] Fewer/less-inertia units online ⇒ visibly steeper RoCoF and deeper nadir.
+      (Physics half **asserted** in `test/runtests.jl` — both the inertia-only
+      isolation and the fewer-units demonstration; the *visibly* half waits on
+      the UI.)
 
 ---
 

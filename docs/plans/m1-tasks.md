@@ -128,12 +128,50 @@ acceptance criteria in `../SPEC.md` §7.8.
       println(n, " => ", isdefined(GLMakie, n)); end'` and decide rename-vs-qualify
       up front, not via an ambiguity error mid-UI-work.
 
-## Validation tests (next batch)
+## Validation tests (DONE)
 
-- [ ] Initial RoCoF matches `−f0·(P_k/S_base)/(2·H_sys)` within tol.
-- [ ] Settling `Δω_ss = ΔP_dist/(D + 1/R_eq)` within tol.
-- [ ] Monotone lesson: less inertia ⇒ steeper RoCoF + deeper nadir (ordering).
-- [ ] ΔPm never exceeds aggregate headroom.
+All four closed forms are asserted in `test/runtests.jl`; the testset that
+satisfies each is named below. **177 tests green** (was 116).
+
+- [x] Initial RoCoF matches `−f0·(P_k/S_base)/(2·H_sys)` — *"closed form: initial
+      RoCoF, swept over every single-unit trip"*. Swept over all four units, not
+      one instance; `H_sys` is the **post-trip** aggregate; the state is read
+      un-stepped so it is still exactly the origin. The all-offline edge
+      (`H_sys = 0` ⇒ RoCoF → ∓Inf) is out of M1 scope and asserted away.
+- [x] Settling `Δω_ss = ΔP_dist/(D + 1/R_eq)` — *"closed form: settling
+      deviation, swept over every trip"*, at `rtol = 1e-6` (≈10⁴× tighter than
+      the ±0.02 Hz the engine testset uses; that looseness is what once absorbed
+      the stale-FSAL bug). The unsaturated precondition is asserted, not assumed
+      — and stated on the **equilibrium** (`ΔPm_end < headroom`), because G2's
+      overshoot transiently touches the ceiling without moving the fixed point.
+      G1 is the deliberate counter-case: its droop demand exceeds the surviving
+      reserve, so it pins at the ceiling and settles *below* the formula.
+- [x] Monotone lesson: less inertia ⇒ steeper RoCoF + deeper nadir — *"less
+      inertia ⇒ steeper RoCoF and deeper nadir (inertia-only)"*, four inertia
+      scalings (2×, 1×, 0.5×, 0.25×) of `example_system` with S_rated/P0/R/Pmax
+      carried through verbatim, so `ΔP`, `R_eq`, `D` and `headroom` are identical
+      and the comparison is inertia-only. Three guards make the ordering
+      non-vacuous: (a) settling frequency is **inertia-free**, so all four must
+      land on the *same* `f_ss` and differ only in undershoot — asserted
+      alongside the ordering, a sharper statement than ordering alone; (b) the
+      ceiling must **not** bind in any config, or the deeper nadir would be
+      partly reserve exhaustion rather than inertia; (c) each nadir must be a
+      genuine undershoot (`< f_ss − 0.1`), so an edit that overdamped the system
+      could not make the ordering pass on floating-point noise. RoCoF0 is checked
+      against the exact `1/H` ratio, not just the ordering. Measured: RoCoF0
+      −0.46 → −3.69 Hz/s, nadir 49.06 → 48.15 Hz, `f_ss` 49.69466 Hz throughout.
+- [x] `ΔPm` never exceeds aggregate headroom — already covered before this batch
+      by *"FrequencyResponseEngine: build, step, trip, closed-form checks"*
+      (`maximum(eng.pms) ≤ headroom`) and *"second trip after saturation does not
+      freeze the integrator"* (post-trip slice vs the **shrunken** ceiling). This
+      batch adds the ceiling check to the settling sweep and both AC #6 testsets.
+- [x] SPEC §7.8 AC #6, literal wording — *"fewer units online ⇒ steeper RoCoF and
+      deeper dip"*. Labelled the **demonstration**, not the isolation: taking a
+      unit offline moves inertia, droop gain and reserve together, so the two
+      configs do not settle to the same frequency (the inertia-only equality
+      assertion deliberately does not apply here). Both effects push the same
+      way, which is the operational point; the depleted config additionally
+      exhausts its reserve (ΔPm pins at the ceiling) while the full one does not.
 
 ## Headless proof & UI (next batch)
 

@@ -304,6 +304,192 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
         @test all(≤(eng.params.headroom + 1e-6), @view eng.pms[n+1:end])
     end
 
+    # --- M1 validation: closed forms + the low-inertia lesson (SPEC §7.6, §7.8)
+    #
+    # The engine-level testsets above prove the *mechanics* on one instance each.
+    # These sweep the same closed forms across every unit, and add the acceptance
+    # criterion the earlier tests do not touch at all: less online inertia ⇒
+    # steeper RoCoF and deeper nadir (SPEC §7.8 AC #6).
+    #
+    # Two shared helpers, defined once for the block below.
+
+    # Rebuild a system with every unit's inertia scaled by `k` and *nothing else*
+    # touched. S_rated/P0/R/Pmax are carried through verbatim, so S_base, the
+    # disturbance size, R_eq, D and the aggregate headroom are all identical
+    # across scalings — which is what makes the comparison inertia-only rather
+    # than a confounded "different system" comparison.
+    scale_inertia(sys::SystemModel, k::Real) =
+        SystemModel(sys.S_base, sys.f0, sys.D, sys.Tg,
+                    [GeneratingUnit(u.id, u.S_rated, u.H * k, u.P0, u.R, u.Pmax)
+                     for u in sys.units])
+
+    # Trip one unit from a cold engine and run it out. Returns the readings the
+    # closed forms and the ordering checks are stated in.
+    function trip_and_run(sys::SystemModel, id::Symbol; dt = 0.02, T = 150.0)
+        eng = init!(FrequencyResponseEngine, sys; dt = dt)
+        inject!(eng, TripGenerator(id))
+        RoCoF0 = current_state(eng).RoCoF        # read at the trip instant, un-stepped
+        for _ in 1:round(Int, T / dt)
+            step!(eng, dt)
+        end
+        s = current_state(eng)
+        a = GridSim.aggregates(sys, eng.online)  # post-trip aggregates
+        return (; RoCoF0, nadir = eng.nadir, Δω_end = s.Δω, f_end = s.f,
+                ΔPm_end = s.ΔPm, ΔPm_max = maximum(eng.pms), aggr = a)
+    end
+
+    P0_of(sys, id) = first(u.P0 for u in sys.units if u.id === id)
+
+    @testset "closed form: initial RoCoF, swept over every single-unit trip" begin
+        # SPEC §7.6 / §7.8 AC #4. RoCoF0 = −f0·(P_k/S_base)/(2·H_sys), where H_sys
+        # is the POST-trip aggregate — the tripped unit's inertia is gone the
+        # instant it goes offline, which is the whole reason the number is
+        # interesting. The state is still exactly the origin (Δω=0, ΔPm=0), so the
+        # swing equation collapses to this with no transient contribution; read it
+        # with no intervening step! or the state has already moved off the origin.
+        sys = example_system()
+        for u in sys.units
+            eng = init!(FrequencyResponseEngine, sys; dt = 0.02)
+            inject!(eng, TripGenerator(u.id))
+            a = GridSim.aggregates(sys, eng.online)
+            @test a.H_sys > 0                     # never the all-offline edge (RoCoF → ∓Inf)
+            expected = -sys.f0 * (u.P0 / sys.S_base) / (2 * a.H_sys)
+            s = current_state(eng)
+            @test s.RoCoF ≈ expected              # exact closed form, default rtol
+            @test s.RoCoF < 0                     # losing generation ⇒ frequency falls
+            @test s.Δω == 0.0                     # still at the origin: no state jump
+            @test s.ΔPm == 0.0                    # governors have not moved yet
+        end
+    end
+
+    @testset "closed form: settling deviation, swept over every trip" begin
+        # SPEC §7.6 / §7.8 AC #5. Δω_ss = ΔP_dist/(D + 1/R_eq) — but ONLY while the
+        # governors are unsaturated; the formula assumes ΔPm can reach the droop
+        # demand *at the fixed point*. G2/G3/G4 do, so they get a tolerance that
+        # bites: rtol = 1e-6, ~4 orders tighter than the ±0.02 Hz used in the
+        # engine testset above. (That looseness is what once absorbed the stale-
+        # derivative bug — a closed-form check with a tolerance looser than the
+        # physics deserves is where the next bug hides.)
+        sys = example_system()
+        for id in (:G2, :G3, :G4)
+            r = trip_and_run(sys, id)
+            Δω_ss = (-P0_of(sys, id) / sys.S_base) / (r.aggr.D + 1 / r.aggr.R_eq)
+            # Precondition, asserted not assumed — and stated on the *equilibrium*,
+            # which is what the closed form is about: at the fixed point the droop
+            # demand ΔPm_ss = −Δω_ss/R_eq must sit strictly under the ceiling, so
+            # the saturation branch is inactive there. G2's overshoot does briefly
+            # touch the ceiling on the way (measured, not assumed: its ΔPm_max sits
+            # exactly at headroom), which clips the transient but cannot move the
+            # equilibrium — the saturation is switched off again by the time the
+            # trajectory settles. Hence the transient peak is checked against the
+            # ceiling, not against the precondition.
+            @test r.ΔPm_end < r.aggr.headroom - 1e-3
+            @test r.ΔPm_max ≤ r.aggr.headroom + 1e-9
+            @test isapprox(r.Δω_end, Δω_ss; rtol = 1e-6)
+            @test isapprox(r.f_end, sys.f0 * (1 + Δω_ss); rtol = 1e-6)
+        end
+
+        # G1 is the counter-case that proves the precondition is load-bearing, not
+        # decoration: its droop demand exceeds the surviving reserve, ΔPm pins at
+        # the ceiling, and the system settles *below* the unsaturated formula. A
+        # test suite that only ever checked the formula would call this a failure;
+        # it is the physics (reserve exhaustion), and the ceiling still holds.
+        r1 = trip_and_run(sys, :G1)
+        Δω_ss_unsat = (-P0_of(sys, :G1) / sys.S_base) / (r1.aggr.D + 1 / r1.aggr.R_eq)
+        @test isapprox(r1.ΔPm_end, r1.aggr.headroom; atol = 1e-6)   # pinned
+        @test r1.Δω_end < Δω_ss_unsat                               # deeper than the formula
+        @test r1.ΔPm_max ≤ r1.aggr.headroom + 1e-9                  # ceiling never crossed
+    end
+
+    @testset "less inertia ⇒ steeper RoCoF and deeper nadir (inertia-only)" begin
+        # SPEC §7.8 AC #6 — the low-inertia/renewables lesson, isolated. Only the
+        # inertia moves; the disturbance, droop gain, damping and reserve are
+        # identical across all four systems, so any difference in the response is
+        # attributable to inertia and nothing else.
+        base = example_system()
+        ks = (2.0, 1.0, 0.5, 0.25)                   # decreasing inertia
+        rs = [trip_and_run(scale_inertia(base, k), :G4) for k in ks]
+
+        # Settling is inertia-FREE: Δω_ss = ΔP_dist/(D + 1/R_eq) has no H in it.
+        # So every config must land on the SAME frequency and differ only in how
+        # far it dipped on the way. Asserting the equality alongside the ordering
+        # is a much sharper statement of the lesson than the ordering alone.
+        a = rs[1].aggr
+        Δω_ss = (-P0_of(base, :G4) / base.S_base) / (a.D + 1 / a.R_eq)
+        f_ss = base.f0 * (1 + Δω_ss)
+        for r in rs
+            @test isapprox(r.Δω_end, Δω_ss; rtol = 1e-4)
+            # No confound: if the ceiling bound in the low-inertia configs but not
+            # the high-inertia ones, the "deeper nadir" would be partly reserve
+            # exhaustion rather than inertia. Fail loudly instead of quietly.
+            @test r.ΔPm_max < r.aggr.headroom - 1e-3
+            # Not a vacuous ordering: each config must genuinely undershoot its
+            # settling value. If a future parameter edit overdamped the system the
+            # nadir would collapse onto f_ss in every config and the ordering below
+            # would start passing on floating-point noise with nothing behind it.
+            @test r.nadir < f_ss - 0.1
+        end
+
+        # Initial RoCoF: strictly steeper as inertia falls, and exactly inversely
+        # proportional to it (halving H doubles RoCoF0 — same ΔP over half the
+        # inertia). The exact ratio is a stronger check than the ordering.
+        @test issorted([r.RoCoF0 for r in rs]; rev = true)   # increasingly negative
+        for i in 2:length(ks)
+            @test isapprox(rs[i].RoCoF0 / rs[1].RoCoF0, ks[1] / ks[i]; rtol = 1e-9)
+        end
+
+        # Nadir: strictly deeper as inertia falls. Physically — with a slow
+        # governor (Tg = 8 s) the early fall is governed by inertia alone, so a
+        # lighter system plunges further toward the damping-only asymptote before
+        # the governors arrive to arrest it.
+        @test issorted([r.nadir for r in rs]; rev = true)     # monotonically lower
+        @test rs[end].nadir < rs[1].nadir - 0.5               # a visible gap, not noise
+    end
+
+    @testset "fewer units online ⇒ steeper RoCoF and deeper dip (SPEC AC #6)" begin
+        # The literal wording of AC #6 ("fewer/less-inertia units online"). This is
+        # the DEMONSTRATION, not the isolation: taking a unit offline moves inertia
+        # and droop gain and reserve together, so unlike the inertia-only testset
+        # above the two configs do NOT settle to the same frequency. Both effects
+        # push the same way, which is exactly the operational point.
+        sys = example_system()
+
+        # Same disturbance (trip G4) in a full system vs one already missing G3.
+        # Measure the dip relative to the pre-trip frequency, since the depleted
+        # system is already below nominal when the second trip lands.
+        function dip_after(pretrips, id; dt = 0.02, T = 150.0)
+            eng = init!(FrequencyResponseEngine, sys; dt = dt)
+            for p in pretrips
+                inject!(eng, TripGenerator(p))
+                for _ in 1:round(Int, T / dt)      # let the pre-trip fully settle
+                    step!(eng, dt)
+                end
+            end
+            f_before = current_state(eng).f
+            mark = length(eng.fs)
+            inject!(eng, TripGenerator(id))
+            RoCoF0 = current_state(eng).RoCoF
+            for _ in 1:round(Int, T / dt)
+                step!(eng, dt)
+            end
+            tail = mark:length(eng.fs)
+            return (; RoCoF0, dip = f_before - minimum(@view eng.fs[tail]),
+                    ΔPm_max = maximum(@view eng.pms[tail]),
+                    headroom = GridSim.aggregates(sys, eng.online).headroom)
+        end
+
+        full = dip_after(Symbol[], :G4)
+        thin = dip_after([:G3], :G4)
+
+        @test thin.RoCoF0 < full.RoCoF0            # steeper (both negative)
+        @test thin.dip > full.dip                  # deeper dip below the pre-trip point
+        # And the second mechanism the depleted system exposes: its surviving
+        # reserve is smaller, so the same trip now exhausts it. Ceiling still holds.
+        @test full.ΔPm_max < full.headroom - 1e-3        # full system: reserve to spare
+        @test isapprox(thin.ΔPm_max, thin.headroom; atol = 1e-6)   # depleted: pinned
+        @test thin.ΔPm_max ≤ thin.headroom + 1e-9
+    end
+
     # --- orchestration: event queue + real-time loop (docs/SPEC.md §7.5) ------
     #
     # Every loop test below terminates on its own: either a finite `duration` with
