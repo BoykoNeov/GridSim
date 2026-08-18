@@ -93,6 +93,9 @@ None of that mechanism exists in a two-state swing + governor model. Feeding the
 cumulative-loss curve into a COI model and matching the collapse would be
 matching a number while missing the physics that produced it.
 
+**§7 shows how to get past this boundary** — and that it is a five-state model,
+not a second process.
+
 **Honest reproduction windows:**
 
 | Window | Content | Status |
@@ -238,3 +241,127 @@ as the demo, rather than being scheduled after it.
 The report is © ENTSO-E 2025. Extracted **numbers and event times** live in
 `docs/scenarios/iberia-2025-04-28.md` with page citations; the PDF and any
 rendered figure images stay out of the repo.
+
+---
+
+## 7. Getting past the fidelity boundary: two areas, not two instances
+
+The obvious guess — run two GridSims and let them talk — is wrong twice over,
+and the correct answer is much smaller than it sounds.
+
+### 7.1 Why not two coupled instances
+
+1. **It breaks a hard architecture invariant.** One process, no client/server,
+   no IPC (`docs/SPEC.md` §3–4, `CLAUDE.md`).
+2. **It is physically wrong, not merely inelegant.** The two areas are not two
+   systems exchanging messages; they share one algebraic quantity,
+   `P_tie = P_max·sin(δ₁ − δ₂)`, which must be evaluated **inside the
+   derivative, at every solver stage**. Splitting it across processes forces an
+   exchange at some finite interval — a co-simulation with an interface delay.
+   Delay inside a feedback loop is artificial phase lag, which is artificial
+   damping, and **the damping of that exact loop is the thing under study**. A
+   split model can turn an unstable swing into a stable one and give a
+   confidently wrong answer. This is the same class of error as the banned
+   post-hoc state clamping.
+3. **There is nothing to gain.** Two areas is **five states** instead of two.
+   It is not a scaling problem; it is a modelling gap.
+
+### 7.2 What to build instead
+
+Rotor **angle** as a state, and a **nonlinear** tie. Per area `i`:
+
+| State | Meaning |
+|-------|---------|
+| `δᵢ`  | rotor angle (rad) — the new one; this is what the COI model throws away |
+| `Δωᵢ` | speed deviation (already have it) |
+| `ΔPmᵢ` | governor state (already have it) |
+
+with `dδᵢ/dt = 2π·Δfᵢ` and each area's imbalance carrying `∓(P_tie − P_tie,0)`.
+
+**The sine is the entire mechanism.** A *linear* tie (`P = K·Δδ`) gives
+diverging frequencies and the inter-area oscillation, but the angle then grows
+without bound and power with it — it **cannot** lose synchronism. Only the sine
+produces the real behaviour: transfer peaks at 90°, *falls* while the angle
+keeps growing, reverses past 180°, and hits `+P_max` at 270°. That reversal is
+the report's ≈5,000 MW export swing. Do not ship the linear version thinking it
+is a step on the way.
+
+### 7.3 It works — measured, not asserted
+
+A dependency-free 90-line probe (hand-rolled RK4, five states, scratch code in
+`M:/claud_projects/temp/entsoe/two_area_probe.jl` — deliberately **not** in
+the repo, so it cannot become a second maintained model) fed with the report's
+own event sequence:
+
+| | probe | report |
+|---|---|---|
+| f at 12:33:00 | 49.943 | 49.94 |
+| f at 12:33:17 | 49.828 | ≈49.80 |
+| angle past 90° (loss of synchronism) | 12:33:20.54 | 12:33:19.62 |
+| out-of-step protection opens the tie | 12:33:21.94 | 12:33:21.54 |
+| tie flow | 1,000 → −3,500 → +3,500 MW | ≈5,000 MW export swing |
+| after separation | Iberia 48.7 → 47.0 Hz, CE recovers to 49.8 | islanded collapse → blackout 12:33:27 |
+
+Parameters (all `[GUESS]` except Iberian KE): `KE₁ = 119,474 MWs`,
+`KE₂ = 800,000 MWs`, `P_tie,0 = 1,000 MW`, `P_max = 3,500 MW`, `D = 1.5`,
+`Tg = 8 s`; Iberian loss ramped to the report's 5,750 MW by 12:33:20.560.
+
+Two results matter more than the agreement itself:
+
+**(a) It closes the §1(b) bracket.** The COI model gives 49.859 Hz at 12:33:00
+where the report says 49.94, because it cannot represent Continental Europe
+propping Iberia up through a finite tie. The two-area model gives **49.943** —
+the support now flows through the tie automatically, with no tuning. The
+pre-separation window stops being a known-wrong window.
+
+**(b) Whether the pole actually slips is a knife-edge, and that is correct.**
+With the realised 4,854 MW of pump-storage shedding included, the probe reaches
+−95° and hangs there without completing the slip; without it, the slip completes.
+Reality slipped *with* the shedding, which says the true late-window deficit was
+larger than the report's floor figures — **independent confirmation of §1's
+finding** that the late window is under-modelled, arrived at from completely
+different physics. The two analyses agree, which is worth more than either alone.
+
+### 7.4 Design sketch
+
+- **Data model.** `Area` (units, load, D, Tg) and `TieLine` (from, to, `P_max`
+  or `X` + terminal voltages, protection settings). `SystemModel` gains a vector
+  of each. Build for **N areas** with a sparse incidence structure from the
+  start (`SPEC` §6), with two as the first instance.
+- **One canonical model preserved.** Today's single-area `SystemModel` becomes a
+  **compiled view**: collapse every area into one COI. `FrequencyResponseEngine`
+  stays as the *fast surrogate*; the multi-area engine is its *accurate sibling*
+  behind the same `SimulationEngine` interface — precisely the fidelity-tier
+  arrangement `SPEC` §3.3 was written for, now with a concrete second tier.
+- **New events.** `TripLine`. Out-of-step protection as a `ContinuousCallback`
+  on `|δᵢ − δⱼ|` crossing 180°/270°, or on apparent impedance entering a relay
+  zone — the latter also produces the bucket-B impedance-trajectory figures.
+- **HVDC in constant-power mode** is a fixed injection with **no angle
+  dependence**. One extra term, and the model then *demonstrates* rather than
+  merely asserts why it gave no frequency support.
+
+### 7.5 Validation targets, in order
+
+1. **Equal-area criterion** — closed-form, textbook; critical clearing time.
+   This is the reference check `SPEC` §6 demands of every engine.
+2. **Small-signal mode frequency**, closed form:
+   `f = (1/2π)·√(2π·f₀·K_s·(1/2KE₁ + 1/2KE₂))`, `K_s = P_max·cos δ₀`.
+   The probe's parameters imply 0.358 Hz; the nonlinear run must ring at that.
+3. **The scenario**: time of the 90° crossing and of the out-of-step trip.
+
+**`P_max` is identifiable from the report, not invented:** `δ₀ = asin(P_tie,0 /
+P_max)`, and the export-swing peak *is* `P_max`. So `P_max` ≈ pre-event flow +
+observed export surge.
+
+### 7.6 What this tier still will not do
+
+The classical model holds voltage magnitude constant behind a reactance. So it
+gets **angle** instability right and **voltage** instability not at all — the
+final phase (12:33:21.5 → 27, voltage collapse to blackout) stays in bucket C.
+
+One trap worth naming: the report's **0.21 Hz East-Centre-West oscillation is a
+three-area mode** (Iberia is its western end, but France and the east are the
+rest of it). A two-area Iberia/CE reduction will not reproduce it, and nobody
+should tune `P_max` trying to hit 0.21 Hz — that would wreck the swing
+behaviour, which is the one thing this tier exists to capture. Three areas, if
+that mode is ever a target.

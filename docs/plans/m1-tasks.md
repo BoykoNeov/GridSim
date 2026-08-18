@@ -183,3 +183,9 @@ The COI model **cannot** reproduce the final ~5 s. Of the ≥6,150 MW imbalance 
 the −1 Hz/s point, ≈5,000 MW was export swing from loss of synchronism, which
 has no representation in a two-state swing + governor model. Faithful window is
 12:32:00 → ~12:33:19.6. Detail in the plan doc §2.
+
+- Two-area / tie-line model (M2 candidate, now evidence-backed): see
+  `docs/plans/entsoe-iberia-reproduction.md` §7. A 5-state probe reproduces the
+  Iberia/Continental-Europe separation to within ~1 s and closes the
+  pre-separation bracket. One process, one integrator — **not** two coupled
+  GridSim instances.
