@@ -319,6 +319,30 @@ orchestration loop never hard-codes a cadence (see `engines/interface.jl`).
 """
 timestep(eng::FrequencyResponseEngine) = eng.dt
 
+"""
+    system_inertia(eng::FrequencyResponseEngine) -> Float64
+
+Aggregate center-of-inertia constant `H_sys` (s, on `model.S_base`) of the units
+still **online**, read live from the shared parameter block. Drops the moment a
+unit trips — that fall is exactly what the UI's inertia indicator shows
+(docs/SPEC.md §7.7).
+
+An accessor rather than a field read at the call site: the UI must not reach past
+the engine interface into `eng.params` (docs/SPEC.md §3.1).
+"""
+system_inertia(eng::FrequencyResponseEngine) = eng.params.H_sys
+
+"""
+    is_online(eng::FrequencyResponseEngine, id::Symbol) -> Bool
+
+Whether unit `id` is still online. Same reason as `system_inertia`: the UI's
+per-unit trip controls need this to grey themselves out, and reading `eng.online`
+directly would make the window depend on an engine field rather than on the
+interface. Unknown ids are simply `false` (a *button* for a non-existent unit is
+not the caller bug that `inject!`'s `KeyError` catches).
+"""
+is_online(eng::FrequencyResponseEngine, id::Symbol) = id in eng.online
+
 # Locate a unit by id in the canonical model (small linear scan; M1 systems are
 # tiny). Throws if absent — a trip of a non-existent unit is a caller bug.
 function _find_unit(model::SystemModel, id::Symbol)

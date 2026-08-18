@@ -59,8 +59,26 @@ and nadir live. Acceptance criteria: `docs/SPEC.md` §7.8.
      is now `ts/fs/rocofs/pms/tripped_mws` and `state_series` gains `tripped_mw`.
    266 tests green. Detail, and the two mid-flight corrections the batch made to
    its own claims, are in `m1-tasks.md`.
-8. **UI** in `ui/` (separate env): live `f(t)` plot + readouts + per-unit trip +
-   play/pause + rtf slider, and an `H_sys` indicator. Proves AC #2, #3, #6.
+8. **UI** in `ui/` (separate env) — DONE. Live `f(t)` plot + a `RoCoF(t)` trace +
+   readouts + per-unit trip + play/pause + rtf slider + an `H_sys` indicator with a
+   ghost of its pre-trip value. AC #2, #3 and #6 are ticked. Two decisions carried
+   the batch:
+   - **One `_build_window`, two entry points.** `launch` opens the real window;
+     `smoke_render` builds the *same* figure offscreen and saves a PNG. Sharing the
+     builder is what stops the verifiable artifact from drifting away from the
+     thing the user actually sees — and the offscreen path is the only reason the
+     window could be checked at all from a session with no screen.
+   - **The window owns its plot buffers.** Fixed-capacity `RollingTrace`s plus a
+     moving x-window and expand-only y-limits, rather than plotting the engine's
+     ever-growing trajectory vectors. That is SPEC §3's "render state ≠ simulation
+     state" paying for itself: it sidesteps the quadratic redraw *and* the
+     unreadable compressed time axis. The expand-only limits are driven by running
+     extremes accumulated on **every published state**, not by whatever state a
+     30 fps repaint happens to sample — sampling clips the nadir, which is exactly
+     the feature the window exists to show. (First render got this wrong and the
+     dip was cut off by the axis box; the picture caught it.)
+   Still open, deliberately: report **Figure 3-67** as a layout target (no new
+   physics needed, but it ticks no acceptance criterion).
 
 ## Validation (closed-form — assert in `test/`)
 

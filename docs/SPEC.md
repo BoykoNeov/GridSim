@@ -329,14 +329,24 @@ end
       produces a frequency trajectory with **no Makie dependency**.
       (`scripts/iberia_2025_04_28.jl`, on the real ENTSO-E scenario; the no-Makie
       half is enforced by a dependency-closure test, not just by convention.)
-- [ ] Real-time loop plots `f(t)` live in GLMakie, paced to wall-clock.
-- [ ] Tripping a generator mid-run produces the expected dip; RoCoF and nadir update live.
+- [x] Real-time loop plots `f(t)` live in GLMakie, paced to wall-clock.
+      (`ui/src/window.jl`; measured 4.01× against 4.0× asked with the window
+      visible. Window startup costs a few seconds, during which the loop is
+      starved — after that the pacing is accurate.)
+- [x] Tripping a generator mid-run produces the expected dip; RoCoF and nadir
+      update live. (Verified on the *visible* window, not only offscreen: a frame
+      grabbed from the running renderer shows the dip, the tripped unit's button
+      greyed out, and the inertia bar below its pre-trip ghost.)
 - [x] Initial RoCoF matches the closed-form value within tolerance (unit test).
 - [x] Settling deviation matches the closed-form value within tolerance (unit test).
-- [ ] Fewer/less-inertia units online ⇒ visibly steeper RoCoF and deeper nadir.
+- [x] Fewer/less-inertia units online ⇒ visibly steeper RoCoF and deeper nadir.
       (Physics half **asserted** in `test/runtests.jl` — both the inertia-only
-      isolation and the fewer-units demonstration; the *visibly* half waits on
-      the UI.)
+      isolation and the fewer-units demonstration. The *visibly* half is now two
+      renders of the same G4 trip at H×1 and H×0.25: RoCoF0 −0.93 vs −3.2 Hz/s,
+      nadir 48.80 vs 48.15 Hz, both settling to the same inertia-free 49.69 Hz.
+      Caveat: the axes are expand-only *per run*, so the two pictures are not on a
+      shared scale — the contrast is exact in the readouts, indicative in the
+      curves.)
 
 ---
 

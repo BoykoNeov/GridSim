@@ -108,20 +108,24 @@ acceptance criteria in `../SPEC.md` §7.8.
 
 ### Known, deferred (not this batch)
 
-- [ ] **Unbounded trajectory growth.** The engine pushes to
-      `ts/fs/rocofs/pms/tripped_mws` on every step forever — the same unbounded-memory problem the engine already
-      avoids for the integrator's own storage (`save_everystep=false`). Harmless at
-      test/script scale; it will show up in the UI batch over a multi-minute run.
-      Fix later with a ring buffer or a decimated history, not by re-designing the
-      engine now.
-- [ ] **An exception inside an `@async` loop is silent.** `step!` deliberately
-      `error()`s on a bad integrator retcode ("fail loud, not silent"), but once
-      `run_realtime!` runs as `@async` with nobody calling `wait`, that throw kills
-      the task quietly — the UI would simply stop updating with no message. Only
-      bites in the async configuration, so no current test catches it. The UI batch
-      must add `Base.errormonitor` on the task, or a `try`/`catch` that publishes
-      the error into an Observable the window can display.
-- [ ] **Check the new exports against GLMakie before writing UI code.** `ui/` will
+- [ ] **Unbounded trajectory growth — STILL OPEN, but no longer a *drawing*
+      problem.** The engine still pushes to `ts/fs/rocofs/pms/tripped_mws` on every
+      step forever, so memory still grows over a multi-minute window session. What
+      the UI batch fixed is only the half it owns: the window plots from its own
+      fixed-capacity `RollingTrace` buffers, never from the engine's vectors, so
+      the quadratic redraw this item predicted (re-uploading an ever-longer array
+      every frame, and a time axis compressing to an unreadable smear) does not
+      happen. The core-side fix — ring buffer or decimated history — is still to
+      come, and is not a UI change.
+- [x] **An exception inside an `@async` loop is silent — RESOLVED.** `launch`
+      wraps the loop task in **both** remedies this item offered, because they do
+      different jobs: `Base.errormonitor` puts the stack trace on stderr, and a
+      `try`/`catch` writes the message into the `status` Observable the window
+      displays, so the failure is visible to someone looking at the window rather
+      than only to someone watching the terminal. It rethrows after publishing —
+      the throw is not swallowed.
+- [x] **Check the new exports against GLMakie before writing UI code — DONE,
+      nothing collides** (detail in the UI section above). `ui/` will
       do `using GridSim, GLMakie`, and the orchestration batch exported `stop!`,
       `timestep`, and `drain!` — the same collision hazard that cost a round on
       `step!`/`solve!`. The headless batch added five more: `LoadShedStage`,
@@ -188,11 +192,52 @@ satisfies each is named below. **177 tests green** at the time of that batch
       the millisecond, against the report's own annotations), cumulative tripped
       generation, 500 ms windowed vs instantaneous RoCoF, and the published
       inertia band run as a sensitivity experiment.
-- [ ] `ui/` GLMakie: live `f(t)`, readouts (f, RoCoF, nadir), per-unit trip,
-      play/pause, rtf slider, `H_sys` indicator (AC #2, #3, #6).
-      Report **Figure 3-67** is the first layout target and needs no new physics —
-      threshold lines, shed annotations, and the cumulative second axis are all
-      computed already.
+- [x] `ui/` GLMakie: live `f(t)`, readouts (t, f, RoCoF, nadir, `H_sys`), per-unit
+      trip, play/pause, rtf slider, `H_sys` indicator (AC #2, #3, #6). Two files:
+      `ui/src/GridSimUI.jl` (the module, which `ui/` did not previously have — the
+      `Project.toml` named a package with no `src/`) and `ui/src/window.jl`.
+      Structure: one `_build_window` shared by **both** entry points, so the PNG
+      the headless path saves is a picture of the very window `launch` opens and
+      cannot drift from it.
+      - `launch(model; …)` — the real window. `wait_for_close` blocks the process,
+        without which a `julia -e` one-liner exits and takes the window with it.
+      - `smoke_render(; path, trips, duration)` — the same window offscreen
+        (`GLMakie.activate!(visible = false)`), driven through a scripted trip
+        timeline flat out, saved as a PNG. **This is what made the batch
+        verifiable at all** from a session with no screen; decided up front rather
+        than after the window was written.
+- [x] Verified on the **visible** window, not only offscreen: a frame grabbed from
+      the running renderer (`Makie.colorbuffer(screen)` — hence `launch` returns
+      the screen handle) shows a live mid-run trace, the tripped unit's button
+      greyed, the slider at 2.0×, and the inertia bar below its ghost.
+- [x] Pacing measured rather than assumed. Headless: 1.99× / 4.93× / 9.94× against
+      2 / 5 / 10 asked. With the window visible: **4.01× against 4.0×**. An earlier
+      reading that looked like "2× runs at 1×" was window *startup* (GLFW creation
+      + shader compilation) inside the measurement window, not a pacing bug — the
+      loop is starved for those few seconds and accurate afterwards.
+- [x] Export-collision check run (the item below), *before* writing UI code:
+      **nothing collides.** All 19 names checked — `stop!`, `timestep`, `drain!`,
+      `shed_log`, `shed_total`, `windowed_rocof`, `LoadShedStage`, `ShedLadder`,
+      the new accessors, and the engine verbs — are undefined in GLMakie. The UI
+      still imports from the core name-by-name (`using GridSim: …`, never
+      wholesale) as cheap insurance: an explicit import shadows anything a
+      wholesale `using` brings in, so a future export cannot reopen this.
+- [x] Two small **core** accessors added for the UI, so the window never reaches
+      past the engine interface into `eng.params`/`eng.online`:
+      `system_inertia(eng)` (the `H_sys` indicator, SPEC §7.7 names it) and
+      `is_online(eng, id)` (trip-button state). Tested against `aggregates` before
+      and after a trip — the indicator must *agree with the aggregate*, not merely
+      be non-zero. Core suite: **266 → 273 tests**.
+- [x] `ui/test/runtests.jl` — **29 tests, all offscreen**, plus `Test` wired into
+      `ui/Project.toml`'s test target (UUID resolved by `Base.identify_package`,
+      never hand-written). The controls are driven the way a user drives them:
+      setting `b.clicks[]` runs the very handler a real click runs, so the
+      click → `EventQueue` → `inject!` path is exercised end to end. Physics and
+      pacing are deliberately **not** duplicated from the core suite.
+- [ ] Report **Figure 3-67** as a layout target — still open. It needs no new
+      physics (threshold lines, shed annotations and the cumulative second axis are
+      all computed already), and it ticks no acceptance criterion, so it stayed out
+      of this batch rather than quietly expanding it.
 
 ### What the headless batch added to core
 

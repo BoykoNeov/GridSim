@@ -846,6 +846,24 @@ end
         @test timestep(eng) == 0.05                     # what run_realtime! defaults to
     end
 
+    @testset "UI accessors: system_inertia falls on a trip, is_online tracks it" begin
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys)
+        # The indicator must agree with the aggregate, not merely be non-zero.
+        @test system_inertia(eng) ≈ GridSim.aggregates(sys, Set(u.id for u in sys.units)).H_sys
+        @test all(is_online(eng, u.id) for u in sys.units)
+        @test !is_online(eng, :nope)                    # a button for a ghost unit, not a bug
+
+        H_before = system_inertia(eng)
+        inject!(eng, TripGenerator(:G1))
+        @test !is_online(eng, :G1)
+        @test is_online(eng, :G2)
+        # Losing a unit removes its kinetic energy from the pool: strictly less inertia.
+        @test system_inertia(eng) < H_before
+        @test system_inertia(eng) ≈
+            GridSim.aggregates(sys, Set([:G2, :G3, :G4])).H_sys
+    end
+
     @testset "run_realtime! headless (rtf = Inf) with a queued trip" begin
         sys = example_system()
         eng = init!(FrequencyResponseEngine, sys; dt = 0.02)

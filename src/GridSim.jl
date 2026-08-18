@@ -72,6 +72,9 @@ export init!, step!, solve!, current_state, state_series, inject!, timestep
 
 # --- M1 concrete engine ---
 export FrequencyResponseEngine
+# Live reads the UI needs and the interface verbs do not cover (H_sys indicator,
+# per-unit trip-button state) — exported so `ui/` never touches engine fields.
+export system_inertia, is_online
 
 # --- real-time orchestration ---
 # (`push!`/`isempty`/`length`/`empty!` on an EventQueue are Base generics we
