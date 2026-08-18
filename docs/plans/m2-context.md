@@ -557,8 +557,11 @@ every case and "they track early" was never in doubt.
 
 - **V4a — both conditions on.** A ring fixture with `D_G1 = 0` and survivors at
   `D/H = 0.5`. The two engines agree to **7.1e-15 Hz across the whole 60 s run**,
-  not merely early. This is the strongest test of the mapping in the batch: a
-  missing weight on `D` puts the settling frequency out by 20/6, and an `H` error
+  not merely early. This is the strongest test of the mapping in the batch: on this
+  fixture a missing weight on `D` gives 4.0 instead of 15.5, so the aggregate would
+  settle at 40.0 Hz against the swing model's 47.42 — a 7.4 Hz miss against a 1e-11
+  bound. (`20/6` is the same mistake's size on `three_machine_ring`, which is where
+  the mapping test pins it; the two fixtures have different damping.) An `H` error
   moves the initial slope. Guarded against vacuity — the frequency really falls to
   47.42 Hz and the survivors really do spread apart, so the agreement is exactness
   and not stillness.
@@ -579,9 +582,12 @@ every case and "they track early" was never in doubt.
 
 V4b's peak sits **below the solver's own default `abstol`**, so "it is the
 inter-machine content" could not simply be asserted — it is exactly where an
-integration artifact would hide. Re-measured across `reltol` 1e-4 → 1e-12 it comes
-out `4.432461218e-6` / `4.432461395e-6` / `4.432461409e-6`: stable to eight
-significant figures. It is the physics. (The tolerance pass-through written to
+integration artifact would hide. Re-measured at the solver's **default** tolerance,
+then at `reltol` 1e-8 / `abstol` 1e-10, then at `reltol` 1e-12 / `abstol` 1e-14, it
+comes out `4.432461218e-6` / `4.432461395e-6` / `4.432461409e-6`: stable to eight
+significant figures. (The loose end is written as "the default" rather than as a
+number, because a minor version bump can move a default — the hazard this repo
+already tracks — and the claim is about the span, not about a specific value.) It is the physics. (The tolerance pass-through written to
 establish that was removed again afterwards, as in step 5 — unused API on
 speculation is what this repo avoids. The measurement lives here instead.)
 

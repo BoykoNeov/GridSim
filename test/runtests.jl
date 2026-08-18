@@ -1862,7 +1862,9 @@ end
         inject!(sw, TripGenerator(trip))          # the same event, at the same t = 0
         inject!(fr, TripGenerator(trip))
         surv = [i for (i, id) in pairs(machine_ids(sw)) if id !== trip]
-        t = [0.0]; gap = [0.0]; spread = [0.0]; f_sw = [current_state(sw).f_coi]
+        s0 = current_state(sw); r0 = current_state(fr)
+        t = [0.0]; gap = [abs(s0.f_coi - r0.f)]          # measured, not a seeded zero
+        spread = [maximum(s0.ω[surv]) - minimum(s0.ω[surv])]; f_sw = [s0.f_coi]
         for _ in 1:nsteps
             s = step!(sw, dt); r = step!(fr, dt)
             push!(t, s.t); push!(gap, abs(s.f_coi - r.f)); push!(f_sw, s.f_coi)
@@ -1947,7 +1949,9 @@ end
         # fixed D_sys equals Σ_online Dᵢ, and (ii) the survivors share D/H, so
         # Σ Dᵢωᵢ = D_sys·ω_coi even while they swing apart. Both hold here by
         # construction, so the two engines must agree for the WHOLE run — not just
-        # early — and any error in the H or D mapping breaks it immediately.
+        # early — and any error in the H or D mapping breaks it immediately: dropping
+        # the weight on D here gives 4.0 instead of 15.5, so the aggregate would
+        # settle at 40.0 Hz against the swing model's 47.42.
         net = ratio_ring()                            # D_G1 = 0; survivors D/H = 0.5
         ma  = machine_arrays(net)
         @test ma.D[1] == 0.0
@@ -1981,7 +1985,8 @@ end
         r = lockstep_coi(net, :G1; nsteps = 3000)     # 60 s
         peak, ipeak = findmax(r.gap)
         # Measured: 4.4325e-6 Hz at t = 0.26 s. Stable to 8 significant figures
-        # across reltol 1e-4 → 1e-12 (spike, see m2-context.md), so it is the physics
+        # from the solver's default tolerance down to reltol 1e-12 (see m2-context.md),
+        # so it is the physics
         # and not integration error — which matters, because it sits BELOW the
         # solver's own default abstol and would otherwise be indistinguishable.
         @test peak ≈ 4.4325e-6 rtol = 5e-3
@@ -2090,6 +2095,8 @@ end
             @test length(eng.K_pidx) == ne
             push!(counts, array_elems(eng))
         end
+        # A tripwire, not a correctness claim: a legitimate new per-machine array
+        # field changes these deliberately. The two assertions below are the claim.
         @test counts == [69, 171, 681]                 # exactly 17n + 1
 
         # Linear, asserted as such: equal slope over both intervals. A dense n×n

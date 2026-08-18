@@ -228,9 +228,10 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
         branches ⇒ the network terms cancel). That is M1's own equation iff the
         tripped machine has `D = 0` and the survivors share `D/H`. On a fixture built
         that way the two engines agree to **7.1e-15 Hz over the whole 60 s run** —
-        not merely early. This is the strongest test of the mapping in the batch: a
-        missing weight on `D` would put the settling frequency out by 20/6, and an
-        `H` error moves the initial slope. Guarded against vacuity — the frequency
+        not merely early. This is the strongest test of the mapping in the batch: on
+        this fixture a missing weight on `D` gives 4.0 instead of 15.5, so the
+        aggregate would settle at 40.0 Hz against the swing model's 47.42 — a `1e-11`
+        bound misses by 7.4 Hz. An `H` error moves the initial slope. Guarded against vacuity — the frequency
         really falls to 47.42 Hz and the survivors really do spread apart.
       - **V4b — what the aggregate averages away, isolated.** Same fixture with the
         survivors' `D/H` made unequal: the two models then agree at `t = 0` and at
@@ -257,8 +258,8 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       quietly asserted. Full write-up in `m2-context.md`.
 - [x] **The 4.4 µHz swing content is physics, not integration error** — it sits
       *below* the solver's own default `abstol`, so it had to be established rather
-      than assumed. Re-measured across `reltol` 1e-4 → 1e-12 it is stable to **eight
-      significant figures**. (The tolerance pass-through written to establish that was
+      than assumed. Re-measured from the solver's default tolerance down to
+      `reltol` 1e-12 it is stable to **eight significant figures**. (The tolerance pass-through written to establish that was
       removed again, as in step 5 — unused API on speculation is what this repo
       avoids.)
 - [x] **The aggregate view cannot express a line trip at all**, and that is asserted
@@ -294,6 +295,13 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       `tripped_mw` for exactly this reason. Decide here whether the swing engine gets
       an event-marker channel; the channel set of an already-running engine cannot be
       changed afterwards.
+- [ ] **The event vocabulary diverges in both directions, and step 7 owns the
+      consequence.** Step 6 asserted that `TripLine` on the compiled COI view is a
+      `MethodError` (a `SystemModel` has no branches). The mirror is equally true:
+      `StepLoad` has no `SwingEngine` method, because a classical-tier load is a
+      machine and there is no aggregate imbalance to move. So the set of controls a
+      window can offer is per-engine, not per-interface — decide that here rather
+      than discovering it while wiring buttons.
 - [ ] **`is_online(eng, from, to)` is a linear scan over branches.** Nothing at three
       branches, but it is the accessor a UI calls once per line per frame, so it lands
       in the redraw path — the same concern that puts the traces on fixed-capacity

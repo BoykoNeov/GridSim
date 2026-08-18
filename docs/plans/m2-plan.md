@@ -134,8 +134,9 @@ down; the numbers in `m2-context.md` are measured, not predicted.
     exactly (lossless branches ⇒ the network terms cancel), which is *literally*
     M1's equation when the tripped machine has `D = 0` and the survivors share
     `D/H`. On a fixture built that way the two agree to **7.1e-15 Hz over 60 s**.
-    This is the sharpest test of the mapping: a missing weight on `D` throws the
-    settling frequency out by 20/6.
+    This is the sharpest test of the mapping: on that fixture a missing weight on
+    `D` gives 4.0 instead of 15.5, settling the aggregate at 40.0 Hz against the
+    swing model's 47.42 — a 7.4 Hz miss against a 1e-11 bound.
   - **V4b, the swing content, isolated.** Same fixture with the survivors' `D/H`
     unequal: identical at `t = 0` and at `t = ∞`, differing only in the transient.
     **4.4325e-6 Hz peak at 0.26 s** against a **3.9 mHz** machine-to-machine spread
