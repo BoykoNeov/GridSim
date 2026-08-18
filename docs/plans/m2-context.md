@@ -439,6 +439,12 @@ bookkeeping passes for the wrong reason.
 The test runs over **both** trip paths, `TripGenerator` and `TripLine`, which is
 what the checklist item meant by "both".
 
+Be clear-eyed about what this leaves: **no test anywhere fails if `auto_dt_reset!`
+is deleted from either `inject!`** — the other call covers for it. That line is
+protected by a comment, not by an assertion, and a future refactor could drop it
+with the suite still green. Keeping it is still right (the alternative is relying on
+an undocumented side effect), but it is a stated risk rather than a defended one.
+
 ### A line trip can split the grid, and the aggregate then lies
 
 Cutting the only line of the two-machine system leaves two islands. This tier does

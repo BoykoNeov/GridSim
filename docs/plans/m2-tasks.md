@@ -211,6 +211,18 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
 ## Step 7 — UI
 
 - [ ] Per-machine rotor angle / speed traces plus the aggregate overlay.
+- [ ] **The trajectory carries no record that a line opened.** The recorder's
+      channels are fixed at construction (`δ_*`, `ω_*`, `f_coi`); a generator trip is
+      at least partly reconstructible from the traces (a machine's `ω` goes flat and
+      its inertia leaves the aggregate), but a **line** trip leaves no trace at all —
+      play a run back and nothing says which line opened, or when. M1 recorded
+      `tripped_mw` for exactly this reason. Decide here whether the swing engine gets
+      an event-marker channel; the channel set of an already-running engine cannot be
+      changed afterwards.
+- [ ] **`is_online(eng, from, to)` is a linear scan over branches.** Nothing at three
+      branches, but it is the accessor a UI calls once per line per frame, so it lands
+      in the redraw path — the same concern that puts the traces on fixed-capacity
+      buffers. Index it (or hoist the lookup out of the frame) before wiring it in.
 - [ ] Offscreen render verified before anything is claimed about the live window —
       the M1 practice, and the reason M1's UI claims held up.
 - [ ] Pinned axes for any comparison render (the M1 fix at `bb644f4`: an unpinned
