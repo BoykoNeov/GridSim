@@ -195,18 +195,93 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       covers this step and was not re-run; the one new named reach is `integrator.f`
       in `test/`.
 
-## Step 6 — the COI view, derived
+## Step 6 — the COI view, derived (DONE)
 
-- [ ] `coi_model(net::NetworkModel) -> SystemModel` (D4) — the aggregate model is a
-      compiled view, never a hand-maintained copy.
-- [ ] **V4 cross-fidelity**: same trip through `SwingEngine` and through
-      `FrequencyResponseEngine` on `coi_model(net)`. Assert **both** that they
-      track early **and** that they diverge later — asserting only the agreement
-      lets the test pass vacuously.
-- [ ] Write down, in the test or beside it, *what* the divergence is (inter-machine
-      swings the aggregate model averages away) so the number is not mistaken for a
-      defect.
-- [ ] **V5**: no dense network matrix is ever assembled.
+- [x] `coi_model(net::NetworkModel) -> SystemModel` (D4) — the aggregate model is a
+      compiled view, never a hand-maintained copy. It lives in
+      `src/model/network_model.jl`, beside the model it compiles down from.
+- [x] **The mapping's trap is an asymmetry, and both halves are asserted against the
+      wrong conversion by name.** `H` and `S_rated` pass through **raw** on the
+      machine's own base, because M1's `aggregates` applies `S_rated/S_base` itself;
+      `SystemModel.D` is summed **after** conversion, because it is already a
+      system-base scalar and nothing downstream re-weights it. A reader will see the
+      inconsistency and "fix" it, so the test pins `H_sys = 43.0 s` against the
+      unweighted `12.0` and the inverted `3.83`, and `D = 20.0` against `6.0` and
+      `2.07`. Both halves come through `machine_arrays` — the same single converter
+      the engine integrates against — so `coi_model` cannot drift into a different
+      per-unit convention.
+- [x] `R = Inf` and `Pmax = P0` ⇒ governor-free with zero headroom, exactly as step 2
+      decided in advance, and the same `R = Inf` shape M1 already validates for
+      inverter-based resources. `Tg = 1.0` is arbitrary and **asserted unobservable**:
+      a second model differing only in `Tg` (1.0 against 100.0) produces a
+      bit-identical 500-step trajectory. It is unobservable for **two** reasons that
+      must both hold (`R_eq = Inf` *and* `ΔPm(0) = 0`), so a future droop tier makes
+      that line load-bearing.
+- [x] **V4 cross-fidelity — three cases, because one case cannot separate the two
+      things that make the models differ.** Both engines are driven through the same
+      trip in **one lockstep loop** comparing the live `current_state` reads, not the
+      recorded series: the two engines have different channel sets and both recorders
+      decimate, so comparing trajectories would compare two differently-sampled
+      histories.
+      - **V4a — the aggregate is EXACT where the tier's assumption holds.** The COI
+        of the swing model obeys `2·ΣH·dω_coi/dt = ΣPm − Σ Dᵢωᵢ` exactly (lossless
+        branches ⇒ the network terms cancel). That is M1's own equation iff the
+        tripped machine has `D = 0` and the survivors share `D/H`. On a fixture built
+        that way the two engines agree to **7.1e-15 Hz over the whole 60 s run** —
+        not merely early. This is the strongest test of the mapping in the batch: a
+        missing weight on `D` would put the settling frequency out by 20/6, and an
+        `H` error moves the initial slope. Guarded against vacuity — the frequency
+        really falls to 47.42 Hz and the survivors really do spread apart.
+      - **V4b — what the aggregate averages away, isolated.** Same fixture with the
+        survivors' `D/H` made unequal: the two models then agree at `t = 0` and at
+        `t = ∞` by construction, so the *only* difference is the transient. Measured
+        peak **4.4325e-6 Hz at t = 0.26 s**, back to `1.2e-10` by 60 s. The machines
+        are **3.9 mHz apart from each other** at that moment and only **4.4 µHz** of
+        it reaches the aggregate — a factor of ~900, and the ratio is what is
+        asserted, so this is a statement about the model rather than a small number
+        with no scale.
+      - **V4c — the shipped ring, where the plan's claim does not hold** (see the
+        finding below). Tracks early (`1.2e-5 Hz` on the first post-trip sample,
+        `3.0e-4` at 0.1 s) and diverges late (`0.857 Hz` at 60 s) — a ratio of
+        ~2800, which is the assertion, plus the late gap as a **derived** number
+        rather than a band.
+- [x] **FINDING, recorded not patched: on the shipped ring the divergence is not what
+      the plan said it was.** The checklist promised "inter-machine swings the
+      aggregate averages away". The dominant term is instead that **M1's `D` is one
+      system-wide constant that never shrinks**, so the aggregate keeps damping a
+      machine that has tripped, while the network model's damping leaves with it. The
+      two settle at `ΣPm_online/Σ_online D` and `ΣPm_online/Σ_all D` — 47.142857 Hz
+      against 48.0 Hz, a gap ~200 000× the swing content V4b isolated. Same class as
+      the D8 coupling finding: the plan said something not realisable as stated, so
+      it is written down and the checklist amended rather than a passing band being
+      quietly asserted. Full write-up in `m2-context.md`.
+- [x] **The 4.4 µHz swing content is physics, not integration error** — it sits
+      *below* the solver's own default `abstol`, so it had to be established rather
+      than assumed. Re-measured across `reltol` 1e-4 → 1e-12 it is stable to **eight
+      significant figures**. (The tolerance pass-through written to establish that was
+      removed again, as in step 5 — unused API on speculation is what this repo
+      avoids.)
+- [x] **The aggregate view cannot express a line trip at all**, and that is asserted
+      (`MethodError`), not merely commented: a `SystemModel` has no branches, so
+      `TripLine` on it is unexpressible rather than inaccurate. That is why step 5's
+      split-grid case has no cross-fidelity counterpart.
+- [x] **V5 — no dense network matrix, as counts rather than a checkbox.** Under D3 the
+      engine assembles no admittance matrix at all, so "assert it is not dense" cannot
+      fail. The version with teeth: `length(params) == 4n + m`,
+      `length(integrator.u) == 2n`, `sum(length, incident) == 2m`, nothing
+      two-dimensional in any field, and the engine's **entire** array storage measured
+      at n = 4/10/40 → **69 / 171 / 681 elements, exactly 17n + 1**, asserted linear by
+      equal slopes. The positive control is stated as a number: at n = 40 the whole
+      engine holds 681 elements while one dense Y-bus alone would be 1600. The first
+      three also cover NetworkDynamics' own flat arrays, which the engine shares.
+- [x] **`Base.summarysize` scaling was measured as an alternative and DROPPED, on
+      purpose.** The compiled network's fixed per-machine overhead is ~2.4 kB, so a
+      dense n×n `Float64` does not overtake it until n ≈ 300 — at n = 10 vs 40 the
+      ratio moves from 3.20 to 3.54 and the bound never bites. It would have passed
+      without discriminating, which the plan already licensed dropping.
+- [x] 1187/1187 core + 33/33 UI green (1093 entering step 6). No new package; the one
+      new exported name, `coi_model`, was already checked clear against GLMakie in
+      step 2 and was re-verified.
 
 ## Step 7 — UI
 

@@ -1823,4 +1823,281 @@ end
     end
 
 
+
+    # --- M2 step 6: the COI view, compiled down from the network model ---------
+    #
+    # `coi_model(net)` is what makes SPEC §3.2 true rather than aspirational: the
+    # aggregate model M1's engine runs on is *derived* from M2's network model, not
+    # hand-maintained beside it. The tests below are the cross-fidelity validation
+    # (V4) and the no-dense-network claim (V5), plus a direct assertion on the
+    # mapping itself — V4 alone lets a partially-wrong mapping through, because a
+    # model wrong in both H and D can still track early and diverge late.
+
+    # A ring shaped so the aggregate view's exactness condition can be switched on
+    # and off. See the V4 testsets for the derivation; in short, the aggregate is
+    # exact iff the tripped machine has `D = 0` (so the aggregate's fixed `D` does
+    # not keep damping a machine that has left) and the survivors share `D/H` (so
+    # `Σ Dᵢωᵢ = D_sys·ω_coi` even while they swing apart). `D/H` is base-independent
+    # — both scale by the same `S_rated/S_base` — so the ratio can be read straight
+    # off the machine data. Machines stay rated away from `S_base`, as everywhere
+    # else here, so a missing per-unit conversion changes the answer.
+    ratio_ring(; D1 = 0.0, D2 = 1.5, D3 = 2.5) = NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0),
+         Branch(:L31, :B3, :B1, 0.25, 500.0)],
+        #        id    bus   S_rated    H    D   Xd′    E′      P0
+        [Machine(:G1, :B1,    300.0,  4.0, D1,  0.30,  1.05,   80.0),
+         Machine(:G2, :B2,    200.0,  3.0, D2,  0.20,  1.03,   30.0),
+         Machine(:G3, :B3,    500.0,  5.0, D3,  0.50,  1.04, -110.0)])
+
+    # Drive both engines through the SAME trip in ONE lockstep loop, comparing the
+    # live reads rather than the recorded series: `state_series` has a different
+    # channel set per engine and both recorders decimate, so comparing trajectories
+    # would be comparing two differently-sampled histories. Returns the aggregate
+    # frequency gap and the *survivors'* speed spread (the tripped machine is
+    # excluded — it is decoupled, so its speed is not inter-machine swing).
+    function lockstep_coi(net, trip::Symbol; dt = 0.02, nsteps = 3000)
+        sw = init!(SwingEngine, net; dt = dt)
+        fr = init!(FrequencyResponseEngine, coi_model(net); dt = dt)
+        inject!(sw, TripGenerator(trip))          # the same event, at the same t = 0
+        inject!(fr, TripGenerator(trip))
+        surv = [i for (i, id) in pairs(machine_ids(sw)) if id !== trip]
+        t = [0.0]; gap = [0.0]; spread = [0.0]; f_sw = [current_state(sw).f_coi]
+        for _ in 1:nsteps
+            s = step!(sw, dt); r = step!(fr, dt)
+            push!(t, s.t); push!(gap, abs(s.f_coi - r.f)); push!(f_sw, s.f_coi)
+            push!(spread, maximum(s.ω[surv]) - minimum(s.ω[surv]))
+        end
+        return (; t, gap, spread, f_sw, sw, fr)
+    end
+
+    @testset "coi_model: the mapping, and the wrong conversions by name" begin
+        net = three_machine_ring()
+        cm  = coi_model(net)
+        ma  = machine_arrays(net)
+        @test cm isa SystemModel
+        @test (cm.S_base, cm.f0) == (net.S_base, net.f0)
+        @test [u.id for u in cm.units] == machine_ids(init!(SwingEngine, net))  # bus order
+
+        # H and S_rated go through RAW (on the machine's own base) because
+        # `aggregates` applies `S_rated/S_base` itself; D is summed AFTER conversion
+        # because `SystemModel.D` is already a system-base scalar. That asymmetry is
+        # the trap in this function, so both halves are asserted against the wrong
+        # conversions by name and not merely against the right one.
+        a = GridSim.aggregates(cm, Set(u.id for u in cm.units))
+        @test a.H_sys ≈ sum(ma.H) atol = 1e-12                  # = 43.0 s
+        @test !isapprox(a.H_sys, sum(m.H for m in net.machines))            # unweighted: 12.0
+        @test !isapprox(a.H_sys, sum(m.H * net.S_base / m.S_rated for m in net.machines))  # inverted: 3.83
+        @test cm.D ≈ sum(ma.D) atol = 1e-12                     # = 20.0 pu/pu
+        @test !isapprox(cm.D, sum(m.D for m in net.machines))               # unweighted: 6.0
+        @test !isapprox(cm.D, sum(m.D * net.S_base / m.S_rated for m in net.machines))     # inverted: 2.07
+        @test a.D == cm.D                                       # passed through, not re-weighted
+
+        # Governor-free, which is what makes the cross-fidelity comparison honest:
+        # both tiers then hold mechanical power constant.
+        @test all(u -> u.R == Inf, cm.units)
+        @test a.R_eq == Inf
+        @test all(u -> u.Pmax == u.P0, cm.units)
+        @test a.headroom == 0.0
+
+        # P0 stays in engineering units (MW) and keeps its sign: a load is a machine
+        # with negative P0, and it compiles to a unit with negative P0 *and* negative
+        # Pmax (which `GeneratingUnit`'s headroom guard accepts, since Pmax ≥ P0).
+        @test [u.P0 for u in cm.units] == [m.P0 for m in net.machines] == [80.0, 30.0, -110.0]
+        @test [u.S_rated for u in cm.units] == [m.S_rated for m in net.machines]
+
+        # The compiled units carry the *rotating* inertia of every machine, load
+        # buses included — so the aggregate H is over all three, not over the two
+        # net generators.
+        @test a.H_sys ≈ 43.0 && a.H_sys > sum(ma.H[1:2])
+
+        # Two machines is a different shape, same rules.
+        cm2 = coi_model(two_machine_system())
+        @test length(cm2.units) == 2
+        @test cm2.D ≈ sum(machine_arrays(two_machine_system()).D) ≈ 13.0
+    end
+
+    @testset "coi_model: Tg is unobservable, and both reasons are asserted" begin
+        # `Tg = 1.0` is arbitrary only because the governor state is identically
+        # zero, which needs BOTH `R_eq = Inf` (no droop command) and `ΔPm(0) = 0`
+        # (M1's state is a deviation). Assert the invariance rather than the comment:
+        # a second model differing ONLY in Tg must give the same trajectory.
+        net = three_machine_ring()
+        cm  = coi_model(net)
+        slow = SystemModel(cm.S_base, cm.f0, cm.D, 100.0, cm.units)
+        a = init!(FrequencyResponseEngine, cm; dt = 0.02)
+        b = init!(FrequencyResponseEngine, slow; dt = 0.02)
+        inject!(a, TripGenerator(:G1)); inject!(b, TripGenerator(:G1))
+        same = true
+        for _ in 1:500
+            sa = step!(a, 0.02); sb = step!(b, 0.02)
+            same &= (sa.f == sb.f)                   # bit-identical, not merely close
+        end
+        @test same
+        @test current_state(a).ΔPm == 0.0            # the governor never moved...
+        @test current_state(a).f < 49.0              # ...but the frequency did
+    end
+
+    @testset "V4a: the aggregate view is EXACT where the tier's assumption holds" begin
+        # The COI of the swing model obeys, exactly (the network terms cancel — the
+        # branches are lossless):
+        #     2·Σ_online H · dω_coi/dt = Σ_online Pm − Σ_online Dᵢ·ωᵢ
+        # M1's aggregate obeys `2·H_sys·dΔω/dt = ΔP_dist − D_sys·Δω`. The two are the
+        # SAME scalar ODE when (i) the tripped machine has D = 0, so the aggregate's
+        # fixed D_sys equals Σ_online Dᵢ, and (ii) the survivors share D/H, so
+        # Σ Dᵢωᵢ = D_sys·ω_coi even while they swing apart. Both hold here by
+        # construction, so the two engines must agree for the WHOLE run — not just
+        # early — and any error in the H or D mapping breaks it immediately.
+        net = ratio_ring()                            # D_G1 = 0; survivors D/H = 0.5
+        ma  = machine_arrays(net)
+        @test ma.D[1] == 0.0
+        @test ma.D[2] / ma.H[2] ≈ ma.D[3] / ma.H[3] ≈ 0.5
+        @test coi_model(net).D ≈ sum(ma.D) ≈ 15.5     # = Σ_online D, since D_G1 = 0
+
+        r = lockstep_coi(net, :G1; nsteps = 3000)     # 60 s
+        @test maximum(r.gap) < 1e-11                  # measured 7.1e-15 Hz
+
+        # Not vacuous: the run is a real disturbance and the machines really do swing
+        # against one another — the agreement is exactness, not stillness.
+        @test r.f_sw[end] ≈ 50.0 * (1 + (sum(ma.Pm) - ma.Pm[1]) / sum(ma.D)) atol = 1e-3
+        @test r.f_sw[end] < 47.5
+        @test maximum(r.spread) > 1e-5                # measured 7.5e-5 pu ≈ 3.8 mHz
+        # Inertia bookkeeping survives the event on both sides of the compile.
+        @test system_inertia(r.sw) ≈ system_inertia(r.fr) ≈ sum(ma.H) - ma.H[1]
+    end
+
+    @testset "V4b: what the aggregate averages away, isolated and measured" begin
+        # Same fixture, but the survivors' D/H ratios are no longer equal, so
+        # condition (ii) above fails while (i) still holds. The two models therefore
+        # start identical (same initial RoCoF) and settle identical (same ω_∞), and
+        # the ONLY difference is the transient — which is exactly the inter-machine
+        # swing content the aggregate model averages away. This is the number the
+        # step-6 plan promised; V4c is where that promise does not hold.
+        net = ratio_ring(; D3 = 2.0)                  # D/H = 0.5 vs 0.4
+        ma  = machine_arrays(net)
+        @test !isapprox(ma.D[2] / ma.H[2], ma.D[3] / ma.H[3])
+        @test coi_model(net).D ≈ sum(ma.D) ≈ 13.0
+
+        r = lockstep_coi(net, :G1; nsteps = 3000)     # 60 s
+        peak, ipeak = findmax(r.gap)
+        # Measured: 4.4325e-6 Hz at t = 0.26 s. Stable to 8 significant figures
+        # across reltol 1e-4 → 1e-12 (spike, see m2-context.md), so it is the physics
+        # and not integration error — which matters, because it sits BELOW the
+        # solver's own default abstol and would otherwise be indistinguishable.
+        @test peak ≈ 4.4325e-6 rtol = 5e-3
+        @test 0.2 < r.t[ipeak] < 0.35
+        # Both ends pinned: agree at the disturbance, agree at the new steady state.
+        @test r.gap[2] < 1e-7                          # first post-trip sample
+        @test r.gap[end] < 1e-8                        # 60 s, measured 1.2e-10
+
+        # The "so what": the machines are 3.9 mHz apart from each other at the peak
+        # of the swing, and only 4.4 µHz of that reaches the aggregate — a factor of
+        # nearly 900 averaged away. Asserting the ratio is what makes this a
+        # statement about the model rather than a small number with no scale.
+        @test maximum(r.spread) * 50.0 / peak > 500
+    end
+
+    @testset "V4c: on the shipped ring the DAMPING gap dominates (the finding)" begin
+        # The step-6 plan says the late divergence is "inter-machine swings the
+        # aggregate averages away". On `three_machine_ring` that is not true, and the
+        # test says so rather than quietly asserting a band that happens to pass.
+        # M1's `D` is ONE system-wide constant that `aggregates` passes through
+        # unchanged, so the aggregate keeps damping a machine that has tripped, while
+        # the network model's damping leaves with it. The two therefore settle at
+        # different frequencies, and that gap is ~200 000× the swing content V4b
+        # isolated. Recorded as a finding in docs/plans/m2-context.md.
+        net = three_machine_ring()
+        ma  = machine_arrays(net)
+        r = lockstep_coi(net, :G1; nsteps = 3000)     # 60 s
+
+        # They DO track early: the initial RoCoF is analytically identical, because
+        # `Σ P0 = 0` at construction makes `Σ Pm_online` equal M1's `ΔP_dist`, and
+        # both models drop the tripped machine's inertia.
+        @test r.gap[2] < 1e-4                          # first post-trip sample: 1.2e-5
+        early = maximum(r.gap[r.t .<= 0.1])
+        @test early < 5e-4                             # measured 3.0e-4 Hz at 0.1 s
+
+        # And they DO diverge later — asserting only the tracking would pass
+        # vacuously if `coi_model` ever returned something trivial. The ratio is the
+        # honest statement of "track early, diverge later": ~2800× apart, measured.
+        @test r.gap[end] > 0.8
+        @test r.gap[end] / early > 1000
+
+        # The divergence is a DERIVED number, not a band: Σ Pm_online over the
+        # surviving damping, against the same numerator over the *whole* damping.
+        ΣPm_online = sum(ma.Pm) - ma.Pm[1]             # = −Pm_G1, since Σ P0 = 0
+        f_swing = 50.0 * (1 + ΣPm_online / (sum(ma.D) - ma.D[1]))   # 47.142857 Hz
+        f_coi   = 50.0 * (1 + ΣPm_online / sum(ma.D))               # 48.0 Hz
+        @test f_swing ≈ 47.142857 atol = 1e-5
+        @test f_coi ≈ 48.0 atol = 1e-12
+        @test r.gap[end] ≈ f_coi - f_swing atol = 1e-5   # residual 3.7e-6 is settling
+        @test r.gap[end] < f_coi - f_swing               # ...and it approaches from below
+
+        # The aggregate view has no line to trip at all: a `SystemModel` has no
+        # branches, so `TripLine` is not merely inaccurate on it, it is unexpressible.
+        # That is the honest boundary of the compiled view, and it is why step 5's
+        # split-grid case has no cross-fidelity counterpart.
+        @test_throws MethodError inject!(r.fr, TripLine(:B1, :B2))
+    end
+
+    @testset "V5: no n² structure anywhere the engine owns" begin
+        # SPEC §4 forbids a dense admittance matrix. Under D3 the engine never
+        # assembles *any* admittance matrix, so "assert it is not dense" is a
+        # checkbox that cannot fail. The version with teeth is a count: coupling
+        # lives on graph edges, so every array the engine owns must be linear in
+        # (machines + branches), and a single dense Y-bus would break that by itself.
+        #
+        # Scope, stated: this covers the engine's own fields AND NetworkDynamics'
+        # flat state/parameter arrays (which the engine shares, so their lengths are
+        # upstream's storage, not ours). It does not reach inside the compiled
+        # `Network` object. There, D3 holds by construction rather than by this test.
+        #
+        # `Base.summarysize` scaling was measured as an alternative and DROPPED: the
+        # fixed per-machine overhead of the compiled network is ~2.4 kB, so a dense
+        # n×n Float64 matrix does not overtake it until n ≈ 300. It would have passed
+        # without discriminating, which is worse than an absent test.
+        function big_ring(n)                 # even n, alternating ±P so Σ P0 = 0
+            buses = [Bus(Symbol("B", i), 400.0) for i in 1:n]
+            machines = [Machine(Symbol("G", i), Symbol("B", i), 200.0, 4.0, 2.0, 0.3,
+                                1.05, isodd(i) ? 40.0 : -40.0) for i in 1:n]
+            branches = [Branch(Symbol("L", i), Symbol("B", i), Symbol("B", mod1(i + 1, n)),
+                               0.25, 500.0) for i in 1:n]
+            return NetworkModel(100.0, 50.0, buses, branches, machines)
+        end
+
+        # Total elements across every array the engine holds. `incident` is a vector
+        # of vectors, so its inner lengths are what count — that is where an
+        # all-pairs structure would hide most naturally.
+        function array_elems(eng)
+            tot = 0
+            for f in fieldnames(SwingEngine)
+                x = getfield(eng, f)
+                x isa AbstractArray || continue
+                @test !(x isa AbstractMatrix)          # nothing two-dimensional at all
+                tot += eltype(x) <: AbstractArray ? sum(length, x) : length(x)
+            end
+            return tot
+        end
+
+        counts = Int[]
+        for n in (4, 10, 40)
+            net = big_ring(n)
+            eng = init!(SwingEngine, net; dt = 0.02)
+            nb, ne = length(net.buses), length(net.branches)
+            @test length(eng.params) == 4nb + ne       # 4 per machine, 1 per branch
+            @test length(eng.integrator.u) == 2nb      # (δ, ω) per machine
+            @test sum(length, eng.incident) == 2ne     # each branch at exactly 2 buses
+            @test length(eng.K_pidx) == ne
+            push!(counts, array_elems(eng))
+        end
+        @test counts == [69, 171, 681]                 # exactly 17n + 1
+
+        # Linear, asserted as such: equal slope over both intervals. A dense n×n
+        # anywhere would make the second slope 30× the first.
+        @test (counts[2] - counts[1]) / (10 - 4) == (counts[3] - counts[2]) / (40 - 10)
+        # The positive control, stated as a number: at n = 40 the engine's ENTIRE
+        # array storage is 681 elements, while one dense Y-bus alone would be 1600.
+        @test counts[3] < 40^2
+    end
+
 end

@@ -89,10 +89,18 @@ boundary, not a shortcut.
    separably observable (either alone suppresses the whole 9.7 % first-step bias, so
    the test asserts omitting both), and a line trip that splits the grid leaves the
    single aggregate read-out meaningless — +12 % / −7.5 % islands reported as −1 %.
-6. **Derive the COI view** — `coi_model(net::NetworkModel) -> SystemModel`, so M1's
-   `FrequencyResponseEngine` runs on a model *compiled down from* M2's rather than
-   a hand-maintained parallel copy (SPEC §3.2). The cross-fidelity comparison test
-   (V4) falls out of this for free.
+6. **Derive the COI view — DONE.** `coi_model(net::NetworkModel) -> SystemModel` in
+   `src/model/network_model.jl`, so M1's `FrequencyResponseEngine` runs on a model
+   *compiled down from* M2's rather than a hand-maintained parallel copy (SPEC §3.2).
+   The mapping's one trap is an asymmetry — `H`/`S_rated` pass through raw because
+   `aggregates` weights them itself, while `D` is summed *after* conversion because
+   `SystemModel.D` is already a system-base scalar — and both halves are asserted
+   against the wrong conversion by name. The batch's finding is that **the plan's
+   description of V4's divergence was wrong**: on the shipped ring the late gap is
+   dominated by M1's damping constant not shrinking when a machine trips, not by
+   inter-machine swings. V4 therefore runs three cases (below) instead of one, and
+   the swing content is isolated on a fixture built for it: **4.4 µHz reaching the
+   aggregate out of a 3.9 mHz machine-to-machine spread.**
 7. **UI** — extend the window with per-machine rotor angle / speed traces and the
    COI overlay. Verified offscreen first, as in M1.
 
@@ -117,19 +125,42 @@ down; the numbers in `m2-context.md` are measured, not predicted.
   the prediction `two_machine_system` implies, computed through the real
   `machine_arrays`/`branch_arrays`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`,
   **`f_osc = 1.5911075 Hz`**. Step 4's job is to make the running engine hit it.
-- **V4 — cross-fidelity against the derived COI model.** Same trip, both engines.
-  Assert **both** halves: the COI frequencies agree early (they must track), and
-  they diverge later (they must not be identical). Asserting only the agreement
-  lets the test pass vacuously if `coi_model` ever returns something trivial.
-- **V5 — no dense network matrix.** Needs care, because under D3 the engine never
-  assembles *any* admittance matrix, so "assert it isn't dense" is a checkbox that
-  cannot fail — the same vacuous-test trap V4 is written to avoid. The honest
-  version is a **structural** claim with teeth: assert the engine's construction
-  path allocates nothing that scales as machines², and state in the code comment
-  that SPEC §4's rule is satisfied *by construction* (coupling lives on graph
-  edges) rather than by a runtime check. If that assertion cannot be made to bite,
-  drop V5 and say so here — a test that cannot fail is worse than an absent one,
-  because it reads as coverage.
+- **V4 — cross-fidelity against the derived COI model. DONE, in three cases.** One
+  case cannot separate the two independent reasons the models differ, which is what
+  the step-6 finding is about. Both engines are driven through the same trip in one
+  **lockstep loop** over the live `current_state` reads — not over `state_series`,
+  whose channel sets differ per engine and whose recorders decimate.
+  - **V4a, exactness.** The swing model's COI obeys `2ΣH·dω_coi/dt = ΣPm − ΣDᵢωᵢ`
+    exactly (lossless branches ⇒ the network terms cancel), which is *literally*
+    M1's equation when the tripped machine has `D = 0` and the survivors share
+    `D/H`. On a fixture built that way the two agree to **7.1e-15 Hz over 60 s**.
+    This is the sharpest test of the mapping: a missing weight on `D` throws the
+    settling frequency out by 20/6.
+  - **V4b, the swing content, isolated.** Same fixture with the survivors' `D/H`
+    unequal: identical at `t = 0` and at `t = ∞`, differing only in the transient.
+    **4.4325e-6 Hz peak at 0.26 s** against a **3.9 mHz** machine-to-machine spread
+    — a factor of ~900 averaged away, and the *ratio* is what is asserted.
+  - **V4c, the shipped ring.** Tracks early (3.0e-4 Hz at 0.1 s), diverges late
+    (0.857 Hz), ratio ~2800 — and the late gap is asserted as a **derived** number
+    (`ΣPm_online/Σ_online D` against `ΣPm_online/Σ_all D`), not as a band.
+  Asserting only the agreement would let the test pass vacuously if `coi_model` ever
+  returned something trivial; V4a's exactness is instead guarded by asserting the
+  disturbance is real (frequency falls to 47.4 Hz, machines genuinely spread apart).
+- **V5 — no dense network matrix. DONE, as counts.** Under D3 the engine assembles
+  no admittance matrix at all, so "assert it isn't dense" is a checkbox that cannot
+  fail — the same vacuous-test trap V4 is written to avoid. The version with teeth
+  is a count: `length(params) == 4n + m`, `length(integrator.u) == 2n`,
+  `sum(length, incident) == 2m`, nothing two-dimensional in any field, and the
+  engine's entire array storage measured at n = 4/10/40 → **69 / 171 / 681
+  elements, exactly 17n + 1**, asserted linear by equal slopes. The positive control
+  is a number rather than a claim: at n = 40 the whole engine holds 681 elements
+  while one dense Y-bus alone would be 1600. The first three assertions also cover
+  NetworkDynamics' own flat arrays, which the engine shares; the interior of the
+  compiled `Network` is out of reach, and there D3 holds by construction.
+  **`Base.summarysize` scaling was measured as an alternative and dropped** on the
+  licence this bullet used to give: the compiled network's fixed per-machine
+  overhead is ~2.4 kB, so a dense n×n does not overtake it until n ≈ 300 and the
+  bound would have passed without discriminating.
 
 ## Pitfalls / carried-forward review notes
 

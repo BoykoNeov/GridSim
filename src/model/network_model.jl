@@ -509,3 +509,83 @@ function three_machine_ring()
     ]
     return NetworkModel(100.0, 50.0, buses, branches, machines)
 end
+
+"""
+    coi_model(net::NetworkModel) -> SystemModel
+
+Compile the **center-of-inertia aggregate view** of `net` — the M1 `SystemModel`
+that `FrequencyResponseEngine` runs on — *down from* the M2 network model. This is
+what keeps SPEC §3.2 ("one canonical model; reduced models are compiled views")
+true rather than aspirational: the aggregate model is never hand-maintained beside
+the network one, and running the same disturbance through both is M2's
+cross-fidelity validation (V4).
+
+The mapping, machine by machine (in bus order):
+
+| `SystemModel`        | from                       | note                          |
+|:---------------------|:---------------------------|:------------------------------|
+| `S_base`, `f0`       | passed through             |                               |
+| `GeneratingUnit.id`  | `Machine.id`               |                               |
+| `.S_rated`, `.H`     | **raw, machine base**      | `aggregates` applies the weight |
+| `.P0`                | `Machine.P0` (MW)          | negative = load, carried as-is  |
+| `.R`                 | `Inf`                      | no governors in this tier       |
+| `.Pmax`              | `= P0` ⇒ zero headroom     | no governors in this tier       |
+| `SystemModel.D`      | `sum(machine_arrays(net).D)` | **pre-weighted, system base** |
+| `SystemModel.Tg`     | `1.0`                      | unobservable — see below        |
+
+**The H/D asymmetry is deliberate and is the trap in this function.** `H` and
+`S_rated` go through *raw* on the machine's own base, because `aggregates`
+(engines/frequency_response.jl) applies `S_rated/S_base` itself. `SystemModel.D`
+is *already* a system-base scalar in M1 and nothing re-weights it, so it must be
+summed **after** conversion. Both halves therefore come through
+`machine_arrays` — the same single converter the engine integrates against — so
+`coi_model` cannot come to hold a different per-unit convention than
+`SwingEngine`. Do not "fix" the inconsistency by weighting `H` here too; the test
+suite asserts against that exact wrong conversion by name.
+
+**`Tg = 1.0` is arbitrary because the governor state is identically zero**, and it
+is zero for *two* reasons that must both hold: `R_eq = Inf` (no droop command) and
+`ΔPm(0) = 0` (M1's state is a deviation, so the governor starts at rest). Then
+`dΔPm/dt = (−Δω/∞ − 0)/Tg = 0` forever and `Tg` never enters the answer — asserted
+in `test/` by compiling a second model with `Tg = 100` and getting the same
+trajectory. If a droop tier ever lands, `Tg` becomes load-bearing and this line
+becomes a real modelling choice.
+
+**No governors is what makes the comparison honest** (the GOVERNORS note at the top
+of this file): both models then hold mechanical power constant, so they differ by
+network dynamics alone rather than by one of them having primary response the
+other lacks. The `R = Inf` / zero-headroom combination is the same shape M1
+already validates for inverter-based resources.
+
+**Two consequences worth naming before they surprise someone.**
+
+  - **Loads compile to units.** A load is a machine with negative `P0`, and it is a
+    rotating mass, so it belongs in `H_sys` and in `D`. It therefore becomes a
+    `GeneratingUnit` with negative `P0` and negative `Pmax`. One M1 read-out does
+    not survive that: `tripped_mw` accumulates `unit.P0` as "generation lost", which
+    is meaningless (and signed the other way) for a compiled load. Read `f`/`RoCoF`
+    off a COI-compiled model, not `tripped_mw`. M1 is deliberately not changed for
+    this — the channel is correct for the model M1 owns.
+  - **The aggregate keeps the damping of a tripped machine.** M1's `D` is one
+    system-wide constant that `aggregates` passes through unchanged, while the
+    network model's damping is per-machine and leaves with the machine. So after a
+    generator trip the two models settle at *different* frequencies
+    (`Σ Pm_online / Σ_online D` against `Σ Pm_online / Σ_all D`), and on the shipped
+    `three_machine_ring` that gap **dominates** the late divergence rather than the
+    inter-machine swings the plan expected. Recorded as a finding in
+    `docs/plans/m2-context.md`; `test/` asserts the gap as a derived number and uses
+    separate fixtures (a tripped machine with `D = 0`) to isolate the swing content.
+"""
+function coi_model(net::NetworkModel)
+    ma = machine_arrays(net)                 # the one per-unit converter (see above)
+    units = Vector{GeneratingUnit}(undef, length(net.machines))
+    for (v, m) in pairs(net.machines)
+        # H and S_rated raw on the machine base — `aggregates` weights them itself.
+        # R = Inf and Pmax = P0: no governor, no headroom (the tier holds Pm fixed).
+        units[v] = GeneratingUnit(m.id, m.S_rated, m.H, m.P0, Inf, m.P0)
+    end
+    # D pre-weighted onto the system base, because `SystemModel.D` is a system-base
+    # scalar that nothing downstream re-weights. This is the asymmetry above.
+    D_sys = sum(ma.D)
+    return SystemModel(net.S_base, net.f0, D_sys, 1.0, units)
+end

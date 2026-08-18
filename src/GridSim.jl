@@ -90,6 +90,9 @@ export GeneratingUnit, SystemModel, example_system
 export Bus, Branch, Machine, NetworkModel
 export machine_arrays, branch_arrays, machine_at
 export two_machine_system, three_machine_ring
+# The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
+# a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
+export coi_model
 
 # --- events ---
 export PerturbationEvent, TripGenerator, StepLoad, TripLine

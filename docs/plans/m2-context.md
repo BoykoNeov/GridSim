@@ -481,6 +481,147 @@ step 3 still covers this step, and it was not re-run; the dev machine remains on
 fresh resolve (`SciMLBase` 3.49.1 / `OrdinaryDiffEq` 7.6.0), which is what a clean
 clone gets.
 
+## Step 6 — the COI view (DONE), and the finding it produced
+
+`coi_model(net::NetworkModel) -> SystemModel` lives in `src/model/network_model.jl`,
+beside the model it compiles down from. This is what makes SPEC §3.2 true rather
+than aspirational: M1's aggregate model is now *derived*, and D4's promise — that
+`SystemModel` survives as a compiled view rather than as a second hand-maintained
+model — is discharged.
+
+### The mapping's trap is an asymmetry, and it is asserted both ways
+
+`H` and `S_rated` pass through **raw**, on the machine's own base, because M1's
+`aggregates` applies `S_rated/S_base` itself. `SystemModel.D` is summed **after**
+conversion, because it is already a system-base scalar and nothing downstream
+re-weights it. A reader will notice the inconsistency and "fix" it, so both halves
+are pinned against the wrong conversions by name: `H_sys = 43.0 s` against the
+unweighted `12.0` and the inverted `3.83`, and `D = 20.0 pu` against `6.0` and
+`2.07`. Both come through `machine_arrays`, the single converter the engine
+integrates against, so `coi_model` cannot come to hold a different per-unit
+convention than `SwingEngine` — the same discipline `_coupling` has.
+
+`R = Inf` and `Pmax = P0` make the compiled model governor-free with zero headroom,
+exactly as step 2 decided in advance, and it is the same `R = Inf` shape M1 already
+validates for inverter-based resources. `Tg = 1.0` is arbitrary and **asserted
+unobservable** rather than merely commented: a model differing only in `Tg` (1.0
+against 100.0) gives a bit-identical 500-step trajectory. It is unobservable for
+*two* reasons that must both hold — `R_eq = Inf` (no droop command) and `ΔPm(0) = 0`
+(M1's state is a deviation) — so a droop tier would make that line load-bearing.
+
+### FINDING: the divergence is not what the plan said it was
+
+The step-6 checklist promised that the late divergence between the two engines is
+"inter-machine swings the aggregate model averages away", and asked for that to be
+written down beside the test so the number is not mistaken for a defect. On the
+shipped `three_machine_ring` it is **false**, and the dominant term is something
+else entirely.
+
+M1's `D` is **one system-wide constant** that `aggregates` passes through unchanged
+on every trip — physically it is *load* damping, which does not vanish when a
+generator disconnects. The network model's damping is **per-machine**, and it leaves
+with the machine. So after a generator trip the two models settle at
+
+    swing:  ω_∞ = Σ Pm_online / Σ_online D        →  47.142857 Hz
+    COI:    ω_∞ = Σ Pm_online / Σ_all     D        →  48.0      Hz
+
+a gap of **0.857 Hz**, roughly **200 000×** the actual swing content. Neither model
+is wrong in its own frame; they simply mean different things by `D`. But the
+consequence for the validation is real: a single comparison on the shipped ring
+measures a damping-bookkeeping mismatch and would have been *reported* as the
+inter-machine lesson. That is the same shape as the D8 coupling finding, and the
+same shape as the Iberia notes' "numbers that look like results and are not".
+
+So the finding is recorded and the checklist amended, rather than a band being
+quietly asserted that happens to pass. V4 now runs three cases instead of one.
+
+### The three cases, and why one could not have done
+
+The aggregate of the swing model obeys, **exactly** (the branches are lossless, so
+the network terms cancel in the weighted sum):
+
+    2·Σ_online H · dω_coi/dt = Σ_online Pm − Σ_online Dᵢ·ωᵢ
+
+M1's model obeys `2·H_sys·dΔω/dt = ΔP_dist − D_sys·Δω`. Two independent things have
+to hold for these to be the same scalar ODE:
+
+  1. `D_sys = Σ_online Dᵢ` — i.e. the tripped machine contributed no damping. True
+     iff its `D` is zero.
+  2. `Σ Dᵢωᵢ = D_sys·ω_coi` — true iff the survivors share `D/H`, since `ω_coi` is
+     the `H`-weighted mean. (`D/H` is base-independent: both scale by the same
+     `S_rated/S_base`, so the ratio can be read straight off the machine data.)
+
+`Σ Pm_online = ΔP_dist` needs no condition — it follows from the constructor's
+`Σ P0 = 0` guard — which is why the *initial* RoCoF is analytically identical in
+every case and "they track early" was never in doubt.
+
+- **V4a — both conditions on.** A ring fixture with `D_G1 = 0` and survivors at
+  `D/H = 0.5`. The two engines agree to **7.1e-15 Hz across the whole 60 s run**,
+  not merely early. This is the strongest test of the mapping in the batch: a
+  missing weight on `D` puts the settling frequency out by 20/6, and an `H` error
+  moves the initial slope. Guarded against vacuity — the frequency really falls to
+  47.42 Hz and the survivors really do spread apart, so the agreement is exactness
+  and not stillness.
+- **V4b — condition 1 on, condition 2 off.** Survivors at `D/H = 0.5` and `0.4`. The
+  two models are then identical at `t = 0` **and** at `t = ∞`, so the only
+  difference is the transient — which is precisely the inter-machine content the
+  plan promised. Peak **4.4325e-6 Hz at t = 0.26 s**, down to `1.2e-10` by 60 s.
+  The machines are **3.9 mHz apart from each other** at that moment and only
+  **4.4 µHz** of it reaches the aggregate; the assertion is that *ratio* (~900),
+  because a small number with no scale is not a statement about the model.
+- **V4c — the shipped ring, both conditions off.** Tracks early (`1.2e-5 Hz` on the
+  first post-trip sample, `3.0e-4` at 0.1 s), diverges late (`0.857 Hz`), ratio
+  ~2800. The late gap is asserted as a **derived** number computed from
+  `machine_arrays`, and asserted to approach it *from below* — the residual `3.7e-6`
+  at 60 s is the tail of the settling, not slack.
+
+### The 4.4 µHz is physics, and that had to be established
+
+V4b's peak sits **below the solver's own default `abstol`**, so "it is the
+inter-machine content" could not simply be asserted — it is exactly where an
+integration artifact would hide. Re-measured across `reltol` 1e-4 → 1e-12 it comes
+out `4.432461218e-6` / `4.432461395e-6` / `4.432461409e-6`: stable to eight
+significant figures. It is the physics. (The tolerance pass-through written to
+establish that was removed again afterwards, as in step 5 — unused API on
+speculation is what this repo avoids. The measurement lives here instead.)
+
+### The aggregate view cannot express a line trip at all
+
+Asserted (`MethodError`), not merely commented. A `SystemModel` has no branches, so
+`TripLine` on the compiled view is *unexpressible* rather than inaccurate. That is
+the honest boundary of the aggregate tier, and it is why step 5's split-grid case —
+the one where a line trip leaves the single COI read-out meaningless — has no
+cross-fidelity counterpart to compare against.
+
+### V5, and the half of it that was dropped on purpose
+
+Under D3 the engine assembles no admittance matrix at all, so "assert it is not
+dense" is a checkbox that cannot fail. The version with teeth is a count:
+`length(params) == 4n + m`, `length(integrator.u) == 2n`,
+`sum(length, incident) == 2m`, nothing two-dimensional in any field, and the
+engine's **entire** array storage measured at n = 4/10/40 → **69 / 171 / 681
+elements, exactly 17n + 1**, asserted linear by equal slopes over both intervals.
+The positive control is stated as a number rather than as a claim: at n = 40 the
+whole engine holds 681 elements while one dense Y-bus alone would be 1600. The
+first three assertions also cover NetworkDynamics' own flat state and parameter
+arrays, which the engine shares by identity — so they are statements about
+upstream's storage, not only ours. The interior of the compiled `Network` is out of
+reach, and there D3 holds by construction.
+
+**`Base.summarysize` scaling was measured as an alternative and dropped**, on the
+licence the plan already gave. The compiled network's fixed per-machine overhead is
+~2.4 kB (17.6 / 29.5 / 94.5 kB at n = 4/10/40), so a dense n×n `Float64` — 12.8 kB
+at n = 40 — does not overtake it until n ≈ 300. Adding one would move the 10→40
+ratio from 3.20 to only 3.54, well inside any bound that a legitimate engine passes.
+It would have read as coverage without discriminating.
+
+### No new dependency surface
+
+Step 6 adds no package and no new upstream name in `src/` — `coi_model` is pure
+Julia over types this repo owns. The one new exported name was already checked
+clear against GLMakie back in step 2 and was re-verified. So the two-resolution
+sweep from steps 3–4 still covers this step and was not re-run.
+
 ## Key decisions (and why)
 
 **D1 — Build on `NetworkDynamics`, alone. Not hand-rolled, not `PowerDynamics`.**
@@ -502,6 +643,10 @@ NetworkDynamics' graph *is* the sparse structure — coupling lives on edges, so
 SPEC §4's "never build a dense Y-bus" is satisfied structurally rather than by
 discipline. If network reduction ever lands (M2b), the full admittance stays
 sparse and canonical and the reduced coupling is a derived compiled view.
+
+**D4 — A new `NetworkModel`; `SystemModel` stays, and is *derived*. DISCHARGED in
+step 6** — `coi_model` exists, and the cross-fidelity comparison it hands over
+produced the step-6 finding above.
 
 **D4 — A new `NetworkModel`; `SystemModel` stays, and is *derived*.**
 `SystemModel` cannot express M2 (no buses, no branches, no transient reactance, no
