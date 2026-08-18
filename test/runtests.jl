@@ -1406,6 +1406,69 @@ end
         end
     end
 
+    @testset "SwingEngine V3: the running engine hits the closed-form swing frequency" begin
+        # Step 2 pinned the *prediction* through the real code path; this is where
+        # the running engine has to produce it. Excitation is a small displacement
+        # of one rotor angle from the fixpoint — not a trip, because a trip removes
+        # the equilibrium the oscillation would be about (see swing.jl's header).
+        net = two_machine_system()
+        ma, ba = machine_arrays(net), branch_arrays(net)
+        K, P = ba.K[1], ma.Pm[1]
+        δ₀ = asin(P / K)
+        ω₀ = 2π * net.f0
+        f_pred = sqrt(ω₀ * K * cos(δ₀) * (1 / (2ma.H[1]) + 1 / (2ma.H[2]))) / 2π
+        @test f_pred ≈ 1.5911075 atol = 1e-6            # the number step 2 pinned
+
+        eng = init!(SwingEngine, net; dt = 0.002)
+        eng.integrator.u[eng.δ_idx[1]] += 0.01          # 10 mrad, small-signal
+        SciMLBase.derivative_discontinuity!(eng.integrator, true)
+        ts, ys = Float64[], Float64[]
+        for _ in 1:6000                                  # 12 s, finite by construction
+            s = step!(eng, 0.002)
+            push!(ts, s.t)
+            push!(ys, (s.δ[1] - s.δ[2]) - δ₀)
+        end
+        # Period from linearly-interpolated upward zero crossings, averaged over
+        # every cycle in the window — not from a peak index, which would quantise
+        # the answer to the step size.
+        cross = Float64[]
+        for i in 2:length(ys)
+            ys[i-1] < 0 <= ys[i] &&
+                push!(cross, ts[i-1] + (ts[i] - ts[i-1]) * (-ys[i-1]) / (ys[i] - ys[i-1]))
+        end
+        @test length(cross) >= 15                        # a long enough window to average
+        f_meas = (length(cross) - 1) / (cross[end] - cross[1])
+        @test f_meas ≈ f_pred atol = 5e-4
+
+        # The residual is understood, not slop: the closed form is the *undamped*
+        # natural frequency, and this system has D > 0, so the measured frequency
+        # must come out slightly LOW — by the ~1e-4 Hz that a damping ratio of
+        # about 0.012 implies, and no more.
+        @test f_meas < f_pred
+        @test f_pred - f_meas < 2.0e-4
+        # It is genuinely a damped oscillation about the fixpoint, not a drift:
+        # the envelope decays and the swing stays centred.
+        @test maximum(abs, @view ys[end-500:end]) < 0.5 * maximum(abs, @view ys[1:500])
+        # Centred on the fixpoint, not riding an offset: averaged over a WHOLE
+        # number of the last cycles (delimited by the crossing times, so the
+        # oscillation itself cancels) the residual is ~1% of the local amplitude.
+        i1 = findlast(t -> t <= cross[end-4], ts)
+        i2 = findlast(t -> t <= cross[end], ts)
+        local_amp = maximum(abs, @view ys[i1:i2])
+        @test abs(sum(@view ys[i1:i2]) / (i2 - i1 + 1)) < 0.05 * local_amp
+
+        # Discriminating power, stated rather than assumed: three ways of getting
+        # this formula wrong all land outside the tolerance above. (Dropping cos δ₀
+        # is the near miss — 8e-3 Hz — which is why the tolerance is 5e-4 and not
+        # something comfortable.)
+        no_cos    = sqrt(ω₀ * K * (1 / (2ma.H[1]) + 1 / (2ma.H[2]))) / 2π
+        coi_H     = sqrt(ω₀ * K * cos(δ₀) / (2 * (ma.H[1] + ma.H[2]))) / 2π
+        one_machine = sqrt(ω₀ * K * cos(δ₀) / (2ma.H[1])) / 2π
+        for wrong in (no_cos, coi_H, one_machine)
+            @test abs(f_meas - wrong) > 5e-4
+        end
+    end
+
     @testset "SwingEngine: angles are gauge-dependent, differences are not" begin
         # Shift every δ by a constant and it is still an equilibrium, so
         # `find_fixpoint` returns an arbitrary gauge — on the ring it happens to
