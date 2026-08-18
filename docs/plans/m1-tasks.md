@@ -138,5 +138,43 @@ acceptance criteria in `../SPEC.md` §7.8.
 ## Headless proof & UI (next batch)
 
 - [ ] `scripts/` generator-trip experiment → frequency trajectory, no Makie (AC #1).
+      **Use the real scenario, not `example_system`** — see below.
 - [ ] `ui/` GLMakie: live `f(t)`, readouts (f, RoCoF, nadir), per-unit trip,
       play/pause, rtf slider, `H_sys` indicator (AC #2, #3, #6).
+
+## ENTSO-E Iberian scenario (folded into the batches above)
+
+Plan: `../plans/entsoe-iberia-reproduction.md`. Data: `../scenarios/iberia-2025-04-28.md`.
+
+Prototyped and confirmed working with **zero new code** — the existing engine
+tracks the report's frequency waypoints when fed the real event sequence. This
+becomes the content of the headless script and the UI demo, replacing the
+synthetic `example_system`.
+
+- [ ] Headless script: staged sequence (`StepLoad(+317.3/S_base)` then trips of
+      355 / 725 / 930 / ≈2,600 MW at their reported timestamps), asserting the
+      49.98 / 49.94 / 49.90 / 49.80 Hz waypoints. **No new mechanisms needed.**
+- [ ] Inverter-based resources: confirmed expressible today as
+      `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — verified finite aggregates,
+      no `NaN`. Add a regression test so it stays true.
+- [ ] Low-frequency load shedding as a **latching `ContinuousCallback` per
+      threshold** (root-finds the exact crossing so the shed instant can be
+      annotated). Downward direction; `affect!` disarms its own stage. This is
+      the sanctioned callback path — a real discrete event, *not* the forbidden
+      post-hoc state clamp.
+- [ ] Cumulative tripped-MW accumulator on the recorded trajectory (the second
+      axis in report Figs 1-3 / 3-7 / 3-9).
+- [ ] **500 ms windowed RoCoF** as an additional post-processing read. Every
+      RoCoF figure in the report is windowed; `current_state` is instantaneous.
+      Do not conflate them — the instantaneous value stays the live readout and
+      the closed-form validation target.
+- [ ] Decide consciously: load inertia (`H_tot = H_eq + H_loads`) is currently
+      conflated into `H_sys`. Either add a term or document it. The report's
+      published 2.21–2.71 s range is a ready-made sensitivity experiment.
+
+### Fidelity boundary — do not overclaim
+
+The COI model **cannot** reproduce the final ~5 s. Of the ≥6,150 MW imbalance at
+the −1 Hz/s point, ≈5,000 MW was export swing from loss of synchronism, which
+has no representation in a two-state swing + governor model. Faithful window is
+12:32:00 → ~12:33:19.6. Detail in the plan doc §2.
