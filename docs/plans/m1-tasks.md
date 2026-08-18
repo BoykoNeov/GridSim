@@ -184,8 +184,11 @@ the −1 Hz/s point, ≈5,000 MW was export swing from loss of synchronism, whic
 has no representation in a two-state swing + governor model. Faithful window is
 12:32:00 → ~12:33:19.6. Detail in the plan doc §2.
 
-- Two-area / tie-line model (M2 candidate, now evidence-backed): see
-  `docs/plans/entsoe-iberia-reproduction.md` §7. A 5-state probe reproduces the
-  Iberia/Continental-Europe separation to within ~1 s and closes the
-  pre-separation bracket. One process, one integrator — **not** two coupled
-  GridSim instances.
+- Two-area / tie-line model (M2 candidate, evidence-backed and sweep-tested):
+  see `docs/plans/entsoe-iberia-reproduction.md` §7. A 5-state probe closes the
+  pre-separation bracket robustly (49.92–49.97 Hz across the whole parameter
+  sweep vs report 49.94; the single-area model gives 49.859) and reproduces the
+  Iberia/Continental-Europe separation to within ~1 s for any tie strength below
+  ≈4,250 MW. One process, one integrator — **not** two coupled GridSim
+  instances. Read §7.3 for which claims survive the sweep and which were
+  retracted; `P_max` is a fitted parameter, not a figure from the report.

@@ -286,7 +286,7 @@ keeps growing, reverses past 180°, and hits `+P_max` at 270°. That reversal is
 the report's ≈5,000 MW export swing. Do not ship the linear version thinking it
 is a step on the way.
 
-### 7.3 It works — measured, not asserted
+### 7.3 What the probe establishes — and what it does not
 
 A dependency-free 90-line probe (hand-rolled RK4, five states, scratch code in
 `M:/claud_projects/temp/entsoe/two_area_probe.jl` — deliberately **not** in
@@ -299,28 +299,76 @@ own event sequence:
 | f at 12:33:17 | 49.828 | ≈49.80 |
 | angle past 90° (loss of synchronism) | 12:33:20.54 | 12:33:19.62 |
 | out-of-step protection opens the tie | 12:33:21.94 | 12:33:21.54 |
-| tie flow | 1,000 → −3,500 → +3,500 MW | ≈5,000 MW export swing |
-| after separation | Iberia 48.7 → 47.0 Hz, CE recovers to 49.8 | islanded collapse → blackout 12:33:27 |
+| tie flow, import support then reversal | 1,000 → −3,500 → +3,500 MW | — |
+| **export swing vs pre-event** | **2,500 MW** | **≈5,000 MW** |
+| after separation | Iberia 48.7 → 46.8 Hz, CE recovers to 49.8 | islanded collapse → blackout 12:33:27 |
 
 Parameters (all `[GUESS]` except Iberian KE): `KE₁ = 119,474 MWs`,
 `KE₂ = 800,000 MWs`, `P_tie,0 = 1,000 MW`, `P_max = 3,500 MW`, `D = 1.5`,
 `Tg = 8 s`; Iberian loss ramped to the report's 5,750 MW by 12:33:20.560.
 
-Two results matter more than the agreement itself:
+**Provenance warning, stated up front.** `P_max` was *not* derived — it was set
+to 6,500 MW first, at which value the tie was so stiff it simply supplied the
+deficit and never slipped a pole, and then reduced to 3,500 MW. The parameter
+that decides whether loss of synchronism happens was adjusted until loss of
+synchronism happened. Everything below is the result of sweeping it back out
+(`two_area_sweep.jl`, same folder) over `P_max` 2,500–5,000 MW × `KE₂`
+600k–1,200k MWs, to separate what survives that sweep from what does not.
 
-**(a) It closes the §1(b) bracket.** The COI model gives 49.859 Hz at 12:33:00
-where the report says 49.94, because it cannot represent Continental Europe
-propping Iberia up through a finite tie. The two-area model gives **49.943** —
-the support now flows through the tie automatically, with no tuning. The
-pre-separation window stops being a known-wrong window.
+**(a) The §1(b) bracket closure is robust — this is the strong claim.**
+Frequency at 12:33:00 across the *entire* sweep grid lands in
+**49.923 – 49.974 Hz** against the report's 49.94, and varying `P_tie,0` over
+500–2,000 MW does not widen that. The COI model gives 49.859. So the worst cell
+in the grid is 0.017 Hz off where the single-area model is 0.081 Hz off — a
+five-fold improvement that holds everywhere, not at one tuned point. Adding a
+second area with a tie fixes the pre-separation window regardless of how the tie
+is parameterised, because the mechanism (Continental Europe propping Iberia up)
+is what was missing, not a coefficient. **The single quoted 49.943 should be
+read as "somewhere in 49.92–49.97", not as three-decimal agreement.**
 
-**(b) Whether the pole actually slips is a knife-edge, and that is correct.**
-With the realised 4,854 MW of pump-storage shedding included, the probe reaches
-−95° and hangs there without completing the slip; without it, the slip completes.
-Reality slipped *with* the shedding, which says the true late-window deficit was
-larger than the report's floor figures — **independent confirmation of §1's
-finding** that the late window is under-modelled, arrived at from completely
-different physics. The two analyses agree, which is worth more than either alone.
+**(b) That the pole slips at all is `P_max`-dependent, and honestly so.**
+90°-crossing time, shedding disabled (report: 12:33:19.62):
+
+| `P_max` (MW) | `KE₂`=600k | 800k | 1000k | 1200k |
+|---|---|---|---|---|
+| 2,500 | 19.58 | 19.46 | 19.38 | 19.32 |
+| 3,000 | 20.12 | 20.01 | 19.94 | 19.90 |
+| 3,500 | 20.60 | 20.54 | 20.50 | 20.46 |
+| 4,000 | 21.20 | 21.09 | 21.00 | 20.92 |
+| 4,250 | 22.29 | 21.52 | 21.37 | 21.28 |
+| ≥ 4,500 | never | never | never | never |
+
+So: for any tie weaker than ≈4,250 MW the peninsula loses synchronism, and the
+timing degrades *gracefully* from 0.3 s early to 2.7 s late across that whole
+band — best near `P_max` ≈ 2,750–3,000, which is also where the report's own
+"~3 GW AC corridor" figure sits (§1.2). Above ≈4,500 MW the tie holds and there
+is no separation at all. `KE₂` barely matters. The defensible statement is
+therefore: *a two-area classical model reproduces the separation, at any tie
+strength in the lower two-thirds of the plausible corridor, to within ~1 s* —
+not *the model predicted 12:33:20.54*.
+
+**(c) The knife-edge inference does not survive the sweep — retracted.**
+Earlier wording claimed that because the probe hangs at −95° when the realised
+4,854 MW of pump-storage shedding is included, while reality slipped anyway, the
+true late-window deficit must exceed the report's floor figures — offered as
+independent confirmation of §1. **It is not independent.** The slip/no-slip
+boundary with shedding on sits at `P_max` ≈ 2,500 (at `KE₂`=600k) to ≈3,500 (at
+1,200k) — *inside* the plausible band, not outside it. At `P_max` = 2,500 MW the
+slip completes with the full shedding present. So "shedding suppresses the slip"
+is a statement about the chosen tie stiffness, not about the deficit. The
+alternative explanations — `P_max` set slightly high, `KE₂` slightly large, or
+the cascade ramp slightly slow — fit equally well. §1's under-modelling finding
+stands on its own evidence; it gains nothing from here.
+
+**(d) The swing magnitude is a genuine miss, and it points somewhere.** The
+probe's export swing against pre-event flow is 2,500 MW where the report
+attributes ≈5,000 MW of the imbalance to the swing — about half. Raising `P_max`
+to produce a 5,000 MW swing pushes it into the band where the tie never slips at
+all (row ≥4,500 above). Those two constraints are in direct conflict inside a
+constant-voltage two-area reduction, which is informative rather than fatal: the
+real swing rode on collapsing voltages and several corridors (ES–FR AC, ES–PT,
+ES–MA) rather than one lumped reactance. **Resolving that conflict is a task for
+the M2 engine, not something to tune away.**
 
 ### 7.4 Design sketch
 
@@ -336,6 +384,9 @@ different physics. The two analyses agree, which is worth more than either alone
 - **New events.** `TripLine`. Out-of-step protection as a `ContinuousCallback`
   on `|δᵢ − δⱼ|` crossing 180°/270°, or on apparent impedance entering a relay
   zone — the latter also produces the bucket-B impedance-trajectory figures.
+  The probe uses the pure 270° threshold with **no timer**: its 1.4 s gap
+  between the 90° crossing and the trip is simply how long the angle takes to
+  travel 90°→270°. Don't read that gap as a protection delay to be reproduced.
 - **HVDC in constant-power mode** is a fixed injection with **no angle
   dependence**. One extra term, and the model then *demonstrates* rather than
   merely asserts why it gave no frequency support.
@@ -346,12 +397,20 @@ different physics. The two analyses agree, which is worth more than either alone
    This is the reference check `SPEC` §6 demands of every engine.
 2. **Small-signal mode frequency**, closed form:
    `f = (1/2π)·√(2π·f₀·K_s·(1/2KE₁ + 1/2KE₂))`, `K_s = P_max·cos δ₀`.
-   The probe's parameters imply 0.358 Hz; the nonlinear run must ring at that.
+   Over the §7.3 sweep band this implies **0.29–0.41 Hz** (0.358 Hz at the
+   probe's own `P_max` = 3,500 MW); the nonlinear run must ring at whatever the
+   closed form says for its own parameters. Note this mode is *not* the report's
+   0.21 Hz observation — see §7.6.
 3. **The scenario**: time of the 90° crossing and of the out-of-step trip.
 
-**`P_max` is identifiable from the report, not invented:** `δ₀ = asin(P_tie,0 /
-P_max)`, and the export-swing peak *is* `P_max`. So `P_max` ≈ pre-event flow +
-observed export surge.
+**On identifying `P_max` — weaker than it first looks.** In principle
+`δ₀ = asin(P_tie,0 / P_max)` and the export-swing peak *is* `P_max`, so the
+report's ≈5,000 MW swing would pin it. But §7.3(d) shows that value sits in the
+range where the tie never slips, so the two report observations (swing magnitude,
+separation occurring) cannot both be honoured by one constant-voltage tie.
+Treat `P_max` as **a fitted parameter with a plausible range** (2,500–4,250 MW),
+report results as ranges over it, and record which conclusions depend on it —
+not as a quantity read off the report.
 
 ### 7.6 What this tier still will not do
 
