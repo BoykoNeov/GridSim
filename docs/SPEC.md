@@ -365,8 +365,11 @@ end
 ## 9. Roadmap after M1 (for context — don't build ahead)
 
 1. **M1 (this doc):** aggregate frequency / RoCoF, real-time, generator trip.
-2. Multi-machine **classical/swing** model (rotor angles) on `NetworkDynamics`/
-   `PowerDynamics`, still real-time on small systems.
+2. **M2** — Multi-machine **classical/swing** model (rotor angles) on
+   `NetworkDynamics`, still real-time on small systems. Plan trio:
+   `docs/plans/m2-plan.md` / `m2-context.md` / `m2-tasks.md`. (`PowerDynamics` is
+   deferred, not adopted — it costs ~123 extra packages for a component library
+   M2's single machine type does not need; see `m2-context.md` D1.)
 3. **Run-then-playback** path: same scenarios in PSID full electromechanical;
    overlay vs the surrogate (cross-fidelity validation as a UI feature).
 4. **Steady-state** ladder: DC power flow → AC power flow (Newton) → AC-OPF
