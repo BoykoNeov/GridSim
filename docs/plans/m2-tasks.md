@@ -22,15 +22,28 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       (ModelingToolkit / Symbolics / DataFrames, ~305 s precompile) for a component
       library M2 does not need — **deferred, not rejected.**
 
-## Step 1 — dependency bump, on its own commit (next)
+## Step 1 — dependency bump, on its own commit (DONE)
 
-- [ ] `julia --project=. -e 'import Pkg; Pkg.add(["NetworkDynamics","Graphs"])'`
-      (never hand-write UUIDs).
-- [ ] **Re-run the full M1 suite before writing any M2 code.** The solver bump is
-      the risk; discovering it while debugging new physics is the expensive way.
-      Record the result here either way — a green run is evidence, not a formality.
-- [ ] Extend the no-Makie dependency-closure test so the new deps are covered by
-      it, and confirm the positive control still makes it non-vacuous.
+- [x] `NetworkDynamics` v1.1.0 + `Graphs` v1.14.0 added via `Pkg.add`. **`Pkg` wrote
+      the `[compat]` entries itself**, matching the house convention (floor =
+      version resolved at add time) — nothing hand-edited.
+- [x] **M1 suite run before the add as a baseline** (273/273) so the "after" number
+      means something, and again after.
+- [x] **The spike's version prediction did not hold, and that is the finding.** The
+      real repo kept `OrdinaryDiffEq` 7.0.1 / `SciMLBase` 3.30.1 because it already
+      had a `Manifest.toml` and Pkg preferred the minimal change. The spike's copy
+      had none, so it resolved fresh to 7.6.0 / 3.49.1. **Both were then tested:
+      273/273 either way.** Since the manifest is gitignored, a fresh clone gets the
+      *second* resolution — so the developer machine is systematically the stale
+      one, and the fresh resolve is the one that must be tested.
+- [x] `derivative_discontinuity!` and `successful_retcode` — the two SciMLBase
+      internals M1 reaches for by name, and exactly what a minor-version move
+      relocates — verified to resolve under **both** versions.
+- [x] No-Makie dependency-closure test strengthened: `NetworkDynamics` and `Graphs`
+      added as explicit positive controls (the scan is only evidence about the new
+      closure if it demonstrably *read* the new closure), plus a wider negative —
+      a transitive plotting dep would violate SPEC §3.1 without containing the
+      string "Makie".
 
 ## Step 2 — canonical network model
 

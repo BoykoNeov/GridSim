@@ -38,7 +38,40 @@ reasoned about**.
 Adding NetworkDynamics to a copy of GridSim's `Project.toml` succeeded and moved
 `OrdinaryDiffEq` 7.0.1 → 7.6.0 and `SciMLBase` 3.30.1 → 3.49.1 — **upgrades within
 the existing bounds, not a downgrade**, and the spike exercised the whole
-integrator API we depend on at those versions.
+integrator API we depend on at those versions. (The real add behaved differently;
+see below. The spike's copy had no `Manifest.toml`, which turned out to be the
+whole explanation.)
+
+## The dependency bump — what actually happened (step 1, DONE)
+
+`Pkg.add(["NetworkDynamics","Graphs"])` against the real repo, and **`Pkg` wrote
+the `[compat]` entries itself** (`Graphs = "1.14.0"`, `NetworkDynamics = "1.1.0"`)
+— floor = version resolved at add time, exactly the convention M1's deps follow.
+Nothing had to be hand-edited.
+
+**The spike's version prediction did not hold, and the reason matters.** The real
+repo already had a `Manifest.toml` pinning `OrdinaryDiffEq` 7.0.1, and Pkg
+preferred the minimal change: it added the new packages and left the solver where
+it was. The spike's copy had no manifest, so it resolved fresh and took the
+newest compatible everything.
+
+So **two resolutions exist in the wild**, and since `Manifest.toml` is gitignored,
+a fresh clone gets the second one:
+
+| | `OrdinaryDiffEq` | `SciMLBase` | M1 suite |
+|---|---|---|---|
+| existing manifest (this machine, incremental) | 7.0.1 | 3.30.1 | **273/273** |
+| fresh resolve (what a clone gets) | 7.6.0 | 3.49.1 | **273/273** |
+
+Both were run, not assumed, and a **baseline run before the add** (also 273/273)
+makes the "after" numbers mean something. `derivative_discontinuity!` and
+`successful_retcode` — the two SciMLBase internals M1 reaches for by name, and
+precisely the kind of thing a minor-version move relocates — were checked to
+resolve under *both*.
+
+The lesson worth keeping: with a gitignored manifest, "what version does this
+resolve to" has **two** answers, and the developer machine is systematically the
+stale one. Test the fresh resolve, because that is what everyone else gets.
 
 ### The three gate criteria — all pass
 
@@ -139,9 +172,8 @@ integrating harmlessly and are excluded from the aggregate read-out.
 
 ## Open questions to resolve during M2
 
-- **Does the M1 suite still pass at `OrdinaryDiffEq` 7.6.0 / `SciMLBase` 3.49.1?**
-  Unknown until step 1 runs. This is why the dependency bump is its own commit,
-  before any M2 code.
+- ~~Does the M1 suite still pass at `OrdinaryDiffEq` 7.6.0 / `SciMLBase` 3.49.1?~~
+  **RESOLVED — yes, 273/273, in both resolutions.** See the bump section above.
 - **Where does the trajectory-buffer fix live?** M2 introduces a second engine
   with the same unbounded-growth shape as M1's. It wants to be one shared
   recording facility, not two leaks — but designing that is a small refactor of

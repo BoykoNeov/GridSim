@@ -961,7 +961,17 @@ end
         # would pass vacuously if `Pkg.dependencies()` ever returned nothing useful.
         names = [d.name for d in values(Pkg.dependencies())]
         @test "Observables" in names                     # positive control
+        # The M2 network deps are named explicitly as *further* positive controls:
+        # they arrived with ~60 transitive packages, and this scan is only evidence
+        # about that closure if the closure it read actually contains them.
+        @test "NetworkDynamics" in names
+        @test "Graphs" in names
         @test !any(n -> occursin("Makie", n), names)     # the actual invariant
+        # Makie is the invariant the SPEC names, but it is not the only way a UI
+        # package could enter — a transitive plotting dep would violate §3.1 just
+        # as much, and would not contain the string "Makie".
+        @test !any(n -> n in ("Plots", "GR", "PyPlot", "PlotlyJS", "UnicodePlots"),
+                   names)
     end
 
 end

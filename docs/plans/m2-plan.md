@@ -39,13 +39,15 @@ boundary, not a shortcut.
 
 ## Approach (incremental; each step commits and leaves tests green)
 
-1. **Dependency bump first, in isolation.** `Pkg.add(["NetworkDynamics", "Graphs"])`
-   and then **re-run the whole M1 suite before writing a line of M2 code.** Adding
-   NetworkDynamics moves `OrdinaryDiffEq` 7.0.1 → 7.6.0 and `SciMLBase` 3.30.1 →
-   3.49.1 (both inside the existing compat bounds; `Manifest.toml` is gitignored).
-   A solver bump can change M1 behaviour, and finding that out *while* debugging
-   new physics is the expensive way to find it out. Extend the existing
-   "no Makie in the core dependency closure" test to cover the new deps.
+1. **Dependency bump first, in isolation — DONE.** `NetworkDynamics` v1.1.0 and
+   `Graphs` v1.14.0 added; `Pkg` wrote their `[compat]` entries itself, matching
+   the house convention (floor = version resolved at add time). The M1 suite was
+   run **before** the add as a baseline and again after, and is **273/273 green in
+   both of the two resolutions that exist in the wild** — see the *Dependency bump*
+   section of `m2-context.md` for why there are two. The "no Makie in the core
+   dependency closure" test gained the new deps as explicit positive controls and a
+   wider negative (a transitive plotting dep would violate SPEC §3.1 without
+   containing the string "Makie").
 2. **Canonical network model** — `src/model/network_model.jl`: `Bus`, `Branch`,
    `Machine`, `NetworkModel`, plus `two_machine_system()` and
    `three_machine_ring()` examples. Engineering units at the boundary, per-unit
@@ -55,6 +57,11 @@ boundary, not a shortcut.
    (one machine) and edge model (one branch), assembly into a `Network`, and
    `SwingEngine <: SimulationEngine` implementing `init!` / `step!` /
    `current_state` / `state_series` / `timestep` / `inject!`.
+   **This is the first real test of the `SimulationEngine` contract.** M1 had one
+   engine, so `src/engines/interface.jl` has never had to hold a second one.
+   Confirm explicitly that `SwingEngine` needs **no changes** to `interface.jl` —
+   and if it does, that is a *finding about the abstraction*, to be recorded as
+   one, not a detail to be patched in passing.
 4. **Steady-state initialization** via `find_fixpoint`, with the flat-start and
    injection assertions from *Validation* below wired in as tests **in the same
    step** — not after. A model initialised off-equilibrium rings from `t = 0` and
@@ -90,7 +97,15 @@ down; the numbers in `m2-context.md` are measured, not predicted.
   Assert **both** halves: the COI frequencies agree early (they must track), and
   they diverge later (they must not be identical). Asserting only the agreement
   lets the test pass vacuously if `coi_model` ever returns something trivial.
-- **V5 — no dense network matrix** is ever assembled (SPEC §4).
+- **V5 — no dense network matrix.** Needs care, because under D3 the engine never
+  assembles *any* admittance matrix, so "assert it isn't dense" is a checkbox that
+  cannot fail — the same vacuous-test trap V4 is written to avoid. The honest
+  version is a **structural** claim with teeth: assert the engine's construction
+  path allocates nothing that scales as machines², and state in the code comment
+  that SPEC §4's rule is satisfied *by construction* (coupling lives on graph
+  edges) rather than by a runtime check. If that assertion cannot be made to bite,
+  drop V5 and say so here — a test that cannot fail is worse than an absent one,
+  because it reads as coverage.
 
 ## Pitfalls / carried-forward review notes
 
