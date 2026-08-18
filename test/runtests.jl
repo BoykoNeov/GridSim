@@ -6,6 +6,15 @@ import SciMLBase
 import Observables          # the core→UI seam; also the positive control for the no-Makie test
 import Pkg                  # to inspect the dependency closure (no-Makie invariant)
 
+# The Iberian scenario script is a DELIVERABLE, so its claims are asserted below.
+# Included as a module so the scenario data stays single-sourced (no second copy of
+# the event times living in the test file) without leaking the script's constants
+# into the suite's namespace. The script guards `main()` behind PROGRAM_FILE, so
+# including it defines everything and runs nothing.
+module Iberia
+include(joinpath(@__DIR__, "..", "scripts", "iberia_2025_04_28.jl"))
+end
+
 # Scaffold-level tests: they exercise the durable contracts (data model, events,
 # engine interface) that ship at initialization. The physics validation for M1
 # (closed-form initial RoCoF and settling deviation, docs/SPEC.md §7.6) is added
@@ -718,6 +727,89 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
         @test isfinite(st.f) && st.f < sys.f0
         @test all(isfinite, state_series(eng).f)
         @test eng.tripped_mw ≈ 900.0
+    end
+
+    @testset "Iberia scenario: the two-window structure, asserted not banded" begin
+        # The headless script is a deliverable, so its claims are pinned here. It is
+        # included as a MODULE so the scenario stays single-sourced (no second copy of
+        # the event times in the test) without leaking its constants into the suite;
+        # `main()` is guarded by PROGRAM_FILE, so including it runs nothing.
+        #
+        # THE TOLERANCES ENCODE A STRUCTURE, NOT A BAND. The model errs in opposite
+        # directions on either side of ~12:33:17, and one symmetric "close enough"
+        # band would hide both halves. So each window is asserted with its own SIGN.
+        eng = Iberia.replay()
+        s = state_series(eng)
+        at(tq) = s.f[argmin(abs.(s.t .- tq))]
+
+        # Window 1 — before loss of synchronism the model runs TOO DEEP, because
+        # Iberia was still synchronously inside Continental Europe behind a finite
+        # tie and was therefore stiffer than the isolated system modelled here.
+        for (tq, fref) in ((55.0, 49.98), (60.0, 49.94), (76.9, 49.90), (77.9, 49.80))
+            fm = at(tq)
+            @test fm < fref                              # the SIGN is the claim
+            @test fref - fm < 0.15                       # …and it stays small
+        end
+
+        # Window 2 — 12:33:20 is DELIBERATELY NOT BANDED. The centre-of-inertia model
+        # cannot reproduce the last 5 s (plan doc §2): ~5,000 MW of the imbalance was
+        # export swing from loss of synchronism, which a two-state swing + governor
+        # model has no state for. With the real defence plan armed the model recovers
+        # while reality collapsed, so this row is asserted as a KNOWN STRUCTURAL
+        # FAILURE. It is not a target: closing it requires the two-area model, and
+        # doing so must come with a conscious edit to this assertion — never with a
+        # parameter tuned until the number matches.
+        @test at(80.0) > 48.50 + 0.5
+        @test eng.nadir > 49.0                           # the ladder arrests the fall
+
+        # The defence plan fired the stages the report annotates, in threshold order.
+        lg = shed_log(eng.ladder)
+        @test length(lg.t) == 4
+        @test lg.threshold_hz == [49.8, 49.7, 49.6, 49.5]
+        @test issorted(lg.t)                             # in time order too
+        @test isapprox(shed_total(eng.ladder) * eng.model.S_base, 3907.0; atol = 1.0)
+        # Root-found, so the crossing instants are not on the dt grid.
+        @test all(t -> !isapprox(t / 0.01, round(t / 0.01); atol = 1e-6), lg.t)
+        # Reality did not reach 49.5 Hz until 12:33:20.1 (report p.174), i.e. AFTER
+        # the boundary; the model gets there early, the same too-deep error as above.
+        @test lg.t[end] < 80.13 - 1.0
+
+        # Disarming the ladder must make it worse — the mechanism has to be load-bearing.
+        bare = Iberia.replay(; shed = false)
+        @test bare.nadir < eng.nadir - 0.5
+        @test isempty(shed_log(bare.ladder).t)
+
+        # Cumulative tripped generation: the scripted sequence, and a lower bound by
+        # construction (the report calls the last cluster a floor).
+        @test issorted(s.tripped_mw)
+        @test s.tripped_mw[end] ≈ 355 + 725 + 930 + 2600
+
+        # The one RoCoF claim that lies INSIDE the faithful window: the report states
+        # |RoCoF| stayed within 1 Hz/s until 12:33:20.560 (p.116), measured over a
+        # 500 ms sliding window. Instantaneous RoCoF is a different quantity and is
+        # steeper by construction — asserted, so the two cannot be conflated later.
+        w = windowed_rocof(s)
+        inwin = findall(t -> t <= Iberia.T_BOUNDARY, s.t)
+        wv = filter(!isnan, w.RoCoF[inwin])
+        @test !isempty(wv)
+        @test maximum(abs, wv) < 1.0                     # the report's claim
+        @test maximum(abs, wv) > 0.2                     # non-vacuous
+        @test maximum(abs, wv) < maximum(abs, s.RoCoF[inwin])
+    end
+
+    @testset "Iberia scenario: keying the base off KE makes RoCoF0 H-independent" begin
+        # The report's 2.21–2.71 s inertia band is uncertainty about how to SPLIT the
+        # measured kinetic energy between machines and motor load. `S_base = KE/H_tot`
+        # makes f0·ΔP/(2·H_sys) collapse to f0·ΔP_MW/(2·KE), so that split cancels out
+        # of the initial RoCoF exactly. The script prints this; here it is pinned, so
+        # nobody later reads the identical column as an empirical insensitivity result.
+        r_lo  = Iberia.rocof0(Iberia.H_LO, :E6)
+        r_mid = Iberia.rocof0(Iberia.H_MID, :E6)
+        r_hi  = Iberia.rocof0(Iberia.H_HI, :E6)
+        @test isapprox(r_lo, r_mid; rtol = 1e-12)
+        @test isapprox(r_hi, r_mid; rtol = 1e-12)
+        @test isapprox(r_mid, -50.0 * 2600.0 / (2 * Iberia.KE); rtol = 1e-12)
+        @test r_mid < 0                                  # a trip lowers frequency
     end
 
     @testset "EventQueue" begin
