@@ -14,7 +14,7 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
 - `Manifest.toml` is **gitignored** (this is a package). Run `Pkg.instantiate()`
   after cloning.
 
-## Current state of the repo (M1 steps 1–5 done: engine + orchestration)
+## Current state of the repo (M1 steps 1–6 done: engine + orchestration + validation)
 
 - **Deps (core):** `CommonSolve`, `OrdinaryDiffEq` v7.0.1, `SciMLBase`, and
   `Observables` v0.5.5 (`Pkg.add`; caret `[compat]`). No Makie in core — now
@@ -22,7 +22,7 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
   positive control). `Pkg` itself is a test-only extra for that check.
 - `src/GridSim.jl` includes: `model/system_model.jl`, `events/events.jl`,
   `engines/interface.jl`, `engines/frequency_response.jl`, and
-  `orchestration/realtime_loop.jl`. Loads clean; **116 tests pass**.
+  `orchestration/realtime_loop.jl`. Loads clean; **177 tests pass**.
 - `model/system_model.jl`: `GeneratingUnit`, `SystemModel`, `example_system()`
   (a 4-unit, S_base=550 MVA, f0=50 Hz system).
 - `events/events.jl`: `PerturbationEvent`, `TripGenerator`, `StepLoad`.
@@ -41,8 +41,23 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
   as an `@async` task beside a GLMakie window (never `Threads.@spawn` — GLMakie is
   not thread-safe and the Observable write is what drives the redraw).
 - `ui/` is a **separate package** (`GridSimUI`, own Project.toml), empty deps.
+- `test/runtests.jl` now closes the validation batch (SPEC §7.6): the closed
+  forms swept over every unit at `rtol = 1e-6`, plus the low-inertia lesson
+  asserted two ways — an inertia-only isolation and the fewer-units-online
+  demonstration. Per-item detail and testset names are in `m1-tasks.md`.
 
 ## Key decisions (and why)
+
+- **Saturation preconditions belong on the equilibrium, not the transient.**
+  The unsaturated settling closed form `Δω_ss = ΔP_dist/(D + 1/R_eq)` is a
+  statement about the fixed point, so the "governors are not saturated" guard
+  it needs is `ΔPm_end < headroom` — *not* the transient peak. Tripping G2 makes
+  the governor overshoot briefly touch the ceiling on the way down while the
+  fixed point stays well under it; saturation clips the transient but cannot
+  move the equilibrium. The transient-level guard is still the right one in the
+  low-inertia comparison, where a ceiling that bound in the light configs but
+  not the heavy ones would make the deeper nadir partly reserve exhaustion
+  rather than inertia. Same fact, two different questions.
 
 - **Scaffold-first, M1 code next batch.** The handoff/spec are validation-first;
   with no engine numerics yet, we ship only the durable contracts that load+test.

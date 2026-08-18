@@ -414,6 +414,13 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
         # So every config must land on the SAME frequency and differ only in how
         # far it dipped on the way. Asserting the equality alongside the ordering
         # is a much sharper statement of the lesson than the ordering alone.
+        # Mixing sources here is deliberate and safe: the disturbance comes from
+        # `base` while D/R_eq come from the k=2.0 config's aggregates — legal
+        # *because* droop, damping and reserve are invariant under inertia
+        # scaling, which is the very premise this testset rests on. If
+        # `scale_inertia` ever grows to touch a second field, that invariance is
+        # gone and this line silently compares against the wrong baseline instead
+        # of failing, so the two must move together.
         a = rs[1].aggr
         Δω_ss = (-P0_of(base, :G4) / base.S_base) / (a.D + 1 / a.R_eq)
         f_ss = base.f0 * (1 + Δω_ss)
