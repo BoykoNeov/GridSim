@@ -72,11 +72,48 @@ acceptance criteria in `../SPEC.md` §7.8.
       closed-form initial RoCoF, unsaturated settling (`Δω_ss=ΔP_dist/(D+1/R_eq)`,
       via a small G4 trip), and `max ΔPm ≤ headroom`. **72 tests pass.**
 
-## Orchestration (next batch)
+## Orchestration (DONE)
 
-- [ ] Event queue + `drain!`.
-- [ ] `run_realtime!(engine, state_obs; rtf)` with wall-clock pacing (Observables).
-- [ ] No Makie import (assert core closure excludes Makie).
+- [x] `EventQueue` + `drain!` in `src/orchestration/realtime_loop.jl`. Lock-guarded
+      (`ReentrantLock`) so the UI can push from any task; `drain!` **swaps** the
+      vector under the lock (O(1) critical section, caller iterates lock-free) and
+      returns a shared `const _NO_EVENTS` when nothing is pending — no allocation on
+      the ~50 event-free steps per second. `push!`/`isempty`/`length`/`empty!` are
+      **`import Base:`**-extended, not redefined: defining them bare inside the module
+      would shadow Base's for the whole package (same collision class as `step!`).
+- [x] `timestep(engine)` added to the engine interface (+ `FrequencyResponseEngine`
+      method returning `eng.dt`) so the loop never hard-codes a cadence.
+- [x] `RealtimeControl` — `running` / `paused` / `rtf` as concrete `Observable`s, so
+      the UI binds play-pause and the speed slider straight to it. Plus `stop!`.
+- [x] `run_realtime!(engine, state_obs=nothing; rtf, control, queue, dt, duration,
+      max_lag)`. Engine-agnostic (only the interface verbs). Pacing **re-anchors
+      rather than accumulating debt**: `rtf` is re-read every pass (the slider moves
+      mid-run), the deadline advances by `dt/rtf`, and if a step overruns by more
+      than `max_lag` the clock restarts from now instead of sprinting through the
+      backlog — same re-anchor on resume from pause, so a long pause does not wake
+      up owing seconds. `rtf = Inf` ⇒ no sleeping: the headless/batch path is the
+      *same code path* as the paced UI run. `state_obs` is a function argument with
+      `_publish!(::Nothing)` / `_publish!(::Observable)` dispatch — never a
+      `Union{Observable,Nothing}` struct field (concrete-fields rule).
+- [x] Runs as a cooperative task (`@async`), not `Threads.@spawn` — GLMakie is not
+      safe to mutate off the main thread, and the Observable write is what triggers
+      the redraw; every wait inside yields.
+- [x] No Makie: `Pkg.dependencies()` closure test asserts **both** that Makie is
+      absent *and* (positive control, so it can't pass vacuously) that Observables
+      is present. Needed `Pkg` in `[extras]`/`[targets]` (UUID resolved via
+      `Base.identify_package`, not hand-written).
+- [x] Loop tests all self-terminate — finite `duration` with `rtf=Inf`, or a state
+      callback stopper plus a wall-clock watchdog. A hung suite is worse than a
+      failing one. **116 tests pass.**
+
+### Known, deferred (not this batch)
+
+- [ ] **Unbounded trajectory growth.** The engine pushes to `ts/fs/rocofs/pms` on
+      every step forever — the same unbounded-memory problem the engine already
+      avoids for the integrator's own storage (`save_everystep=false`). Harmless at
+      test/script scale; it will show up in the UI batch over a multi-minute run.
+      Fix later with a ring buffer or a decimated history, not by re-designing the
+      engine now.
 
 ## Validation tests (next batch)
 

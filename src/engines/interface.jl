@@ -70,6 +70,16 @@ playback/plotting.
 """
 function state_series end
 
+"""
+    timestep(engine) -> Float64
+
+The engine's natural real-time step (s). The orchestration loop asks for this
+rather than hard-coding a `dt`, so each fidelity tier can carry its own sensible
+cadence and the loop stays engine-agnostic. Real-time engines implement it; a
+caller may still override the loop's `dt` explicitly.
+"""
+function timestep end
+
 # --- live perturbation (real-time engines) ------------------------------
 
 """

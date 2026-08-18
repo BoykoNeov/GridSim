@@ -14,25 +14,32 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
 - `Manifest.toml` is **gitignored** (this is a package). Run `Pkg.instantiate()`
   after cloning.
 
-## Current state of the repo (M1 engine batch — steps 1–2 done)
+## Current state of the repo (M1 steps 1–5 done: engine + orchestration)
 
-- **Deps (core):** `CommonSolve`, plus `OrdinaryDiffEq` v7.0.1 and `Observables`
-  v0.5.5 added in the M1 batch (`Pkg.add`; caret `[compat]`). No Makie in core.
+- **Deps (core):** `CommonSolve`, `OrdinaryDiffEq` v7.0.1, `SciMLBase`, and
+  `Observables` v0.5.5 (`Pkg.add`; caret `[compat]`). No Makie in core — now
+  *asserted* by a `Pkg.dependencies()` closure test (with Observables as the
+  positive control). `Pkg` itself is a test-only extra for that check.
 - `src/GridSim.jl` includes: `model/system_model.jl`, `events/events.jl`,
-  `engines/interface.jl`, and now `engines/frequency_response.jl`. Loads clean;
-  **35 tests pass**.
+  `engines/interface.jl`, `engines/frequency_response.jl`, and
+  `orchestration/realtime_loop.jl`. Loads clean; **116 tests pass**.
 - `model/system_model.jl`: `GeneratingUnit`, `SystemModel`, `example_system()`
   (a 4-unit, S_base=550 MVA, f0=50 Hz system).
 - `events/events.jl`: `PerturbationEvent`, `TripGenerator`, `StepLoad`.
 - `engines/interface.jl`: `SimulationEngine`; GridSim-owned generic verbs `init!`,
-  `current_state`, `state_series`, `inject!` (no methods yet); `step!`/`solve!`
+  `current_state`, `state_series`, `inject!`, `timestep`; `step!`/`solve!`
   imported from `CommonSolve` and re-exported (one shared generic with SciML).
-  Tests now assert the same identity holds for `OrdinaryDiffEq` (both verbs) —
-  the deferred empirical check from the scaffold batch.
-- `engines/frequency_response.jl`: `aggregates(model, online) -> (; H_sys, R_eq,
-  D, Tg)` implemented + unit-tested (unexported helper). The engine struct,
-  `init!`/`step!`/`current_state`, and `inject!` are **still to come** (steps 3+).
-- `orchestration/realtime_loop.jl` is still a **placeholder** (comments + outline).
+  Tests assert the same identity holds for `OrdinaryDiffEq` (both verbs).
+- `engines/frequency_response.jl`: `aggregates` (COI `H_sys`/`R_eq`/`D`/`Tg`/
+  `headroom`), `FRParams`, `fr_rhs!` (headroom saturation **in the derivative**),
+  and `FrequencyResponseEngine{I}` with `init!`/`step!`/`current_state`/
+  `state_series`/`timestep`/`inject!`.
+- `orchestration/realtime_loop.jl`: `EventQueue` + `drain!`, `RealtimeControl` +
+  `stop!`, and `run_realtime!`. Engine-agnostic (interface verbs only), publishes
+  each state to an `Observable`, paces to wall-clock with re-anchoring instead of
+  debt accumulation, `rtf = Inf` for the flat-out headless path. Designed to run
+  as an `@async` task beside a GLMakie window (never `Threads.@spawn` — GLMakie is
+  not thread-safe and the Observable write is what drives the redraw).
 - `ui/` is a **separate package** (`GridSimUI`, own Project.toml), empty deps.
 
 ## Key decisions (and why)
@@ -52,11 +59,17 @@ without re-deriving. Pairs with `m1-plan.md` and `m1-tasks.md`.
   `OrdinaryDiffEq` v7.0.1 (lighter closure, Makie-free; still bundles `Tsit5` now
   and `Rodas5`/`Verner` for later stiff tiers). `DifferentialEquations` rejected
   as too heavy for M1.
-- Exact mechanism for the ΔPm headroom saturation (in-RHS clamp of the derivative
-  vs a `DiscreteCallback`/`ManifoldProjection`). **Decide when writing the RHS
-  (step 3, next).** Get an advisor read before committing to an approach.
-- Whether the running nadir lives in the engine state record or is derived by the
-  orchestration layer. (Leaning: engine records `(t,f,RoCoF)`, nadir derived.)
+- ~~Exact mechanism for the ΔPm headroom saturation.~~ **RESOLVED (step 3):**
+  saturation in the derivative (`fr_rhs!` zeroes `dΔPm` at the ceiling — which also
+  gives release for free), with an `isoutofdomain` guard on top that *rejects and
+  retries* an overshooting step (never writes state, so not the forbidden post-hoc
+  clamp), plus a discrete re-init of `ΔPm` to the new ceiling inside `inject!`.
+- ~~Whether the running nadir lives in the engine or is derived by orchestration.~~
+  **RESOLVED:** the engine tracks it (`eng.nadir`, updated in `_record!`) — the
+  orchestration loop stays a pure driver and holds no physics state.
+- **Trajectory history is unbounded** (`ts/fs/rocofs/pms` grow on every step). Fine
+  for scripts/tests; needs a ring buffer or decimation before long UI sessions.
+  Tracked in `m1-tasks.md` under "Known, deferred".
 - ~~`step!`/`solve!` collide with CommonSolve's exports~~ **RESOLVED (scaffold
   batch):** `CommonSolve` is now a direct core dep and `engines/interface.jl` does
   `import CommonSolve: step!, solve!`, so we share one generic with the SciML

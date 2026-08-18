@@ -285,6 +285,14 @@ The full recorded trajectory accumulated by `step!` (for plotting/playback).
 state_series(eng::FrequencyResponseEngine) =
     (; t = eng.ts, f = eng.fs, RoCoF = eng.rocofs, ΔPm = eng.pms)
 
+"""
+    timestep(eng::FrequencyResponseEngine) -> Float64
+
+The engine's own real-time step (s) — what `run_realtime!` uses by default so the
+orchestration loop never hard-codes a cadence (see `engines/interface.jl`).
+"""
+timestep(eng::FrequencyResponseEngine) = eng.dt
+
 # Locate a unit by id in the canonical model (small linear scan; M1 systems are
 # tiny). Throws if absent — a trip of a non-existent unit is a caller bug.
 function _find_unit(model::SystemModel, id::Symbol)

@@ -3,6 +3,8 @@ using Test
 import CommonSolve
 import OrdinaryDiffEq
 import SciMLBase
+import Observables          # the core→UI seam; also the positive control for the no-Makie test
+import Pkg                  # to inspect the dependency closure (no-Makie invariant)
 
 # Scaffold-level tests: they exercise the durable contracts (data model, events,
 # engine interface) that ship at initialization. The physics validation for M1
@@ -300,6 +302,121 @@ import SciMLBase
         @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
         # Post-trip trajectory never crosses the new (shrunken) ceiling.
         @test all(≤(eng.params.headroom + 1e-6), @view eng.pms[n+1:end])
+    end
+
+    # --- orchestration: event queue + real-time loop (docs/SPEC.md §7.5) ------
+    #
+    # Every loop test below terminates on its own: either a finite `duration` with
+    # `rtf = Inf` (no sleeping, so it cannot outlive the assertion it supports), or
+    # an explicit stopper wired to a state callback plus a wall-clock watchdog. A
+    # `while running[]` loop with wall-clock pacing is the classic way to hang a
+    # suite, and a hung suite is worse than a failing one.
+
+    @testset "EventQueue" begin
+        q = EventQueue()
+        @test isempty(q) && length(q) == 0
+        @test isempty(drain!(q))                        # draining an empty queue is fine
+
+        push!(q, TripGenerator(:G1))
+        push!(q, StepLoad(0.05))
+        @test length(q) == 2 && !isempty(q)
+
+        evs = drain!(q)                                 # submission order preserved
+        @test evs == [TripGenerator(:G1), StepLoad(0.05)]
+        @test isempty(q)                                # …and the queue is now empty
+        @test isempty(drain!(q))                        # a second drain yields nothing
+
+        # The swap must hand out a *fresh* vector each time, not alias the one the
+        # caller is still holding — otherwise a later push! would mutate it.
+        push!(q, TripGenerator(:G2))
+        @test length(evs) == 2                          # the earlier batch is untouched
+        empty!(q)
+        @test isempty(q)
+    end
+
+    @testset "timestep is the engine's own dt" begin
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.05)
+        @test timestep(eng) == 0.05                     # what run_realtime! defaults to
+    end
+
+    @testset "run_realtime! headless (rtf = Inf) with a queued trip" begin
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.02)
+        obs = Observables.Observable(current_state(eng))
+        q = EventQueue()
+        push!(q, TripGenerator(:G1))                    # applied at the first step boundary
+
+        out = run_realtime!(eng, obs; rtf = Inf, queue = q, duration = 2.0)
+
+        @test out.engine === eng                        # returns the handles it used
+        @test out.queue === q
+        @test out.control isa RealtimeControl
+        @test isempty(q)                                # the loop drained it
+        @test !(:G1 in eng.online)                      # …and injected it
+
+        @test isapprox(current_state(eng).t, 2.0; atol = 0.021)   # ran the sim duration
+        @test obs[] == current_state(eng)                # published the latest state
+        s = state_series(eng)
+        @test length(s.t) == 101                         # seed point + 100 steps of 0.02
+        @test minimum(s.f) < sys.f0 - 0.05               # losing 150 MW dips frequency
+        @test eng.nadir == minimum(s.f)
+    end
+
+    @testset "run_realtime! stops when control.running[] is cleared" begin
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
+        obs = Observables.Observable(current_state(eng))
+        ctl = RealtimeControl(; rtf = Inf)
+        # Stop from a state callback: deterministic (counts published states, so it
+        # also proves one publish per step) and independent of wall-clock timing.
+        published = Ref(0)
+        Observables.on(obs) do _
+            published[] += 1
+            published[] == 10 && stop!(ctl)
+        end
+        # `duration = Inf` on purpose — the callback is what must end this loop.
+        run_realtime!(eng, obs; control = ctl, duration = Inf)
+        @test published[] == 10
+        @test !ctl.running[]
+        @test isapprox(current_state(eng).t, 0.2; atol = 1e-9)   # exactly 10 × dt
+    end
+
+    @testset "run_realtime! honours pause and resumes without catch-up sprint" begin
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
+        ctl = RealtimeControl(; rtf = Inf, paused = true)
+        task = @async run_realtime!(eng, nothing; control = ctl, duration = 1.0)
+        # Watchdog: whatever happens, this loop is over within 10 s wall-clock, so a
+        # regression in the pause branch fails the test instead of hanging the suite.
+        @async (sleep(10.0); stop!(ctl))
+
+        sleep(0.2)
+        @test current_state(eng).t == 0.0               # frozen: sim time did not advance
+        @test ctl.running[]                             # …but the loop is alive
+        ctl.paused[] = false
+        wait(task)
+        @test isapprox(current_state(eng).t, 1.0; atol = 0.021)   # resumed and finished
+    end
+
+    @testset "run_realtime! paces to wall-clock at rtf = 1" begin
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
+        t_wall = @elapsed run_realtime!(eng, nothing; rtf = 1.0, duration = 0.2)
+        @test isapprox(current_state(eng).t, 0.2; atol = 0.021)
+        # Lower bound is the real assertion (it did sleep rather than sprint); the
+        # upper bound is deliberately loose — timer resolution and CI load are noisy.
+        @test 0.15 < t_wall < 3.0
+        # Twice the speed must take less wall-clock time for the same sim duration.
+        eng2 = init!(FrequencyResponseEngine, example_system(); dt = 0.02)
+        t_wall2 = @elapsed run_realtime!(eng2, nothing; rtf = 4.0, duration = 0.2)
+        @test t_wall2 < t_wall
+    end
+
+    @testset "core dependency closure is UI-free (no Makie)" begin
+        # The structural invariant (docs/SPEC.md §3.1): the core may reach Observables
+        # — that is the seam live state crosses — but never a plotting package. The
+        # positive half matters as much as the negative: without it this testset
+        # would pass vacuously if `Pkg.dependencies()` ever returned nothing useful.
+        names = [d.name for d in values(Pkg.dependencies())]
+        @test "Observables" in names                     # positive control
+        @test !any(n -> occursin("Makie", n), names)     # the actual invariant
     end
 
 end
