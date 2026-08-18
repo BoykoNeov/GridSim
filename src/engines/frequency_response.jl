@@ -162,7 +162,13 @@ Fields: the canonical `model`; the live `online` unit set; the **shared** mutabl
 `params` (the very object the integrator holds — `eng.integrator.p === eng.params`,
 which is what lets `inject!` change the system without disturbing the continuous
 state); the real-time `dt`; the `integrator`; `f0`; the recorded trajectory
-(`ts`, `fs`, `rocofs`, `pms`) and the running `nadir` frequency.
+(`ts`, `fs`, `rocofs`, `pms`, `tripped_mws`); the running `nadir` frequency and
+`tripped_mw` accumulator; and the **shared** `ladder` of armed load-shedding
+stages (the same object the callbacks close over — see `protection/load_shedding.jl`).
+
+`tripped_mw` is cumulative **generation** lost to `TripGenerator` (MW, engineering
+units) — the second axis of report Figures 1-3 / 3-7 / 3-9. Shed *load* is not
+generation and is logged separately in `ladder`.
 """
 mutable struct FrequencyResponseEngine{I} <: SimulationEngine
     model::SystemModel
@@ -175,24 +181,36 @@ mutable struct FrequencyResponseEngine{I} <: SimulationEngine
     fs::Vector{Float64}
     rocofs::Vector{Float64}
     pms::Vector{Float64}
+    tripped_mws::Vector{Float64}
     nadir::Float64
+    tripped_mw::Float64
+    ladder::ShedLadder
 end
 
 """
-    FrequencyResponseEngine(model; t0=0.0, dt=0.02, solver=Tsit5())
+    FrequencyResponseEngine(model; t0=0.0, dt=0.02, solver=Tsit5(), shed=LoadShedStage[])
 
 Build a ready-to-step engine from `model`. All units start online; the parameter
 block starts at zero disturbance (`ΔP_dist = 0`, so the system sits at the origin
 until the first `inject!`). The integrator is `init`-ed (not `solve`-d) so the
 orchestration loop can interleave events and redraws (docs/SPEC.md §6).
+
+`shed` arms a low-frequency load-shedding ladder (`LoadShedStage`); each stage
+becomes a downward-crossing `ContinuousCallback` that root-finds its exact firing
+instant. Default: an empty ladder, i.e. no protection scheme. See
+`protection/load_shedding.jl` for why this is the *sanctioned* callback path.
 """
 function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
                                  dt::Real = _FR_DT0,
-                                 solver = OrdinaryDiffEq.Tsit5())
+                                 solver = OrdinaryDiffEq.Tsit5(),
+                                 shed::Vector{LoadShedStage} = LoadShedStage[])
     online = Set(u.id for u in model.units)
     a = aggregates(model, online)
     params = FRParams(a.H_sys, a.R_eq, a.D, a.Tg, 0.0, a.headroom)
     t0f = Float64(t0)
+    # Built BEFORE the integrator and shared with it: the callbacks close over
+    # this exact `ladder`, and the engine keeps the same object as a field.
+    ladder = ShedLadder(shed)
     # Large *finite* tspan: we drive the integrator with `step!(integ, dt, true)`,
     # so the end is never reached, and a finite bound keeps OrdinaryDiffEq's
     # adaptive initial-step heuristic well-behaved (with `Inf`, `dtmax=Inf` and the
@@ -204,16 +222,18 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
     integrator = OrdinaryDiffEq.init(prob, solver;
                                      dt = Float64(dt),
                                      isoutofdomain = _fr_outofdomain,
+                                     callback = shed_callbacks(ladder, model.f0),
                                      save_everystep = false, dense = false)
     f0 = model.f0
-    # Seed the trajectory with the pre-disturbance point (Δω=0 ⇒ f=f0, RoCoF=0).
+    # Seed the trajectory with the pre-disturbance point (Δω=0 ⇒ f=f0, RoCoF=0,
+    # nothing tripped yet).
     return FrequencyResponseEngine(model, online, params, Float64(dt), integrator,
                                    f0, Float64[t0f], Float64[f0], Float64[0.0],
-                                   Float64[0.0], f0)
+                                   Float64[0.0], Float64[0.0], f0, 0.0, ladder)
 end
 
 """
-    init!(FrequencyResponseEngine, model; t0=0.0, dt=0.02, solver=Tsit5())
+    init!(FrequencyResponseEngine, model; t0=0.0, dt=0.02, solver=Tsit5(), shed=[])
 
 Interface entry point. Dispatching on the engine **type** (not an instance) and
 returning a freshly built, fully-typed engine resolves the construction
@@ -253,6 +273,7 @@ function _record!(eng::FrequencyResponseEngine)
     push!(eng.fs, s.f)
     push!(eng.rocofs, s.RoCoF)
     push!(eng.pms, s.ΔPm)
+    push!(eng.tripped_mws, eng.tripped_mw)
     s.f < eng.nadir && (eng.nadir = s.f)
     return s
 end
@@ -278,12 +299,17 @@ function step!(eng::FrequencyResponseEngine, dt::Real = eng.dt)
 end
 
 """
-    state_series(eng::FrequencyResponseEngine) -> (; t, f, RoCoF, ΔPm)
+    state_series(eng::FrequencyResponseEngine) -> (; t, f, RoCoF, ΔPm, tripped_mw)
 
 The full recorded trajectory accumulated by `step!` (for plotting/playback).
+`RoCoF` is the **instantaneous** value; the report-comparable 500 ms windowed
+read is `windowed_rocof(series)` (see `analysis/postprocess.jl`) — they are
+different quantities and must not be conflated. `tripped_mw` is the cumulative
+generation lost so far (MW), the second axis of report Figs 1-3 / 3-7 / 3-9.
 """
 state_series(eng::FrequencyResponseEngine) =
-    (; t = eng.ts, f = eng.fs, RoCoF = eng.rocofs, ΔPm = eng.pms)
+    (; t = eng.ts, f = eng.fs, RoCoF = eng.rocofs, ΔPm = eng.pms,
+       tripped_mw = eng.tripped_mws)
 
 """
     timestep(eng::FrequencyResponseEngine) -> Float64
@@ -339,6 +365,7 @@ function inject!(eng::FrequencyResponseEngine, ev::TripGenerator)
     p.Tg = a.Tg
     p.headroom = a.headroom
     p.ΔP_dist -= unit.P0 / eng.model.S_base   # lost generation ⇒ frequency dips
+    eng.tripped_mw += unit.P0                 # cumulative tripped GENERATION (MW)
     # Discrete event-boundary re-init: cap ΔPm at the shrunken ceiling, then tell
     # the integrator the state+params jumped so it drops its stale FSAL derivative.
     eng.integrator.u[2] = min(eng.integrator.u[2], p.headroom)

@@ -30,6 +30,10 @@ include("model/system_model.jl")
 # --- perturbation events (live injection) ---
 include("events/events.jl")
 
+# --- protection schemes (armed, state-triggered — not user-injected) ---
+# Low-frequency load shedding as a root-finding ContinuousCallback per stage.
+include("protection/load_shedding.jl")
+
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
 
@@ -37,6 +41,10 @@ include("engines/interface.jl")
 # Center-of-inertia aggregate frequency model: `aggregates`, the engine struct,
 # and init! / step! / current_state / inject!. See docs/plans/m1-plan.md.
 include("engines/frequency_response.jl")
+
+# --- post-processing reads over a recorded trajectory ---
+# Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
+include("analysis/postprocess.jl")
 
 # --- real-time orchestration (event queue + wall-clock-paced loop) ---
 # Engine-agnostic: speaks only the SimulationEngine verbs. Uses Observables to
@@ -48,6 +56,12 @@ export GeneratingUnit, SystemModel, example_system
 
 # --- events ---
 export PerturbationEvent, TripGenerator, StepLoad
+
+# --- protection ---
+export LoadShedStage, ShedLadder, shed_log, shed_total
+
+# --- post-processing ---
+export windowed_rocof
 
 # --- engine interface ---
 # `step!`/`solve!` are CommonSolve's generics (imported in engines/interface.jl

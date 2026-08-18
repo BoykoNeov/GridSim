@@ -505,6 +505,221 @@ import Pkg                  # to inspect the dependency closure (no-Makie invari
     # `while running[]` loop with wall-clock pacing is the classic way to hang a
     # suite, and a hung suite is worse than a failing one.
 
+    @testset "load shedding: latching, downward-only, root-found" begin
+        # The ladder is an ARMED PROTECTION SCHEME, not a user-injected event: it
+        # fires on the system's own state, at a root-found instant, once per stage.
+        sys = example_system()
+        stage = LoadShedStage(49.5, 0.02; label = :s1)
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01, shed = [stage])
+        @test isempty(shed_log(eng.ladder).t)            # nothing fires at build
+        @test eng.ladder.armed == [true]
+        inject!(eng, TripGenerator(:G4))                 # -60/550 pu => dips past 49.5
+        for _ in 1:1500; step!(eng); end                 # 15 s
+        lg = shed_log(eng.ladder)
+        @test length(lg.t) == 1                          # fired exactly once
+        @test lg.label == [:s1]
+        @test eng.ladder.armed == [false]                # latched
+        @test shed_total(eng.ladder) ≈ 0.02
+        # Root-found, not step-quantised: the crossing instant is (almost surely)
+        # NOT on the dt grid, and f at that instant is the threshold to solver tol.
+        t_fire = lg.t[1]
+        @test 0 < t_fire < 15
+        @test !isapprox(t_fire / 0.01, round(t_fire / 0.01); atol = 1e-6)
+        i = argmin(abs.(eng.ts .- t_fire))
+        @test isapprox(eng.fs[i], 49.5; atol = 0.02)     # within one dt of the grid
+        # And it actually helped: same scenario without the ladder settles lower.
+        bare = init!(FrequencyResponseEngine, sys; dt = 0.01)
+        inject!(bare, TripGenerator(:G4))
+        for _ in 1:1500; step!(bare); end
+        @test current_state(eng).f > current_state(bare).f
+    end
+
+    @testset "load shedding: downward crossings only (affect_neg! slot)" begin
+        # Positional-argument hazard: `ContinuousCallback(cond, affect!, affect_neg!)`
+        # — `affect!` is the UPcrossing, `affect_neg!` the DOWNcrossing. Wire the shed
+        # into the wrong slot and it fires as frequency RISES through the threshold:
+        # physically backwards, and silent. Assert both polarities, don't trust the
+        # signature.
+        #
+        # `example_system` is underdamped (ζ ≈ 0.28), so a load shed sends frequency
+        # up through a threshold and the swing brings it back down through the same
+        # one ~6 s later. That gives both crossings in ONE run, in a known order.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01,
+                    shed = [LoadShedStage(50.5, 0.02; label = :both_ways)])
+        inject!(eng, StepLoad(-0.3))                     # shed load => f climbs
+        for _ in 1:200; step!(eng); end                  # t = 2 s: f ≈ 52.8, well past 50.5
+        @test current_state(eng).f > 50.5                # the UPcrossing really happened
+        @test isempty(shed_log(eng.ladder).t)            # ...and it did NOT fire
+        @test eng.ladder.armed == [true]
+        for _ in 1:600; step!(eng); end                  # t = 8 s: the swing brings it back
+        @test current_state(eng).f < 50.5                # now a DOWNcrossing
+        @test length(shed_log(eng.ladder).t) == 1        # ...and it fired
+        @test 2.0 < shed_log(eng.ladder).t[1] < 8.0      # on the way down, not the way up
+    end
+
+    @testset "load shedding: a fired stage never re-arms" begin
+        # The latch sign is the subtle part: a disarmed stage's condition must keep
+        # the sign it had just AFTER firing (negative). Return +1.0 instead and the
+        # rootfinder sees a manufactured sign change at the disarm instant => double
+        # shed. This drives frequency back up through the threshold and down again.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01,
+                    shed = [LoadShedStage(49.5, 0.001; label = :once)])
+        inject!(eng, TripGenerator(:G1))                 # deep dip => fires
+        for _ in 1:500; step!(eng); end
+        @test length(shed_log(eng.ladder).t) == 1
+        inject!(eng, StepLoad(-0.6))                     # haul it back above 49.5
+        for _ in 1:2000; step!(eng); end
+        @test current_state(eng).f > 49.5
+        inject!(eng, StepLoad(0.6))                      # and back down through it
+        for _ in 1:2000; step!(eng); end
+        @test current_state(eng).f < 49.5
+        @test length(shed_log(eng.ladder).t) == 1        # still exactly one shed
+        @test shed_total(eng.ladder) ≈ 0.001
+    end
+
+    @testset "shed sign == StepLoad(-dP): shedding load raises frequency" begin
+        # Pins the convention against a future sign flip: `ΔP_dist += ΔP_pu` for a
+        # shed must be the exact mirror of `StepLoad`'s `ΔP_dist -= ΔP_pu`.
+        sys = example_system()
+        shed_amt = 0.02
+        # Fire the ladder at a threshold the trip is guaranteed to cross.
+        a = init!(FrequencyResponseEngine, sys; dt = 0.005,
+                  shed = [LoadShedStage(49.9, shed_amt; label = :x)])
+        inject!(a, TripGenerator(:G4))
+        for _ in 1:16000; step!(a); end                  # 80 s — well past settling
+        @test length(shed_log(a.ladder).t) == 1
+        # Equivalent hand-injected version: same trip, same shed as a StepLoad at the
+        # root-found instant. Compare the SETTLING point, which is instant-independent.
+        b = init!(FrequencyResponseEngine, sys; dt = 0.005)
+        inject!(b, TripGenerator(:G4))
+        inject!(b, StepLoad(-shed_amt))
+        for _ in 1:16000; step!(b); end
+        @test isapprox(a.params.ΔP_dist, b.params.ΔP_dist; rtol = 1e-12)
+        # 80 s is ~3.5 damped periods past settling, so the two runs' different shed
+        # INSTANTS have decayed out and only the shared fixed point is left. A flipped
+        # sign would move that fixed point by ~0.11 Hz — 10⁴x this tolerance.
+        @test isapprox(current_state(a).f, current_state(b).f; atol = 1e-5)
+    end
+
+    @testset "shed event is integrated, not just recorded (dt refinement)" begin
+        # The shed affect! mutates `p` while leaving `u` alone — the stale-FSAL hazard
+        # `inject!` arms against by hand. On the callback path DiffEqBase already sets
+        # `derivative_discontinuity` before invoking the affect, so no explicit call is
+        # needed there; this test is what keeps that true. It matters because the error
+        # would be INVISIBLE to any readout assertion: `current_state` recomputes RoCoF
+        # algebraically from `_dΔω`, so it would report the right post-shed value while
+        # the integration drifted. Only refining dt and demanding convergence
+        # discriminates.
+        sys = example_system()
+        stage = LoadShedStage(49.8, 0.05; label = :fsal)
+        function run_to(dt, tend)
+            eng = init!(FrequencyResponseEngine, sys; dt = dt, shed = [stage])
+            inject!(eng, TripGenerator(:G1))
+            for _ in 1:round(Int, tend / dt); step!(eng); end
+            return eng
+        end
+        coarse = run_to(0.01, 3.0)
+        fine   = run_to(0.001, 3.0)
+        @test length(shed_log(coarse.ladder).t) == 1
+        @test length(shed_log(fine.ladder).t) == 1
+        # Root-found instant is a property of the trajectory, not of the sampling.
+        @test isapprox(shed_log(coarse.ladder).t[1], shed_log(fine.ladder).t[1];
+                       atol = 1e-4)
+        # 10x refinement must not move the state: a stale-derivative step biases the
+        # coarse run by ~dt*ΔP_shed/(2*H_sys), which this rtol rejects.
+        @test isapprox(current_state(coarse).Δω, current_state(fine).Δω; rtol = 2e-3)
+    end
+
+    @testset "cumulative tripped MW counts generation only" begin
+        # The second axis of report Figs 1-3 / 3-7 / 3-9 is tripped GENERATION.
+        # Shed load is not generation and must not leak into it.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01,
+                    shed = [LoadShedStage(49.5, 0.02; label = :s)])
+        @test eng.tripped_mw == 0.0
+        step!(eng)
+        @test state_series(eng).tripped_mw[end] == 0.0
+        inject!(eng, TripGenerator(:G1))                 # 150 MW
+        step!(eng)
+        @test eng.tripped_mw ≈ 150.0
+        @test state_series(eng).tripped_mw[end] ≈ 150.0
+        inject!(eng, TripGenerator(:G1))                 # already offline => no double count
+        @test eng.tripped_mw ≈ 150.0
+        inject!(eng, StepLoad(0.05))                     # load, not generation
+        @test eng.tripped_mw ≈ 150.0
+        inject!(eng, TripGenerator(:G3))                 # +70 MW
+        for _ in 1:1500; step!(eng); end
+        @test eng.tripped_mw ≈ 220.0
+        @test !isempty(shed_log(eng.ladder).t)           # the ladder did fire...
+        @test eng.tripped_mw ≈ 220.0                     # ...and did not touch the tally
+        # The recorded series is aligned with the trajectory and non-decreasing.
+        s = state_series(eng)
+        @test length(s.tripped_mw) == length(s.t)
+        @test issorted(s.tripped_mw)
+        @test s.tripped_mw[end] ≈ 220.0
+    end
+
+    @testset "windowed_rocof: 500 ms sliding window, actual elapsed divisor" begin
+        # Every RoCoF number in the ENTSO-E report is a 500 ms window (p.116); the
+        # engine's `current_state` RoCoF is instantaneous. Different quantities.
+        t = collect(0.0:0.01:2.0)
+        f = 50.0 .- 2.0 .* t                             # exact -2 Hz/s ramp
+        w = windowed_rocof(t, f)
+        @test length(w) == length(t)
+        @test all(isnan, w[t .< 0.5 - 1e-9])             # window not full yet => NaN
+        @test all(x -> isapprox(x, -2.0; atol = 1e-9), filter(!isnan, w))
+        @test count(!isnan, w) == count(>=(0.5 - 1e-9), t)
+        # Non-uniform samples: the divisor is the ACTUAL elapsed time, not the
+        # nominal window. Here the lookback lands 0.7 s back, not 0.5 s.
+        tn = [0.0, 0.3, 1.0]
+        fn = [50.0, 50.0, 49.0]
+        wn = windowed_rocof(tn, fn)
+        @test isnan(wn[1]) && isnan(wn[2])
+        @test isapprox(wn[3], -1.0 / 0.7; atol = 1e-12)  # -1.4286, not -2.0
+        # Window length is a knob.
+        @test count(!isnan, windowed_rocof(t, f; window = 1.0)) < count(!isnan, w)
+        @test_throws ArgumentError windowed_rocof(t, f[1:end-1])
+        @test_throws ArgumentError windowed_rocof(t, f; window = 0.0)
+        # NamedTuple method over a real trajectory: the windowed peak is strictly
+        # shallower than the instantaneous one during a fast transient.
+        eng = init!(FrequencyResponseEngine, example_system(); dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:1000; step!(eng); end
+        s = state_series(eng)
+        ww = windowed_rocof(s)
+        @test ww.t === s.t
+        @test length(ww.RoCoF) == length(s.t)
+        @test minimum(filter(!isnan, ww.RoCoF)) > minimum(s.RoCoF)
+    end
+
+    @testset "inverter-based resources (H=0, R=Inf) give finite aggregates" begin
+        # The Iberian scenario models the tripping blocks as IBR: zero inertia, no
+        # droop, no headroom. This must stay expressible with no data-model change,
+        # and must not produce NaN/Inf where a finite number belongs.
+        pv = GeneratingUnit(:PV, 900.0, 0.0, 900.0, Inf, 900.0)
+        sync = GeneratingUnit(:SYNC, 1000.0, 4.0, 600.0, 0.05, 800.0)
+        sys = SystemModel(2000.0, 50.0, 1.5, 8.0, [sync, pv])
+        a = GridSim.aggregates(sys, Set([:SYNC, :PV]))
+        @test isfinite(a.H_sys) && a.H_sys ≈ 4.0 * 1000 / 2000     # PV adds no inertia
+        @test isfinite(a.R_eq) && a.R_eq > 0                        # 1/Inf = 0, no NaN
+        @test a.R_eq ≈ 1 / ((1 / 0.05) * 1000 / 2000)
+        @test isfinite(a.headroom) && a.headroom ≈ (800 - 600) / 2000  # PV: zero reserve
+        # An all-IBR set is the degenerate corner: no inertia, no droop, no NaN.
+        b = GridSim.aggregates(sys, Set([:PV]))
+        @test b.H_sys == 0.0 && b.R_eq == Inf && b.headroom == 0.0
+        @test !isnan(b.H_sys) && !isnan(b.headroom)
+        # And the engine runs with one in the mix: trip the PV, get a finite dip.
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01)
+        inject!(eng, TripGenerator(:PV))
+        for _ in 1:1000; step!(eng); end
+        st = current_state(eng)
+        @test isfinite(st.f) && st.f < sys.f0
+        @test all(isfinite, state_series(eng).f)
+        @test eng.tripped_mw ≈ 900.0
+    end
+
     @testset "EventQueue" begin
         q = EventQueue()
         @test isempty(q) && length(q) == 0
