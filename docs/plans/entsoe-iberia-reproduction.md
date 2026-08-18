@@ -342,10 +342,32 @@ So: for any tie weaker than ≈4,250 MW the peninsula loses synchronism, and the
 timing degrades *gracefully* from 0.3 s early to 2.7 s late across that whole
 band — best near `P_max` ≈ 2,750–3,000, which is also where the report's own
 "~3 GW AC corridor" figure sits (§1.2). Above ≈4,500 MW the tie holds and there
-is no separation at all. `KE₂` barely matters. The defensible statement is
-therefore: *a two-area classical model reproduces the separation, at any tie
-strength in the lower two-thirds of the plausible corridor, to within ~1 s* —
-not *the model predicted 12:33:20.54*.
+is no separation at all. `KE₂` barely matters.
+
+**The 4,250 MW boundary is a property of (tie, cascade) jointly, not of the tie
+alone** — the cascade ramp is the direct competitor to tie stiffness in deciding
+whether the angle runs away, so it was swept too. Largest `P_max` that still
+slips:
+
+| cascade ramp duration | 1,941 MW | 2,357 MW | **2,773 MW (report)** | 3,189 MW | 3,605 MW |
+|---|---|---|---|---|---|
+| 1.5 s | 3,600 | 4,100 | 4,500 | 4,900 | 5,300 |
+| **2.46 s (report)** | 3,500 | 3,900 | **4,300** | 4,600 | 5,000 |
+| 3.5 s | 3,500 | 3,900 | 4,300 | 4,700 | 5,100 |
+| 5.0 s | 3,400 | 3,800 | 4,200 | 4,600 | 5,000 |
+
+Two readings. The boundary tracks cascade **magnitude** almost one-for-one
+(±30 % in MW moves it ±~900 MW), so the 4,250 figure must always be quoted *at
+the report's cascade profile* — it is not a standalone property of the corridor.
+But it is near-**insensitive to ramp duration** (3,400–3,600 MW across 1.5–5 s):
+how fast the deficit arrives barely matters, only how much of it there is. That
+second fact is useful, because the report's within-cascade event ordering is
+explicitly uncertain (§5) while the cumulative total is comparatively solid.
+
+The defensible statement is therefore: *at the report's cascade profile, a
+two-area classical model reproduces the separation, at any tie strength in the
+lower two-thirds of the plausible corridor, to within ~1 s* — not *the model
+predicted 12:33:20.54*.
 
 **(c) The knife-edge inference does not survive the sweep — retracted.**
 Earlier wording claimed that because the probe hangs at −95° when the realised
@@ -360,15 +382,24 @@ alternative explanations — `P_max` set slightly high, `KE₂` slightly large, 
 the cascade ramp slightly slow — fit equally well. §1's under-modelling finding
 stands on its own evidence; it gains nothing from here.
 
-**(d) The swing magnitude is a genuine miss, and it points somewhere.** The
-probe's export swing against pre-event flow is 2,500 MW where the report
-attributes ≈5,000 MW of the imbalance to the swing — about half. Raising `P_max`
-to produce a 5,000 MW swing pushes it into the band where the tie never slips at
-all (row ≥4,500 above). Those two constraints are in direct conflict inside a
-constant-voltage two-area reduction, which is informative rather than fatal: the
-real swing rode on collapsing voltages and several corridors (ES–FR AC, ES–PT,
-ES–MA) rather than one lumped reactance. **Resolving that conflict is a task for
-the M2 engine, not something to tune away.**
+**(d) The ceiling of this tier, stated in advance — the most useful result here.**
+The probe's export swing against pre-event flow is 2,500 MW where the report
+attributes ≈5,000 MW of the imbalance to the swing. That is not a calibration
+shortfall to be closed later: the swing peak *is* `P_max`, so producing 5,000 MW
+requires `P_max` ≈ 6,000 MW, which sits far inside the band where the tie never
+slips at all. **A constant-voltage two-area reduction can reproduce the
+separation, or the swing magnitude, but not both.** The tie strength that lets
+the peninsula fall out of step is structurally too weak to carry the observed
+surge.
+
+This belongs in the same category as "a linear tie cannot slip a pole" (§7.2):
+a boundary you can name *before* building anything, not a defect discovered
+afterwards. And it names its own exit criterion — the real surge rode on
+collapsing voltages across several corridors (ES–FR AC, ES–PT, ES–MA), so
+**matching the swing magnitude is the point at which voltage state stops being
+optional.** Whoever builds the M2 engine should treat reproducing the separation
+timing as in scope and reproducing the 5,000 MW swing as out of scope, and
+should not tune toward the latter.
 
 ### 7.4 Design sketch
 
