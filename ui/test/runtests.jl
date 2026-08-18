@@ -107,6 +107,35 @@ click!(b) = (b.clicks[] = b.clicks[] + 1)
         @test !win.control.running[]                    # loop returns after this step
     end
 
+    @testset "pinned y-limits stay pinned; unpinned ones expand to the dip" begin
+        # Expand-only limits are right for a live window but wrong for *comparing*
+        # two runs: each picture fills its own frame, so a dip three times deeper
+        # draws the same shape as a shallow one. `ylims_f`/`ylims_rocof` pin both
+        # runs to one scale — this asserts the pin actually holds against a dip
+        # that would otherwise force the box open.
+        ylo_of(ax) = ax.finallimits[].origin[2]
+
+        sys = example_system()
+        pinned = BUILD(sys; window_seconds = 12.0, rtf = Inf,
+                       ylims_f = (47.9, 50.35), ylims_rocof = (-4.0, 2.0))
+        click!(pinned.widgets.unit_buttons[1][2])          # G1: the deep, saturating trip
+        run_realtime!(pinned.engine, pinned.state; control = pinned.control,
+                      queue = pinned.queue, duration = 10.0)
+        pinned.refresh!(; force = true)
+        @test ylo_of(pinned.axes.frequency) ≈ 47.9 atol = 1e-3
+        @test ylo_of(pinned.axes.rocof) ≈ -4.0 atol = 1e-3
+        # The pin is only meaningful if the run really did go outside the default box.
+        @test minimum(state_series(pinned.engine).f) < 47.9
+
+        loose = BUILD(sys; window_seconds = 12.0, rtf = Inf)
+        click!(loose.widgets.unit_buttons[1][2])
+        run_realtime!(loose.engine, loose.state; control = loose.control,
+                      queue = loose.queue, duration = 10.0)
+        loose.refresh!(; force = true)
+        # Unpinned, the same run must have pushed the box open past its f0 − 2.0 start.
+        @test ylo_of(loose.axes.frequency) < sys.f0 - 2.0
+    end
+
     @testset "smoke_render writes a PNG of the same window" begin
         dir = mktempdir()
         path = joinpath(dir, "smoke.png")

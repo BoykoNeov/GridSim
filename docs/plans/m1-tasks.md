@@ -228,12 +228,27 @@ satisfies each is named below. **177 tests green** at the time of that batch
       `is_online(eng, id)` (trip-button state). Tested against `aggregates` before
       and after a trip — the indicator must *agree with the aggregate*, not merely
       be non-zero. Core suite: **266 → 273 tests**.
-- [x] `ui/test/runtests.jl` — **29 tests, all offscreen**, plus `Test` wired into
+- [x] `ui/test/runtests.jl` — **33 tests, all offscreen**, plus `Test` wired into
       `ui/Project.toml`'s test target (UUID resolved by `Base.identify_package`,
       never hand-written). The controls are driven the way a user drives them:
       setting `b.clicks[]` runs the very handler a real click runs, so the
       click → `EventQueue` → `inject!` path is exercised end to end. Physics and
       pacing are deliberately **not** duplicated from the core suite.
+- [x] **Comparison renders must pin both runs to one scale.** The live window's
+      y-limits are expand-only (nobody can choose limits for a run that has not
+      happened yet), which is right on screen and *wrong* for comparing two runs:
+      each picture fills its own frame, so the first AC #6 pair drew a −0.93 Hz/s
+      spike and a −3.6 Hz/s spike as visually identical shapes — the pictures
+      argued against the very claim they were evidence for. `smoke_render` now
+      takes `ylims_f`/`ylims_rocof`; the live window's behaviour is unchanged. A
+      test asserts the pin holds against a dip that would otherwise force the box
+      open, *and* that the same run unpinned does force it open.
+- [x] The README's own launch one-liner was run end to end, not assumed:
+      `window_open[]` is already `true` when `launch` returns, so `wait_for_close`
+      blocks properly (6.32 s against a 6 s scripted close) and the loop stops on
+      window close. Worth checking rather than reasoning about — had `display`
+      not realised the window synchronously, the documented command would have
+      exited instantly with no window and no error.
 - [ ] Report **Figure 3-67** as a layout target — still open. It needs no new
       physics (threshold lines, shed annotations and the cumulative second axis are
       all computed already), and it ticks no acceptance criterion, so it stayed out

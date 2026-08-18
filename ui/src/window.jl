@@ -68,7 +68,9 @@ function _build_window(model::SystemModel;
                        rtf::Real = 1.0,
                        window_seconds::Real = 60.0,
                        shed::Vector{LoadShedStage} = LoadShedStage[],
-                       title::AbstractString = "GridSim — real-time frequency response")
+                       title::AbstractString = "GridSim — real-time frequency response",
+                       ylims_f = nothing,
+                       ylims_rocof = nothing)
     engine = init!(FrequencyResponseEngine, model; dt = dt, shed = shed)
     queue = EventQueue()
     control = RealtimeControl(; rtf = rtf)
@@ -175,8 +177,16 @@ function _build_window(model::SystemModel;
     rspan = Ref(0.5)           # RoCoF axis half-height, expand-only
     rmax = Ref(0.0)            # largest |RoCoF| *published*, not merely drawn
     greyed = Set{Symbol}()     # units whose button has already been marked offline
-    ylims!(ax_f, ylo[], yhi[])
-    ylims!(ax_r, -rspan[], rspan[])
+
+    # Pinned axes disable the expand-only logic below. Expand-only is right for a
+    # live window — nobody can choose limits for a run that has not happened yet —
+    # but it is wrong for *comparing* two runs: each picture ends up on its own
+    # scale, so a dip three times deeper draws exactly the same shape as a shallow
+    # one. Anything rendering a comparison must pin both runs to one scale.
+    fixed_f = ylims_f !== nothing
+    fixed_r = ylims_rocof !== nothing
+    fixed_f ? ylims!(ax_f, ylims_f[1], ylims_f[2]) : ylims!(ax_f, ylo[], yhi[])
+    fixed_r ? ylims!(ax_r, ylims_rocof[1], ylims_rocof[2]) : ylims!(ax_r, -rspan[], rspan[])
 
     # Repaint, at most once every `REDRAW_INTERVAL` unless forced. Reads the latest
     # published state; the buffers were already filled by the state handler.
@@ -199,11 +209,11 @@ function _build_window(model::SystemModel;
         # sluggishness source and a picture that jitters; growing the box only
         # when an extreme approaches its edge keeps the scale stable and makes two
         # runs visually comparable.
-        if nadir[] < ylo[] + 0.25
+        if !fixed_f && nadir[] < ylo[] + 0.25
             ylo[] = nadir[] - 0.5
             ylims!(ax_f, ylo[], yhi[])
         end
-        if rmax[] > 0.9 * rspan[]
+        if !fixed_r && rmax[] > 0.9 * rspan[]
             rspan[] = 1.25 * rmax[]
             ylims!(ax_r, -rspan[], rspan[])
         end
@@ -245,10 +255,12 @@ function _build_window(model::SystemModel;
     # way a user does — setting `b.clicks[]` runs the same handler a real click
     # runs, which is the only way to check the click path without a screen.
     widgets = (; unit_buttons, pause = b_pause, stop = b_stop, speed = sl)
+    axes = (; frequency = ax_f, rocof = ax_r, inertia = ax_h)
     # `readout` rides along so a test can assert what the window actually *shows*
     # — in particular that the displayed nadir is the true minimum over every
     # published state, not whichever state a repaint happened to sample.
-    return (; fig, engine, control, queue, state, status, readout, refresh!, widgets)
+    return (; fig, engine, control, queue, state, status, readout, refresh!, widgets,
+              axes)
 end
 
 """
@@ -334,6 +346,12 @@ This is how the window is verified from a session with no screen to look at, and
 what turns "the UI code compiles" into a picture of an actual dip. Trips go
 through the `EventQueue` and the real loop — the identical path a button click
 takes — so the render exercises the live wiring, not a bypass.
+
+Pass `ylims_f` / `ylims_rocof` as `(lo, hi)` to pin the axes instead of letting
+them size themselves to the run. Required whenever two renders are meant to be
+*compared*: with per-run limits each picture fills its own frame, so a dip three
+times deeper draws the same shape as a shallow one and the comparison shows
+nothing.
 """
 function smoke_render(model::SystemModel = example_system();
                       path::AbstractString,
@@ -341,12 +359,15 @@ function smoke_render(model::SystemModel = example_system();
                       trips::Vector{Tuple{Float64,Symbol}} = [(2.0, :G1)],
                       duration::Real = 20.0,
                       shed::Vector{LoadShedStage} = LoadShedStage[],
-                      title::AbstractString = "GridSim — real-time frequency response")
+                      title::AbstractString = "GridSim — real-time frequency response",
+                      ylims_f = nothing,
+                      ylims_rocof = nothing)
     GLMakie.activate!(; visible = false)
     # `window_seconds = duration` keeps the whole run inside the rolling buffer and
     # the x-window, so the saved frame shows the entire event rather than its tail.
     win = _build_window(model; dt = dt, rtf = Inf, window_seconds = duration,
-                        shed = shed, title = title)
+                        shed = shed, title = title,
+                        ylims_f = ylims_f, ylims_rocof = ylims_rocof)
     win.control.rtf[] = Inf     # flat out: no wall-clock pacing for a file render
 
     t_now = 0.0

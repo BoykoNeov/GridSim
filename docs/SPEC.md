@@ -341,12 +341,13 @@ end
 - [x] Settling deviation matches the closed-form value within tolerance (unit test).
 - [x] Fewer/less-inertia units online ⇒ visibly steeper RoCoF and deeper nadir.
       (Physics half **asserted** in `test/runtests.jl` — both the inertia-only
-      isolation and the fewer-units demonstration. The *visibly* half is now two
-      renders of the same G4 trip at H×1 and H×0.25: RoCoF0 −0.93 vs −3.2 Hz/s,
-      nadir 48.80 vs 48.15 Hz, both settling to the same inertia-free 49.69 Hz.
-      Caveat: the axes are expand-only *per run*, so the two pictures are not on a
-      shared scale — the contrast is exact in the readouts, indicative in the
-      curves.)
+      isolation and the fewer-units demonstration. The *visibly* half is two
+      renders of the same G4 trip at H×1 and H×0.25, **pinned to one shared
+      scale** (`smoke_render(…; ylims_f, ylims_rocof)`): RoCoF0 −0.93 vs
+      −3.6 Hz/s, nadir 48.80 vs 48.15 Hz, both recovering to the same
+      inertia-free ~49.69 Hz. The shared scale is the whole point — with the
+      live window's per-run expand-only limits each picture fills its own frame,
+      so the two spikes drew identically and the comparison showed nothing.)
 
 ---
 

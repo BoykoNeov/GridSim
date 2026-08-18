@@ -55,13 +55,19 @@ orchestration loop — the identical path a button click takes — so this exerc
 the live wiring rather than bypassing it. It is how the window is checked in a
 headless session and in CI.
 
+Pass `ylims_f = (lo, hi)` / `ylims_rocof = (lo, hi)` to pin the axes whenever two
+renders are meant to be *compared*. The live window sizes its axes to the run
+(expand-only), which is right on screen but makes two separate pictures fill
+their own frames — a dip four times steeper then draws exactly like a shallow
+one.
+
 ## Tests
 
 ```
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-29 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+33 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered. Physics and wall-clock pacing are asserted in the core suite and are
