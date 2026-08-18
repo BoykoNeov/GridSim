@@ -161,9 +161,9 @@ the `init!`/constructor below, never by filling fields by hand.
 Fields: the canonical `model`; the live `online` unit set; the **shared** mutable
 `params` (the very object the integrator holds — `eng.integrator.p === eng.params`,
 which is what lets `inject!` change the system without disturbing the continuous
-state); the real-time `dt`; the `integrator`; `f0`; the recorded trajectory
-(`ts`, `fs`, `rocofs`, `pms`, `tripped_mws`); the running `nadir` frequency and
-`tripped_mw` accumulator; and the **shared** `ladder` of armed load-shedding
+state); the real-time `dt`; the `integrator`; `f0`; the bounded recorded trajectory
+(`traj`, a `TrajectoryRecorder` — see `engines/recorder.jl`); the running `nadir`
+frequency and `tripped_mw` accumulator; and the **shared** `ladder` of armed load-shedding
 stages (the same object the callbacks close over — see `protection/load_shedding.jl`).
 
 `tripped_mw` is cumulative **generation** lost to `TripGenerator` (MW, engineering
@@ -177,23 +177,23 @@ mutable struct FrequencyResponseEngine{I} <: SimulationEngine
     dt::Float64
     integrator::I
     f0::Float64
-    ts::Vector{Float64}
-    fs::Vector{Float64}
-    rocofs::Vector{Float64}
-    pms::Vector{Float64}
-    tripped_mws::Vector{Float64}
+    traj::TrajectoryRecorder{(:t, :f, :RoCoF, :ΔPm, :tripped_mw),5}
     nadir::Float64
     tripped_mw::Float64
     ladder::ShedLadder
 end
 
 """
-    FrequencyResponseEngine(model; t0=0.0, dt=0.02, solver=Tsit5(), shed=LoadShedStage[])
+    FrequencyResponseEngine(model; t0=0.0, dt=0.02, solver=Tsit5(), shed=[], capacity=200_000)
 
 Build a ready-to-step engine from `model`. All units start online; the parameter
 block starts at zero disturbance (`ΔP_dist = 0`, so the system sits at the origin
 until the first `inject!`). The integrator is `init`-ed (not `solve`-d) so the
 orchestration loop can interleave events and redraws (docs/SPEC.md §6).
+
+`capacity` bounds the recorded trajectory (see `engines/recorder.jl`); the default is
+far beyond any interactive run, so it guards an unattended one rather than shaping a
+normal one.
 
 `shed` arms a low-frequency load-shedding ladder (`LoadShedStage`); each stage
 becomes a downward-crossing `ContinuousCallback` that root-finds its exact firing
@@ -203,7 +203,8 @@ instant. Default: an empty ladder, i.e. no protection scheme. See
 function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
                                  dt::Real = _FR_DT0,
                                  solver = OrdinaryDiffEq.Tsit5(),
-                                 shed::Vector{LoadShedStage} = LoadShedStage[])
+                                 shed::Vector{LoadShedStage} = LoadShedStage[],
+                                 capacity::Integer = _TRAJ_CAPACITY)
     online = Set(u.id for u in model.units)
     a = aggregates(model, online)
     params = FRParams(a.H_sys, a.R_eq, a.D, a.Tg, 0.0, a.headroom)
@@ -226,10 +227,11 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
                                      save_everystep = false, dense = false)
     f0 = model.f0
     # Seed the trajectory with the pre-disturbance point (Δω=0 ⇒ f=f0, RoCoF=0,
-    # nothing tripped yet).
+    # nothing tripped yet). `:t` is prepended by the recorder itself.
+    traj = TrajectoryRecorder(:f, :RoCoF, :ΔPm, :tripped_mw; capacity = capacity)
+    record!(traj, t0f, f0, 0.0, 0.0, 0.0)
     return FrequencyResponseEngine(model, online, params, Float64(dt), integrator,
-                                   f0, Float64[t0f], Float64[f0], Float64[0.0],
-                                   Float64[0.0], Float64[0.0], f0, 0.0, ladder)
+                                   f0, traj, f0, 0.0, ladder)
 end
 
 """
@@ -267,13 +269,13 @@ function current_state(eng::FrequencyResponseEngine)
 end
 
 # Append the current state to the trajectory and update the running nadir.
+#
+# The nadir is tracked HERE, incrementally, and deliberately not read back out of
+# the trajectory later: the recorder decimates once it fills, so `minimum` over the
+# retained samples is the lowest sample still kept, not the lowest that occurred.
 function _record!(eng::FrequencyResponseEngine)
     s = current_state(eng)
-    push!(eng.ts, s.t)
-    push!(eng.fs, s.f)
-    push!(eng.rocofs, s.RoCoF)
-    push!(eng.pms, s.ΔPm)
-    push!(eng.tripped_mws, eng.tripped_mw)
+    record!(eng.traj, s.t, s.f, s.RoCoF, s.ΔPm, eng.tripped_mw)
     s.f < eng.nadir && (eng.nadir = s.f)
     return s
 end
@@ -301,15 +303,18 @@ end
 """
     state_series(eng::FrequencyResponseEngine) -> (; t, f, RoCoF, ΔPm, tripped_mw)
 
-The full recorded trajectory accumulated by `step!` (for plotting/playback).
+The recorded trajectory accumulated by `step!` (for plotting/playback), read
+straight off the engine's `TrajectoryRecorder`. **Bounded, not complete**: once the
+recorder fills it decimates, so late in a long run the samples are evenly spaced but
+coarser than `dt`. Use the returned `t` — never an assumed step — to place them, and
+do not derive exact extrema from these vectors (the engine's own `nadir` is the
+running one; see `engines/recorder.jl`).
 `RoCoF` is the **instantaneous** value; the report-comparable 500 ms windowed
 read is `windowed_rocof(series)` (see `analysis/postprocess.jl`) — they are
 different quantities and must not be conflated. `tripped_mw` is the cumulative
 generation lost so far (MW), the second axis of report Figs 1-3 / 3-7 / 3-9.
 """
-state_series(eng::FrequencyResponseEngine) =
-    (; t = eng.ts, f = eng.fs, RoCoF = eng.rocofs, ΔPm = eng.pms,
-       tripped_mw = eng.tripped_mws)
+state_series(eng::FrequencyResponseEngine) = series(eng.traj)
 
 """
     timestep(eng::FrequencyResponseEngine) -> Float64

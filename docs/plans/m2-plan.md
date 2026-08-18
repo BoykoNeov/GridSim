@@ -165,10 +165,12 @@ network reduction (a natural M2b, deliberately not M2a) · markets/OPF · maps.
 
 ## Carried over from M1, still open
 
-- **Unbounded trajectory growth in the core.** The engine appends to its
-  trajectory vectors on every step forever. The UI is insulated (it draws from its
-  own fixed-size buffers), but the core-side ring buffer / decimated history is
-  still owed. M2 adds a second engine with the same shape — **fix the pattern once,
-  in a shared place, rather than duplicating the leak.**
+- ~~**Unbounded trajectory growth in the core.**~~ **CLOSED at the head of step 3**
+  (`src/engines/recorder.jl`), on its own commit with M1 retrofitted onto it and no
+  new engine alongside — M1's suite is the only thing in the repo that can find a
+  bug in the recorder, and it can only do so if nothing else changed. Decimating,
+  not a ring buffer: the nadir and the initial slope live at the *start* of a run.
+  See the checklist entry in `m2-tasks.md` for the two rules this makes binding
+  (time is a mandatory channel; running summaries are tracked outside the buffer).
 - Report Figure 3-67 as a layout target — still open, still ticks no acceptance
   criterion.

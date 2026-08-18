@@ -22,6 +22,17 @@ end
 
 @testset "GridSim scaffold" begin
 
+    # Returns the ArgumentError message a thunk throws, or a marker string. Used
+    # instead of a bare `@test_throws ArgumentError` so a guard test cannot pass
+    # because a *different* guard fired first — several of the invalid models
+    # below violate more than one rule, and "it threw" would not distinguish them.
+    argerr_msg(f) = try
+        f()
+        "NO ERROR THROWN"
+    catch e
+        e isa ArgumentError ? e.msg : "NOT-ArgumentError: $(typeof(e))"
+    end
+
     @testset "domain model" begin
         sys = example_system()
         @test sys isa SystemModel
@@ -76,6 +87,111 @@ end
         # doing `using GridSim, OrdinaryDiffEq` sees one `step!`/`solve!`, not two.
         @test GridSim.step! === OrdinaryDiffEq.step!
         @test GridSim.solve! === OrdinaryDiffEq.solve!
+    end
+
+    # --- the shared bounded trajectory recorder (src/engines/recorder.jl) -------
+    #
+    # Every engine records through this instead of growing its own vectors. The
+    # retention rule is: a sample whose 1-based push index is `n` is kept iff
+    # `(n-1) % keep_every == 0`, and `keep_every` doubles each time the buffer
+    # fills. So the retained samples are always an arithmetic progression that
+    # starts at the very first sample — which is the property these tests assert,
+    # rather than a hand-traced sequence that would only prove one capacity.
+
+    @testset "TrajectoryRecorder: retention invariant across capacities" begin
+        # Odd capacities are where the stride bookkeeping goes off by one, so they
+        # are in the sweep deliberately. Each property is checked after *every* one
+        # of the 200 pushes but reported as one assertion per capacity, with the
+        # offending push indices in the failure output.
+        for cap in (2, 3, 4, 5, 8, 9)
+            rec = GridSim.TrajectoryRecorder(:x; capacity = cap)
+            over_capacity, lost_first, not_progression, ragged, unevenly_spaced =
+                Int[], Int[], Int[], Int[], Int[]
+            for n in 1:200
+                GridSim.record!(rec, 0.1 * n, Float64(n))
+                tr = GridSim.series(rec)
+                k = rec.keep_every
+                GridSim.n_kept(rec) <= cap || push!(over_capacity, n)
+                # The first sample must survive every halving — that is the whole
+                # reason for decimating instead of dropping the oldest: the nadir
+                # and the initial RoCoF both live at the start of a disturbance.
+                tr.x[1] == 1.0 || push!(lost_first, n)
+                # Retained samples are exactly the progression 1, 1+k, 1+2k, ...
+                tr.x == collect(1.0:k:Float64(n)) || push!(not_progression, n)
+                length(tr.t) == length(tr.x) == GridSim.n_kept(rec) || push!(ragged, n)
+                # ...hence evenly spaced in time, which is what any consumer that
+                # finite-differences or plots the series depends on.
+                length(tr.t) >= 2 && !all(≈(0.1 * k), diff(tr.t)) &&
+                    push!(unevenly_spaced, n)
+            end
+            @test over_capacity == Int[]
+            @test lost_first == Int[]
+            @test not_progression == Int[]
+            @test ragged == Int[]
+            @test unevenly_spaced == Int[]
+            @test rec.n_seen == 200            # every sample was *offered*...
+            @test GridSim.n_kept(rec) < 200    # ...and the buffer is bounded anyway
+        end
+    end
+
+    @testset "TrajectoryRecorder: the capacity-4 trace, by hand" begin
+        # The property test above generalises this, but a worked example pins the
+        # intent: at capacity 4 the buffer halves at pushes 5, 9, 17, ...
+        rec = GridSim.TrajectoryRecorder(:x; capacity = 4)
+        got = Vector{Float64}[]
+        for n in 1:9
+            GridSim.record!(rec, Float64(n), Float64(n))
+            push!(got, copy(GridSim.series(rec).x))
+        end
+        @test got[4] == [1.0, 2.0, 3.0, 4.0]      # full, stride still 1
+        @test got[5] == [1.0, 3.0, 5.0]           # halved, stride 2, sample 5 kept
+        @test got[7] == [1.0, 3.0, 5.0, 7.0]      # full again
+        @test got[9] == [1.0, 5.0, 9.0]           # halved, stride 4, sample 9 kept
+        @test rec.keep_every == 4
+    end
+
+    @testset "TrajectoryRecorder: shape, names, and guards" begin
+        rec = GridSim.TrajectoryRecorder(:f, :RoCoF; capacity = 16)
+        # `:t` is prepended by the recorder and comes first, so no consumer can be
+        # handed data without the time base it needs to place the samples.
+        @test propertynames(GridSim.series(rec)) == (:t, :f, :RoCoF)
+        @test GridSim.n_kept(rec) == 0
+        # Arity is pinned by the type parameter: a call with the wrong number of
+        # channels fails at the call site, not as a length mismatch found later.
+        @test_throws MethodError GridSim.record!(rec, 0.0, 1.0)
+        @test_throws MethodError GridSim.record!(rec, 0.0, 1.0, 2.0, 3.0)
+        @test occursin("prepended automatically",
+                       argerr_msg(() -> GridSim.TrajectoryRecorder(:t, :f)))
+        @test occursin("at least one channel",
+                       argerr_msg(() -> GridSim.TrajectoryRecorder()))
+        @test occursin("duplicate channel",
+                       argerr_msg(() -> GridSim.TrajectoryRecorder(:f, :f)))
+        @test occursin("capacity must be >= 2",
+                       argerr_msg(() -> GridSim.TrajectoryRecorder(:f; capacity = 1)))
+        # Concrete field types on the hot path (SPEC §4).
+        @test isconcretetype(fieldtype(typeof(rec), :channels))
+    end
+
+    @testset "recorder: engine nadir survives decimation (summary ≠ buffer)" begin
+        # The trap this guards: once the buffer decimates, `minimum(series.f)` is
+        # the lowest *retained* sample, not the lowest that occurred. Running
+        # summaries must therefore be tracked incrementally, outside the buffer.
+        sys = example_system()
+        run_engine(cap) = begin
+            eng = init!(FrequencyResponseEngine, sys; dt = 0.02, capacity = cap)
+            inject!(eng, TripGenerator(:G1))
+            for _ in 1:3000; step!(eng, 0.02); end
+            eng
+        end
+        small, big = run_engine(64), run_engine(200_000)
+        @test GridSim.n_kept(small.traj) <= 64
+        @test GridSim.n_kept(big.traj) == 3001          # nothing dropped at all
+        # The nadir is identical either way — it is not read off the buffer.
+        @test small.nadir ≈ big.nadir atol = 1e-12
+        # And it had better not be, because the decimated buffer genuinely lost it:
+        # the lowest retained sample is strictly above the true nadir.
+        @test minimum(GridSim.series(small.traj).f) > small.nadir + 1e-9
+        @test minimum(GridSim.series(big.traj).f) ≈ big.nadir atol = 1e-12
     end
 
     @testset "aggregates (COI, on system base) vs hand arithmetic" begin
@@ -203,12 +319,13 @@ end
         for _ in 1:5000                                 # 100 s at dt=0.02
             step!(eng, 0.02)
         end
-        @test maximum(eng.pms) ≤ eng.params.headroom + 1e-6
+        @test maximum(state_series(eng).ΔPm) ≤ eng.params.headroom + 1e-6
         @test eng.nadir < sys.f0                         # frequency dipped
         @test current_state(eng).f < sys.f0              # and settles below nominal
         # Trajectory recorded one point per step (+ the seeded origin).
-        @test length(eng.ts) == length(eng.fs) == length(eng.pms)
-        @test issorted(eng.ts)
+        traj = state_series(eng)
+        @test length(traj.t) == length(traj.f) == length(traj.ΔPm)
+        @test issorted(traj.t)
 
         # Tripping an already-offline unit is a no-op.
         d_before = eng.params.ΔP_dist
@@ -302,7 +419,7 @@ end
         @test eng.params.headroom ≈ 80 / 550
         # Re-init'd down to the new ceiling at the event boundary (not left stranded).
         @test current_state(eng).ΔPm ≤ eng.params.headroom + 1e-9
-        n = length(eng.pms)
+        n = length(state_series(eng).ΔPm)
         t0 = eng.integrator.t
         for _ in 1:2000                                  # must keep advancing, not abort
             step!(eng, 0.02)
@@ -310,7 +427,7 @@ end
         @test eng.integrator.t > t0 + 39.0               # ~40 s of real progress, no freeze
         @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
         # Post-trip trajectory never crosses the new (shrunken) ceiling.
-        @test all(≤(eng.params.headroom + 1e-6), @view eng.pms[n+1:end])
+        @test all(≤(eng.params.headroom + 1e-6), @view state_series(eng).ΔPm[n+1:end])
     end
 
     # --- M1 validation: closed forms + the low-inertia lesson (SPEC §7.6, §7.8)
@@ -344,7 +461,7 @@ end
         s = current_state(eng)
         a = GridSim.aggregates(sys, eng.online)  # post-trip aggregates
         return (; RoCoF0, nadir = eng.nadir, Δω_end = s.Δω, f_end = s.f,
-                ΔPm_end = s.ΔPm, ΔPm_max = maximum(eng.pms), aggr = a)
+                ΔPm_end = s.ΔPm, ΔPm_max = maximum(state_series(eng).ΔPm), aggr = a)
     end
 
     P0_of(sys, id) = first(u.P0 for u in sys.units if u.id === id)
@@ -482,15 +599,16 @@ end
                 end
             end
             f_before = current_state(eng).f
-            mark = length(eng.fs)
+            mark = length(state_series(eng).f)
             inject!(eng, TripGenerator(id))
             RoCoF0 = current_state(eng).RoCoF
             for _ in 1:round(Int, T / dt)
                 step!(eng, dt)
             end
-            tail = mark:length(eng.fs)
-            return (; RoCoF0, dip = f_before - minimum(@view eng.fs[tail]),
-                    ΔPm_max = maximum(@view eng.pms[tail]),
+            tr = state_series(eng)
+            tail = mark:length(tr.f)
+            return (; RoCoF0, dip = f_before - minimum(@view tr.f[tail]),
+                    ΔPm_max = maximum(@view tr.ΔPm[tail]),
                     headroom = GridSim.aggregates(sys, eng.online).headroom)
         end
 
@@ -534,8 +652,9 @@ end
         t_fire = lg.t[1]
         @test 0 < t_fire < 15
         @test !isapprox(t_fire / 0.01, round(t_fire / 0.01); atol = 1e-6)
-        i = argmin(abs.(eng.ts .- t_fire))
-        @test isapprox(eng.fs[i], 49.5; atol = 0.02)     # within one dt of the grid
+        tr = state_series(eng)
+        i = argmin(abs.(tr.t .- t_fire))
+        @test isapprox(tr.f[i], 49.5; atol = 0.02)       # within one dt of the grid
         # And it actually helped: same scenario without the ladder settles lower.
         bare = init!(FrequencyResponseEngine, sys; dt = 0.01)
         inject!(bare, TripGenerator(:G4))
@@ -981,17 +1100,6 @@ end
     # conversion to the system base happens, so if they are right nothing
     # downstream has to redo it, and if they are wrong every downstream number is
     # plausible and wrong.
-
-    # Returns the ArgumentError message a thunk throws, or a marker string. Used
-    # instead of a bare `@test_throws ArgumentError` so a guard test cannot pass
-    # because a *different* guard fired first — several of the invalid models
-    # below violate more than one rule, and "it threw" would not distinguish them.
-    argerr_msg(f) = try
-        f()
-        "NO ERROR THROWN"
-    catch e
-        e isa ArgumentError ? e.msg : "NOT-ArgumentError: $(typeof(e))"
-    end
 
     @testset "network model: shape, ids, and bus ordering" begin
         net = two_machine_system()

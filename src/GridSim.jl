@@ -47,6 +47,12 @@ include("protection/load_shedding.jl")
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
 
+# --- shared bounded trajectory recording (engines/recorder.jl) ---
+# Every engine records through this rather than growing its own vectors: a live
+# run that is never stopped would otherwise allocate without bound. Internal (not
+# exported) — engines expose their history through `state_series`.
+include("engines/recorder.jl")
+
 # --- M1's FrequencyResponseEngine ---
 # Center-of-inertia aggregate frequency model: `aggregates`, the engine struct,
 # and init! / step! / current_state / inject!. See docs/plans/m1-plan.md.

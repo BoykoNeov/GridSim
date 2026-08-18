@@ -132,11 +132,25 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
 
 ## Carried over from M1 — decide, don't drift
 
-- [ ] **Unbounded trajectory growth.** Both engines now have the same shape. Fix it
-      once in a shared recording facility rather than duplicating the leak. Decide
-      where it lives *before* `SwingEngine` grows its own vectors — retrofitting
-      two engines costs more than designing one. **This is now step 3's opening
-      item, not a background note:** step 3 is where the second copy gets written.
+- [x] **Unbounded trajectory growth — DONE, on its own commit before the engine.**
+      `src/engines/recorder.jl`: a shared, fixed-capacity `TrajectoryRecorder` that
+      **decimates** when full (halve the buffer, halve the rate from then on) rather
+      than dropping the oldest — a ring buffer would discard precisely the initial
+      RoCoF and the nadir, which are the headline numbers. `FrequencyResponseEngine`
+      was retrofitted onto it **in the same commit and with no new engine alongside**,
+      because M1's 350 tests are the only oracle in the repo that can find a bug in
+      the recorder; bundled with `SwingEngine`, a failure would have been ambiguous
+      between "recorder wrong" and "swing model wrong". 411/411 core + 33/33 UI green.
+      Two consequences now load-bearing rather than incidental:
+      **(a) time is a mandatory channel** — the constructor prepends `:t` and refuses
+      to be handed one, because decimation changes the sample interval mid-run and any
+      consumer assuming a fixed `dt` breaks silently after the first halving
+      (`windowed_rocof` already divided by *actual* elapsed time, so it was safe by
+      habit; that habit is now a requirement). **(b) Running summaries must not be
+      derived from the buffer** — `minimum(series.f)` is the lowest *retained* sample,
+      not the lowest that occurred. A test pins this: the same run at capacity 64 and
+      at 200 000 reports the *same* nadir, while the small buffer's retained minimum is
+      strictly above it.
 - [ ] Report **Figure 3-67** as a layout target — still open, still ticks no
       acceptance criterion.
 
