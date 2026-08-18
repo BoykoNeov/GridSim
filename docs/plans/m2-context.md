@@ -206,6 +206,157 @@ second branch on a pair with a message that says so.
   collision hazard. All 14 checked (including `SwingEngine`, `TripLine`,
   `coi_model` for later steps) are clear.
 
+## Steps 3–4 — the swing engine (DONE), and the three things they settled
+
+Landed as three commits, deliberately in this order.
+
+### The trajectory recorder went first, alone
+
+`src/engines/recorder.jl` — a shared, fixed-capacity `TrajectoryRecorder` that
+**decimates** when it fills (halve the buffer, halve the sampling rate from then
+on) rather than dropping the oldest sample. A ring buffer is the obvious choice
+and the wrong one here: the initial rate of change and the frequency nadir both
+happen in the first seconds after a disturbance, so keeping "the most recent
+N samples" would discard exactly the headline numbers and retain a flat settled
+tail. Decimation keeps the whole run at progressively coarser resolution with the
+start never lost.
+
+It landed on its **own commit, with M1's engine retrofitted onto it and no new
+engine alongside**. The reasoning is about oracles, not tidiness: M1 has hundreds
+of tests that exercise trajectories and `SwingEngine` had none, so M1's suite was
+the only thing in the repo capable of finding a bug in the recorder — and it could
+only do so if nothing else changed in the same commit. Bundled with the new engine,
+a failure would have been ambiguous between "recorder wrong" and "swing model
+wrong", and the wrong one would have been debugged first.
+
+Two rules the design turns from incidental into binding:
+
+  - **Time is a mandatory channel.** Decimation changes the effective sample
+    interval mid-run, so anything that finite-differences the series, or plots it
+    against an implied step, breaks silently after the first halving. The
+    constructor prepends `:t` itself and *refuses* to be handed one, which makes
+    "a recorder without a time base" unrepresentable rather than merely discouraged.
+    (`windowed_rocof` already divided by the actual elapsed time rather than the
+    nominal window, so it was decimation-safe by habit before it had to be.)
+  - **Running summaries are tracked outside the buffer.** `minimum(series.f)` is
+    the lowest *retained* sample, not the lowest that occurred. Pinned by a test
+    that runs the same scenario at capacity 64 and at 200 000: the reported nadir is
+    identical, while the small buffer's retained minimum sits strictly above it.
+
+Retention invariant: sample `n` is kept iff `(n-1) % keep_every == 0`, with the
+keeper test **re-applied after a halving** — doubling the stride can disqualify the
+very sample that triggered it, which is where odd capacities break if you push
+blindly. Swept over capacities 2/3/4/5/8/9 × 200 pushes.
+
+### FINDING — the `SimulationEngine` contract held, with one strain worth naming
+
+M1 had a single engine, so `src/engines/interface.jl` had never been asked to hold
+a second. It needed **no changes**, and that is asserted in `test/` rather than
+claimed here: every verb resolves on `SwingEngine`, and `init!` dispatches on the
+engine *type* exactly as M1's does (the construction chicken-and-egg — a struct
+parametric on types that only exist once the integrator does — resolves the same
+way).
+
+The one place it strains is **`state_series`**. M1 returns a fixed set of aggregate
+channels; `SwingEngine` returns one channel per machine angle, one per machine
+speed, plus the aggregate — a shape that depends on the model. Both satisfy what
+`interface.jl` actually states ("a NamedTuple of named, equal-length series"), and
+both lead with `:t`, so a consumer that reads channels **by name** works against
+either. A consumer that assumes a *particular* set of channels does not. This is
+recorded as a property of the abstraction rather than patched: the UI currently
+calls `state_series` and `current_state` by name, so step 7 is where it has to be
+handled honestly instead of by widening the interface now on speculation.
+
+### FINDING — graph edge order is not branch order, and V2 cannot catch it
+
+`Graphs.SimpleGraph` iterates its edges in sorted `(src, dst)` order, **not** in
+the order branches were added, and NetworkDynamics indexes edge parameters by
+position in that list. On `three_machine_ring` the branches `[L12, L23, L31]` map
+to graph edges `[1, 3, 2]`, so the natural-looking "branch *k* ↦ edge *k*" would
+hand two of the three lines the wrong coupling.
+
+What makes this worth a finding rather than a footnote is that **the planned
+validation could not have caught it**. V2 recomputes each machine's electrical
+power and checks it against the specified mechanical power — but `find_fixpoint`
+converges happily on whatever self-consistent *wrong* network it is given, and
+power recomputed from the same wrong couplings still balances. V1 passes too: a
+wrong network still has a flat start. The mis-assignment would have survived every
+acceptance criterion and shown up only as an oscillation frequency nobody had a
+prediction for.
+
+Two defences, because the structural one alone leaves nothing to test:
+
+  - **Structural:** edge parameters are filled in a single pass over the graph's
+    own edge list, looking each branch up by its (unordered) bus pair. There is no
+    positional correspondence, hence no index that could be permuted.
+  - **Asserted:** `branch_to_edge` (kept as the reverse map `TripLine` will need at
+    step 5) is tested to be a permutation, and each edge is tested to hold the
+    coupling of the branch joining its two buses. The ring's three couplings are
+    all distinct, so the assertion bites; on a system with equal couplings it
+    would not, which is itself a reason to keep the ring in the test set.
+
+Edge *orientation*, by contrast, is harmless: `K` is symmetric and `K·sin` is
+antisymmetric, so flipping an edge's ends flips the sign of a quantity that
+`AntiSymmetric` was going to flip anyway.
+
+### The post-trip system has no equilibrium — stated so nobody "fixes" it
+
+`NetworkModel` enforces `Σ P0 = 0` at construction, but a trip deliberately breaks
+it, and the classical tier has no governors to make up the loss. So after a trip
+there is **no fixpoint at all**: speed falls until damping balances the shortfall
+(`ω_coi → ΣPm_remaining / ΣD`, matched to 1e-4 in `test/`), and because that limit
+is non-zero every angle then grows without bound at a common rate. Angle
+*differences* still settle. Two consequences worth carrying: never call
+`find_fixpoint` on a post-trip state, and never assert on an absolute angle.
+
+The gauge point is separate and equally load-bearing — shifting every `δ` by the
+same constant is still an equilibrium, so the fixpoint solver returns an arbitrary
+offset (on the ring it lands near 2.1 rad, nowhere near zero). The test asserts the
+**symmetry itself** — displace all angles by 0.7 rad and the residual is still zero
+— rather than asserting wherever this particular solver run happened to land.
+
+### V1 / V2 / V3, measured
+
+  - **V1 flat start** — residual `6e-18` (two machines) and `2e-17` (ring) at
+    `t = 0`; a 2 s pre-disturbance window does not move.
+  - **V2 injections** — reproduce to `2e-16`, recomputed from the model's own
+    couplings rather than from what the engine handed the solver. This is the
+    sign-convention test: a flipped coupling still oscillates, still settles, and
+    still has a nadir.
+  - **V3 closed-form swing frequency** — the running engine measures
+    **1.5909869 Hz** against the pinned prediction **1.5911075 Hz**, excited by a
+    10 mrad angle displacement (not a trip — a trip removes the equilibrium the
+    oscillation would be about) and averaged over every cycle in a 12 s window by
+    interpolated zero crossings. The `1.2e-4 Hz` gap is the damping: the closed form
+    is the *undamped* natural frequency, so the measurement must come out slightly
+    low, and the test asserts the sign and bounds the size of that offset instead of
+    widening the tolerance until it passes. Three wrong versions of the formula —
+    dropping `cos δ₀`, using total system inertia, using one machine's inertia —
+    are all asserted to land outside the tolerance; dropping `cos δ₀` is the near
+    miss at `8e-3 Hz`, which is why the tolerance is `5e-4` rather than something
+    comfortable.
+
+### Smaller things these steps settled
+
+  - **`ω₀` rides in the parameter vector, not in a closure.** Capturing it would
+    make every model its own anonymous function type and force a recompile per
+    system; as a parameter, all models share one compiled `Network` type.
+  - **No `isoutofdomain` guard was copied from M1.** M1 has one to absorb overshoot
+    above a bounded quantity. Nothing here is bounded — post-trip drift is intended
+    — so a copied state guard would fire on correct behaviour and collapse the step
+    size.
+  - **Flat state positions come from NetworkDynamics' symbolic indexing**
+    (`NetworkDynamics.SII`), resolved once at construction, so the engine never
+    assumes a memory layout. A test round-trips them against a symbolic read, so an
+    upstream layout change reports itself instead of quietly corrupting the physics.
+  - **The shared-mutable-parameter pattern is inherited, and asserted.**
+    `eng.params === eng.integrator.p` holds, as the spike predicted, so an event
+    changes the system without disturbing the continuous state.
+  - **`system_inertia` and `is_online` are reused verbatim** for the new engine —
+    the same physical quantities under the same names, so the UI reads both engines
+    through one API. `machine_ids` is the new per-machine counterpart, and both new
+    exported names were checked clear against GLMakie before being added.
+
 ## Key decisions (and why)
 
 **D1 — Build on `NetworkDynamics`, alone. Not hand-rolled, not `PowerDynamics`.**
@@ -259,21 +410,26 @@ integrating harmlessly and are excluded from the aggregate read-out.
 
 - ~~Does the M1 suite still pass at `OrdinaryDiffEq` 7.6.0 / `SciMLBase` 3.49.1?~~
   **RESOLVED — yes, 273/273, in both resolutions.** See the bump section above.
-- **Where does the trajectory-buffer fix live?** M2 introduces a second engine
-  with the same unbounded-growth shape as M1's. It wants to be one shared
-  recording facility, not two leaks — but designing that is a small refactor of
-  working M1 code and should be decided, not drifted into.
+- ~~**Where does the trajectory-buffer fix live?**~~ **RESOLVED —
+  `src/engines/recorder.jl`**, decimating rather than a ring buffer, landed on its
+  own commit with M1 retrofitted onto it before the second engine was written. See
+  the steps 3–4 section above for why it went first and alone, and for the two
+  rules it makes binding.
 - ~~**Does the two-machine closed form survive the real `NetworkModel`?**~~
   **HALF-RESOLVED.** It survives, but only after the coupling itself was corrected
   (the finding above) — which is exactly the "one more layer where a convention can
   go wrong" this question was written to catch, and it did go wrong. The prediction
   is now re-derived through the real `machine_arrays`/`branch_arrays` and pinned in
-  `test/`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`, **`f_osc = 1.5911075 Hz`**. The
-  remaining half is step 4: the *running engine* has to measure that number.
-- **The trajectory-buffer decision stops being deferrable at step 3.** M2's engine
-  is where the second copy of M1's unbounded-growth pattern gets written, so step 3
-  opens with deciding where the shared recording facility lives — not with writing
-  the engine.
+  `test/`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`, **`f_osc = 1.5911075 Hz`**. **Now
+  FULLY RESOLVED**: the running engine measures `1.5909869 Hz`, the shortfall being
+  the damping the undamped closed form omits (V3 above).
+- ~~**The trajectory-buffer decision stops being deferrable at step 3.**~~ **DONE —
+  it was step 3's opening commit**, exactly as this note demanded.
+- **How does the UI consume two different `state_series` shapes?** Newly open, from
+  the conformance finding above. The window currently reads `state_series` and
+  `current_state` by name against M1's fixed channels; M2's are per-machine and
+  model-dependent. Step 7 has to resolve this by reading channels by name, not by
+  widening the engine interface now on speculation.
 - **How much UI does M2 need?** Per-machine traces are clearly in scope; a network
   canvas with node positions is a different (and much larger) piece of work, and
   SPEC §3.5's render-state-is-not-simulation-state rule bites the moment it starts.

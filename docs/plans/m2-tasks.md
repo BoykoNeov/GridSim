@@ -71,42 +71,83 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
 - [x] 350/350 core tests green (273 entering M2), on the fresh resolve as well as
       the incremental one.
 
-## Step 3 — the swing engine
+## Step 3 — the swing engine (DONE)
 
-- [ ] `src/engines/swing.jl`: NetworkDynamics vertex model (machine) and edge model
-      (branch), assembled into a `Network` compiled *from* `NetworkModel`.
-- [ ] `SwingEngine <: SimulationEngine` — `init!`, `step!`, `current_state`,
-      `state_series`, `timestep`, `inject!`. Parametric on the concrete integrator
-      type, built through `init!` as constructor of record (same shape as
-      `FrequencyResponseEngine`).
-- [ ] `current_state` exposes per-machine angle and speed **and** the
-      inertia-weighted system frequency — they are different quantities and the
-      names must not blur (`ω_coi = Σ Hᵢ·ωᵢ / Σ Hᵢ`).
-- [ ] Accessors for whatever the UI needs, so `ui/` never reaches into engine
-      fields (the `system_inertia` / `is_online` precedent).
+- [x] **Step 3 opened with the trajectory recorder, on its own commit** — see the
+      carried-over section at the bottom. That ordering was deliberate and is the
+      first thing to read if this batch is being reconstructed.
+- [x] `src/engines/swing.jl`: NetworkDynamics vertex model (machine) and edge model
+      (branch), assembled into a `Network` compiled *from* `NetworkModel`. `ω₀`
+      rides in the vertex parameters rather than a closure, so every model shares
+      one compiled `Network` type instead of forcing a recompile per system.
+- [x] `SwingEngine <: SimulationEngine` — `init!`, `step!`, `current_state`,
+      `state_series`, `timestep`, `inject!(::TripGenerator)`. Parametric on the
+      concrete network, integrator **and** recorder types (the recorder's channel
+      count depends on the machine count), built through `init!` as constructor of
+      record. `TripLine` remains step 5.
+- [x] **The contract held: `interface.jl` needed no changes**, asserted in `test/`
+      rather than claimed. The one strain — `state_series` returns a different set
+      of channels per engine — is recorded as a **finding about the abstraction**
+      in `m2-context.md` and left for step 7 to handle honestly, not patched by
+      widening the interface on speculation.
+- [x] `current_state` exposes per-machine `δ` and `ω` **and** `ω_coi`/`f_coi` under
+      distinct names, with a test that walks a transient asserting `ω_coi` really is
+      the inertia-weighted mean *and* that the machines genuinely spread apart — so
+      the equality is not holding trivially.
+- [x] Accessors: `machine_ids`, plus `system_inertia` / `is_online` reused verbatim
+      for the new engine, so `ui/` reads both engines through one API. Both new
+      exported names checked clear against GLMakie first.
+- [x] **FINDING: graph edge order is not branch order, and V2 provably cannot catch
+      a mis-mapping.** `[L12, L23, L31]` maps to graph edges `[1, 3, 2]`. Defended
+      structurally (edge parameters filled in one pass over the graph's own edge
+      list, keyed by bus pair — no index to permute) *and* asserted directly, since
+      the fixpoint solver converges on any self-consistent wrong network and the
+      injection check then balances against the same wrong couplings. Full write-up
+      in `m2-context.md`.
 
-## Step 4 — initialization, with its tests in the same step
+## Step 4 — initialization, with its tests in the same step (DONE)
 
-- [ ] Steady state via `find_fixpoint`; no hand-rolled power flow (D6).
-- [ ] **V1 flat start**: `max|du| < 1e-10` at `t = 0`, and a 2 s pre-disturbance
-      window stays flat. Acceptance criterion, not a nicety.
-- [ ] **V2 injection check**: each machine's computed electrical power equals its
-      specified mechanical power to `1e-8`. This is the sign-convention test — a
-      flipped sign still oscillates, still settles, still has a nadir.
-- [ ] Tests assert angle **differences**, never absolute angles (rotational
-      symmetry means the gauge is arbitrary).
+- [x] Steady state via `find_fixpoint`; no hand-rolled power flow (D6). It ships in
+      the step-3 commit because the engine cannot be smoke-tested at all without a
+      start state.
+- [x] **V1 flat start**: residual `6e-18` (two machines) / `2e-17` (ring) at
+      `t = 0`, and a 2 s pre-disturbance window that does not move.
+- [x] **V2 injection check**: reproduces to `2e-16`, recomputed from the *model's*
+      couplings rather than from what the engine handed the solver.
+- [x] **V3 closed-form swing frequency, on the running engine**: measured
+      **1.5909869 Hz** against the pinned **1.5911075 Hz**, excited by a 10 mrad
+      angle displacement (a trip would remove the equilibrium the oscillation is
+      about) and averaged over every cycle in a 12 s window by interpolated zero
+      crossings. The `1.2e-4 Hz` gap is the damping the undamped closed form omits;
+      the test asserts the **sign** of that offset and **bounds its size** rather
+      than widening the tolerance until it passes. Three wrong versions of the
+      formula are asserted to fall outside the tolerance — dropping `cos δ₀` is the
+      near miss at `8e-3 Hz`, which is what sets the tolerance at `5e-4`.
+- [x] Tests assert angle **differences**, never absolute angles — and the gauge
+      symmetry itself is asserted (displace every angle by 0.7 rad, residual still
+      zero) rather than pinning wherever the solver happened to land.
+- [x] **Recorded, not patched: the post-trip system has no equilibrium.** No
+      governors in this tier, so a trip leaves `Σ Pm ≠ 0` permanently: speed falls
+      until damping balances it (`ω_coi → ΣPm/ΣD`, matched to 1e-4) and angles then
+      drift together forever. Never call `find_fixpoint` on a post-trip state.
 
 ## Step 5 — events
 
-- [ ] `inject!(::SwingEngine, ::TripGenerator)` — reuse the M1 event type; zero the
-      machine's coupling and mechanical power, **do not resize the state vector**.
+- [x] `inject!(::SwingEngine, ::TripGenerator)` — **DONE in step 3** (it is one of
+      the interface verbs step 3 owed). Reuses the M1 event type; zeroes the
+      machine's mechanical power and its incident branch couplings, and the state
+      vector is asserted not to be resized.
 - [ ] `TripLine(from, to)` — new event; zero that branch's coupling. Template is
       NetworkDynamics' `cascading_failure.jl` example.
 - [ ] Both paths call `derivative_discontinuity!` and `auto_dt_reset!`, and both
       are tested for it — the M1 lesson was that a stale cached derivative injects
       a small persistent error that no assertion catches unless one is written.
-- [ ] A tripped machine is excluded from the aggregate frequency read-out even
-      though its state keeps integrating.
+      (The trip path calls both already; the *test* that distinguishes calling them
+      from not calling them is still owed, and belongs with `TripLine`.)
+- [x] A tripped machine is excluded from the aggregate frequency read-out even
+      though its state keeps integrating — its inertia weight goes to zero, and the
+      test checks both that it leaves the aggregate and that its own speed damps to
+      rest harmlessly.
 
 ## Step 6 — the COI view, derived
 
@@ -163,8 +204,10 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       re-deriving is what caught it. Prediction now pinned in `test/` through the
       real `machine_arrays`/`branch_arrays`: `K = 4.284 pu`, `δ₀ = 0.140518 rad`,
       `f_osc = 1.5911075 Hz`. Step 4 must make the *running engine* measure it.
-- [ ] Per-machine speed deviation is not M1's aggregate deviation. Check the names
-      in the exported API do not invite the confusion.
+- [x] Per-machine speed deviation is not M1's aggregate deviation. `current_state`
+      returns `δ`/`ω` (per machine, vectors) alongside `ω_coi`/`f_coi` (aggregate,
+      scalars) — four distinct names, none reused from M1's `Δω`/`f`. The trace
+      channels follow suit (`δ_G1`, `ω_G1`, …, `f_coi`).
 - [x] **A model that is "wrong on its face" is rejected at construction**, and each
       guard's *message* is asserted — several invalid models violate more than one
       rule, so "it threw" would not prove the intended guard fired.
@@ -179,5 +222,6 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       `Bus` · `Branch` · `Machine` · `NetworkModel` · `machine_arrays` ·
       `branch_arrays` · `machine_at` · `two_machine_system` · `three_machine_ring` ·
       `SwingEngine` · `TripLine` · `coi_model` · `buses` · `branches`.
-- [ ] Any long-running loop test self-terminates (finite duration, or a state
-      stopper plus a wall-clock watchdog). A hung suite is worse than a failing one.
+- [x] Any long-running loop test self-terminates. Every M2 engine test drives a
+      fixed step count (the longest is 6000 steps / 12 s of simulated time); none
+      loops on a condition, so none can hang.

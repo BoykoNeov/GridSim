@@ -65,19 +65,21 @@ boundary, not a shortcut.
    confined to the two array functions, and the example machines are rated away
    from `S_base` so a missing conversion changes the answer instead of hiding
    behind a weight of 1.
-3. **The swing engine** — `src/engines/swing.jl`: the NetworkDynamics vertex model
-   (one machine) and edge model (one branch), assembly into a `Network`, and
-   `SwingEngine <: SimulationEngine` implementing `init!` / `step!` /
-   `current_state` / `state_series` / `timestep` / `inject!`.
-   **This is the first real test of the `SimulationEngine` contract.** M1 had one
-   engine, so `src/engines/interface.jl` has never had to hold a second one.
-   Confirm explicitly that `SwingEngine` needs **no changes** to `interface.jl` —
-   and if it does, that is a *finding about the abstraction*, to be recorded as
-   one, not a detail to be patched in passing.
-4. **Steady-state initialization** via `find_fixpoint`, with the flat-start and
-   injection assertions from *Validation* below wired in as tests **in the same
-   step** — not after. A model initialised off-equilibrium rings from `t = 0` and
-   produces a plausible oscillation that is pure artifact.
+3. **The swing engine — DONE.** `src/engines/swing.jl`. Step 3 opened, as planned,
+   with the shared trajectory recorder on its own commit (see "Carried over from
+   M1" below). **The contract held: `interface.jl` needed no changes**, and that is
+   asserted in `test/` rather than asserted here. The one strain is `state_series`,
+   whose channel set now differs per engine — recorded as a finding in
+   `m2-context.md` and left for step 7, not papered over by widening the interface
+   on speculation. The batch also produced a hazard the plan had not named: graph
+   edge order is not branch order, and **V2 provably cannot catch the resulting
+   mis-mapping**, so it needed a structural defence *and* its own assertion.
+4. **Steady-state initialization — DONE.** `find_fixpoint`, with V1/V2 in the same
+   commit as the engine (it cannot be smoke-tested without a start state) and V3 in
+   the next one. Measured: V1 residual `6e-18`/`2e-17`, V2 to `2e-16`, V3 the
+   running engine at **1.5909869 Hz** against the pinned **1.5911075 Hz** — the gap
+   being the damping the undamped closed form omits, whose sign and size the test
+   asserts rather than absorbing into a loose tolerance.
 5. **Events.** Reuse `TripGenerator` (same event type, new engine method) and add
    `TripLine(from, to)`. Both are realised by **zeroing coupling parameters, never
    by resizing the state vector** (see Pitfalls).
