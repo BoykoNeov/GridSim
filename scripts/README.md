@@ -10,5 +10,12 @@ Run one with the project environment active:
 julia --project=. scripts/<name>.jl
 ```
 
-The first such script (a headless generator-trip experiment producing a frequency
-trajectory) lands with Milestone 1.
+## `iberia_2025_04_28.jl`
+
+Replays the 28 April 2025 Iberian blackout event sequence through
+`FrequencyResponseEngine` and prints its frequency waypoints against the ones
+reported by ENTSO-E. This is Milestone 1's headless proof (`docs/SPEC.md` §7.8
+criterion 1), using a real scenario instead of the synthetic `example_system`.
+
+Read `docs/plans/entsoe-iberia-reproduction.md` §2 before treating its output as
+validation — the centre-of-inertia model is faithful only up to ~12:33:19.6.

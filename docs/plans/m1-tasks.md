@@ -151,9 +151,14 @@ tracks the report's frequency waypoints when fed the real event sequence. This
 becomes the content of the headless script and the UI demo, replacing the
 synthetic `example_system`.
 
-- [ ] Headless script: staged sequence (`StepLoad(+317.3/S_base)` then trips of
-      355 / 725 / 930 / ≈2,600 MW at their reported timestamps), asserting the
-      49.98 / 49.94 / 49.90 / 49.80 Hz waypoints. **No new mechanisms needed.**
+- [x] Headless script `scripts/iberia_2025_04_28.jl`: staged sequence
+      (`StepLoad(+317.3/S_base)` then trips of 355 / 725 / 930 / ≈2,600 MW at
+      their reported timestamps), printing the waypoint comparison. No Makie.
+      **No new mechanisms needed.** (AC #1.)
+- [ ] Promote those waypoints to test assertions. Tolerances must encode the
+      **two-window** caveat: the model runs too deep before 12:33:16 and too
+      shallow after, so a single band would hide both. The 12:33:20 row is
+      coincidental cancellation — never tune against it.
 - [ ] Inverter-based resources: confirmed expressible today as
       `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — verified finite aggregates,
       no `NaN`. Add a regression test so it stays true.

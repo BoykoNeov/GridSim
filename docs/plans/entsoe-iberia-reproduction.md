@@ -5,7 +5,9 @@ case — both as a validation target for the physics and as the source of a
 visualisation vocabulary worth building toward.
 
 **Data:** `docs/scenarios/iberia-2025-04-28.md` (extracted figures + page cites).
-**Status:** planning only. No engine code has been written for this yet.
+**Runnable:** `scripts/iberia_2025_04_28.jl` (headless, no Makie).
+**Status:** the replay script exists; no *engine* changes have been made for this
+yet — §3 lists the three mechanisms still missing.
 
 ---
 
@@ -20,16 +22,37 @@ Feeding the report's own event sequence (net load rise +317 MW, then the 355 /
 existing `FrequencyResponseEngine`, parameterised from the report's Iberian
 kinetic energy (119,474 MWs, `H_tot = 2.46 s`):
 
-| Report time | Reported f | Model f |
-|-------------|-----------:|--------:|
-| 12:32:55    |      49.98 |  49.966 |
-| 12:32:57+   |      49.94 |  49.859 |
-| 12:33:16+   |      49.90 |  49.865 |
-| 12:33:17+   |      49.80 |  49.669 |
-| 12:33:20    |      48.50 |  48.732 |
+**Reproduce with `julia --project=. scripts/iberia_2025_04_28.jl`** — that script
+records every modelling choice behind these numbers (`S_base`, `D`, `Tg`, the
+synchronous-block sizing) and marks which are report facts and which are ours.
 
-The shape is right and the magnitudes are in the right neighbourhood. Two
-observations from the discrepancies are worth more than the agreement:
+| Report time | Reported f | Model f | Δ |
+|-------------|-----------:|--------:|--:|
+| 12:32:55    |      49.98 |  49.966 | −0.014 |
+| 12:33:00    |      49.94 |  49.859 | −0.081 |
+| 12:33:16+   |      49.90 |  49.865 | −0.035 |
+| 12:33:17+   |      49.80 |  49.669 | −0.131 |
+| 12:33:20    |      48.50 |  48.732 | **+0.232** |
+
+**The two windows fail in opposite directions, and reading this table as one
+"close enough" verdict is wrong** — it papers over two unrelated causes and
+would send someone tuning the wrong parameter.
+
+- **Before 12:33:16 the model runs too deep** (−0.08 Hz at 12:33:00). Cause in
+  (b) below.
+- **After 12:33:16 the model runs too shallow** (+0.23 Hz at 12:33:20), and that
+  last row is **coincidental cancellation, not calibration**. The script omits
+  the ≈4,854 MW of pump-storage shedding that actually fired from 49.8 Hz
+  downward (Table 3-14) — shedding pushes frequency *up*. Reality nevertheless
+  fell *further* than the model, so the true late-window imbalance was well
+  above the 2,600 MW injected. That is consistent with the report's own hedges
+  (the 930 MW event "or even more than 1,100 MW"; the ≥2,600 MW figure is a
+  floor; rooftop PV below the 1 MW reporting threshold is unobservable) and with
+  the loss-of-synchronism export swing of §2. **Do not tune against this
+  waypoint.** Adding the LFDD ladder (§3.1) will make this row *worse* before
+  the under-modelled loss is corrected — that is expected and correct.
+
+Two further observations are worth more than any of the agreement:
 
 **(a) Inverter-based generation needs no new data model.** A PV/wind block is
 already expressible as `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — zero inertia
@@ -197,11 +220,11 @@ GLMakie UI.
 This scenario should be **the content of that batch**, replacing `example_system`
 as the demo, rather than being scheduled after it.
 
-- **Next batch (M1 completion).** Headless script runs the staged sequence with
-  `TripGenerator` × N plus `StepLoad` for the net-load rise, asserting the
-  49.98 / 49.94 / 49.90 / 49.80 waypoints. Needs no new mechanisms — §1 above is
-  already a working prototype of it. Ticks §7.8's first criterion with real
-  content.
+- **Done.** `scripts/iberia_2025_04_28.jl` — the staged sequence as a headless,
+  Makie-free script printing the waypoint comparison. Ticks §7.8's first
+  criterion with real content. Still to add: the waypoint comparisons as *test
+  assertions* (with tolerances that encode §1's two-window caveat, not a single
+  band).
 - **Batch after.** §3.1 LFDD callback + §3.2 cumulative bookkeeping + §3.3
   windowed RoCoF. Unlocks Figure 3-67, the most valuable single chart.
 - **Then.** GLMakie UI, with the ENTSO-E chart archetypes in bucket A as the
