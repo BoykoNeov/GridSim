@@ -31,8 +31,17 @@ synchronous-block sizing) and marks which are report facts and which are ours.
 | 12:32:55    |      49.98 |  49.966 | −0.014 |
 | 12:33:00    |      49.94 |  49.859 | −0.081 |
 | 12:33:16+   |      49.90 |  49.865 | −0.035 |
-| 12:33:17+   |      49.80 |  49.669 | −0.131 |
-| 12:33:20    |      48.50 |  48.732 | **+0.232** |
+| 12:33:17+   |      49.80 |  49.705 | −0.095 |
+| 12:33:20    |      48.50 |  49.711 | **+1.211** |
+
+> **Updated after the LFDD ladder landed (§3.1).** Two rows moved, and the
+> prediction this section made below was confirmed. The 12:33:20 row went from
+> **+0.232 to +1.211** — the ladder sheds 3,907 MW, the model recovers at 49.50 Hz,
+> and the coincidental cancellation that made the old number look good is gone.
+> The 12:33:17 row also moved (49.669 → 49.705), which is easy to miss: the
+> 49.8 Hz pump-storage stage fires at 12:33:17.405, i.e. *before* that waypoint.
+> The pre-boundary rows are otherwise unchanged, because nothing sheds above
+> 49.8 Hz.
 
 **The two windows fail in opposite directions, and reading this table as one
 "close enough" verdict is wrong** — it papers over two unrelated causes and
@@ -51,6 +60,11 @@ would send someone tuning the wrong parameter.
   the loss-of-synchronism export swing of §2. **Do not tune against this
   waypoint.** Adding the LFDD ladder (§3.1) will make this row *worse* before
   the under-modelled loss is corrected — that is expected and correct.
+  **Confirmed:** the ladder landed and the row went to **+1.211**. With the real
+  defence plan armed the model arrests the fall and recovers; reality shed
+  ~15.5 GW and collapsed anyway. That divergence is now the headline of the
+  script, and it is a cleaner statement of the boundary than the old near-miss
+  ever was.
 
 Two further observations are worth more than any of the agreement:
 
@@ -58,7 +72,9 @@ Two further observations are worth more than any of the agreement:
 already expressible as `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — zero inertia
 contribution, `1/R = 1/Inf = 0` droop gain, zero headroom, and tripping it dumps
 `P0` straight into `ΔP_dist`. Verified: aggregates stay finite, no `NaN`.
-So the "renewables have no inertia" lesson is already representable.
+So the "renewables have no inertia" lesson is already representable. Now a
+**regression test**, not just an observation — including the all-IBR corner
+(`H_sys = 0`, `R_eq = Inf`, zero headroom, still no `NaN`).
 
 **(b) The pre-separation window needs *two areas*, and the data proves it.**
 Running the same script with a Continental-Europe-scale base instead of an
@@ -113,6 +129,32 @@ Everything else the frequency story needs, the engine already has.
 
 ### 3.1 Low-frequency load shedding as a latching threshold event
 
+**DONE** — `src/protection/load_shedding.jl` (`LoadShedStage` / `ShedLadder` /
+`shed_log` / `shed_total`), armed via `init!(…; shed = stages)`. Built as
+separate `ContinuousCallback`s in a `CallbackSet` rather than one
+`VectorContinuousCallback`: with ~12 stages a per-stage closure beats the vector
+form's disarmed-sentinel bookkeeping. Two things were subtle enough to be worth
+recording:
+
+- **The latch must hold the sign it had *after* firing** (negative, for a
+  downward crossing of `f − threshold`). Returning `+1.0` when disarmed
+  manufactures a sign change at the disarm instant, which the rootfinder reads as
+  a fresh crossing ⇒ double shed.
+- **`affect!` is the upcrossing, `affect_neg!` the downcrossing.** Asserted in
+  both polarities rather than trusted: `example_system` is underdamped, so one
+  run supplies an upward and a downward crossing of the same threshold ~6 s
+  apart, and the test demands silence on the first and a firing on the second.
+
+One expectation did **not** survive contact: the shed `affect!` mutates `p`
+without touching `u`, which is the stale-FSAL hazard `inject!` has to arm against
+by hand — but `apply_callback!` sets `derivative_discontinuity` *before* invoking
+the affect for a `ContinuousCallback`, so no explicit call is needed on this path.
+Checked in the DiffEqBase source and verified empirically (removing it changes a
+10× `dt` refinement by ~5e-14). A `dt`-refinement test guards it, because the
+error would be invisible to any readout assertion — `current_state` recomputes
+RoCoF algebraically, so it would report the right value while the integration
+drifted.
+
 The single architectural addition. Each threshold (49.5, 49.3, 49.0, 48.8, 48.6,
 48.4, 48.2, 48.0 Hz) arms a one-shot shed of a known MW amount.
 
@@ -135,12 +177,24 @@ existing `inject!` event-boundary handling.
 
 ### 3.2 Cumulative tripped-MW bookkeeping
 
+**DONE** — `eng.tripped_mw` plus a `tripped_mw` vector in `state_series`.
+Generation only: shed load is not generation and is logged separately in the
+ladder. Tested against double-counting a re-trip of an already-offline unit.
+
 Figures 1-3, 3-7 and 3-9 all plot **cumulative tripped generation** on a second
 axis against voltage or frequency. The information is entirely in the event log;
 the engine simply does not accumulate it. Small addition to the recorded
 trajectory alongside `ts/fs/rocofs/pms`.
 
 ### 3.3 500 ms windowed RoCoF
+
+**DONE** — `windowed_rocof` in `src/analysis/postprocess.jl`, engine-agnostic
+(takes vectors or a `state_series`). Same length as the input with `NaN` before
+the window fills, so it overlays directly on `f(t)`; divides by the **actual**
+elapsed time rather than the nominal window, since samples need not be uniformly
+spaced. The script uses it for the one RoCoF claim that lies inside the faithful
+window — the report's "|RoCoF| stayed within 1 Hz/s until 12:33:20.560" — which
+the instantaneous value could not legitimately be checked against.
 
 **Every RoCoF number in the report is a 500 ms sliding window** (ENTSO-E best
 practice, stated on p.116). `current_state` returns the instantaneous
@@ -153,6 +207,30 @@ trajectory — not as a replacement for the instantaneous value, which stays the
 live readout and the closed-form validation target (`docs/SPEC.md` §7.6).
 
 ### 3.4 Two open questions to decide consciously, not by default
+
+**BOTH DECIDED**, in `scripts/iberia_2025_04_28.jl`.
+
+*Load inertia:* documented, not modelled. `H_tot` sits entirely on the
+synchronous fleet. That is **exact** for the frequency trajectory — the swing
+equation only ever sees the total — and becomes an approximation the moment load
+inertia would have to leave with shed load, which now matters, since the ladder
+sheds 3.9 GW of load. Recorded at the top of the script; an `H_load` field is
+deliberately *not* added at M1.
+
+*Which base:* keyed off `KE`. The consequence is sharper than expected and is
+worth stating plainly, because the script's own sensitivity table looks like a
+result and is not: `S_base = KE/H_tot` makes `f0·ΔP/(2·H_sys)` collapse to
+`f0·ΔP_MW/(2·KE)`, so **the published 2.21–2.71 s band cancels out of the initial
+RoCoF exactly**. The band is uncertainty about how to *split* a measured kinetic
+energy between machines and motor load, and a single-frequency model does not
+care about the split. What the band does move is `S_base`, hence the fleet's
+per-unit droop and damping (8.9 → 10.6), which nudges the disarmed nadir ~0.08 Hz
+— *deeper at higher inertia*, the giveaway that it is not an inertia effect at
+all. The genuine inertia-only comparison, everything else held fixed, lives in
+`test/runtests.jl`. Bottom line: the ~1.2 Hz late-window gap **cannot** be
+attributed to inertia uncertainty.
+
+The original framing of both questions follows.
 
 - **Load inertia.** The report's `H_tot = H_eq + H_loads`, and the 2.21–2.71 s
   range exists *because* `H_loads` is uncertain. GridSim has no load-inertia
@@ -224,14 +302,20 @@ This scenario should be **the content of that batch**, replacing `example_system
 as the demo, rather than being scheduled after it.
 
 - **Done.** `scripts/iberia_2025_04_28.jl` — the staged sequence as a headless,
-  Makie-free script printing the waypoint comparison. Ticks §7.8's first
-  criterion with real content. Still to add: the waypoint comparisons as *test
-  assertions* (with tolerances that encode §1's two-window caveat, not a single
-  band).
-- **Batch after.** §3.1 LFDD callback + §3.2 cumulative bookkeeping + §3.3
-  windowed RoCoF. Unlocks Figure 3-67, the most valuable single chart.
-- **Then.** GLMakie UI, with the ENTSO-E chart archetypes in bucket A as the
-  layout targets rather than an ad-hoc plot.
+  Makie-free script. Ticks §7.8's first criterion with real content.
+- **Done.** §3.1 LFDD callback + §3.2 cumulative bookkeeping + §3.3 windowed
+  RoCoF, all three wired into the script, plus §3.4's two decisions. Everything
+  Figure 3-67 needs is now computed: threshold lines, root-found shed instants to
+  the millisecond, per-stage MW, and the cumulative-tripped second axis. Only the
+  drawing is missing.
+- **Done.** The waypoints as *test assertions*, with tolerances that encode the
+  two-window structure by **sign** rather than a single band, and with the
+  12:33:20 row asserted as a known structural failure rather than banded. The
+  script is included as a module by the test file so the scenario stays
+  single-sourced.
+- **Next.** GLMakie UI, with the ENTSO-E chart archetypes in bucket A as the
+  layout targets rather than an ad-hoc plot. Figure 3-67 is the first target and
+  needs no further physics.
 - **M2 candidate.** Two-area + tie-line, motivated by the bracket in §1b.
 
 ---

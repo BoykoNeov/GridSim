@@ -770,11 +770,18 @@ end
         @test isapprox(shed_total(eng.ladder) * eng.model.S_base, 3907.0; atol = 1.0)
         # Root-found, so the crossing instants are not on the dt grid.
         @test all(t -> !isapprox(t / 0.01, round(t / 0.01); atol = 1e-6), lg.t)
-        # Reality did not reach 49.5 Hz until 12:33:20.1 (report p.174), i.e. AFTER
-        # the boundary; the model gets there early, the same too-deep error as above.
-        @test lg.t[end] < 80.13 - 1.0
+        # Reality did not reach 49.5 Hz until 12:33:20.133 (report p.174), i.e. AFTER
+        # the fidelity boundary; the model gets there ~1.7 s early, the same too-deep
+        # error as the waypoints above. Two-sided on purpose: a one-sided "more than
+        # 1 s early" would also be satisfied by a run firing at 60 s for unrelated
+        # reasons, which is not the claim being made.
+        @test 78.0 < lg.t[end] < 79.0
 
         # Disarming the ladder must make it worse — the mechanism has to be load-bearing.
+        # The armed nadir is pinned at the 49.5 Hz threshold (that stage arrests the
+        # fall), the disarmed one lands at ~48.73, so the gap is ~0.77 Hz; 0.5 is a
+        # deliberate margin under it, not a number that happened to pass. If the
+        # ladder's contents change, this is the assertion that moves.
         bare = Iberia.replay(; shed = false)
         @test bare.nadir < eng.nadir - 0.5
         @test isempty(shed_log(bare.ladder).t)

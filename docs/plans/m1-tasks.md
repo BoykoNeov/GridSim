@@ -108,8 +108,8 @@ acceptance criteria in `../SPEC.md` §7.8.
 
 ### Known, deferred (not this batch)
 
-- [ ] **Unbounded trajectory growth.** The engine pushes to `ts/fs/rocofs/pms` on
-      every step forever — the same unbounded-memory problem the engine already
+- [ ] **Unbounded trajectory growth.** The engine pushes to
+      `ts/fs/rocofs/pms/tripped_mws` on every step forever — the same unbounded-memory problem the engine already
       avoids for the integrator's own storage (`save_everystep=false`). Harmless at
       test/script scale; it will show up in the UI batch over a multi-minute run.
       Fix later with a ring buffer or a decimated history, not by re-designing the
@@ -122,16 +122,22 @@ acceptance criteria in `../SPEC.md` §7.8.
       must add `Base.errormonitor` on the task, or a `try`/`catch` that publishes
       the error into an Observable the window can display.
 - [ ] **Check the new exports against GLMakie before writing UI code.** `ui/` will
-      do `using GridSim, GLMakie`, and this batch exported `stop!`, `timestep`, and
-      `drain!` — the same collision hazard that cost a round on `step!`/`solve!`.
-      Run `julia -e 'using GLMakie; for n in (:stop!, :timestep, :drain!);
+      do `using GridSim, GLMakie`, and the orchestration batch exported `stop!`,
+      `timestep`, and `drain!` — the same collision hazard that cost a round on
+      `step!`/`solve!`. The headless batch added five more: `LoadShedStage`,
+      `ShedLadder`, `shed_log`, `shed_total`, `windowed_rocof`. Run
+      `julia -e 'using GLMakie; for n in (:stop!, :timestep, :drain!, :shed_log,
+      :shed_total, :windowed_rocof, :LoadShedStage, :ShedLadder);
       println(n, " => ", isdefined(GLMakie, n)); end'` and decide rename-vs-qualify
-      up front, not via an ambiguity error mid-UI-work.
+      up front, not via an ambiguity error mid-UI-work. Deliberately **not** run in
+      the headless batch — it needs GLMakie installed in `ui/`, which is the UI
+      batch's setup cost, not this one's.
 
 ## Validation tests (DONE)
 
 All four closed forms are asserted in `test/runtests.jl`; the testset that
-satisfies each is named below. **177 tests green** (was 116).
+satisfies each is named below. **177 tests green** at the time of that batch
+(was 116); **266 after the headless batch**.
 
 - [x] Initial RoCoF matches `−f0·(P_k/S_base)/(2·H_sys)` — *"closed form: initial
       RoCoF, swept over every single-unit trip"*. Swept over all four units, not
@@ -173,12 +179,55 @@ satisfies each is named below. **177 tests green** (was 116).
       way, which is the operational point; the depleted config additionally
       exhausts its reserve (ΔPm pins at the ceiling) while the full one does not.
 
-## Headless proof & UI (next batch)
+## Headless proof (DONE) & UI (next batch)
 
-- [ ] `scripts/` generator-trip experiment → frequency trajectory, no Makie (AC #1).
-      **Use the real scenario, not `example_system`** — see below.
+- [x] `scripts/` generator-trip experiment → frequency trajectory, no Makie (AC #1),
+      on the **real ENTSO-E scenario** rather than `example_system`. SPEC §7.8's
+      first acceptance criterion is now ticked. The script prints five sections:
+      the waypoint comparison, the defence-plan stages that fired (root-found to
+      the millisecond, against the report's own annotations), cumulative tripped
+      generation, 500 ms windowed vs instantaneous RoCoF, and the published
+      inertia band run as a sensitivity experiment.
 - [ ] `ui/` GLMakie: live `f(t)`, readouts (f, RoCoF, nadir), per-unit trip,
       play/pause, rtf slider, `H_sys` indicator (AC #2, #3, #6).
+      Report **Figure 3-67** is the first layout target and needs no new physics —
+      threshold lines, shed annotations, and the cumulative second axis are all
+      computed already.
+
+### What the headless batch added to core
+
+- [x] `src/protection/load_shedding.jl` — `LoadShedStage` / `ShedLadder` /
+      `shed_log` / `shed_total`, armed with `init!(…; shed = stages)`. One
+      downward-crossing `ContinuousCallback` per stage in a `CallbackSet` (not one
+      `VectorContinuousCallback` — per-stage closures beat sentinel bookkeeping at
+      ~12 stages). **The sanctioned callback path:** it steps a *parameter* at a
+      root-found instant, which is a real discrete event, not the forbidden
+      post-hoc clamp of a state variable.
+      Two traps, both now asserted: a disarmed stage's condition must hold the sign
+      it had **after** firing (a `+1.0` sentinel manufactures a crossing at the
+      disarm instant ⇒ double shed); and `affect!` is the *upcrossing* while
+      `affect_neg!` is the *downcrossing* — tested in both polarities in one run,
+      since `example_system` is underdamped enough to supply both crossings of the
+      same threshold ~6 s apart.
+      One expectation was **wrong and is recorded as such**: no explicit
+      `derivative_discontinuity!` is needed here (unlike `inject!`), because
+      `apply_callback!` sets it before invoking the affect for a
+      `ContinuousCallback`. Checked in the DiffEqBase source *and* verified
+      empirically — removing the call moves a 10× `dt` refinement by ~5e-14. The
+      `dt`-refinement test stays as the guard, because that error would be
+      invisible to any readout assertion (`current_state` recomputes RoCoF
+      algebraically, so it would read correctly while the integration drifted).
+- [x] Cumulative tripped **generation**: `eng.tripped_mw` and a `tripped_mw` vector
+      in `state_series` — the second axis of report Figs 1-3 / 3-7 / 3-9. Shed load
+      is not generation and does not leak into it.
+- [x] `windowed_rocof` in `src/analysis/postprocess.jl` — the 500 ms sliding window
+      every report RoCoF figure uses. An **additional** read; the instantaneous
+      value stays the live readout and the closed-form validation target. NaN-padded
+      to the input length so it overlays `f(t)`, and divided by the **actual**
+      elapsed time rather than the nominal window.
+- [x] `Printf` added to the test target (UUID resolved via `Base.identify_package`,
+      never hand-written) — the script formats report timestamps and `Pkg.test()`'s
+      sandbox does not carry undeclared stdlibs.
 
 ## ENTSO-E Iberian scenario (folded into the batches above)
 
@@ -193,27 +242,53 @@ synthetic `example_system`.
       (`StepLoad(+317.3/S_base)` then trips of 355 / 725 / 930 / ≈2,600 MW at
       their reported timestamps), printing the waypoint comparison. No Makie.
       **No new mechanisms needed.** (AC #1.)
-- [ ] Promote those waypoints to test assertions. Tolerances must encode the
-      **two-window** caveat: the model runs too deep before 12:33:16 and too
-      shallow after, so a single band would hide both. The 12:33:20 row is
-      coincidental cancellation — never tune against it.
-- [ ] Inverter-based resources: confirmed expressible today as
-      `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — verified finite aggregates,
-      no `NaN`. Add a regression test so it stays true.
-- [ ] Low-frequency load shedding as a **latching `ContinuousCallback` per
-      threshold** (root-finds the exact crossing so the shed instant can be
-      annotated). Downward direction; `affect!` disarms its own stage. This is
-      the sanctioned callback path — a real discrete event, *not* the forbidden
-      post-hoc state clamp.
-- [ ] Cumulative tripped-MW accumulator on the recorded trajectory (the second
-      axis in report Figs 1-3 / 3-7 / 3-9).
-- [ ] **500 ms windowed RoCoF** as an additional post-processing read. Every
-      RoCoF figure in the report is windowed; `current_state` is instantaneous.
-      Do not conflate them — the instantaneous value stays the live readout and
-      the closed-form validation target.
-- [ ] Decide consciously: load inertia (`H_tot = H_eq + H_loads`) is currently
-      conflated into `H_sys`. Either add a term or document it. The report's
-      published 2.21–2.71 s range is a ready-made sensitivity experiment.
+- [x] Promote those waypoints to test assertions. Done by **sign**, not by band:
+      each pre-boundary waypoint must sit *below* the report (too deep) and within
+      0.15 Hz. The 12:33:20 row is deliberately **not banded** — it is asserted as
+      a known structural failure (the model recovers, reality collapsed), so
+      closing it demands a conscious edit to the assertion rather than a parameter
+      tuned until the number matches. The test includes the script as a module, so
+      the scenario stays single-sourced.
+      **The last row got worse on purpose:** +0.232 → **+1.211**, because arming
+      the real defence plan removed the coincidental cancellation that made the old
+      number look good. The 12:33:17 row also moved (49.669 → 49.705) — the 49.8 Hz
+      stage fires at 12:33:17.405, i.e. *before* that waypoint.
+- [x] Inverter-based resources: `GeneratingUnit(:PV, S, 0.0, P0, Inf, P0)` — now a
+      regression test, including the all-IBR corner (`H_sys = 0`, `R_eq = Inf`,
+      zero headroom, no `NaN`) and an end-to-end trip producing a finite dip.
+- [x] Low-frequency load shedding as a **latching `ContinuousCallback` per
+      threshold** — see "What the headless batch added to core" above. The script
+      arms the full 12-stage Fig 3-67 ladder (15,532 MW); four stages fire, shedding
+      3,907 MW, and **the model recovers at 49.50 Hz while reality collapsed**.
+      That divergence is the honest headline, not a defect: the report's own
+      numbers say ~15.5 GW was shed and the system went down anyway, because of
+      ~5,000 MW of loss-of-synchronism export swing this model has no state for.
+- [x] Cumulative tripped-MW accumulator on the recorded trajectory (the second
+      axis in report Figs 1-3 / 3-7 / 3-9). Reported at the report's own
+      checkpoints, flagged as a **lower bound** — the ≥2,600 MW cluster is a floor
+      the report states as such.
+- [x] **500 ms windowed RoCoF** as an additional post-processing read. Used for
+      the one RoCoF claim inside the faithful window (|RoCoF| within 1 Hz/s until
+      12:33:20.560, p.116), which the model satisfies. The report's −1 Hz/s and
+      −2 Hz/s figures are *past* the boundary and are marked not-a-target in the
+      script's own output. The instantaneous value remains the live readout and the
+      closed-form validation target; a test asserts the windowed read is strictly
+      shallower, so the two cannot be conflated later.
+- [x] Decide consciously: load inertia. **Documented, not modelled** — `H_tot`
+      sits entirely on the synchronous fleet. Exact for the frequency trajectory
+      (the swing equation only sees the total); an approximation the moment load
+      inertia would have to leave with shed load, which now matters since the
+      ladder sheds 3.9 GW of it. No `H_load` field at M1.
+      The published range ran as the sensitivity experiment and the result needed
+      correcting mid-flight, which is worth remembering: **all three inertias give
+      an identical armed nadir**, and that is *not* insensitivity to inertia — the
+      2,638 MW stage at 49.5 Hz pins the nadir to a protection setting. Disarmed,
+      the band moves the nadir ~0.08 Hz and moves it *deeper at higher inertia*,
+      because keying `S_base` off measured kinetic energy makes the initial RoCoF
+      exactly `f0·ΔP_MW/(2·KE)` — H-independent by construction — leaving only a
+      base-rescaling artefact. So the ~1.2 Hz late-window gap **cannot** be blamed
+      on inertia uncertainty. Both the identical column and the wrong-direction
+      column are asserted in tests, so neither can be misread later as a result.
 
 ### Fidelity boundary — do not overclaim
 

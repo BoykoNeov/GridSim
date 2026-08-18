@@ -325,8 +325,10 @@ end
 
 ### 7.8 Acceptance criteria
 
-- [ ] Core (`model` + `engines` + `orchestration`) runs headless from a script and
+- [x] Core (`model` + `engines` + `orchestration`) runs headless from a script and
       produces a frequency trajectory with **no Makie dependency**.
+      (`scripts/iberia_2025_04_28.jl`, on the real ENTSO-E scenario; the no-Makie
+      half is enforced by a dependency-closure test, not just by convention.)
 - [ ] Real-time loop plots `f(t)` live in GLMakie, paced to wall-clock.
 - [ ] Tripping a generator mid-run produces the expected dip; RoCoF and nadir update live.
 - [x] Initial RoCoF matches the closed-form value within tolerance (unit test).

@@ -120,6 +120,11 @@ const WAYPOINTS = [
 ]
 
 # The model is faithful only up to loss of synchronism at 12:33:19.62 (plan §2).
+# THIS IS A REPORTED TIMESTAMP (p.116), NOT A FITTED WINDOW. It is the instant the
+# Iberian Peninsula lost synchronism with Continental Europe, after which ~5,000 MW
+# of the imbalance was export swing that this model has no state for. It is also
+# load-bearing in test/runtests.jl, which reads it from here rather than repeating
+# it — so it must never be widened to make a number agree.
 const T_BOUNDARY = 79.62
 
 """
