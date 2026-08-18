@@ -28,6 +28,13 @@ import Observables
 # network split into islands. Imported (not `using`) so every call site says
 # `Graphs.` and nothing about the graph layer is implicit.
 import Graphs
+# NetworkDynamics compiles the M2 network model into the ODE the SwingEngine
+# integrates: one vertex model per machine, one edge model per branch, coupling
+# carried on graph edges rather than in an admittance matrix (D3). Imported (not
+# `using`) so every call site names it — including `NetworkDynamics.SII`, the
+# symbolic-indexing interface the engine uses to resolve flat state/parameter
+# positions instead of assuming a memory layout.
+import NetworkDynamics
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
@@ -57,6 +64,11 @@ include("engines/recorder.jl")
 # Center-of-inertia aggregate frequency model: `aggregates`, the engine struct,
 # and init! / step! / current_state / inject!. See docs/plans/m1-plan.md.
 include("engines/frequency_response.jl")
+
+# --- M2's SwingEngine ---
+# Multi-machine classical (network swing) model on NetworkDynamics: per-machine
+# (δ, ω) coupled through the branches, plus the inertia-weighted aggregate.
+include("engines/swing.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -100,6 +112,12 @@ export FrequencyResponseEngine
 # Live reads the UI needs and the interface verbs do not cover (H_sys indicator,
 # per-unit trip-button state) — exported so `ui/` never touches engine fields.
 export system_inertia, is_online
+
+# --- M2 concrete engine ---
+# `machine_ids` is the per-machine counterpart of `system_inertia`/`is_online`:
+# the read `ui/` needs to label traces without touching engine fields. Both names
+# checked clear against GLMakie's exports before being added.
+export SwingEngine, machine_ids
 
 # --- real-time orchestration ---
 # (`push!`/`isempty`/`length`/`empty!` on an EventQueue are Base generics we

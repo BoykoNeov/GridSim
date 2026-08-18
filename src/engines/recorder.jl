@@ -139,6 +139,33 @@ function record!(rec::TrajectoryRecorder{names,N}, values::Vararg{Real,N}) where
     return rec
 end
 
+
+"""
+    record!(rec::TrajectoryRecorder{names,N}, t::Real, values::AbstractVector{<:Real}) -> rec
+
+Same as the varargs form, for an engine whose channel count is not a compile-time
+constant — `SwingEngine` has one angle and one speed channel per machine, so it
+fills a reusable buffer and passes it here rather than splatting. `values` holds
+the non-time channels, in order; the length is checked against the recorder rather
+than pinned by dispatch, so the error names both counts.
+"""
+function record!(rec::TrajectoryRecorder{names,N}, t::Real,
+                 values::AbstractVector{<:Real}) where {names,N}
+    length(values) == N - 1 || throw(ArgumentError(
+        "record!: got $(length(values)) channel values, expected $(N - 1) " *
+        "for channels $(Base.tail(names))"))
+    rec.n_seen += 1
+    n = rec.n_seen
+    (n - 1) % rec.keep_every == 0 || return rec
+    length(rec.channels[1]) < rec.capacity || _decimate!(rec)
+    (n - 1) % rec.keep_every == 0 || return rec
+    @inbounds push!(rec.channels[1], Float64(t))
+    @inbounds for k in 2:N
+        push!(rec.channels[k], Float64(values[k - 1]))
+    end
+    return rec
+end
+
 """
     series(rec::TrajectoryRecorder) -> NamedTuple
 

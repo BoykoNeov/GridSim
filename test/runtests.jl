@@ -4,6 +4,8 @@ import CommonSolve
 import OrdinaryDiffEq
 import SciMLBase
 import Observables          # the core→UI seam; also the positive control for the no-Makie test
+import Graphs               # to re-derive the graph the SwingEngine builds (edge ordering)
+import NetworkDynamics      # to read SwingEngine state symbolically, independently of its index vectors
 import Pkg                  # to inspect the dependency closure (no-Makie invariant)
 
 # The Iberian scenario script is a DELIVERABLE, so its claims are asserted below.
@@ -1319,6 +1321,252 @@ end
         # the impossible, it does not quietly narrow the model's range.
         @test NetworkModel(100.0, 50.0, buses, branches,
                            [m(:G1, :B1, 199.0), m(:G2, :B2, -199.0)]) isa NetworkModel
+    end
+
+
+    # --- M2 step 3/4: the SwingEngine ------------------------------------------
+    #
+    # Scope note: `find_fixpoint`-based initialization and its two acceptance
+    # criteria (V1 flat start, V2 injection/sign convention) live here rather than
+    # in a later batch, because the engine cannot be smoke-tested at all without a
+    # start state — a model placed off-equilibrium rings from t = 0 and produces a
+    # plausible oscillation that is pure artifact. V3 (the *running* engine hitting
+    # the closed-form swing frequency) is the separate step-4 test.
+
+    @testset "SwingEngine: conformance to the SimulationEngine contract" begin
+        # M1 had one engine, so `interface.jl` had never been asked to hold a
+        # second. It needed **no changes** — recorded here as an assertion rather
+        # than a claim in a document. Every verb resolves on the new engine, and
+        # `init!` dispatches on the type exactly as M1's does.
+        net = two_machine_system()
+        @test SwingEngine <: SimulationEngine
+        eng = init!(SwingEngine, net)
+        @test eng isa SwingEngine
+        for verb in (current_state, state_series, timestep)
+            @test hasmethod(verb, Tuple{SwingEngine})
+        end
+        @test hasmethod(step!, Tuple{SwingEngine})
+        @test hasmethod(inject!, Tuple{SwingEngine,TripGenerator})
+        @test hasmethod(init!, Tuple{Type{SwingEngine},NetworkModel})
+        # The one place the abstraction *does* strain: `state_series` returns a
+        # different set of channels per engine. Both are NamedTuples of equal-length
+        # named series — the contract interface.jl actually states — so a consumer
+        # that reads by name works against either, but one that assumes a fixed set
+        # of channels does not. Written down as a finding in m2-context.md.
+        m1 = init!(FrequencyResponseEngine, example_system())
+        @test propertynames(state_series(m1)) != propertynames(state_series(eng))
+        @test first(propertynames(state_series(m1))) === :t          # ...but both
+        @test first(propertynames(state_series(eng))) === :t         # lead with time
+        # Shared-mutable-parameter identity, inherited from NetworkDynamics rather
+        # than assumed: this is what lets an event change the system without
+        # disturbing the continuous state.
+        @test eng.params === eng.integrator.p
+        @test NetworkDynamics.pflat(NetworkDynamics.NWParameter(eng.integrator)) === eng.integrator.p
+    end
+
+    @testset "SwingEngine V1: flat start, and it stays flat" begin
+        # Acceptance criterion, not a nicety (m2-plan.md "Validation").
+        for net in (two_machine_system(), three_machine_ring())
+            eng = init!(SwingEngine, net; dt = 0.02)
+            du = similar(eng.integrator.u)
+            eng.nw(du, eng.integrator.u, eng.params, 0.0)
+            @test maximum(abs, du) < 1e-10
+            s0 = current_state(eng)
+            # At rest to the fixpoint solver's own precision — not exactly zero,
+            # because ω is solved for rather than assigned, and it lands ~1e-28.
+            @test maximum(abs, s0.ω) < 1e-20
+            @test abs(s0.ω_coi) < 1e-20
+            @test s0.f_coi ≈ net.f0 atol = 1e-12
+            # A 2 s pre-disturbance window must not drift or ring.
+            for _ in 1:100; step!(eng, 0.02); end
+            s = current_state(eng)
+            @test maximum(abs, s.δ .- s0.δ) < 1e-9
+            @test maximum(abs, s.ω) < 1e-9
+            @test s.f_coi ≈ net.f0 atol = 1e-9
+        end
+    end
+
+    @testset "SwingEngine V2: injections reproduce (the sign-convention test)" begin
+        # A flipped coupling sign still oscillates, still settles, still has a
+        # nadir — this is the test that catches it. `Pe` is recomputed here from
+        # the *model's* couplings, independently of what the engine handed
+        # NetworkDynamics.
+        for net in (two_machine_system(), three_machine_ring())
+            eng = init!(SwingEngine, net)
+            δ = current_state(eng).δ
+            ma, ba = machine_arrays(net), branch_arrays(net)
+            for i in eachindex(ma.Pm)
+                Pe = 0.0
+                for e in eachindex(ba.K)
+                    ba.src[e] == i && (Pe += ba.K[e] * sin(δ[i] - δ[ba.dst[e]]))
+                    ba.dst[e] == i && (Pe += ba.K[e] * sin(δ[i] - δ[ba.src[e]]))
+                end
+                @test Pe ≈ ma.Pm[i] atol = 1e-8      # generation == export
+            end
+        end
+    end
+
+    @testset "SwingEngine: angles are gauge-dependent, differences are not" begin
+        # Shift every δ by a constant and it is still an equilibrium, so
+        # `find_fixpoint` returns an arbitrary gauge — on the ring it happens to
+        # land near 2.1 rad, nowhere near zero. Only differences may be asserted.
+        net = two_machine_system()
+        eng = init!(SwingEngine, net)
+        ma, ba = machine_arrays(net), branch_arrays(net)
+        δ = current_state(eng).δ
+        # The static half of the closed form pinned in step 2: δ₀ = asin(P/K).
+        @test δ[1] - δ[2] ≈ asin(ma.Pm[1] / ba.K[1]) atol = 1e-9
+        @test δ[1] - δ[2] ≈ 0.1405180 atol = 1e-6
+        # The symmetry itself, asserted rather than assumed: shift every angle by
+        # the same constant and the residual is still zero. That is *why* absolute
+        # angles carry no information — and it is a property of the model, not of
+        # wherever this particular solver run happened to land.
+        ring = init!(SwingEngine, three_machine_ring())
+        u = copy(ring.integrator.u)
+        for i in ring.δ_idx; u[i] += 0.7; end
+        du = similar(u); ring.nw(du, u, ring.params, 0.0)
+        @test maximum(abs, du) < 1e-10
+        # The ring has no closed form (that is why it is the second system), so its
+        # angle differences are pinned as a regression value, not derived.
+        δr = current_state(ring).δ
+        @test δr[2] - δr[1] ≈ -0.0378207 atol = 1e-6
+        @test δr[3] - δr[1] ≈ -0.1462231 atol = 1e-6
+    end
+
+    @testset "SwingEngine: branch↦edge mapping (what V2 provably cannot catch)" begin
+        # `Graphs.SimpleGraph` iterates edges in sorted (src,dst) order, not in the
+        # order branches were added, and NetworkDynamics indexes edge parameters by
+        # position in that list. V2 cannot catch a permutation here: `find_fixpoint`
+        # converges on whatever self-consistent (wrong) network it is handed, and
+        # `Pe` recomputed from the same wrong couplings still equals `Pm`. So the
+        # mapping gets its own direct assertion.
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net)
+        ba = branch_arrays(net)
+        nb = length(net.buses)
+        g = Graphs.SimpleGraph(nb)
+        for e in eachindex(ba.src); Graphs.add_edge!(g, ba.src[e], ba.dst[e]); end
+        edge_pairs = [(Graphs.src(e), Graphs.dst(e)) for e in Graphs.edges(g)]
+
+        # 1. The hazard is real on this system: branch order and edge order differ,
+        #    so a "branch k ↦ edge k" implementation would mis-assign two of three.
+        @test edge_pairs == [(1, 2), (1, 3), (2, 3)]
+        @test [minmax(ba.src[e], ba.dst[e]) for e in eachindex(ba.src)] !=
+              [minmax(p...) for p in edge_pairs]
+        @test eng.branch_to_edge == [1, 3, 2]        # explicitly not the identity
+
+        # 2. It is a permutation — this is what catches two branches collapsing
+        #    onto one edge, which a bus-pair keying can otherwise do silently.
+        @test sort(eng.branch_to_edge) == collect(1:length(ba.K))
+
+        # 3. Each edge actually holds the coupling of the branch joining its two
+        #    buses. The ring's three couplings are all distinct, so this bites.
+        held = [eng.params[i] for i in eng.K_pidx]
+        @test length(unique(round.(ba.K; digits = 6))) == 3    # distinct ⇒ detectable
+        for (bi, ei) in pairs(eng.branch_to_edge)
+            @test held[ei] ≈ ba.K[bi] atol = 1e-12
+            @test minmax(ba.src[bi], ba.dst[bi]) == minmax(edge_pairs[ei]...)
+        end
+        # And in edge order the held couplings are a genuine reordering of the
+        # branch-order ones — the assertion that would fail under the naive map.
+        @test held != ba.K
+        @test sort(held) ≈ sort(ba.K)
+    end
+
+    @testset "SwingEngine: flat indices come from the symbolic interface" begin
+        # The engine never assumes a memory layout; it resolves flat positions
+        # through NetworkDynamics' symbolic indexing once, at construction. If that
+        # upstream layout ever moves, this test says so rather than the physics
+        # going quietly wrong.
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net)
+        s = NetworkDynamics.NWState(eng.integrator)
+        u = eng.integrator.u
+        for i in 1:length(net.buses)
+            @test u[eng.δ_idx[i]] == s.v[i, :δ]
+            @test u[eng.ω_idx[i]] == s.v[i, :ω]
+            @test eng.params[eng.Pm_pidx[i]] == s.p.v[i, :Pm]
+        end
+        @test allunique(vcat(eng.δ_idx, eng.ω_idx))
+        @test allunique(vcat(eng.Pm_pidx, eng.K_pidx))
+    end
+
+    @testset "SwingEngine: per-machine speed is not the aggregate" begin
+        # `ωᵢ` (one machine's per-unit deviation) and `ω_coi` (the inertia-weighted
+        # mean) are different quantities under different names — the confusion
+        # m2-plan.md flags. Assert that they are genuinely different numbers during
+        # a transient, and that the aggregate is the weighted mean it claims to be.
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.01)
+        inject!(eng, TripGenerator(:G2))
+        spread_seen = false
+        for _ in 1:500
+            s = step!(eng, 0.01)
+            H = eng.w                                   # 0 for the tripped machine
+            @test s.ω_coi ≈ sum(H .* s.ω) / sum(H) atol = 1e-12
+            maximum(s.ω) - minimum(s.ω) > 1e-4 && (spread_seen = true)
+        end
+        # The machines really do swing against each other — otherwise the equality
+        # above would hold trivially and prove nothing.
+        @test spread_seen
+    end
+
+    @testset "SwingEngine: a trip zeroes coupling without resizing the state" begin
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.01)
+        n_state = length(eng.integrator.u)
+        H_before = system_inertia(eng)
+        @test all(id -> is_online(eng, id), machine_ids(eng))
+
+        v = findfirst(==(:G1), machine_ids(eng))
+        inject!(eng, TripGenerator(:G1))
+        @test length(eng.integrator.u) == n_state       # never resized
+        @test !is_online(eng, :G1)
+        @test eng.params[eng.Pm_pidx[v]] == 0.0
+        @test all(e -> eng.params[eng.K_pidx[e]] == 0.0, eng.incident[v])
+        # …and only the incident branches: on a 3-ring G1 touches two of three.
+        @test count(i -> eng.params[i] == 0.0, eng.K_pidx) == 2
+        @test system_inertia(eng) < H_before
+        @test system_inertia(eng) ≈ H_before - machine_arrays(net).H[v] atol = 1e-12
+
+        # Tripping again is a no-op; tripping a machine that does not exist is a
+        # caller bug, and the lookup happens first so the error is reachable.
+        @test inject!(eng, TripGenerator(:G1)) === eng
+        @test_throws KeyError inject!(eng, TripGenerator(:NOPE))
+
+        # Post-trip there is NO equilibrium (no governors, so ΣPm ≠ 0 now): speed
+        # falls until damping balances the shortfall. Assert that limit rather than
+        # any absolute angle, which drifts forever by design.
+        for _ in 1:4000; step!(eng, 0.01); end
+        ma = machine_arrays(net)
+        others = [i for i in eachindex(ma.Pm) if i != v]
+        @test current_state(eng).ω_coi ≈ sum(ma.Pm[others]) / sum(ma.D[others]) atol = 1e-4
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        # The tripped machine keeps integrating harmlessly — undriven and decoupled,
+        # it damps to rest — and is excluded from the aggregate read-out.
+        @test abs(current_state(eng).ω[v]) < 1e-6
+        @test eng.w[v] == 0.0
+    end
+
+    @testset "SwingEngine: recording is bounded and the nadir is not read from it" begin
+        net = two_machine_system()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        @test propertynames(state_series(eng)) ==
+              (:t, :δ_G1, :δ_G2, :ω_G1, :ω_G2, :f_coi)
+        @test length(state_series(eng).t) == 1          # seeded pre-disturbance point
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:1000; step!(eng, 0.02); end
+        @test length(state_series(eng).t) == 1001
+
+        small = init!(SwingEngine, net; dt = 0.02, capacity = 64)
+        inject!(small, TripGenerator(:G1))
+        for _ in 1:1000; step!(small, 0.02); end
+        @test GridSim.n_kept(small.traj) <= 64
+        @test small.nadir ≈ eng.nadir atol = 1e-12      # summary, not a buffer read
+        @test minimum(state_series(small).f_coi) > small.nadir + 1e-9
+        # Wrong channel count is a named error, not a silent length mismatch.
+        @test occursin("expected", argerr_msg(() ->
+            GridSim.record!(small.traj, 0.0, [1.0, 2.0])))
     end
 
 
