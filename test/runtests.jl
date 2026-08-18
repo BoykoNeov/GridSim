@@ -100,7 +100,17 @@ end
     # starts at the very first sample — which is the property these tests assert,
     # rather than a hand-traced sequence that would only prove one capacity.
 
-    @testset "TrajectoryRecorder: retention invariant across capacities" begin
+    # Both entry points are swept, not just one. `record!` has a varargs form (arity
+    # pinned by the type parameter) and a vector form for engines whose channel count
+    # is only known at construction — and `SwingEngine` records *exclusively* through
+    # the vector one, so a sweep of the varargs path alone would leave the newer
+    # engine's actual code path unasserted. They share one retention decision
+    # (`_accept!`), which is what this pair of sweeps is really checking stays true.
+    RECORD_ENTRY_POINTS = (("varargs", (rec, t, x) -> GridSim.record!(rec, t, x)),
+                           ("vector",  (rec, t, x) -> GridSim.record!(rec, t, [x])))
+
+    @testset "TrajectoryRecorder: retention invariant, via $label" for
+            (label, push_sample) in RECORD_ENTRY_POINTS
         # Odd capacities are where the stride bookkeeping goes off by one, so they
         # are in the sweep deliberately. Each property is checked after *every* one
         # of the 200 pushes but reported as one assertion per capacity, with the
@@ -110,7 +120,7 @@ end
             over_capacity, lost_first, not_progression, ragged, unevenly_spaced =
                 Int[], Int[], Int[], Int[], Int[]
             for n in 1:200
-                GridSim.record!(rec, 0.1 * n, Float64(n))
+                push_sample(rec, 0.1 * n, Float64(n))
                 tr = GridSim.series(rec)
                 k = rec.keep_every
                 GridSim.n_kept(rec) <= cap || push!(over_capacity, n)

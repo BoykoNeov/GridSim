@@ -192,6 +192,13 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       not the lowest that occurred. A test pins this: the same run at capacity 64 and
       at 200 000 reports the *same* nadir, while the small buffer's retained minimum is
       strictly above it.
+      **Both `record!` entry points share one retention decision and both are swept.**
+      There is a varargs form (arity pinned by the type) and a vector form for engines
+      whose channel count is only known at construction — and `SwingEngine` uses the
+      vector one *exclusively*, so sweeping only the varargs path would have left the
+      newer engine's actual code path unasserted. The duplicated retention logic that
+      first shipped in the vector form was folded back into a single `_accept!`: a
+      second copy inside the very file written to prevent second copies.
 - [ ] Report **Figure 3-67** as a layout target — still open, still ticks no
       acceptance criterion.
 
@@ -225,3 +232,14 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
 - [x] Any long-running loop test self-terminates. Every M2 engine test drives a
       fixed step count (the longest is 6000 steps / 12 s of simulated time); none
       loops on a condition, so none can hang.
+- [x] **Both dependency resolutions tested, not just the developer machine's.** The
+      engine adds two named reaches step 1 never checked — `SciMLBase.auto_dt_reset!`
+      (new here, and a runtime failure rather than a load failure if it moved) and
+      `NetworkDynamics.SII` (a dependency's internal alias; its absence would break
+      *construction*). Manifest moved aside, `Pkg.instantiate()` re-resolved to the
+      fresh pair (`SciMLBase` 3.49.1 / `OrdinaryDiffEq` 7.6.0), all four named
+      reaches resolve, and the suite is **1046/1046 on both**. V3 is the tightest
+      solver-dependent assertion in the repo (measured gap `1.205e-4` against a
+      `2.0e-4` bound), and it comes out **bit-identical** across the two
+      resolutions — so that 1.66× margin is not solver-version slack. The dev
+      machine has been left on the fresh resolve, which is what a clean clone gets.

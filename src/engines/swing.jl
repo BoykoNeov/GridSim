@@ -94,7 +94,8 @@ continuous state — inherited here from NetworkDynamics rather than assumed, an
 asserted in `test/`); flat index vectors into the state and parameter arrays
 (`δ_idx`/`ω_idx`/`Pm_pidx`/`K_pidx`), resolved once through NetworkDynamics'
 symbolic interface so nothing here assumes a memory layout; `branch_to_edge` and
-`incident`, the graph bookkeeping the header describes; the COI weights `w` (a
+`incident`, the graph bookkeeping the header describes; the pre-trip inertias `H`
+(kept for step 6's `coi_model`, never mutated) beside the live COI weights `w` (a
 machine's inertia while it is online, zero once tripped) and their sum; the
 bounded `traj`; and the running `nadir` of the COI frequency.
 """
@@ -228,8 +229,12 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     K_pidx  = [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, :K)) for e in 1:ne]
 
     ids = Symbol[m.id for m in net.machines]     # bus order, by construction
+    # `H` is the pre-trip baseline, kept unmutated; `w` is the live COI weight
+    # (a machine's inertia while online, zero once tripped). Nothing in M2a reads
+    # `H` yet — step 6's `coi_model` needs the original inertias to compile the
+    # aggregate model, and recovering them from `w` after a trip is impossible.
     H = copy(ma.H)
-    w = copy(ma.H)                                # COI weight: H while online, 0 once tripped
+    w = copy(ma.H)
 
     # One channel per machine angle, one per machine speed, plus the aggregate.
     # `:t` is prepended by the recorder itself (see engines/recorder.jl).
@@ -295,8 +300,10 @@ end
 # Append the current state to the bounded trajectory and update the running nadir.
 #
 # Reads the flat state directly through the index vectors and fills a reusable
-# scratch buffer, so the per-step record path allocates nothing — `current_state`
-# is the read-out API and may allocate, the hot loop does not use it.
+# scratch buffer, so the per-step path creates no temporaries — `current_state`
+# builds fresh vectors and is the read-out API, deliberately not used by this loop.
+# (The recorder's own `push!` still reallocates when a channel outgrows its
+# capacity, amortised; "no temporaries" is the claim, not "no allocation ever".)
 #
 # As in M1, the nadir is tracked HERE, incrementally, and never read back out of
 # the trajectory: the recorder decimates once full, so the lowest retained sample

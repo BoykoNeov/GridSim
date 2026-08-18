@@ -113,6 +113,24 @@ function _decimate!(rec::TrajectoryRecorder)
     return rec
 end
 
+# The retention decision, in ONE place: both `record!` methods call this and then
+# only do their own pushing. Duplicating the sequence below is exactly the kind of
+# second copy this file exists to prevent — and it would be the copy no test
+# distinguishes, since the two entry points are asserted against the same invariant.
+#
+# Returns whether the caller should push this sample, having already advanced the
+# counter and (if the buffer was full) decimated.
+@inline function _accept!(rec::TrajectoryRecorder)
+    rec.n_seen += 1
+    n = rec.n_seen
+    (n - 1) % rec.keep_every == 0 || return false
+    length(rec.channels[1]) < rec.capacity || _decimate!(rec)
+    # Re-test: the halving just doubled the stride, which may have disqualified
+    # this very sample. Pushing it anyway is how the invariant breaks (visibly so
+    # at odd capacities, where the retained samples stop being evenly spaced).
+    return (n - 1) % rec.keep_every == 0
+end
+
 """
     record!(rec::TrajectoryRecorder{names,N}, values::Vararg{Real,N}) -> rec
 
@@ -124,14 +142,7 @@ channels is a `MethodError` at the call site rather than a length mismatch
 discovered later.
 """
 function record!(rec::TrajectoryRecorder{names,N}, values::Vararg{Real,N}) where {names,N}
-    rec.n_seen += 1
-    n = rec.n_seen
-    (n - 1) % rec.keep_every == 0 || return rec
-    length(rec.channels[1]) < rec.capacity || _decimate!(rec)
-    # Re-test: the halving just doubled the stride, which may have disqualified
-    # this very sample. Pushing it anyway is how the invariant breaks (visibly so
-    # at odd capacities, where the retained samples stop being evenly spaced).
-    (n - 1) % rec.keep_every == 0 || return rec
+    _accept!(rec) || return rec
     v = ntuple(k -> Float64(values[k]), Val(N))   # unrolled; keeps the push stable
     @inbounds for k in 1:N
         push!(rec.channels[k], v[k])
@@ -154,11 +165,7 @@ function record!(rec::TrajectoryRecorder{names,N}, t::Real,
     length(values) == N - 1 || throw(ArgumentError(
         "record!: got $(length(values)) channel values, expected $(N - 1) " *
         "for channels $(Base.tail(names))"))
-    rec.n_seen += 1
-    n = rec.n_seen
-    (n - 1) % rec.keep_every == 0 || return rec
-    length(rec.channels[1]) < rec.capacity || _decimate!(rec)
-    (n - 1) % rec.keep_every == 0 || return rec
+    _accept!(rec) || return rec
     @inbounds push!(rec.channels[1], Float64(t))
     @inbounds for k in 2:N
         push!(rec.channels[k], Float64(values[k - 1]))
