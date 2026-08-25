@@ -1856,8 +1856,8 @@ end
         # to use does not change what the record says happened.
         @test (log[1].a, log[1].b) == (:B1, :B2)
         @test log[2].kind === :trip_generator && log[2].a === :G2
-        @test describe(log[1]) == "trip line B1–B2"
-        @test describe(log[2]) == "trip G2"
+        @test describe_event(log[1]) == "trip line B1–B2"
+        @test describe_event(log[2]) == "trip G2"
 
         # The log records what CHANGED the system, not what was asked for: the
         # no-op paths of both `inject!` methods leave no entry behind.
@@ -2215,13 +2215,23 @@ end
             return NetworkModel(100.0, 50.0, buses, branches, machines)
         end
 
-        # Total elements across every array the engine holds. `incident` is a vector
-        # of vectors, so its inner lengths are what count — that is where an
+        # Total elements across every container the engine holds. `incident` is a
+        # vector of vectors, so its inner lengths are what count — that is where an
         # all-pairs structure would hide most naturally.
+        #
+        # `AbstractDict` is counted too, and that is not decoration: step 7 added a
+        # bus-pair index, and a `Dict` is not an `AbstractArray`, so an array-only
+        # sweep would have let an all-pairs *dictionary* be added later without
+        # moving these counts or the slope beside them. Exactly the shape of this
+        # file's own edge-order lesson — if no test would fail, write one.
         function array_elems(eng)
             tot = 0
             for f in fieldnames(SwingEngine)
                 x = getfield(eng, f)
+                if x isa AbstractDict
+                    tot += length(x)
+                    continue
+                end
                 x isa AbstractArray || continue
                 @test !(x isa AbstractMatrix)          # nothing two-dimensional at all
                 tot += eltype(x) <: AbstractArray ? sum(length, x) : length(x)
@@ -2238,15 +2248,18 @@ end
             @test length(eng.integrator.u) == 2nb      # (δ, ω) per machine
             @test sum(length, eng.incident) == 2ne     # each branch at exactly 2 buses
             @test length(eng.K_pidx) == ne
+            @test length(eng.branch_of_buses) == ne     # one key per branch at EVERY n
             push!(counts, array_elems(eng))
         end
         # A tripwire, not a correctness claim: a legitimate new per-machine array
         # field changes these deliberately. The two assertions below are the claim.
-        # Moved from 17n + 1 to 17n + 2 at step 7, deliberately and by exactly the
-        # right amount: the `δ_coi` recorder channel adds ONE element to the sample
-        # buffer regardless of n. A per-machine mistake would have shifted the
-        # slope, which the next assertion is what catches.
-        @test counts == [70, 172, 682]                 # exactly 17n + 2
+        # Moved at step 7, deliberately and by exactly the right amount: `δ_coi`
+        # adds ONE element to the sample buffer regardless of n (17n+1 → 17n+2),
+        # and counting the bus-pair index adds one key per branch, i.e. one per
+        # machine on this ring (17n+2 → 18n+2). A per-machine mistake in the first
+        # or an all-pairs structure in the second would have shifted the slope,
+        # which the next assertion is what catches.
+        @test counts == [74, 182, 722]                 # exactly 18n + 2
 
         # Linear, asserted as such: equal slope over both intervals. A dense n×n
         # anywhere would make the second slope 30× the first.

@@ -266,6 +266,47 @@ click!(b) = (b.clicks[] = b.clicks[] + 1)
         @test parse(Float64, m.captures[1]) ≈ maximum(abs, rel[2:3]) atol = 1e-2
     end
 
+    @testset "the picture takes every published state, not every repaint" begin
+        # M1 pins this through its nadir read-out: the deepest point of a dip almost
+        # never coincides with a ~30 fps repaint, so anything sized from the sampled
+        # state clips the very feature the window exists to show.
+        #
+        # THE AGGREGATE CANNOT CARRY THAT CLAIM IN THIS TIER, which is why this test
+        # is shaped differently rather than copied. With no governors, a generator
+        # trip declines monotonically — its nadir IS the final sample, so an
+        # equality test would pass even for a read-out sampled at repaint time and
+        # would prove nothing. And a line trip, which does recover, moves the COI by
+        # 9.8 µHz (measured on this ring): three orders below anything the read-out
+        # displays. So the claim is pinned where it does bite — the trace buffers.
+        net = three_machine_ring()
+        win = NBUILD(net; window_seconds = 20.0, rtf = Inf, dt = 0.02)
+        # Count publications independently of the window, so the assertion is the
+        # claim itself rather than an arithmetic guess at how many steps the loop
+        # will take (it takes one more than `duration/dt` often enough — the sim
+        # clock accumulates in floating point).
+        published = Ref(0)
+        on(_ -> published[] += 1, win.state)
+        push!(win.queue, TripLine(:B1, :B2))
+        run_realtime!(win.engine, win.state; control = win.control,
+                      queue = win.queue, duration = 12.0)
+        win.refresh!(; force = true)
+
+        # Every published state is in the buffer, plus the seed point from build.
+        # A run this fast repaints a couple of times at most, so a buffer filled on
+        # the repaint path instead of the state path would hold single digits — the
+        # count below is ~600.
+        pts = win.traces.angle[1].points[]
+        @test published[] > 500                         # the run really was long
+        @test length(pts) == published[] + 1
+
+        # ...and it holds an interior peak that no repaint sampled: the line trip
+        # swings the angle out and rings back down, so the largest excursion is in
+        # the middle of the run, not at either end.
+        y = [abs(p[2]) for p in pts]
+        @test maximum(y) > 1.2 * y[end]
+        @test argmax(y) > 1 && argmax(y) < length(y)
+    end
+
     @testset "an all-offline system reads NaN and leaves the nadir finite" begin
         # `f_coi` is NaN once no machine is left to average — the engine's honest
         # answer. A NaN loses every comparison, which is what keeps the running

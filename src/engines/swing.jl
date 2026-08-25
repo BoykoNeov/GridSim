@@ -113,13 +113,13 @@ struct EngineEvent
 end
 
 """
-    describe(ev::EngineEvent) -> String
+    describe_event(ev::EngineEvent) -> String
 
 One-line label for an event — what a plot marker or a status line shows. Lives
 here rather than in `ui/` so both a window and a headless report name an event the
 same way.
 """
-describe(ev::EngineEvent) =
+describe_event(ev::EngineEvent) =
     ev.kind === :trip_generator ? string("trip ", ev.a) :
     ev.kind === :trip_line      ? string("trip line ", ev.a, "–", ev.b) :
                                   string(ev.kind, " ", ev.a, " ", ev.b)

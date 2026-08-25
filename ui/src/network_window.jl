@@ -29,6 +29,14 @@
 #   single survivor regardless of which one is chosen. The aggregate degrades
 #   gracefully in both cases — it tracks the surviving cluster, and a machine that
 #   leaves it visibly separates, which is the honest picture.
+#
+#   THE ONE ARTIFACT THAT CHOICE INTRODUCES, so a reader does not take it for
+#   physics: the reference is weighted by the machines that are online, so at the
+#   instant a generator trips the weights change and every remaining trace takes an
+#   instantaneous step — about 35 mrad on the shipped ring, and the same step for
+#   all of them, since it is the reference that moved and not the rotors. No rotor
+#   accelerated: `δᵢ − δⱼ` between any two survivors is continuous across the event.
+#   The dashed event marker sits exactly on it, which is the intended reading.
 
 # How many log entries the written event list shows at once. The dashed markers
 # on the plots are never trimmed — this bounds only the text, which lives in a
@@ -314,7 +322,7 @@ function _build_network_window(net::NetworkModel;
             head = length(log) > _EVENTS_SHOWN ?
                    @sprintf("(+%d earlier)\n", length(log) - _EVENTS_SHOWN) : ""
             event_text[] = isempty(log) ? "(none yet)" :
-                head * join((@sprintf("%6.2f s  %s", e.t, describe(e)) for e in shown), "\n")
+                head * join((@sprintf("%6.2f s  %s", e.t, describe_event(e)) for e in shown), "\n")
         end
 
         for tr in ftraces; notify(tr.points); end
@@ -351,8 +359,13 @@ function _build_network_window(net::NetworkModel;
     widgets = (; machine_buttons, line_buttons, pause = b_pause, stop = b_stop,
                  speed = sl)
     axes = (; frequency = ax_f, angle = ax_δ, inertia = ax_h)
+    # `traces` rides along for the same reason `readout` does in the M1 window: so a
+    # test can assert what the picture actually CONTAINS. The claim worth pinning is
+    # that the buffers take every published state while only the repaint is rate
+    # limited — nothing is dropped from the picture, it just arrives in batches.
+    traces = (; frequency = ftraces, angle = δtraces, coi = coitrace)
     return (; fig, engine, control, queue, state, status, readout, event_text,
-              refresh!, widgets, axes)
+              refresh!, widgets, axes, traces)
 end
 
 """

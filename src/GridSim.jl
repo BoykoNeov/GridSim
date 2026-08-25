@@ -123,11 +123,15 @@ export system_inertia, is_online
 export SwingEngine, machine_ids
 # The applied-event record the trajectory deliberately does not carry (a line trip
 # leaves no channel behind, and a one-sample marker is what decimation deletes —
-# see the head of `engines/swing.jl`). `describe` gives a window and a headless
-# report one shared wording for an event. All four checked clear against GLMakie's
-# exports; note that the obvious `events` is NOT clear, which is why the accessor
-# is `event_log`.
-export EngineEvent, event_log, n_events, n_events_dropped, describe
+# see the head of `engines/swing.jl`). `describe_event` gives a window and a
+# headless report one shared wording for an event.
+#
+# All five checked clear against GLMakie's exports, and two names were rejected on
+# the way: the obvious `events` is NOT clear (hence `event_log`), and the obvious
+# `describe` is clear of GLMakie but is exactly the kind of generic verb another
+# package in the same session will also export (DataFrames does), so it is
+# `describe_event` — a collision that costs nothing to avoid and a round to fix.
+export EngineEvent, event_log, n_events, n_events_dropped, describe_event
 
 # --- real-time orchestration ---
 # (`push!`/`isempty`/`length`/`empty!` on an EventQueue are Base generics we

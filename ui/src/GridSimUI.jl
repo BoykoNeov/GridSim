@@ -54,7 +54,7 @@ using GridSim: SystemModel, GeneratingUnit, example_system,
 # network method takes a timeline of *events* rather than of unit ids — this
 # engine accepts two kinds, and naming the type is how a caller says which.
 using GridSim: NetworkModel, SwingEngine, TripLine, machine_ids,
-               PerturbationEvent, EngineEvent, event_log, n_events, describe
+               PerturbationEvent, EngineEvent, event_log, n_events, describe_event
 
 include("window.jl")
 include("network_window.jl")

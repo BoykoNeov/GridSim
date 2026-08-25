@@ -354,7 +354,36 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       dependencies". `Pkg.resolve()` in `ui/` fixes it; nothing in the repo needed
       changing, which is why it can sit undetected until the first UI work after a
       core dependency change.
-- [x] 1234/1234 core + 74/74 UI green (1187 / 33 entering step 7).
+- [x] **The picture takes every published state, not every repaint** — M1's nadir
+      claim, pinned where it actually bites here. It is deliberately NOT a copy of
+      M1's test, because the aggregate cannot carry that claim in this tier: with no
+      governors a generator trip declines monotonically (its nadir *is* the final
+      sample, so an equality test would pass for a repaint-sampled read-out too and
+      prove nothing), and a line trip — which does recover — moves the COI by
+      **9.8 µHz**, three orders below anything a read-out displays. So the assertion
+      is on the trace buffers: one point per published state (counted independently,
+      not derived from `duration/dt` — the sim clock accumulates in floating point
+      and the loop often takes one extra step), holding an interior peak that no
+      repaint sampled.
+- [x] **Export names re-checked, and one was renamed on the second look.** All five
+      new names are clear of GLMakie — but `describe` is clear of GLMakie and still
+      wrong to export: it is exactly the generic verb another package in the same
+      session also exports (DataFrames does). Renamed `describe_event`. The comment
+      claiming the check had been done was written *before* running it for three of
+      the names, which is the reusable half of this.
+- [x] **The V5 tripwire had quietly stopped covering a new field.** `array_elems`
+      filtered on `AbstractArray`, and step 7's bus-pair index is a `Dict` — so an
+      all-pairs *dictionary* added later would have moved neither the counts nor the
+      slope beside them. Dicts are now counted (`18n + 2`, re-pinned) and the
+      one-key-per-branch assertion was lifted into the n = 4/10/40 sweep, so it is a
+      scaling claim rather than a spot check on the ring.
+- [x] **The angle reference steps at a generator trip, and that is documented rather
+      than smoothed.** The reference is weighted by the online machines, so when one
+      leaves, every remaining trace takes an instantaneous step — 35 mrad on the
+      shipped ring, identical for all of them, because it is the reference that moved
+      and not the rotors (`δᵢ − δⱼ` between survivors is continuous across the
+      event). The dashed marker sits exactly on it, which is the intended reading.
+- [x] 1237/1237 core + 78/78 UI green (1187 / 33 entering step 7).
 
 ### Known limits, recorded not patched
 

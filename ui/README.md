@@ -117,7 +117,7 @@ Its axis pins are `ylims_f` and `ylims_δ`.
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-74 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+78 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both windows, including that the two engines really do reject each
