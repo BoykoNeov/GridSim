@@ -370,11 +370,22 @@ end
    `docs/plans/m2-plan.md` / `m2-context.md` / `m2-tasks.md`. (`PowerDynamics` is
    deferred, not adopted — it costs ~123 extra packages for a component library
    M2's single machine type does not need; see `m2-context.md` D1.)
-3. **Run-then-playback** path: same scenarios in PSID full electromechanical;
+3. **M3** — Primary response and armed protection **on the network tier**:
+   governor droop as a third machine state, per-area low-frequency load shedding,
+   out-of-step tripping of a tie, and the two-area Iberian case moved into the
+   repo with its parameter sweep. Plan trio: `docs/plans/m3-plan.md` /
+   `m3-context.md` / `m3-tasks.md`. **This was taken ahead of the playback rung
+   below, deliberately**: it closes work the repo already labels unsound
+   (`entsoe-iberia-reproduction.md` §7.3 — a tuned parameter behind the headline
+   numbers) and adds no dependency, whereas the playback rung almost certainly
+   forces the `PowerSystems.jl` adoption of step 5 forward. See `m3-context.md`
+   §Why this milestone.
+4. **Run-then-playback** path: same scenarios in PSID full electromechanical;
    overlay vs the surrogate (cross-fidelity validation as a UI feature).
-4. **Steady-state** ladder: DC power flow → AC power flow (Newton) → AC-OPF
+5. **Steady-state** ladder: DC power flow → AC power flow (Newton) → AC-OPF
    (adopt `PowerFlows.jl`; introduce `PowerSystems.jl` as canonical model here).
-5. Protection, then **markets/OPF** (`PowerSimulations.jl`, `JuMP`).
-6. Renewables / low-inertia studies (the M1 lesson, scaled up).
-7. National scale: geographic map (`GeoMakie`/`Tyler.jl` or web `maplibre`+`deck.gl`),
+6. Wider protection (M3 builds the first two schemes: per-area load shedding and
+   out-of-step tripping), then **markets/OPF** (`PowerSimulations.jl`, `JuMP`).
+7. Renewables / low-inertia studies (the M1 lesson, scaled up).
+8. National scale: geographic map (`GeoMakie`/`Tyler.jl` or web `maplibre`+`deck.gl`),
    batched/GPU contingency & time-series.

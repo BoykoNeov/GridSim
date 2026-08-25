@@ -1,0 +1,219 @@
+# M3 — Primary response and armed protection on the network tier · Plan
+
+Companion docs: `m3-context.md` (decisions and what was measured behind them),
+`m3-tasks.md` (the checklist). Layers on `docs/SPEC.md` §3–6 and the M2 trio.
+
+## Goal
+
+Give the multi-machine swing tier the two things the 28 April 2025 Iberian
+blackout scenario needs and M2 does not have — **generation that responds to
+falling frequency** (governor droop) and **protection that arms itself and fires
+on the system's own state** (low-frequency demand disconnection per area, and
+out-of-step tripping of a tie) — and then run the two-area Iberian case *inside
+the repo*, on the real engine, replacing the throwaway probe whose numbers
+`entsoe-iberia-reproduction.md` §7.3 already flags as tuned.
+
+The milestone is chosen for exactly that reason: it closes work the repo has
+already labelled unsound, and it needs **no new dependency**.
+
+### Why this is one state, not a new model
+
+`entsoe-iberia-reproduction.md` §7.2 names the five-state two-area model the
+fidelity boundary needs: `δ`, `Δω`, `ΔPm` per area, with a **nonlinear** tie
+`P = P_max·sin(δ₁−δ₂)`. M2 built the first two states and the sine. A two-area
+system *is* `two_machine_system()` — two machines, one branch. What is missing is
+`ΔPm`, the shedding ladder's binding to a named area, and the out-of-step trip.
+
+## Fidelity tier — what this is and what it is not
+
+Still the **reduced classical (network-swing)** tier: constant internal voltage
+`E′` at each bus, no bus voltage as an unknown, pure ODE, no admittance matrix.
+M3 does not move the tier — it adds a *control* state on top of it.
+
+What M3 therefore still cannot do, unchanged from M2:
+
+- **No voltage dynamics.** The report's last window (12:33:21.5 → blackout) is
+  voltage collapse in an islanded system. Out of scope, and must not be claimed.
+- **No AC power flow, no load buses, no network reduction** (M2b / roadmap step 4).
+- **No turbine/boiler detail.** One first-order lag per machine, as SPEC §7.2.
+
+And one thing M3 deliberately does not add, stated because the obvious assumption
+is wrong (see below): **no secondary control / AGC.**
+
+## The correction that shapes step 2
+
+> With governors the system has a real equilibrium after a trip.
+
+**False, and the plan is written against it.** At settle `dΔPm/dt = 0` and droop
+gives `Δω = −ΔP / (1/R_eq + D)` — **non-zero**, because part of the deficit is
+carried by load damping, which is not mechanical power. So `dδ/dt = ω₀·Δω ≠ 0`
+and every angle still grows without bound. Governors make the drift *slower*, not
+absent. M2's two standing rules therefore carry forward **verbatim**:
+
+- never call `find_fixpoint` on a post-trip state — it cannot converge;
+- never assert on an absolute angle — only on differences.
+
+Only AGC (`dζ/dt = Δω`, `ΔP_agc = −Ki·ζ`; SPEC §7.2 "optional") drives `Δω → 0`
+and makes angles settle. It is **out of scope for M3** and named here so that a
+later reader knows the omission was chosen. Step 2's criterion is consequently
+*"speed converges to the droop closed form and angle **differences** converge"*,
+not "the system reaches a fixpoint".
+
+## Approach (incremental; each step commits and leaves tests green)
+
+### Step 1 — the governor state, alone on its own commit
+
+`Machine` grows `R` (droop, pu on the machine's own base), `Pmax` (MW) and `Tg`
+(s). Each vertex grows a third state `ΔPm`, per-unit on the system base:
+
+```
+dδᵢ/dt   = ω₀·ωᵢ
+dωᵢ/dt   = (Pmᵢ + ΔPmᵢ + esumᵢ − Dᵢ·ωᵢ) / (2Hᵢ)
+dΔPmᵢ/dt = (−ωᵢ/Rᵢ − ΔPmᵢ) / Tgᵢ        saturated at headroomᵢ in the DERIVATIVE
+```
+
+A governor-free machine is `R = Inf`, `Pmax = P0`: the derivative becomes
+`−ΔPm/Tg`, which from a zero start holds `ΔPm ≡ 0`. So M2's models remain
+expressible and every existing test still describes a real system.
+
+**No new scenario ships alongside this step.** The 1234-test suite is the only
+oracle in the repo that can find a bug in a state-layout change — the same
+discipline as M2's recorder retrofit, for the same reason.
+
+**M2's numbers get re-pinned once, here, and the plan says so in advance.**
+Bit-identity with M2 is not achievable and this was measured, not assumed (see
+`m3-context.md` D1): the solver's error norm is averaged over the state vector,
+so adding a third entry per machine — even one whose derivative is identically
+zero — changes the accepted step sequence from the second step onward. The
+safety net is therefore *agreement to solver tolerance*, with the old values
+recorded in the context doc beside the new ones.
+
+**The `isoutofdomain` guard, and the header note it contradicts.** M1 uses an
+`isoutofdomain` predicate to reject (not clamp) steps that overshoot headroom.
+`swing.jl`'s header currently states there is deliberately **no** such guard here,
+because nothing in the engine is bounded and a copied guard would fire spuriously
+on the drifting angles. That reasoning is still correct for `δ` and `ω` and is now
+incomplete: `ΔPm` *is* bounded. The predicate must test **only the `ΔPm` indices**,
+and the header note must be amended **in the same commit** — otherwise the file
+reads as forbidding the guard it contains.
+
+### Step 2 — what primary response actually does, asserted
+
+Validation only (V1–V4 below). No new mechanism.
+
+### Step 3 — the shedding ladder, unbound from the M1 engine (refactor)
+
+`ShedLadder` today triggers on `FrequencyResponseEngine`'s single `f` and steps a
+global `ΔP_dist`. On a two-area model that is **wrong in a way that still runs**:
+Iberia sheds and Continental Europe does not, and `f_coi` across a separating pair
+is the "weighted average of two unrelated numbers" `swing.jl`'s own header calls
+meaningless. A ladder driven by it would produce a plausible trace and shed at the
+wrong instants.
+
+So a ladder **binds to one named machine** and firing changes **that machine's**
+`Pm` parameter. On the aggregate engine the named machine is the whole system, so
+M1's behaviour is the one-machine case of the general one — this is a refactor of
+working code and ships as one, with M1's existing shed tests unchanged.
+
+### Step 4 — out-of-step protection (new mechanism)
+
+A `ContinuousCallback` root-finding the instant `|δ_from − δ_to|` crosses a
+threshold on a named branch, which then trips that branch through the existing
+`inject!(::TripLine)` path. Latching, like a shed stage: it does not re-close.
+This is the report's tie separation at 12:33:21.54, and it is the reason the
+scenario ends in two islands rather than in a numerical runaway.
+
+Separate step and separate commit from step 3: one is a refactor of code that
+works, the other is a mechanism with no precedent in the repo.
+
+### Step 5 — generation lost as a ramp, not an instant
+
+The report's cascade is ≈2,773 MW arriving over ≈2.46 s. M2 has only instant
+trips. Rather than staircase it into N discrete trips — whose edges would give the
+root-finding protection of step 4 artificial firing instants — the vertex carries
+a ramp: `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)`. Exact, continuous,
+three extra parameters, and it is the input the sweep varies.
+
+### Step 6 — the Iberian two-area case, in-repo, with its sweep
+
+A `NetworkModel` of two machines and one tie, from the report's own figures, run
+by a script beside `scripts/iberia_2025_04_28.jl`. **Acceptance is the sweep, not
+the trace**: the step is done when the parameter sweep over tie strength, remote
+inertia and cascade profile is in the repo and regenerable, and the single-point
+numbers are either deleted or explicitly labelled as one cell of that grid. A port
+that prints three tuned numbers again has recreated the exact problem this
+milestone was chosen to close (`entsoe-iberia-reproduction.md` §7.3–7.4).
+
+### Step 7 — Figure 3-67, or drop it explicitly
+
+Frequency trace with horizontal threshold lines and shed annotations — the single
+highest-value figure in the report's catalogue, carried open across M1 **and** M2
+because it ticked no acceptance criterion. It gets one here: *the shed-annotated
+panel renders offscreen from the two-area run, with each stage's marker at the
+root-found instant from the shed log, and the offscreen render is checked in as
+the proof.* If the batch runs short this is the item to drop — the sweep being
+in-repo is worth more — and dropping it means saying so, not carrying it a third
+time.
+
+## Validation (assert in `test/`)
+
+- **V1 — governor-free equivalence.** A network with `R = Inf` on every machine
+  reproduces M2's recorded results to solver tolerance (not bit-identically; D1).
+  The M2 constants are re-pinned once in step 1 with both values recorded.
+- **V2 — the droop closed form.** Single machine plus load, step imbalance `ΔP`:
+  speed settles at `Δω = −ΔP/(1/R_eq + D)` and mechanical power rises by
+  `−Δω/R_eq`. Asserted on the **running engine**, not on the formula.
+- **V3 — angle differences settle, absolute angles do not.** Post-trip, assert
+  `δᵢ − δⱼ` converges and assert that the common mode keeps drifting at
+  `ω₀·Δω_settle`. This pins the correction above as a *tested property* rather
+  than a paragraph.
+- **V4 — headroom saturates in the derivative.** A machine given headroom smaller
+  than droop would command stops at exactly `headroom`, comes **off** the ceiling
+  unaided once frequency recovers, and the `isoutofdomain` predicate never fires
+  during continuous integration. Plus: the predicate ignores `δ` and `ω` — assert
+  it directly against a state with a large drifted angle.
+- **V5 — the ladder sheds the right area.** Two machines, one falling; assert the
+  falling one's `Pm` changes and the other's does not, and that a ladder bound to
+  the *other* machine does not fire. A `f_coi`-driven ladder would pass a
+  "something shed" test — this is the assertion that would catch it.
+- **V6 — out-of-step timing is a root, not a step.** Halving `dt` moves the trip
+  instant by less than solver tolerance; the tie's power reverses sign before the
+  trip (the report's export swing); and the trip leaves two islands, each holding
+  its own frequency.
+- **V7 — the sweep's shape, not its cells.** Assert the *monotone* property the
+  sweep established (a stiffer tie slips later, and above a boundary never slips),
+  not a tuned number. A cell value that moves with a solver version is not a
+  result; the ordering is.
+
+## Pitfalls carried into M3
+
+- **Post-hoc state clamping is still banned.** Headroom is a derivative
+  saturation plus a step-rejecting predicate. `inject!` re-seating `ΔPm` at an
+  event boundary is a discrete jump at a discontinuity, not a mid-integration
+  clamp — same justification as M1's, and it must be re-stated per machine.
+- **Per-machine speed is not aggregate speed.** M2's four distinct names
+  (`δ`/`ω` per machine, `ω_coi`/`f_coi` aggregate) now gain `ΔPm` per machine.
+  Do not add an aggregate `ΔPm` read-out that invites the same conflation.
+- **`coi_model` must be revisited.** It currently compiles a *governor-free*
+  `SystemModel` (`R = Inf`, `Pmax = P0`) precisely so the cross-fidelity
+  comparison differs by inter-machine dynamics alone. With real droop on the
+  network model it must compile the real aggregate droop — and the comparison
+  then means something different. Say which in the code, not just here.
+- **Check every new export against `GLMakie`** before writing UI code — the
+  collision hazard that has now cost a round twice.
+- **The `ui/` manifest is gitignored too.** A dependency change in `src/` that the
+  UI package needs is invisible until a UI test runs; M2 was bitten six steps
+  after the fact.
+
+## Out of scope for M3
+
+Secondary control / AGC · voltage dynamics and the DAE tier · load buses and
+network reduction (M2b) · `PowerSystems.jl` as canonical model (roadmap step 4) ·
+the full-electromechanical playback overlay (roadmap step 3) · markets/OPF · maps ·
+the report's post-separation collapse window.
+
+## Carried over, still open
+
+- Figure 3-67 — now step 7, **with** an acceptance criterion for the first time.
+- `m1-tasks.md` still records unbounded trajectory growth as open; M2 step 3
+  closed it. Fix the stale line in the first docs commit of this batch.

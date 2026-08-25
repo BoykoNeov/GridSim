@@ -424,8 +424,11 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       newer engine's actual code path unasserted. The duplicated retention logic that
       first shipped in the vector form was folded back into a single `_accept!`: a
       second copy inside the very file written to prevent second copies.
-- [ ] Report **Figure 3-67** as a layout target — still open, still ticks no
-      acceptance criterion.
+- [ ] Report **Figure 3-67** as a layout target — **carried to M3 step 7**, which
+      is the first time it has been given an acceptance criterion (render the
+      annotated panel offscreen from the two-area run, markers at the root-found
+      shed instants, or drop it in writing). It ticked none here, which is why it
+      drifted twice. See `m3-tasks.md`.
 
 ## Known hazards to check off explicitly
 

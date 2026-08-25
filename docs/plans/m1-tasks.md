@@ -108,8 +108,16 @@ acceptance criteria in `../SPEC.md` §7.8.
 
 ### Known, deferred (not this batch)
 
-- [ ] **Unbounded trajectory growth — STILL OPEN, but no longer a *drawing*
-      problem.** The engine still pushes to `ts/fs/rocofs/pms/tripped_mws` on every
+- [x] **Unbounded trajectory growth — CLOSED at the head of M2 step 3**
+      (`src/engines/recorder.jl`): one bounded, *decimating* `TrajectoryRecorder`,
+      shipped on its own commit with M1 retrofitted onto it and no new engine
+      alongside. Decimating rather than a ring buffer because the nadir and the
+      initial slope live at the *start* of a run. Two rules became binding with it:
+      time is a mandatory channel (decimation changes the sample interval mid-run),
+      and running summaries are tracked outside the buffer (the retained minimum is
+      not the minimum that occurred). See `m2-tasks.md` step 3.
+      *Original entry, kept for the record:* the engine still pushes to
+      `ts/fs/rocofs/pms/tripped_mws` on every
       step forever, so memory still grows over a multi-minute window session. What
       the UI batch fixed is only the half it owns: the window plots from its own
       fixed-capacity `RollingTrace` buffers, never from the engine's vectors, so
@@ -249,10 +257,13 @@ satisfies each is named below. **177 tests green** at the time of that batch
       window close. Worth checking rather than reasoning about — had `display`
       not realised the window synchronously, the documented command would have
       exited instantly with no window and no error.
-- [ ] Report **Figure 3-67** as a layout target — still open. It needs no new
+- [ ] Report **Figure 3-67** as a layout target — **carried to M3 step 7, which
+      gives it an acceptance criterion for the first time.** It needs no new
       physics (threshold lines, shed annotations and the cumulative second axis are
-      all computed already), and it ticks no acceptance criterion, so it stayed out
-      of this batch rather than quietly expanding it.
+      all computed already), and it ticked no acceptance criterion, which is
+      exactly why it drifted across two milestones. See `m3-tasks.md` step 7: it is
+      done when the annotated panel renders offscreen from the two-area run with
+      markers at the root-found shed instants — or it is dropped in writing.
 
 ### What the headless batch added to core
 
