@@ -153,6 +153,44 @@ of error the sweep exists to rule out.
 Cost, stated: the vertex RHS now carries a scenario input. Accepted because the
 alternative puts a numerical artefact in the headline result.
 
+**Two things the ramp must not break.** It introduces explicit `t`-dependence into
+a right-hand side that `find_fixpoint` solves *before* `t_start`. M2's flat-start
+acceptance criterion — a model placed off equilibrium rings from `t = 0` with a
+plausible oscillation that is pure initialization artefact — must survive, and
+step 5 must assert the ramp is **inert at the fixpoint solve**. A mis-signed
+`t_start` would otherwise seed the run off equilibrium, and the resulting
+oscillation would look exactly like physics.
+
+**The cascade magnitude is NOT settled, and must not be inherited.** The doc being
+replaced quotes two figures for the same cascade:
+
+- §7.3's probe parameters: *"Iberian loss ramped to the report's **5,750 MW** by
+  12:33:20.560"*;
+- §7.4's sweep table: **2,773 MW** labelled *"(report)"*, with its ±30 % cells at
+  1,941 and 3,605.
+
+They differ by more than 2×, and the sweep's own headline finding is that the slip
+boundary *"tracks cascade magnitude almost one-for-one"* — so this is not a
+cosmetic discrepancy, it decides whether step 6 reproduces anything.
+
+What the citation source (`docs/scenarios/iberia-2025-04-28.md`) actually supports:
+cumulative **generation** loss in Spain reached **>2.5 GW by 12:33:18.020** (p.11)
+and **≈5,750 MW by 12:33:20.560** (p.119). The 2,773 figure appears **nowhere** in
+the scenario doc and does not reconstruct from its Table 3-1 clusters by any
+grouping (4a+4b ≈ 725, 5a/5b ≈ 930, 6a/6b ≈ 650, 7–13 ≥ 2,600). It is an unsourced
+intermediate.
+
+Compounding it, §2 of the plan doc explains exactly how a 2× gap arises in this
+event: at the −1 Hz/s moment the Iberian imbalance was ≥6,150 MW **of which
+≈5,000 MW was the export swing**, not generation loss. So "imbalance" and
+"generation lost" are different quantities here and one of the two figures may be
+the wrong one.
+
+**Therefore step 6 must re-derive the ramp magnitude from Table 3-1**, state which
+quantity `rate·duration` represents (generation lost, not apparent imbalance), and
+reconcile the staged discrete losses *before* the ramp with the cumulative 5,750 MW
+at 12:33:20.560. It is a checklist item, not a discovery to be made mid-step.
+
 ### D8 — A real system base, chosen once
 
 M1's Iberian script used `s_base(H_tot) = KE/H_tot`, making the base an artefact

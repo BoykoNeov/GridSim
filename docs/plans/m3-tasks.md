@@ -46,8 +46,10 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
 
 ## Step 2 — validation of primary response
 
-- [ ] **V1** governor-free network agrees with M2's re-pinned values to solver
-      tolerance.
+- [ ] **V1** governor-free network still satisfies M2's **closed-form** predictions
+      (`K = 4.284 pu`, `δ₀ = 0.140518 rad`, `f_osc = 1.5911075 Hz`, the V3 gap
+      inside its bound) — **not** M2's re-pinned measured values, which step 1
+      itself moves and against which the check would pass by construction.
 - [ ] **V2** droop settling `Δω = −ΔP/(1/R_eq + D)` measured on the **running
       engine**, and mechanical power up by `−Δω/R_eq`.
 - [ ] **V3** angle *differences* converge while the common mode keeps drifting at
@@ -82,9 +84,21 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
       addition cannot have perturbed existing scenarios.
 - [ ] Ramp end is a `C¹` corner, not a jump: assert no protection callback fires
       spuriously at `t_start` or `t_start + duration`.
+- [ ] **The ramp is inert at the fixpoint solve.** It puts explicit `t`-dependence
+      into a RHS that `find_fixpoint` evaluates before `t_start`; M2's flat-start
+      criterion must survive, and a mis-signed `t_start` must be caught by a test
+      rather than showing up as an initialization artefact that looks like physics.
 
 ## Step 6 — the Iberian two-area case, in-repo, with its sweep
 
+- [ ] **Re-derive the cascade magnitude from Table 3-1 before writing the ramp**
+      — do **not** inherit it. The doc being replaced quotes 5,750 MW and 2,773 MW
+      for the same cascade (`D7`), differing by more than 2×, and the sweep's own
+      finding is that the slip boundary tracks magnitude almost one-for-one. Record
+      which quantity `rate·duration` represents (generation lost, **not** apparent
+      imbalance — §2 of the plan doc shows ≈5,000 MW of the 6,150 MW imbalance was
+      export swing), and reconcile the staged pre-ramp losses against the
+      cumulative 5,750 MW at 12:33:20.560.
 - [ ] Two-machine `NetworkModel` on `S_base = 10,000 MVA`, both machines rated away
       from the base (`D8`), `Σ P0 = 0`.
 - [ ] Tie strength expressed as the reactance it is: `X = E′₁E′₂/(P_max/S_base)`

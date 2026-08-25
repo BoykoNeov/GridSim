@@ -128,7 +128,10 @@ works, the other is a mechanism with no precedent in the repo.
 
 ### Step 5 — generation lost as a ramp, not an instant
 
-The report's cascade is ≈2,773 MW arriving over ≈2.46 s. M2 has only instant
+The report's cascade arrives over ≈2.46 s. **Its magnitude must be re-derived, not
+inherited** — the doc being replaced quotes two figures that differ by more than
+2× (`m3-context.md` D7), and the sweep's own finding is that the slip boundary
+tracks cascade magnitude almost one-for-one. M2 has only instant
 trips. Rather than staircase it into N discrete trips — whose edges would give the
 root-finding protection of step 4 artificial firing instants — the vertex carries
 a ramp: `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)`. Exact, continuous,
@@ -157,9 +160,16 @@ time.
 
 ## Validation (assert in `test/`)
 
-- **V1 — governor-free equivalence.** A network with `R = Inf` on every machine
-  reproduces M2's recorded results to solver tolerance (not bit-identically; D1).
-  The M2 constants are re-pinned once in step 1 with both values recorded.
+- **V1 — governor-free equivalence, against a solver-independent oracle.** A
+  network with `R = Inf` on every machine must still satisfy M2's **closed-form**
+  predictions — `K = 4.284 pu`, `δ₀ = 0.140518 rad`, `f_osc = 1.5911075 Hz`, and
+  the V3 gap inside its stated bound — because those are derived, not measured,
+  and a re-pinning cannot move them. Asserting instead against "M2's recorded
+  values" would be circular: step 1 re-pins those very constants, so the check
+  would pass by construction. The re-pinning is then what it should be — a
+  measurement that must still satisfy an independent prediction, not a new
+  baseline that defines its own success. Both old and new measured values are
+  recorded in `m3-context.md`.
 - **V2 — the droop closed form.** Single machine plus load, step imbalance `ΔP`:
   speed settles at `Δω = −ΔP/(1/R_eq + D)` and mechanical power rises by
   `−Δω/R_eq`. Asserted on the **running engine**, not on the formula.
