@@ -121,6 +121,13 @@ export system_inertia, is_online
 # the read `ui/` needs to label traces without touching engine fields. Both names
 # checked clear against GLMakie's exports before being added.
 export SwingEngine, machine_ids
+# The applied-event record the trajectory deliberately does not carry (a line trip
+# leaves no channel behind, and a one-sample marker is what decimation deletes —
+# see the head of `engines/swing.jl`). `describe` gives a window and a headless
+# report one shared wording for an event. All four checked clear against GLMakie's
+# exports; note that the obvious `events` is NOT clear, which is why the accessor
+# is `event_log`.
+export EngineEvent, event_log, n_events_dropped, describe
 
 # --- real-time orchestration ---
 # (`push!`/`isempty`/`length`/`empty!` on an EventQueue are Base generics we

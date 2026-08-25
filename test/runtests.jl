@@ -1804,8 +1804,10 @@ end
     @testset "SwingEngine: recording is bounded and the nadir is not read from it" begin
         net = two_machine_system()
         eng = init!(SwingEngine, net; dt = 0.02)
+        # Pinned deliberately: the channel set of a running engine cannot be
+        # changed afterwards, so it is a decision (step 7) rather than a detail.
         @test propertynames(state_series(eng)) ==
-              (:t, :δ_G1, :δ_G2, :ω_G1, :ω_G2, :f_coi)
+              (:t, :δ_G1, :δ_G2, :ω_G1, :ω_G2, :δ_coi, :f_coi)
         @test length(state_series(eng).t) == 1          # seeded pre-disturbance point
         inject!(eng, TripGenerator(:G1))
         for _ in 1:1000; step!(eng, 0.02); end
@@ -1820,6 +1822,146 @@ end
         # Wrong channel count is a named error, not a silent length mismatch.
         @test occursin("expected", argerr_msg(() ->
             GridSim.record!(small.traj, 0.0, [1.0, 2.0])))
+    end
+
+    # --- M2 step 7: what the UI needs before a line of drawing code -----------
+    #
+    # Three decisions the window depends on, asserted here rather than in `ui/`,
+    # because they are core behaviour and the core suite is what would catch a
+    # regression in them.
+
+    @testset "SwingEngine: applied events are logged, the trajectory cannot say it" begin
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        @test isempty(event_log(eng))
+        @test n_events_dropped(eng) == 0
+
+        for _ in 1:50; step!(eng); end
+        t_line = eng.integrator.t
+        inject!(eng, TripLine(:B1, :B2))
+        for _ in 1:50; step!(eng); end
+        t_gen = eng.integrator.t
+        inject!(eng, TripGenerator(:G2))
+
+        log = event_log(eng)
+        @test length(log) == 2
+        # The timestamp is the integrator's own clock at the moment of injection —
+        # not a wall clock, and not a time the caller supplied.
+        @test log[1].t == t_line
+        @test log[2].t == t_gen
+        @test log[1].kind === :trip_line
+        # Logged by the branch's bus names, so the argument order a caller happened
+        # to use does not change what the record says happened.
+        @test (log[1].a, log[1].b) == (:B1, :B2)
+        @test log[2].kind === :trip_generator && log[2].a === :G2
+        @test describe(log[1]) == "trip line B1–B2"
+        @test describe(log[2]) == "trip G2"
+
+        # The log records what CHANGED the system, not what was asked for: the
+        # no-op paths of both `inject!` methods leave no entry behind.
+        inject!(eng, TripLine(:B2, :B1))         # already open, either order
+        inject!(eng, TripGenerator(:G2))         # already offline
+        @test length(event_log(eng)) == 2
+        # ...and neither does an event that throws before it applies anything.
+        @test_throws KeyError inject!(eng, TripGenerator(:G9))
+        @test_throws KeyError inject!(eng, TripLine(:B1, :B9))
+        @test length(event_log(eng)) == 2
+
+        # It is a copy: a caller may keep it without holding a handle on the engine.
+        keep = event_log(eng)
+        inject!(eng, TripLine(:B2, :B3))
+        @test length(keep) == 2 && length(event_log(eng)) == 3
+
+        # And the point of the whole thing: nothing in the recorded channels says a
+        # line opened. Every channel is a smooth per-machine or aggregate quantity,
+        # and none of them is the event marker a played-back run would need.
+        @test !any(n -> occursin("trip", String(n)) || occursin("event", String(n)),
+                   propertynames(state_series(eng)))
+    end
+
+    @testset "SwingEngine: the event log is bounded and says so" begin
+        # Events are user clicks, so the cap is far above any session — but a
+        # scripted driver must not turn this into the one vector that grows
+        # forever. At the cap the EARLIEST events are kept (the same
+        # start-is-what-matters choice the recorder makes when it decimates) and
+        # the rest are counted rather than silently dropped.
+        net = two_machine_system()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        cap = GridSim._EVENT_LOG_CAP
+        for k in 1:(cap + 10)
+            # Straight at the log: a real trip is a no-op the second time, so the
+            # cap is unreachable through `inject!` on a two-machine system.
+            GridSim._log_event!(eng, :trip_generator, Symbol("G", k), Symbol(""))
+        end
+        log = event_log(eng)
+        @test length(log) == cap
+        @test n_events_dropped(eng) == 10
+        @test log[1].a === :G1                   # the start survives...
+        @test log[end].a === Symbol("G", cap)    # ...and the tail is what was cut
+    end
+
+    @testset "SwingEngine: δ_coi is the gauge-free reference the angle traces need" begin
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        s = current_state(eng)
+
+        # It is the same inertia-weighted mean as ω_coi, over the same live weights.
+        @test s.δ_coi ≈ sum(eng.w .* s.δ) / sum(eng.w) atol = 1e-14
+
+        # THE PROPERTY THAT MAKES IT THE RIGHT REFERENCE. `find_fixpoint` picks an
+        # arbitrary gauge — shifting every angle by a constant is still the same
+        # physical state — so an absolute angle is not a plottable quantity. Shift
+        # the whole state and the aggregate shifts with it, leaving every machine's
+        # angle *relative to it* untouched.
+        rel_before = s.δ .- s.δ_coi
+        for i in eng.δ_idx; eng.integrator.u[i] += 0.75; end
+        s2 = current_state(eng)
+        @test s2.δ_coi ≈ s.δ_coi + 0.75 atol = 1e-12
+        @test s2.δ .- s2.δ_coi ≈ rel_before atol = 1e-12
+        for i in eng.δ_idx; eng.integrator.u[i] -= 0.75; end   # put the gauge back
+
+        # The recorded channel is the same number as the live read-out.
+        step!(eng)
+        tr = state_series(eng)
+        @test tr.δ_coi[end] ≈ current_state(eng).δ_coi atol = 1e-14
+
+        # A tripped machine leaves the reference, exactly as it leaves ω_coi: the
+        # aggregate is the weighted mean over SURVIVORS, so it tracks the cluster
+        # that is still running rather than being dragged by a decoupled rotor.
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:400; step!(eng); end
+        s3 = current_state(eng)
+        surv = [2, 3]
+        @test s3.δ_coi ≈ sum(eng.w[surv] .* s3.δ[surv]) / sum(eng.w[surv]) atol = 1e-12
+        # ...which is what keeps the picture readable: the survivors sit close to
+        # the reference while the tripped machine visibly separates from it. Both
+        # halves matter — a reference that drifted with the dead machine would push
+        # the survivors off the axis instead.
+        rel = s3.δ .- s3.δ_coi
+        @test maximum(abs, rel[surv]) < 0.5           # survivors: on-screen
+        @test abs(rel[1]) > 10 * maximum(abs, rel[surv])   # the tripped one: gone
+    end
+
+    @testset "SwingEngine: the bus-pair lookup is indexed, and both callers share it" begin
+        net = three_machine_ring()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        # One entry per branch, keyed by the unordered pair — so a branch cannot be
+        # reachable under one bus order and missing under the other.
+        @test length(eng.branch_of_buses) == length(net.branches)
+        for (b, br) in pairs(net.branches)
+            @test GridSim._find_branch(eng, br.from, br.to) == b
+            @test GridSim._find_branch(eng, br.to, br.from) == b
+            @test is_online(eng, br.from, br.to) && is_online(eng, br.to, br.from)
+        end
+        # The two callers still disagree only where they are meant to: a read-out
+        # for a line that does not exist is `false`, injecting into one is a bug.
+        @test GridSim._find_branch(eng, :B1, :B9) === nothing
+        @test !is_online(eng, :B1, :B9)
+        @test_throws KeyError inject!(eng, TripLine(:B1, :B9))
+        # And the index still resolves the branch a trip must actually open.
+        inject!(eng, TripLine(:B3, :B1))
+        @test !is_online(eng, :B1, :B3)
+        @test iszero(eng.params[eng.K_pidx[eng.branch_to_edge[3]]])   # L31, not another
     end
 
 
@@ -2097,7 +2239,11 @@ end
         end
         # A tripwire, not a correctness claim: a legitimate new per-machine array
         # field changes these deliberately. The two assertions below are the claim.
-        @test counts == [69, 171, 681]                 # exactly 17n + 1
+        # Moved from 17n + 1 to 17n + 2 at step 7, deliberately and by exactly the
+        # right amount: the `δ_coi` recorder channel adds ONE element to the sample
+        # buffer regardless of n. A per-machine mistake would have shifted the
+        # slope, which the next assertion is what catches.
+        @test counts == [70, 172, 682]                 # exactly 17n + 2
 
         # Linear, asserted as such: equal slope over both intervals. A dense n×n
         # anywhere would make the second slope 30× the first.

@@ -62,6 +62,68 @@
 
 const _SWING_DT0 = 0.02   # default real-time step (s), matching M1's
 
+# WHY A SEPARATE EVENT LOG AND NOT AN EXTRA RECORDER CHANNEL (step 7's first
+# decision, docs/plans/m2-tasks.md). The trajectory carries `δ_*`, `ω_*` and the
+# aggregates, and from those a *generator* trip is partly reconstructible (a
+# machine's speed goes flat, its inertia leaves the aggregate) while a *line* trip
+# leaves no trace at all: play a run back and nothing says which line opened, or
+# when. Two reasons the fix is a log rather than a channel:
+#
+#   1. A trip is a single-sample spike, and decimation is precisely the operation
+#      that deletes those. The recorder halves its buffer by keeping every other
+#      retained sample, so a marker that is non-zero in one sample has a 50 %
+#      chance of vanishing at each halving — the one datum whose *exact instant*
+#      matters would be the first thing thrown away.
+#   2. A channel is a `Float64`. "Which line?" is a pair of bus names, and encoding
+#      symbols as numbers to fit the buffer is a code nothing would decode.
+#
+# So events are logged where they are *applied* — inside `inject!`, timestamped
+# from the integrator's own clock. Deliberately not in the UI's click handler: a
+# scripted run (`smoke_render`, the tests, any headless driver) never clicks, and a
+# log that only exists when a human is watching is not a record of the run.
+#
+# Bounded, like everything else here: events are user clicks, so the cap is far
+# above any real session, but a scripted driver pushing events in a loop must not
+# turn this into the one vector in the engine that grows forever. At the cap the
+# log stops appending and counts the drops (`n_events_dropped`) — keeping the
+# *earliest* events, the same "the start is what matters" choice the recorder makes
+# when it decimates rather than rolling.
+const _EVENT_LOG_CAP = 256
+
+"""
+    EngineEvent(t, kind, a, b)
+
+One perturbation, as applied — the record a played-back trajectory cannot supply.
+
+  - `t`    — simulation time at which the engine applied it (the integrator's own
+             clock, read inside `inject!`; never a wall clock).
+  - `kind` — `:trip_generator` or `:trip_line`.
+  - `a`, `b` — what it hit: the machine id and `Symbol("")` for a generator trip,
+             the two bus names for a line trip.
+
+Only events that actually *changed* something are logged: re-tripping an already
+offline machine is a no-op in `inject!` and produces no entry, so the log is a
+record of the run rather than of the clicks.
+"""
+struct EngineEvent
+    t::Float64
+    kind::Symbol
+    a::Symbol
+    b::Symbol
+end
+
+"""
+    describe(ev::EngineEvent) -> String
+
+One-line label for an event — what a plot marker or a status line shows. Lives
+here rather than in `ui/` so both a window and a headless report name an event the
+same way.
+"""
+describe(ev::EngineEvent) =
+    ev.kind === :trip_generator ? string("trip ", ev.a) :
+    ev.kind === :trip_line      ? string("trip line ", ev.a, "–", ev.b) :
+                                  string(ev.kind, " ", ev.a, " ", ev.b)
+
 """
     swing_vertex!(dv, v, esum, p, t)
 
@@ -110,10 +172,12 @@ continuous state — inherited here from NetworkDynamics rather than assumed, an
 asserted in `test/`); flat index vectors into the state and parameter arrays
 (`δ_idx`/`ω_idx`/`Pm_pidx`/`K_pidx`), resolved once through NetworkDynamics'
 symbolic interface so nothing here assumes a memory layout; `branch_to_edge` and
-`incident`, the graph bookkeeping the header describes; the pre-trip inertias `H`
-(kept for step 6's `coi_model`, never mutated) beside the live COI weights `w` (a
-machine's inertia while it is online, zero once tripped) and their sum; the
-bounded `traj`; and the running `nadir` of the COI frequency.
+`incident`, the graph bookkeeping the header describes; `branch_of_buses`, the
+bus-pair index behind `is_online`; the pre-trip inertias `H` (kept for step 6's
+`coi_model`, never mutated) beside the live COI weights `w` (a machine's inertia
+while it is online, zero once tripped) and their sum; the bounded `traj`; the
+bounded `log` of applied events with its `n_dropped` counter; and the running
+`nadir` of the COI frequency.
 """
 mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     model::NetworkModel
@@ -132,11 +196,14 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     K_pidx::Vector{Int}
     branch_to_edge::Vector{Int}
     incident::Vector{Vector{Int}}
+    branch_of_buses::Dict{Tuple{Symbol,Symbol},Int}
     H::Vector{Float64}
     w::Vector{Float64}
     Σw::Float64
     traj::R
     sample::Vector{Float64}
+    log::Vector{EngineEvent}
+    n_dropped::Int
     nadir::Float64
 end
 
@@ -253,17 +320,33 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     H = copy(ma.H)
     w = copy(ma.H)
 
-    # One channel per machine angle, one per machine speed, plus the aggregate.
-    # `:t` is prepended by the recorder itself (see engines/recorder.jl).
+    # Bus pair ⇒ branch index, so "which line is this?" is a hash lookup rather
+    # than a scan over `model.branches`. It exists because a UI asks it once per
+    # line per frame (`is_online`), which puts it in the redraw path; the key is
+    # the *unordered* pair, matching `TripLine`'s "either order" contract.
+    branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
+        _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
+
+    # One channel per machine angle, one per machine speed, then the two
+    # aggregates. `:t` is prepended by the recorder itself (engines/recorder.jl).
+    #
+    # `δ_coi` is here because the channel set of a running engine cannot be
+    # changed later (step 7's decision) and because the *individual* angles are
+    # gauge-arbitrary: only differences mean anything, and the difference a reader
+    # wants is against the aggregate. It could in principle be recomputed from the
+    # per-machine angles afterwards — but only by a consumer that also reproduces
+    # the live COI weights, which change at every generator trip. One channel is
+    # cheaper than making every consumer re-derive that bookkeeping correctly.
     channels = vcat([Symbol("δ_", id) for id in ids],
-                    [Symbol("ω_", id) for id in ids], [:f_coi])
+                    [Symbol("ω_", id) for id in ids], [:δ_coi, :f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
 
     eng = SwingEngine(net, nw, Set(ids), Set(eachindex(net.branches)),
                       integrator.p, Float64(dt), integrator,
                       net.f0, ω₀, ids, δ_idx, ω_idx, Pm_pidx, K_pidx,
-                      branch_to_edge, incident, H, w, sum(w), traj,
-                      Vector{Float64}(undef, length(channels)), net.f0)
+                      branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
+                      Vector{Float64}(undef, length(channels)),
+                      EngineEvent[], 0, net.f0)
     _record!(eng)                                 # seed the pre-disturbance point
     return eng
 end
@@ -278,22 +361,35 @@ so there is no half-built engine to mutate in place. See `interface.jl`.
 """
 init!(::Type{SwingEngine}, net::NetworkModel; kwargs...) = SwingEngine(net; kwargs...)
 
-# Inertia-weighted mean speed over the machines still online. `w` is zero for a
-# tripped machine, so its state keeps integrating harmlessly without polluting the
-# aggregate read-out. With everything tripped there is no weighted mean to report
-# and the result is `NaN` — the honest answer, and one that plotting skips rather
-# than drawing a fake zero.
-@inline function _ω_coi(eng::SwingEngine, u)
+# Inertia-weighted mean of one per-machine quantity over the machines still
+# online. `w` is zero for a tripped machine, so its state keeps integrating
+# harmlessly without polluting the aggregate read-out. With everything tripped
+# there is no weighted mean to report and the result is `NaN` — the honest answer,
+# and one that plotting skips rather than drawing a fake zero.
+#
+# ONE helper for both aggregates, because they are the same weighted mean over the
+# same live weights: a second copy is how `ω_coi` and `δ_coi` would come to
+# disagree about which machines count.
+@inline function _coi(eng::SwingEngine, u, idx::Vector{Int})
     eng.Σw > 0 || return NaN
     acc = 0.0
     @inbounds for i in eachindex(eng.w)
-        acc += eng.w[i] * u[eng.ω_idx[i]]
+        acc += eng.w[i] * u[idx[i]]
     end
     return acc / eng.Σw
 end
 
+@inline _ω_coi(eng::SwingEngine, u) = _coi(eng, u, eng.ω_idx)
+
+# The aggregate ANGLE — a plain linear mean, deliberately not a circular one.
+# `δ` here is the *unwrapped* rotor angle NetworkDynamics integrates, which after a
+# generator trip grows without bound by design (see the header); wrapping it into
+# `(-π, π]` to take a circular mean would put an artificial sawtooth into the one
+# reference the traces are drawn against.
+@inline _δ_coi(eng::SwingEngine, u) = _coi(eng, u, eng.δ_idx)
+
 """
-    current_state(eng::SwingEngine) -> (; t, δ, ω, ω_coi, f_coi)
+    current_state(eng::SwingEngine) -> (; t, δ, ω, δ_coi, ω_coi, f_coi)
 
 Named state at "now". Pure read of the integrator — no stepping.
 
@@ -301,18 +397,21 @@ Named state at "now". Pure read of the integrator — no stepping.
               only differences are meaningful (see the constructor's note).
   - `ω`     — per-machine per-unit speed deviations, in bus order. One machine's
               deviation; *not* M1's aggregate `Δω`.
+  - `δ_coi` — the inertia-weighted mean of `δ` over online machines (rad). Carries
+              the same arbitrary gauge as `δ` itself, which is exactly the point:
+              `δ[i] - δ_coi` is gauge-free and is the angle worth plotting.
   - `ω_coi` — the inertia-weighted mean of `ω` over online machines (pu).
   - `f_coi` — that same aggregate in engineering units, `f0·(1 + ω_coi)` (Hz).
               The system frequency, and the quantity comparable to M1's `f`.
 
-`δ` and `ω` are freshly allocated copies, so a caller may keep them; the two
+`δ` and `ω` are freshly allocated copies, so a caller may keep them; the three
 scalars are the cheap read for a live indicator.
 """
 function current_state(eng::SwingEngine)
     u = eng.integrator.u
     ω_coi = _ω_coi(eng, u)
     return (t = eng.integrator.t, δ = u[eng.δ_idx], ω = u[eng.ω_idx],
-            ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
+            δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
 
 # Append the current state to the bounded trajectory and update the running nadir.
@@ -334,7 +433,8 @@ function _record!(eng::SwingEngine)
         eng.sample[n + i] = u[eng.ω_idx[i]]
     end
     f_coi = eng.f0 * (1 + _ω_coi(eng, u))
-    eng.sample[2n + 1] = f_coi
+    eng.sample[2n + 1] = _δ_coi(eng, u)
+    eng.sample[2n + 2] = f_coi
     record!(eng.traj, eng.integrator.t, eng.sample)
     f_coi < eng.nadir && (eng.nadir = f_coi)
     return nothing
@@ -362,8 +462,14 @@ end
 """
     state_series(eng::SwingEngine) -> NamedTuple
 
-The recorded trajectory as `(; t, δ_<id>..., ω_<id>..., f_coi)` — one channel per
-machine angle, one per machine speed, plus the aggregate frequency in Hz.
+The recorded trajectory as `(; t, δ_<id>..., ω_<id>..., δ_coi, f_coi)` — one
+channel per machine angle, one per machine speed, then the aggregate angle (rad,
+same gauge as the per-machine angles) and the aggregate frequency in Hz.
+
+**It records no events.** Nothing in these channels says a line opened, and a
+single-sample marker is exactly what decimation deletes — `event_log(eng)` is
+where applied perturbations live, with their exact instants (see the note at the
+head of this file).
 
 **Bounded, not complete**, exactly as for M1: once the recorder fills it decimates,
 so late in a long run the samples are evenly spaced but coarser than `dt`. Use the
@@ -396,6 +502,43 @@ read so `ui/` never reaches into engine internals (SPEC §3.1); the same reason
 `system_inertia`/`is_online` exist for M1.
 """
 machine_ids(eng::SwingEngine) = copy(eng.ids)
+
+"""
+    event_log(eng::SwingEngine) -> Vector{EngineEvent}
+
+Every perturbation the engine has actually applied, in order, each with the
+simulation time it landed at. A copy, so a caller may keep it.
+
+This is the record the trajectory cannot hold (see the head of this file): a line
+trip changes no channel that survives decimation, so without this a played-back
+run cannot say which line opened or when.
+
+Bounded at $(_EVENT_LOG_CAP) entries — far above any interactive session, and a
+scripted driver that exceeds it keeps the earliest events while
+`n_events_dropped` counts the rest.
+"""
+event_log(eng::SwingEngine) = copy(eng.log)
+
+"""
+    n_events_dropped(eng::SwingEngine) -> Int
+
+How many applied events the bounded log had to discard (`0` in any real session).
+Reported rather than silent: a truncated log that does not say it is truncated
+reads as "nothing else happened".
+"""
+n_events_dropped(eng::SwingEngine) = eng.n_dropped
+
+# Append one applied event. Called from `inject!` *after* its no-op guards, so the
+# log records what changed the system rather than what was asked for, and reads
+# the integrator's own clock rather than being handed a time by the caller.
+function _log_event!(eng::SwingEngine, kind::Symbol, a::Symbol, b::Symbol)
+    if length(eng.log) < _EVENT_LOG_CAP
+        push!(eng.log, EngineEvent(eng.integrator.t, kind, a, b))
+    else
+        eng.n_dropped += 1
+    end
+    return nothing
+end
 
 """
     system_inertia(eng::SwingEngine) -> Float64
@@ -466,22 +609,29 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     end
     eng.w[v] = 0.0                           # out of the aggregate read-out...
     eng.Σw = sum(eng.w)                      # ...and out of the inertia indicator
+    _log_event!(eng, :trip_generator, ev.id, Symbol(""))
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return eng
 end
 
+# The unordered bus pair, as a canonically ordered tuple — the key both the index
+# and every lookup go through, so "B1–B2" and "B2–B1" cannot become two keys.
+@inline _bus_pair(a::Symbol, b::Symbol) = a < b ? (a, b) : (b, a)
+
 # Branch index (position in `model.branches`) of the line joining two buses, in
-# either order, or `nothing`. ONE pair-matching loop, shared by the read-out and by
-# the event, so "which line is this?" cannot mean two different things in the two
-# places that ask — the same reason the recorder has a single `_accept!`.
-function _find_branch(eng::SwingEngine, from::Symbol, to::Symbol)
-    for (b, br) in pairs(eng.model.branches)
-        ((br.from === from && br.to === to) ||
-         (br.from === to && br.to === from)) && return b
-    end
-    return nothing
-end
+# either order, or `nothing`. ONE lookup, shared by the read-out and by the event,
+# so "which line is this?" cannot mean two different things in the two places that
+# ask — the same reason the recorder has a single `_accept!`. That sharing is also
+# why the index went *here* rather than into `is_online` alone: a fast path for the
+# read-out and a scan for the event would be the second meaning this comment
+# exists to prevent.
+#
+# It is a hash lookup because a UI calls `is_online` once per line per frame, which
+# puts it squarely in the redraw path. At three branches the scan cost nothing; the
+# point is that it no longer scales with the network.
+_find_branch(eng::SwingEngine, from::Symbol, to::Symbol) =
+    get(eng.branch_of_buses, _bus_pair(from, to), nothing)
 
 # The same lookup, but a missing branch is a caller bug rather than a `false` —
 # the contract `_machine_vertex` already sets for machines.
@@ -534,6 +684,10 @@ function inject!(eng::SwingEngine, ev::TripLine)
     # NOT branch order (see the header). This is the one place that map is read,
     # and `test/` asserts it is a permutation *and* that the right line goes dead.
     eng.params[eng.K_pidx[eng.branch_to_edge[b]]] = 0.0
+    # Logged by the branch's own bus names, not the caller's argument order, so two
+    # runs that trip the same line agree on what the log says happened.
+    br = eng.model.branches[b]
+    _log_event!(eng, :trip_line, br.from, br.to)
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return eng
