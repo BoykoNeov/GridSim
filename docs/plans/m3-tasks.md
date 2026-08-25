@@ -73,6 +73,28 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
       including why the aggregate `Tg` ships as an explicitly unvalidated choice.
 - [x] **The `isoutofdomain` cost question measured here too** (271 ns against a
       1974 ns step, ~14 %, kept). `m3-context.md`, open questions.
+- [x] **New exports checked against `GLMakie`: there are none.** `R`, `Pmax` and
+      `Tg` are struct fields, `ΔPm` is a `NamedTuple` key, and
+      `_swing_outofdomain` is internal. Written down rather than left silent,
+      because on a hazard list that has cost a round twice, silence reads as
+      skipped rather than as clear.
+- [x] **Two counterfactuals committed, not left in a scratch script.** Neither
+      mechanism was covered by a test that would fail if it were removed:
+      - the **re-seat** in `inject!` — remove it and the same run aborts
+        `Unstable` at the second trip;
+      - the **guard itself** being attached to `init` — detach it and six
+        assertions across two testsets go red. Four of those are in the
+        saturation test, which was *expected* to pass without the guard on the
+        grounds that the derivative saturation bounds `ΔPm` by itself. It does
+        not: adaptive-step overshoot exceeds the 1e-9 bound without the guard to
+        reject it. The guard is load-bearing, not belt-and-braces.
+- [x] **A legal machine nothing had initialised**: finite `R` with `Pmax == P0`
+      (zero reserve, blessed by D4) is the one configuration where the saturation
+      branch is live *at* the equilibrium — `ΔPm >= headroom` is `0 >= 0`. It was
+      only ever *constructed* in a guard test, never handed to `find_fixpoint`. Now
+      initialised and run: the fixpoint converges flat and the machine holds at
+      exactly zero while droop commands it upward. A sweep cell zeroing an area's
+      reserve is an obvious thing to try in step 6, and it would have found this.
 
 ## Step 2 — validation of primary response
 

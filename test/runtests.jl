@@ -1227,6 +1227,13 @@ end
 
         # X′d is carried data in M2a, not dynamics. Changing it must not move K by
         # one bit — this is the regression test against quietly folding it back in.
+        # NOTE (M3 step 1): this 8-argument form is a LOSSY copy now — it drops
+        # `R`, `Pmax` and `Tg` back to the governor-free defaults. Harmless here,
+        # because `two_machine_system`'s machines are governor-free to begin with,
+        # and deliberately not "fixed" by spelling all eleven arguments out: the
+        # point of this fixture is that changing `Xd′` alone must not move `K`.
+        # But a rebuild-a-machine loop written this way in step 5's ramp or step 6's
+        # sweep would silently disarm every governor it touched.
         stiffer = NetworkModel(100.0, 50.0, net.buses, net.branches,
                                [Machine(m.id, m.bus, m.S_rated, m.H, m.D,
                                         10 * m.Xd′, m.E′, m.P0) for m in net.machines])
@@ -1791,6 +1798,63 @@ end
         # …and it does fire on the one thing it is for.
         u[eng.ΔPm_idx[2]] = eng.params[eng.hr_pidx[2]] + 1e-6
         @test pred(u, eng.params, 0.0)
+    end
+
+    @testset "M3 step 1: zero reserve with a real governor is a legal machine" begin
+        # `Pmax == P0` with FINITE `R` is explicitly legal (m3-context.md D4: zero
+        # reserve is legal, negative is not) and it is the one configuration where
+        # the saturation branch is live AT the equilibrium — `ΔPm >= headroom` is
+        # `0 >= 0`, i.e. true, on the very state `find_fixpoint` is solving for. If
+        # that ever gave the solve a zero row it would be a step-6 landmine, since
+        # a sweep cell setting an area's reserve to zero is an obvious thing to try.
+        # So it is initialised here rather than only constructed.
+        net = governed_ring(; hr2 = 0.0)
+        @test machine_arrays(net).headroom[2] == 0.0
+        @test machine_arrays(net).invR[2] > 0            # …and it does have a governor
+        eng = init!(SwingEngine, net; dt = 0.01)
+        du = similar(eng.integrator.u)
+        eng.nw(du, eng.integrator.u, eng.params, 0.0)
+        @test maximum(abs, du) < 1e-10                   # flat start survives it
+        @test current_state(eng).f_coi ≈ net.f0 atol = 1e-12
+
+        # And it holds at exactly zero while droop is commanding it upward — the
+        # ceiling binds from the first instant rather than after a ramp.
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:5000; step!(eng, 0.01); end           # 50 s, finite by construction
+        s = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        @test s.ΔPm[2] == 0.0                            # pinned, exactly
+        @test s.f_coi < net.f0 - 0.2                     # …with a real deficit to answer
+        @test s.ΔPm[3] > 0.1                             # …that the machine with reserve took
+    end
+
+    @testset "M3 step 1: the guard is attached, not merely defined" begin
+        # Every other test here would pass with `isoutofdomain` deleted from the
+        # `init` call: the predicate tests construct the predicate themselves, the
+        # saturation bound is met by the DERIVATIVE saturation alone, and the trip
+        # hazard is closed by `inject!`'s re-seat rather than by the guard. If no
+        # test would fail, write one — this file's own V5 rule.
+        #
+        # So: strand `ΔPm` above its ceiling by moving the ceiling directly, which
+        # is precisely the state a trip would leave behind if the re-seat were
+        # missing. With the guard attached every proposed step is out of domain and
+        # the integration aborts; without it the run continues (the derivative
+        # saturation simply parks `ΔPm` where it is). The abort is the assertion.
+        eng = init!(SwingEngine, governed_ring(); dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:1000; step!(eng, 0.01); end           # 10 s: the governor ramps up
+        stranded = current_state(eng).ΔPm[2]
+        @test stranded > 0.1                             # not a vacuous setup
+        eng.params[eng.hr_pidx[2]] = 0.0                 # ceiling drops below the state
+        @test_throws ErrorException begin
+            for _ in 1:200; step!(eng, 0.01); end        # 2 s, finite by construction
+        end
+        # It aborted where the guard says it should, not by drifting off somewhere.
+        @test !SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        @test current_state(eng).t < 12.1
+        # This is the mirror of the re-seat test above, and both are worth having:
+        # that one proves `inject!`'s re-seat is load-bearing, this one proves the
+        # guard it protects against is actually installed.
     end
 
     @testset "M3 step 1: a trip that shrinks the ceiling does not freeze the solver" begin
