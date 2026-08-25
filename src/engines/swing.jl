@@ -2,18 +2,43 @@
 # (network swing) model, built on NetworkDynamics (docs/plans/m2-plan.md §3).
 #
 # THE TIER. Each machine is a constant-magnitude voltage `E′` **at its bus** whose
-# angle is the rotor angle, so its state is `(δ, ω)` and branch coupling is the
-# closed form `K_ij = E′ᵢE′ⱼ/X_ij` (the D8 correction; see the tier note at the
-# head of `model/network_model.jl`). No bus voltage is an unknown, so the whole
-# system stays a pure ODE and `Tsit5` still applies. Per machine, on `S_base`:
+# angle is the rotor angle, and branch coupling is the closed form
+# `K_ij = E′ᵢE′ⱼ/X_ij` (the D8 correction; see the tier note at the head of
+# `model/network_model.jl`). No bus voltage is an unknown, so the whole system stays
+# a pure ODE and `Tsit5` still applies. Per machine, on `S_base`:
 #
-#     dδᵢ/dt = ω₀·ωᵢ
-#     dωᵢ/dt = (Pmᵢ − Σⱼ K_ij·sin(δᵢ−δⱼ) − Dᵢ·ωᵢ) / (2Hᵢ)
+#     dδᵢ/dt   = ω₀·ωᵢ
+#     dωᵢ/dt   = (Pmᵢ + ΔPmᵢ − Σⱼ K_ij·sin(δᵢ−δⱼ) − Dᵢ·ωᵢ) / (2Hᵢ)
+#     dΔPmᵢ/dt = (−ωᵢ·(1/Rᵢ) − ΔPmᵢ) / Tgᵢ      saturated at headroomᵢ (M3 step 1)
 #
 # `ωᵢ` is a **per-unit speed deviation of one machine** and is NOT M1's aggregate
 # `Δω`. The system-wide quantity is the inertia-weighted mean
 # `ω_coi = Σ Hᵢωᵢ / Σ Hᵢ`, reported separately and under its own name — conflating
-# the two is the silent error `m2-plan.md` warns about.
+# the two is the silent error `m2-plan.md` warns about. `ΔPmᵢ` inherits that
+# discipline and goes one step further: there is deliberately **no aggregate `ΔPm`
+# read-out at all**, because a pooled reserve figure is exactly what invites
+# "the system has 900 MW of headroom" on a pair of areas that is about to separate.
+#
+# THE GOVERNOR STATE (M3 step 1) is a *control* state on the same electrical tier,
+# not a new tier: nothing about the network representation changes. Three things
+# about it are worth having in front of you before reading the RHS:
+#
+#   - **Governor-free is `R = Inf`, `Pmax = P0`, and it is the default.** The gain
+#     `1/R` is then `0` and `ΔPm` starts at `0`, so `dΔPm/dt = −ΔPm/Tg` holds the
+#     third state identically at zero. Every M2 model is still exactly the system
+#     it was.
+#   - **Headroom saturates in the DERIVATIVE, never by clamping the state** — the
+#     correctness landmine carried since M1 (see `engines/frequency_response.jl`).
+#     Zeroing the derivative also gives release for free: once frequency recovers,
+#     the governor term turns negative and `ΔPm` comes off the ceiling unaided.
+#   - **There is no down-regulation floor**, deliberately, as in M1. Only the
+#     up-headroom saturates; a machine held above nominal commands unboundedly
+#     negative `ΔPm`. A known limit of the tier, recorded rather than papered over.
+#
+# AND DROOP STILL DOES NOT GIVE A POST-TRIP EQUILIBRIUM. At settle
+# `Δω = −ΔP/(1/R_eq + D)`, non-zero because load damping carries part of the
+# deficit, so the angles keep drifting exactly as the note below describes.
+# Governors make the drift slower, not absent. The two standing rules are unchanged.
 #
 # THE SIGN CONVENTION, spelled out, because a flipped sign still oscillates, still
 # settles, and still has a nadir (validation V2 is what catches it). The edge
@@ -40,14 +65,23 @@
 #
 # NO EQUILIBRIUM AFTER A **GENERATOR** TRIP — do not "fix" the drift.
 # `NetworkModel` enforces `Σ P0 = 0` at construction, but losing a machine
-# deliberately breaks it: the classical tier has no governors, so the remaining
-# machines cannot make up the loss. The system therefore has **no fixpoint at all**
-# afterwards. Speed falls until damping balances the shortfall
-# (`ω_coi → ΣPm_remaining / ΣD`) and, because that limit is non-zero, every `δ` then
-# grows without bound at a common rate. That is the physics of this tier, not a bug
-# and not an integration failure: angle *differences* still settle. Consequences:
-# never call `find_fixpoint` on a post-generator-trip state (it cannot converge),
-# and never assert on an absolute angle.
+# deliberately breaks it, and the remaining machines cannot make the loss up —
+# not even with governors. The system therefore has **no fixpoint at all**
+# afterwards. Speed falls until the primary response *plus* damping balances the
+# shortfall and, because that limit is non-zero, every `δ` then grows without bound
+# at a common rate. That is the physics of this tier, not a bug and not an
+# integration failure: angle *differences* still settle. Consequences: never call
+# `find_fixpoint` on a post-generator-trip state (it cannot converge), and never
+# assert on an absolute angle.
+#
+# The settling speed is where the two cases differ, and only in magnitude:
+#
+#     no governors (M2):  ω_coi → ΣPm_remaining / ΣD
+#     with droop (M3):    ω_coi → ΣPm_remaining / (Σ 1/Rᵢ + ΣD),  or the headroom
+#                         ceiling if the droop command runs out of reserve first
+#
+# The second is smaller, never zero. Believing droop makes it zero is the premise
+# `m3-plan.md` was written against.
 #
 # A **LINE** TRIP IS THE OTHER CASE, and the sharper test. It changes no `Pm`, so
 # `Σ Pm = 0` still holds and the surviving network *does* have an equilibrium: every
@@ -127,20 +161,47 @@ describe_event(ev::EngineEvent) =
 """
     swing_vertex!(dv, v, esum, p, t)
 
-One machine's RHS. State `v = (δ, ω)` — rotor angle (rad) and per-unit speed
-deviation. Parameters `p = (Pm, H, D, ω₀)`, all on the system base.
+One machine's RHS. State `v = (δ, ω, ΔPm)` — rotor angle (rad), per-unit speed
+deviation, and the governor's extra mechanical power (pu on the system base).
+Parameters `p = (Pm, H, D, ω₀, invR, headroom, Tg)`, all on the system base.
+
+`ΔPm` is a **deviation**: it starts at zero and rides on top of the scheduled `Pm`,
+so a machine's total mechanical power is `Pm + ΔPm`. It is per machine, and there
+is no aggregate counterpart by design (see the head of this file).
 
 `ω₀` rides in the parameter vector rather than being captured in a closure so that
 every model compiles to the *same* `Network` type: a closure over `ω₀` would make
-each system its own anonymous function type and force a recompile per model.
+each system its own anonymous function type and force a recompile per model. The
+governor parameters ride there for a second reason as well — `inject!` has to be
+able to take a machine's droop and reserve out of the live system at an event
+boundary without touching the continuous state.
 """
 function swing_vertex!(dv, v, esum, p, t)
-    δ, ω = v[1], v[2]
+    δ, ω, ΔPm = v[1], v[2], v[3]
     Pm, H, D, ω₀ = p[1], p[2], p[3], p[4]
+    invR, headroom, Tg = p[5], p[6], p[7]
     dv[1] = ω₀ * ω
     # `esum` is MINUS the electrical power exported from this bus — see the sign
     # convention note in the file header — hence `+ esum[1]`, not `-`.
-    dv[2] = (Pm + esum[1] - D * ω) / (2 * H)
+    dv[2] = (Pm + ΔPm + esum[1] - D * ω) / (2 * H)
+    # Governor/turbine first-order lag toward the droop-commanded power. `invR` is
+    # the GAIN `1/R` already converted to the system base (`machine_arrays`), so a
+    # governor-free machine is `invR = 0` — no droop command, and no `Inf` in the
+    # hot path to produce a `NaN`.
+    dΔPm = (-ω * invR - ΔPm) / Tg
+    # Saturation in the DERIVATIVE at this machine's own up-reserve — never a
+    # post-hoc clamp of the state, which would corrupt the integration (the M1
+    # landmine; see `engines/frequency_response.jl`). Zeroing the derivative also
+    # releases for free: when frequency recovers the governor term turns negative,
+    # the condition stops firing, and `ΔPm` comes off the ceiling unaided.
+    #
+    # `zero(dΔPm)` and not `0.0`: the fixpoint solve differentiates this RHS, where
+    # `dΔPm` is a dual number, and rebinding it to a `Float64` would make the local
+    # type-unstable on exactly the path that has to be fast.
+    if ΔPm >= headroom && dΔPm > 0
+        dΔPm = zero(dΔPm)
+    end
+    dv[3] = dΔPm
     return nothing
 end
 
@@ -170,7 +231,7 @@ parameter vector (`eng.params === eng.integrator.p`,
 the M1 pattern that lets an event change the system without disturbing the
 continuous state — inherited here from NetworkDynamics rather than assumed, and
 asserted in `test/`); flat index vectors into the state and parameter arrays
-(`δ_idx`/`ω_idx`/`Pm_pidx`/`K_pidx`), resolved once through NetworkDynamics'
+(`δ_idx`/`ω_idx`/`ΔPm_idx`/`Pm_pidx`/`K_pidx`/`invR_pidx`/`hr_pidx`), resolved once through NetworkDynamics'
 symbolic interface so nothing here assumes a memory layout; `branch_to_edge` and
 `incident`, the graph bookkeeping the header describes; `branch_of_buses`, the
 bus-pair index behind `is_online`; the pre-trip inertias `H` (kept for step 6's
@@ -192,8 +253,11 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     ids::Vector{Symbol}
     δ_idx::Vector{Int}
     ω_idx::Vector{Int}
+    ΔPm_idx::Vector{Int}
     Pm_pidx::Vector{Int}
     K_pidx::Vector{Int}
+    invR_pidx::Vector{Int}
+    hr_pidx::Vector{Int}
     branch_to_edge::Vector{Int}
     incident::Vector{Vector{Int}}
     branch_of_buses::Dict{Tuple{Symbol,Symbol},Int}
@@ -205,6 +269,30 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     log::Vector{EngineEvent}
     n_dropped::Int
     nadir::Float64
+end
+
+# `isoutofdomain` predicate, built per engine because it has to close over the
+# resolved flat indices (there is no other way to reach `ΔPm` and `headroom` from
+# the `(u, p, t)` the solver hands it).
+#
+# It touches **only** the `ΔPm` entries. `δ` and `ω` are deliberately unbounded in
+# this engine — post-trip the angles drift forever by design — so a predicate that
+# looked at them would reject every step of a perfectly correct run and collapse
+# `dt` to an abort. That is not a hypothetical: it is why M2 shipped with no guard
+# at all. Asserted directly in `test/` against a state with a large drifted angle,
+# because a predicate that quietly grew a `δ` term would show up as "the solver got
+# slow", not as a failure.
+#
+# The `1e-10` slack is roundoff tolerance so a step landing exactly *on* a ceiling
+# is not rejected. A machine with zero headroom (every governor-free one) has
+# `ΔPm ≡ 0` against a ceiling of `0`, which never trips it.
+function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
+    return function (u, p, t)
+        @inbounds for k in eachindex(ΔPm_idx)
+            u[ΔPm_idx[k]] > p[hr_pidx[k]] + 1e-10 && return true
+        end
+        return false
+    end
 end
 
 """
@@ -239,9 +327,13 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     end
     ne = Graphs.ne(g)
 
+    # `StateMask(1:1)` still means "this vertex's output to the network is state 1,
+    # the angle" — the third state is invisible to the edges, which is the whole
+    # claim that M3 adds a control state and does not move the electrical tier.
     vertex = NetworkDynamics.VertexModel(f = swing_vertex!,
                                          g = NetworkDynamics.StateMask(1:1),
-                                         sym = [:δ, :ω], psym = [:Pm, :H, :D, :ω₀],
+                                         sym = [:δ, :ω, :ΔPm],
+                                         psym = [:Pm, :H, :D, :ω₀, :invR, :headroom, :Tg],
                                          name = :machine)
     edge = NetworkDynamics.EdgeModel(g = NetworkDynamics.AntiSymmetric(swing_edge!),
                                      outsym = [:P], psym = [:K], name = :branch)
@@ -267,10 +359,18 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     for i in 1:nb
         s.v[i, :δ] = 0.0                 # only the fixpoint solver's starting guess
         s.v[i, :ω] = 0.0
+        # `ΔPm` is a deviation, so the pre-disturbance value is zero — and it is a
+        # genuine fixpoint of its own equation there (`dΔPm/dt = (−0·invR − 0)/Tg`),
+        # so seeding it does not bias the solve. The saturation branch is not taken
+        # at the seed either: `dΔPm` is `0`, not `> 0`.
+        s.v[i, :ΔPm] = 0.0
         s.p.v[i, :Pm] = ma.Pm[i]
         s.p.v[i, :H]  = ma.H[i]
         s.p.v[i, :D]  = ma.D[i]
         s.p.v[i, :ω₀] = ω₀
+        s.p.v[i, :invR]     = ma.invR[i]
+        s.p.v[i, :headroom] = ma.headroom[i]
+        s.p.v[i, :Tg]       = ma.Tg[i]
     end
 
     branch_to_edge = Vector{Int}(undef, length(ba.K))
@@ -284,6 +384,24 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
         push!(incident[j], ei)
     end
 
+    # Flat indices into the state and parameter vectors, resolved once through
+    # NetworkDynamics' symbolic interface. Nothing in this engine assumes a stride
+    # or an ordering; `test/` asserts these round-trip against a symbolic read, so
+    # if the upstream layout ever moves, that test says so instead of the physics
+    # going quietly wrong.
+    #
+    # Resolved BEFORE the integrator (M3 step 1) because the `isoutofdomain`
+    # predicate below is built from them and has to be handed to `init`. They come
+    # off `nw` alone, so nothing about the ordering here depends on the integrator.
+    SII = NetworkDynamics.SII
+    δ_idx     = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :δ)) for i in 1:nb]
+    ω_idx     = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :ω)) for i in 1:nb]
+    ΔPm_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :ΔPm)) for i in 1:nb]
+    Pm_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :Pm)) for i in 1:nb]
+    K_pidx    = [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, :K)) for e in 1:ne]
+    invR_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :invR)) for i in 1:nb]
+    hr_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :headroom)) for i in 1:nb]
+
     # --- steady state, then the integrator -------------------------------------
     fp = NetworkDynamics.find_fixpoint(nw, s)
     u0 = collect(NetworkDynamics.uflat(fp))
@@ -293,24 +411,25 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # because we drive it with `step!(integ, dt, true)` and never reach the end,
     # an explicit seed `dt`, and the integrator's own saved solution switched off —
     # we keep our own bounded history, and its would grow without bound on a long
-    # live run. There is deliberately **no `isoutofdomain` guard**: M1 has one to
-    # absorb headroom overshoot, but nothing here is bounded — post-trip the angles
-    # drift forever by design (see the header), so a copied state guard would fire
-    # spuriously and collapse the step size.
+    # live run.
+    #
+    # THE `isoutofdomain` GUARD, AND THE HEADER NOTE IT REPLACES (M3 step 1). Until
+    # M3 this file said there is deliberately **no** such guard, on the grounds that
+    # nothing in the engine is bounded — post-trip the angles drift forever by
+    # design, so a copied M1-style state guard would fire spuriously and collapse
+    # the step size. That reasoning is still exactly right for `δ` and `ω`, and it
+    # is now incomplete: `ΔPm` *is* bounded, by each machine's own headroom.
+    #
+    # So the predicate exists and tests **only the `ΔPm` indices**. It rejects and
+    # retries an offending step, never writing the state, so it is not the forbidden
+    # post-hoc clamp — the derivative saturation in `swing_vertex!` does the physical
+    # work and this only absorbs adaptive-step overshoot on top of it. During
+    # continuous integration it cannot stall, because the derivative is already zero
+    # at the ceiling, which puts the solution *at* `headroom`, not above it.
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
+                                     isoutofdomain = _swing_outofdomain(ΔPm_idx, hr_pidx),
                                      save_everystep = false, dense = false)
-
-    # Flat indices into the state and parameter vectors, resolved once through
-    # NetworkDynamics' symbolic interface. Nothing in this engine assumes a stride
-    # or an ordering; `test/` asserts these round-trip against a symbolic read, so
-    # if the upstream layout ever moves, that test says so instead of the physics
-    # going quietly wrong.
-    SII = NetworkDynamics.SII
-    δ_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :δ)) for i in 1:nb]
-    ω_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :ω)) for i in 1:nb]
-    Pm_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :Pm)) for i in 1:nb]
-    K_pidx  = [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, :K)) for e in 1:ne]
 
     ids = Symbol[m.id for m in net.machines]     # bus order, by construction
     # `H` is the pre-trip baseline, kept unmutated; `w` is the live COI weight
@@ -343,7 +462,8 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
 
     eng = SwingEngine(net, nw, Set(ids), Set(eachindex(net.branches)),
                       integrator.p, Float64(dt), integrator,
-                      net.f0, ω₀, ids, δ_idx, ω_idx, Pm_pidx, K_pidx,
+                      net.f0, ω₀, ids, δ_idx, ω_idx, ΔPm_idx, Pm_pidx, K_pidx,
+                      invR_pidx, hr_pidx,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
                       EngineEvent[], 0, net.f0)
@@ -389,7 +509,7 @@ end
 @inline _δ_coi(eng::SwingEngine, u) = _coi(eng, u, eng.δ_idx)
 
 """
-    current_state(eng::SwingEngine) -> (; t, δ, ω, δ_coi, ω_coi, f_coi)
+    current_state(eng::SwingEngine) -> (; t, δ, ω, ΔPm, δ_coi, ω_coi, f_coi)
 
 Named state at "now". Pure read of the integrator — no stepping.
 
@@ -397,6 +517,12 @@ Named state at "now". Pure read of the integrator — no stepping.
               only differences are meaningful (see the constructor's note).
   - `ω`     — per-machine per-unit speed deviations, in bus order. One machine's
               deviation; *not* M1's aggregate `Δω`.
+  - `ΔPm`   — per-machine governor output (pu on `S_base`), in bus order: the extra
+              mechanical power on top of the scheduled `Pm`, saturated at that
+              machine's own headroom. **Deliberately not aggregated** — see the head
+              of this file. It is read here rather than recorded as a trajectory
+              channel: the channel set of a running engine is fixed at construction,
+              and a per-machine reserve trace is not what a live indicator wants.
   - `δ_coi` — the inertia-weighted mean of `δ` over online machines (rad). Carries
               the same arbitrary gauge as `δ` itself, which is exactly the point:
               `δ[i] - δ_coi` is gauge-free and is the angle worth plotting.
@@ -411,6 +537,7 @@ function current_state(eng::SwingEngine)
     u = eng.integrator.u
     ω_coi = _ω_coi(eng, u)
     return (t = eng.integrator.t, δ = u[eng.δ_idx], ω = u[eng.ω_idx],
+            ΔPm = u[eng.ΔPm_idx],
             δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
 
@@ -441,7 +568,7 @@ function _record!(eng::SwingEngine)
 end
 
 """
-    step!(eng::SwingEngine, dt=eng.dt) -> (; t, δ, ω, ω_coi, f_coi)
+    step!(eng::SwingEngine, dt=eng.dt) -> (; t, δ, ω, ΔPm, δ_coi, ω_coi, f_coi)
 
 Advance by exactly `dt`, record the trajectory point, and return the new state.
 Extends `CommonSolve.step!`, sharing one generic with the integrator's own
@@ -587,9 +714,22 @@ undriven, so it simply damps out; resizing mid-integration would force an
 integrator re-init and throw away the continuous-state-carries-through property
 that makes live injection clean.
 
-Two integrator-boundary calls make this a discrete *event* rather than a silent
-parameter poke, and both are needed:
+**The machine's governor leaves with it, and its `ΔPm` is re-seated to zero at the
+boundary** (M3 step 1). Zeroing the droop gain and the headroom is the physics — a
+dead machine commands no primary response and holds no reserve — but doing only
+that would strand a `ΔPm` that was riding the old ceiling *above* the new one of
+zero, and the `isoutofdomain` guard would then reject every proposed step until
+`dt` collapsed to an abort. This is the same hazard M1 documents and the same
+answer: a **discrete jump at an event boundary**, which is not the forbidden
+mid-integration post-hoc clamp. It re-seats to zero rather than to the new ceiling
+because a tripped machine produces nothing at all, not merely nothing extra — its
+scheduled `Pm` goes to zero in the very same breath.
 
+Three integrator-boundary calls make this a discrete *event* rather than a silent
+parameter poke, and all three are needed:
+
+  - the `ΔPm` re-seat above, before the two calls below, so the derivative the
+    solver recomputes is the one for the state it will actually integrate from;
   - `derivative_discontinuity!` so the FSAL solver drops its cached (now stale)
     derivative instead of integrating the first post-trip step from the pre-trip
     one — an error small enough that no assertion catches it unless one is written.
@@ -617,6 +757,13 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     for e in eng.incident[v]
         p[eng.K_pidx[e]] = 0.0
     end
+    # The governor leaves with the machine: no droop command, no reserve.
+    p[eng.invR_pidx[v]] = 0.0
+    p[eng.hr_pidx[v]]   = 0.0
+    # …and the state it had accumulated is re-seated at the boundary, or it would be
+    # stranded above the ceiling that just went to zero and the `isoutofdomain`
+    # guard would reject every step from here on (see the docstring).
+    eng.integrator.u[eng.ΔPm_idx[v]] = 0.0
     eng.w[v] = 0.0                           # out of the aggregate read-out...
     eng.Σw = sum(eng.w)                      # ...and out of the inertia indicator
     _log_event!(eng, :trip_generator, ev.id, Symbol(""))

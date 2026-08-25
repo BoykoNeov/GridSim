@@ -88,6 +88,16 @@ zero — changes the accepted step sequence from the second step onward. The
 safety net is therefore *agreement to solver tolerance*, with the old values
 recorded in the context doc beside the new ones.
 
+> **Outcome (step 1, measured): the re-pin did not happen.** Every gauge-free
+> quantity came out bit-identical to M2 — `f_coi`, the angle differences, and the
+> accepted/rejected step counts themselves. D1's probe measured a **free-running**
+> integration; this engine is driven by `step!(integrator, dt, true)`, which forces
+> a stop at every `dt`, and both versions were already taking exactly one internal
+> step per `dt`. The mechanism the probe identified is real and had no room to act.
+> The one number that moved was the fixpoint's arbitrary gauge. Full table and the
+> transferable lesson — a numerical probe must reproduce the *stepping discipline*
+> of the code it predicts, not just its right-hand side — in `m3-context.md` D1.
+
 **The `isoutofdomain` guard, and the header note it contradicts.** M1 uses an
 `isoutofdomain` predicate to reject (not clamp) steps that overshoot headroom.
 `swing.jl`'s header currently states there is deliberately **no** such guard here,

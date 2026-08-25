@@ -1173,7 +1173,40 @@ end
         @test machine_arrays(net).H !== ma.H
 
         # Everything is a plain contiguous Float64 vector (SPEC §4, struct-of-arrays).
-        @test all(a -> a isa Vector{Float64}, (ma.H, ma.D, ma.Pm, ma.E, ma.Xd))
+        @test all(a -> a isa Vector{Float64}, (ma.H, ma.D, ma.Pm, ma.E, ma.Xd,
+                                               ma.invR, ma.headroom, ma.Tg))
+
+        # Governor conversions (M3 step 1). `two_machine_system` is governor-free,
+        # so its gain is zero and its reserve is zero — and `1/Inf` is `0.0`, which
+        # is the whole reason no special case is needed anywhere downstream.
+        @test ma.invR == [0.0, 0.0]
+        @test ma.headroom == [0.0, 0.0]
+        @test !any(isnan, ma.invR)
+        @test ma.Tg == [1.0, 1.0]
+
+        # …and against hand arithmetic on a governed pair. It is the GAIN 1/R that
+        # carries the power weight, not the droop: G1 is 250 MVA on a 100 MVA base,
+        # so w = 2.5 and (1/0.05)·2.5 = 50. Reserve is (Pmax − P0)/S_base.
+        gov = NetworkModel(100.0, 50.0, net.buses, net.branches,
+                           [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  60.0, 0.05, 110.0, 8.0),
+                            Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -60.0, 0.04, -20.0, 6.0)])
+        mg = machine_arrays(gov)
+        @test mg.invR ≈ [(1 / 0.05) * 2.5, (1 / 0.04) * 4.0] ≈ [50.0, 100.0]
+        @test mg.headroom ≈ [(110.0 - 60.0) / 100, (-20.0 - -60.0) / 100] ≈ [0.5, 0.4]
+        @test mg.Tg == [8.0, 6.0]                       # seconds, base-independent
+        # The two ways to get the gain conversion wrong, by name: converting the
+        # DROOP instead of the gain (the mirror image of the Xd′ mistake above), and
+        # forgetting the weight entirely. Both give plausible numbers.
+        @test mg.invR ≉ [1 / (0.05 * 2.5), 1 / (0.04 * 4.0)]
+        @test mg.invR ≉ [1 / 0.05, 1 / 0.04]
+
+        # The reason this conversion lives here and only here: summing the per-machine
+        # gains must reproduce M1's aggregate droop EXACTLY, because `aggregates`
+        # applies the identical weight to `1/Rᵢ`. If the two ever disagreed, the
+        # cross-fidelity comparison would be measuring a per-unit bug.
+        a = GridSim.aggregates(coi_model(gov), Set([:G1, :G2]))
+        @test 1 / a.R_eq ≈ sum(mg.invR) ≈ 150.0
+        @test a.headroom ≈ sum(mg.headroom) ≈ 0.9
     end
 
     @testset "branch_arrays: coupling K through the real code path" begin
@@ -1256,6 +1289,25 @@ end
         @test occursin("Xd′", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.0, 1.05, 0.0)))
         @test occursin("E′", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 0.0, 0.0)))
         @test occursin("anti-physical", argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, -1.0, 0.25, 1.05, 0.0)))
+        # Governor data (M3 step 1). Each guard is provoked ALONE and asserted by
+        # its own wording: an invalid machine usually breaks more than one rule at
+        # once, so "it threw an ArgumentError" would not prove the intended guard is
+        # the one that fired.
+        #                                     S_rated  H    D    Xd′   E′   P0     R     Pmax  Tg
+        @test occursin("droop is a divisor",
+              argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, 0.0,  0.0,   0.0, 1.0)))
+        @test occursin("governor lag's denominator",
+              argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, 0.0, 0.05,   0.0, 0.0)))
+        @test occursin("headroom < 0",
+              argerr_msg(() -> Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, 0.0, 0.05,  -1.0, 1.0)))
+        # …and the ones that must NOT throw: R = Inf is the sanctioned way to say
+        # "no governor" and satisfies `R > 0`; zero reserve (Pmax == P0) is legal,
+        # only negative reserve is not; and a NEGATIVE P0 with a negative ceiling
+        # above it is the aggregated-area case (D4) — an importing area whose net
+        # injection is negative still has up-reserve.
+        @test Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, 0.0, Inf, 0.0, 1.0).R == Inf
+        @test Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, 10.0, 0.05, 10.0, 1.0).Pmax == 10.0
+        @test Machine(:G, :B, 100.0, 4.0, 2.0, 0.25, 1.05, -10.0, 0.05, -4.0, 1.0).Pmax == -4.0
         @test occursin("self-loop", argerr_msg(() -> Branch(:L, :B1, :B1, 0.1, 500.0)))
         @test occursin("denominator", argerr_msg(() -> Branch(:L, :B1, :B2, 0.0, 500.0)))
         @test occursin("rating", argerr_msg(() -> Branch(:L, :B1, :B2, 0.1, 0.0)))
@@ -1619,6 +1671,158 @@ end
         # it damps to rest — and is excluded from the aggregate read-out.
         @test abs(current_state(eng).ω[v]) < 1e-6
         @test eng.w[v] == 0.0
+    end
+
+    # ---- M3 step 1: the governor state ------------------------------------------
+    # Full validation of primary response is step 2 (V1–V4). What lives here is the
+    # narrow set of claims about the *state-layout change itself* — that M2's models
+    # still describe the systems they described, and that the one new failure mode
+    # the change creates is closed. `governed_ring` is local to these testsets, not
+    # a shipped fixture: step 1 deliberately adds no scenario.
+
+    # The M2 ring with real droop on the two machines that survive a G1 trip.
+    # `hr2` is G2's up-reserve in MW, so the same shape serves both the
+    # "reserve is ample" and the "reserve runs out" cases.
+    function governed_ring(; hr2 = 200.0, hr3 = 60.0, Tg = 5.0)
+        buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+        machines = [
+            Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05,   80.0),               # no governor
+            Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.03,   30.0, 0.05,   30.0 + hr2, Tg),
+            Machine(:G3, :B3, 500.0, 5.0, 2.0, 0.50, 1.04, -110.0, 0.05, -110.0 + hr3, Tg),
+        ]
+        branches = [Branch(:L12, :B1, :B2, 0.25, 500.0),
+                    Branch(:L23, :B2, :B3, 0.25, 500.0),
+                    Branch(:L31, :B3, :B1, 0.25, 500.0)]
+        return NetworkModel(100.0, 50.0, buses, branches, machines)
+    end
+
+    @testset "M3 step 1: a governor-free machine is still governor-free" begin
+        # The defaulted constructor arguments are what let every M2 call site keep
+        # working, so the thing to assert is that what they build is the machine it
+        # always was — not merely that the code compiles.
+        for net in (two_machine_system(), three_machine_ring())
+            @test all(m -> m.R == Inf, net.machines)
+            @test all(m -> m.Pmax == m.P0, net.machines)      # zero headroom
+            @test all(m -> m.Tg > 0, net.machines)            # validated even when unread
+            ma = machine_arrays(net)
+            @test all(iszero, ma.invR) && all(iszero, ma.headroom)
+
+            # And the state stays at zero through a real disturbance, which is the
+            # claim that matters: `dΔPm/dt = (−ω·0 − ΔPm)/Tg` never leaves a zero
+            # start. The bound is the fixpoint solver's own precision and not exact
+            # zero, for the same reason V1 bounds `ω` that way rather than asserting
+            # `== 0`: the start is SOLVED for, not assigned. Twenty seconds of a real
+            # frequency collapse must not grow it by a single order of magnitude —
+            # which is what "droop leaked in" would look like.
+            eng = init!(SwingEngine, net; dt = 0.01)
+            @test maximum(abs, current_state(eng).ΔPm) < 1e-20
+            inject!(eng, TripGenerator(first(machine_ids(eng))))
+            for _ in 1:2000; step!(eng, 0.01); end             # 20 s, finite by construction
+            @test maximum(abs, current_state(eng).ΔPm) < 1e-20
+            @test current_state(eng).f_coi < net.f0 - 1.0      # …and it really did collapse
+            @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        end
+    end
+
+    @testset "M3 step 1: the third state is a control state, not a new tier" begin
+        net = governed_ring()
+        eng = init!(SwingEngine, net; dt = 0.02)
+        nb = length(net.buses)
+        s = NetworkDynamics.NWState(eng.integrator)
+        u = eng.integrator.u
+        # Resolved symbolically like every other index — nothing assumes a stride.
+        for i in 1:nb
+            @test u[eng.ΔPm_idx[i]] == s.v[i, :ΔPm]
+            @test eng.params[eng.invR_pidx[i]] == s.p.v[i, :invR]
+            @test eng.params[eng.hr_pidx[i]] == s.p.v[i, :headroom]
+        end
+        @test allunique(vcat(eng.δ_idx, eng.ω_idx, eng.ΔPm_idx))
+        @test allunique(vcat(eng.Pm_pidx, eng.K_pidx, eng.invR_pidx, eng.hr_pidx))
+
+        # The electrical tier is untouched: the vertex still exports its ANGLE to the
+        # network and nothing else. If `ΔPm` ever reached an edge, the coupling would
+        # stop being `K·sin(Δδ)` and this would no longer be the classical tier.
+        @test NetworkDynamics.outsym(eng.nw[NetworkDynamics.VIndex(1)]) == [:δ]
+
+        # Flat start survives the extra state — the acceptance criterion, re-checked
+        # on a GOVERNED model because that is where the fixpoint solve is new.
+        du = similar(u); eng.nw(du, u, eng.params, 0.0)
+        @test maximum(abs, du) < 1e-10
+        @test maximum(abs, current_state(eng).ΔPm) < 1e-20
+        @test current_state(eng).f_coi ≈ net.f0 atol = 1e-12
+    end
+
+    @testset "M3 step 1: headroom saturates in the derivative, and releases" begin
+        # The M1 landmine, re-stated per machine. Give G2 5 MW of reserve — far less
+        # than droop would command after losing G1 — and it must stop AT the ceiling,
+        # not above it, with the integration never rejected into a stall.
+        # G3 gets a deliberately large reserve so that "G2 is on its ceiling and G3
+        # is not" is a statement about per-machine saturation. With the shipped 60 MW
+        # G3 hits its own ceiling too — a pooled-reserve reading would call that a
+        # pass, which is exactly the conflation the per-machine ceiling exists to
+        # prevent.
+        net = governed_ring(; hr2 = 5.0, hr3 = 300.0)
+        ma = machine_arrays(net)
+        eng = init!(SwingEngine, net; dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:20000; step!(eng, 0.01); end              # 200 s, finite by construction
+        s = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        @test s.ΔPm[2] ≈ ma.headroom[2] atol = 1e-9
+        # Above the ceiling only by adaptive-step roundoff, inside the guard's own
+        # slack — which is why the guard never fires and never collapses the step.
+        @test s.ΔPm[2] - ma.headroom[2] < 1e-10
+        # G3 has ample reserve and is NOT on its ceiling: the saturation is per
+        # machine, not a pooled system limit.
+        @test s.ΔPm[3] < ma.headroom[3] - 0.05
+
+        # The predicate itself: it must ignore δ and ω entirely. Post-trip the angles
+        # drift forever by design, so a predicate that grew a δ term would reject
+        # every step of a correct run — and would look like "the solver got slow",
+        # not like a failure. Asserted directly against a large drifted angle.
+        pred = GridSim._swing_outofdomain(eng.ΔPm_idx, eng.hr_pidx)
+        u = copy(eng.integrator.u)
+        @test !pred(u, eng.params, 0.0)                       # the real, saturated state
+        for i in eachindex(eng.δ_idx)
+            u[eng.δ_idx[i]] = 1.0e6                           # a wildly drifted rotor angle
+            u[eng.ω_idx[i]] = -0.5                            # and a speed nowhere near nominal
+        end
+        @test !pred(u, eng.params, 0.0)
+        # …and it does fire on the one thing it is for.
+        u[eng.ΔPm_idx[2]] = eng.params[eng.hr_pidx[2]] + 1e-6
+        @test pred(u, eng.params, 0.0)
+    end
+
+    @testset "M3 step 1: a trip that shrinks the ceiling does not freeze the solver" begin
+        # The failure mode the state-layout change creates, and the reason `inject!`
+        # re-seats `ΔPm` at the event boundary. A trip zeroes that machine's headroom
+        # while its `ΔPm` is above zero; without the re-seat every proposed step is
+        # out of domain, `dt` collapses, and the run aborts. M1 has this exact test
+        # ("second trip after saturation does not freeze the integrator") — this is
+        # its multi-machine counterpart, and it lives beside the code that creates
+        # the hazard rather than waiting for the validation step.
+        eng = init!(SwingEngine, governed_ring(); dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:1000; step!(eng, 0.01); end                # 10 s: G2's governor ramps up
+        before = current_state(eng).ΔPm[2]
+        @test before > 0.1                                    # not a vacuous test
+        @test eng.params[eng.hr_pidx[2]] > before             # …and it is below its ceiling
+
+        inject!(eng, TripGenerator(:G2))
+        @test eng.params[eng.invR_pidx[2]] == 0.0             # the governor left with it
+        @test eng.params[eng.hr_pidx[2]] == 0.0
+        @test eng.integrator.u[eng.ΔPm_idx[2]] == 0.0         # …re-seated, not stranded
+        # A tripped machine produces NOTHING, not merely nothing extra: `Pm` and
+        # `ΔPm` go to zero together.
+        @test eng.params[eng.Pm_pidx[2]] == 0.0
+
+        for _ in 1:2000; step!(eng, 0.01); end                # 20 s past the second trip
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        @test current_state(eng).t ≈ 30.0 atol = 1e-6         # it really did advance
+        @test current_state(eng).ΔPm[2] == 0.0                # and stays put, undriven
+        # The survivor picks the deficit up — the run is a real disturbance, not a
+        # frozen state that trivially satisfies the assertions above.
+        @test current_state(eng).ΔPm[3] > 0.1
     end
 
     @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
@@ -2040,12 +2244,46 @@ end
         @test !isapprox(cm.D, sum(m.D * net.S_base / m.S_rated for m in net.machines))     # inverted: 2.07
         @test a.D == cm.D                                       # passed through, not re-weighted
 
-        # Governor-free, which is what makes the cross-fidelity comparison honest:
-        # both tiers then hold mechanical power constant.
+        # Governor-free, because `three_machine_ring`'s machines are — NOT because
+        # `coi_model` hard-codes it any more (M3 step 1). The distinction matters:
+        # M2 deleted the governor on the way through so the two tiers differed by
+        # inter-machine dynamics alone, and a view that deletes a property of the
+        # canonical model is not a compiled view of it (SPEC §3.2). Now the droop
+        # comes through and this fixture simply has none.
         @test all(u -> u.R == Inf, cm.units)
         @test a.R_eq == Inf
         @test all(u -> u.Pmax == u.P0, cm.units)
         @test a.headroom == 0.0
+        @test cm.Tg == 1.0                                      # the no-droop fallback
+
+        # …and with real droop it is passed through rather than discarded, on both
+        # bases: `R` raw on the machine base (`aggregates` applies the weight) and
+        # `Pmax` in MW. G2 alone has a governor here, so the aggregate gain is its
+        # gain and the aggregate lag is its lag — the weighted mean's one case with
+        # an unambiguous answer.
+        one_gov = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+            [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05,   80.0),
+             Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.03,   30.0, 0.05, 130.0, 7.0),
+             Machine(:G3, :B3, 500.0, 5.0, 2.0, 0.50, 1.04, -110.0)])
+        cg = coi_model(one_gov)
+        ag = GridSim.aggregates(cg, Set(u.id for u in cg.units))
+        @test [u.R for u in cg.units] == [Inf, 0.05, Inf]        # raw, machine base
+        @test [u.Pmax for u in cg.units] == [80.0, 130.0, -110.0]
+        @test 1 / ag.R_eq ≈ (1 / 0.05) * (200.0 / 100.0) ≈ 40.0  # gain carries the weight
+        @test ag.headroom ≈ (130.0 - 30.0) / 100 ≈ 1.0
+        @test cg.Tg == 7.0                                       # only voter, so it wins
+        # The lag is weighted by droop GAIN, not by MVA and not unweighted: a machine
+        # that does not respond gets no say in how fast the aggregate responds. With
+        # two governors of unequal gain the three answers are different numbers, and
+        # this is the one that ships (a choice with no oracle — see `coi_model`).
+        two_gov = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+            [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05,   80.0),
+             Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.03,   30.0, 0.05, 130.0,  2.0),
+             Machine(:G3, :B3, 500.0, 5.0, 2.0, 0.50, 1.04, -110.0, 0.10, -10.0, 10.0)])
+        g2, g3 = (1 / 0.05) * 2.0, (1 / 0.10) * 5.0              # 40.0 and 50.0
+        @test coi_model(two_gov).Tg ≈ (g2 * 2.0 + g3 * 10.0) / (g2 + g3)
+        @test coi_model(two_gov).Tg ≉ (2.0 + 10.0) / 2           # unweighted
+        @test coi_model(two_gov).Tg ≉ (200.0 * 2.0 + 500.0 * 10.0) / 700.0   # MVA-weighted
 
         # P0 stays in engineering units (MW) and keeps its sign: a load is a machine
         # with negative P0, and it compiles to a unit with negative P0 *and* negative
@@ -2067,7 +2305,15 @@ end
     @testset "coi_model: Tg is unobservable, and both reasons are asserted" begin
         # `Tg = 1.0` is arbitrary only because the governor state is identically
         # zero, which needs BOTH `R_eq = Inf` (no droop command) and `ΔPm(0) = 0`
-        # (M1's state is a deviation). Assert the invariance rather than the comment:
+        # (M1's state is a deviation).
+        #
+        # Scope, after M3 step 1: this is a property of a GOVERNOR-FREE model, not of
+        # `coi_model` in general. `three_machine_ring` has no droop, so the fallback
+        # fires and `Tg` is genuinely unobservable here. Compile a governed network
+        # and `Tg` becomes load-bearing — and the aggregation that produces it is a
+        # modelling choice nothing in this suite can distinguish (see `coi_model`).
+        #
+        # Assert the invariance rather than the comment:
         # a second model differing ONLY in Tg must give the same trajectory.
         net = three_machine_ring()
         cm  = coi_model(net)
@@ -2244,8 +2490,8 @@ end
             net = big_ring(n)
             eng = init!(SwingEngine, net; dt = 0.02)
             nb, ne = length(net.buses), length(net.branches)
-            @test length(eng.params) == 4nb + ne       # 4 per machine, 1 per branch
-            @test length(eng.integrator.u) == 2nb      # (δ, ω) per machine
+            @test length(eng.params) == 7nb + ne       # 7 per machine, 1 per branch
+            @test length(eng.integrator.u) == 3nb      # (δ, ω, ΔPm) per machine
             @test sum(length, eng.incident) == 2ne     # each branch at exactly 2 buses
             @test length(eng.K_pidx) == ne
             @test length(eng.branch_of_buses) == ne     # one key per branch at EVERY n
@@ -2253,19 +2499,31 @@ end
         end
         # A tripwire, not a correctness claim: a legitimate new per-machine array
         # field changes these deliberately. The two assertions below are the claim.
-        # Moved at step 7, deliberately and by exactly the right amount: `δ_coi`
+        # Moved at M2 step 7, deliberately and by exactly the right amount: `δ_coi`
         # adds ONE element to the sample buffer regardless of n (17n+1 → 17n+2),
         # and counting the bus-pair index adds one key per branch, i.e. one per
         # machine on this ring (17n+2 → 18n+2). A per-machine mistake in the first
         # or an all-pairs structure in the second would have shifted the slope,
         # which the next assertion is what catches.
-        @test counts == [74, 182, 722]                 # exactly 18n + 2
+        #
+        # Moved again at M3 step 1, by exactly 6n — and the whole point of the
+        # tripwire is that the move has to be accounted for rather than re-pinned:
+        # three new vertex parameters (`invR`, `headroom`, `Tg`) add 3n to the
+        # shared parameter vector, and three new index vectors (`ΔPm_idx`,
+        # `invR_pidx`, `hr_pidx`) add n each. 18n + 2 → 24n + 2. The recorder is
+        # deliberately NOT in that list: `ΔPm` is read through `current_state`
+        # rather than recorded as 1 channel per machine, which would have added
+        # another n to the sample buffer and a per-machine trace nothing asked for.
+        @test counts == [98, 242, 962]                 # exactly 24n + 2
 
         # Linear, asserted as such: equal slope over both intervals. A dense n×n
         # anywhere would make the second slope 30× the first.
         @test (counts[2] - counts[1]) / (10 - 4) == (counts[3] - counts[2]) / (40 - 10)
         # The positive control, stated as a number: at n = 40 the engine's ENTIRE
-        # array storage is 681 elements, while one dense Y-bus alone would be 1600.
+        # array storage is 962 elements, while one dense Y-bus alone would be 1600.
+        # The margin narrowed when the governor state landed (it was 722), which is
+        # the honest reading — a linear model with a bigger constant is still linear,
+        # and the slope assertion above is what actually rules out the n² structure.
         @test counts[3] < 40^2
     end
 

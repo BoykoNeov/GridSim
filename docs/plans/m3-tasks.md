@@ -19,30 +19,60 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
       speed offset, so the angles still drift and `find_fixpoint` still cannot be
       called post-trip. V3 now exists to pin that as a tested property.
 
-## Step 1 — the governor state, alone on its own commit
+## Step 1 — the governor state, alone on its own commit (DONE)
 
-- [ ] `Machine` grows `R`, `Pmax`, `Tg`; constructor guards each (`R > 0`,
+- [x] `Machine` grows `R`, `Pmax`, `Tg`; constructor guards each (`R > 0`,
       `Tg > 0`, `Pmax ≥ P0`) with **the message asserted per guard**, since an
       invalid machine usually violates more than one rule and "it threw" would not
-      prove the intended guard fired (the M2 discipline).
-- [ ] `Pmax` documented as **net-injection ceiling** on an aggregated area machine,
-      not a fleet nameplate (`m3-context.md` D4).
-- [ ] Third vertex state `ΔPm`; `machine_arrays` gains the droop-gain and headroom
+      prove the intended guard fired (the M2 discipline). The three are **defaulted
+      positional** arguments (`Inf`, `P0`, `1.0`), which is what keeps all eleven
+      existing call sites building the machine they always built.
+- [x] `Pmax` documented as **net-injection ceiling** on an aggregated area machine,
+      not a fleet nameplate (`m3-context.md` D4). The negative-`P0`,
+      negative-`Pmax` importing-area case is asserted as legal, since that is the
+      shape the Iberian machine takes.
+- [x] Third vertex state `ΔPm`; `machine_arrays` gains the droop-gain and headroom
       conversions to system base, and remains the **only** place conversion happens.
-- [ ] Headroom saturation **in the derivative**; `inject!`'s re-seating of `ΔPm`
-      at an event boundary re-justified per machine.
-- [ ] `isoutofdomain` predicate touching **only** the `ΔPm` indices, and the
+      Asserted the way it has to be to mean anything: `sum(invR)` reproduces M1's
+      `1/R_eq` through `aggregates`, and the two plausible wrong conversions
+      (weighting the droop instead of the gain; no weight at all) are named.
+- [x] Headroom saturation **in the derivative**; `inject!`'s re-seating of `ΔPm`
+      at an event boundary re-justified per machine — and given a test, because the
+      hazard it closes had no planned counterpart. Verified non-vacuous: with the
+      re-seat removed the same run aborts `Unstable` at the second trip.
+- [x] `isoutofdomain` predicate touching **only** the `ΔPm` indices, and the
       `swing.jl` header's "there is deliberately no guard here" note **amended in
-      the same commit**.
-- [ ] Governor-free (`R = Inf`) machines expressible, so every M2 model still
-      describes a real system.
-- [ ] **No new scenario in this commit.** The existing suite is the only oracle
-      that can find a bug in a state-layout change.
-- [ ] M2's solver-dependent constants **re-measured and re-pinned once**, with the
+      the same commit**. The predicate is asserted directly against a state with a
+      1e6 rad drifted angle, because a `δ` term creeping in would present as "the
+      solver got slow", not as a failure.
+- [x] Governor-free (`R = Inf`) machines expressible, so every M2 model still
+      describes a real system — asserted as `ΔPm` staying at solver precision
+      through a 20 s frequency collapse, not merely as "it builds".
+- [x] **No new scenario in this commit.** The existing suite is the only oracle
+      that can find a bug in a state-layout change. The governed fixtures the new
+      tests need are local to those testsets, not shipped.
+- [x] M2's solver-dependent constants **re-measured and re-pinned once**, with the
       old value recorded beside the new one — including the tight `1.205e-4` /
       `2.0e-4` gap, whose margin must be reported, not silently widened.
-- [ ] Suite green before and after, and the "before" number written down so the
-      "after" number means something.
+      **Reported: `1.205465e-4`, a 1.659× margin against M2's 1.66×.**
+
+      **And the finding: the re-pin the plan announced did not happen.** Every
+      gauge-free quantity is bit-identical to M2 — `f_coi`, the angle differences,
+      even `naccept`/`nreject`. D1's probe was right about the error norm and wrong
+      about this engine, because `step!(integrator, dt, true)` forces a stop at
+      every `dt` and the controller was already taking exactly one step per `dt`.
+      The only number that moved was the fixpoint's arbitrary **gauge** (a common
+      2.14455e-3 rad shift on the two-machine pair), which is the one quantity the
+      code says must never be asserted on. Table in `m3-context.md` D1.
+- [x] Suite green before and after, and the "before" number written down so the
+      "after" number means something. **Before: 1237 core / 78 UI. After: 1320 core
+      / 78 UI.** Both measured, not inherited — the figures carried in memory
+      (1234 / 74) were stale.
+- [x] **`coi_model`'s meaning decided here rather than deferred to step 2**: it
+      compiles the real droop. See the settled open question in `m3-context.md`,
+      including why the aggregate `Tg` ships as an explicitly unvalidated choice.
+- [x] **The `isoutofdomain` cost question measured here too** (271 ns against a
+      1974 ns step, ~14 %, kept). `m3-context.md`, open questions.
 
 ## Step 2 — validation of primary response
 
@@ -128,21 +158,31 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
 
 ## Known hazards to check off explicitly
 
-- [ ] **Post-hoc state clamping stays banned.** Derivative saturation plus a
+- [x] **Post-hoc state clamping stays banned.** Derivative saturation plus a
       step-rejecting predicate; the event-boundary re-seat is a discontinuity, not
-      a clamp.
-- [ ] **`coi_model`'s meaning is decided, not defaulted** — governor-free view or
+      a clamp. *(Step 1. The re-seat goes to zero rather than to the new ceiling,
+      because a tripped machine produces nothing at all, not merely nothing extra —
+      its scheduled `Pm` goes to zero in the same breath.)*
+- [x] **`coi_model`'s meaning is decided, not defaulted** — governor-free view or
       real aggregate droop, and what the cross-fidelity comparison then compares.
-- [ ] **No aggregate `ΔPm` read-out** that invites the per-machine / aggregate
-      conflation M2 spent four distinct names avoiding.
-- [ ] **Every long-running test self-terminates** on a fixed step count, never on a
-      condition.
+      *(Step 1: real droop. The aggregate `Tg` ships as a stated, unvalidated
+      choice rather than as a formula presented as settled.)*
+- [x] **No aggregate `ΔPm` read-out** that invites the per-machine / aggregate
+      conflation M2 spent four distinct names avoiding. *(Step 1: `current_state`
+      returns the per-machine vector and nothing sums it. It is deliberately not a
+      recorder channel either — see the V5 tripwire's own note.)*
+- [x] **Every long-running test self-terminates** on a fixed step count, never on a
+      condition. *(Holds for step 1's four new testsets; re-check per step.)*
 - [ ] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
 
 ## Housekeeping folded into the first docs commit of this batch
 
-- [ ] `m1-tasks.md` still records unbounded trajectory growth as open; M2 step 3
-      closed it (`src/engines/recorder.jl`). Fix the stale line.
-- [ ] Figure 3-67 is carried open in both `m1-tasks.md` and `m2-tasks.md` while
-      ticking no acceptance criterion. Point both at M3 step 7, which has one.
+- [x] `m1-tasks.md` still records unbounded trajectory growth as open; M2 step 3
+      closed it (`src/engines/recorder.jl`). Fix the stale line. — **Already done**
+      before this batch: `m1-tasks.md` line 111 reads "CLOSED at the head of M2
+      step 3" and keeps the original entry beneath it for the record. Checked, not
+      assumed, at the head of step 1.
+- [x] Figure 3-67 is carried open in both `m1-tasks.md` and `m2-tasks.md` while
+      ticking no acceptance criterion. Point both at M3 step 7, which has one. —
+      **Already done**: both files carry the pointer and the criterion. Checked.

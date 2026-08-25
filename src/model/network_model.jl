@@ -48,12 +48,31 @@
 # (this is how the three-machine ring's −110 MW bus works). Constant-impedance
 # loads and the reduction they require are M2b.
 #
-# GOVERNORS: there are none. `Machine` deliberately carries no droop `R` and no
-# `Pmax`, because the classical tier holds mechanical power constant. The COI view
-# compiled from this model (step 6) therefore compiles to a *governor-free*
-# `SystemModel` (`R = Inf`, `Pmax = P0`) — which is what makes the cross-fidelity
-# comparison honest: the two models then differ by inter-machine dynamics alone,
-# not by one of them having primary response the other lacks.
+# GOVERNORS (M3 step 1 — this replaces M2's "there are none"). `Machine` now
+# carries droop `R`, a net-injection ceiling `Pmax` and a governor lag `Tg`, and
+# each machine gains a third state `ΔPm` in the engine. This does **not** move the
+# fidelity tier: it is a *control* state on top of the same reduced classical
+# network-swing model, not a new electrical representation.
+#
+#   - **Governor-free is still expressible, and is the default**: `R = Inf`,
+#     `Pmax = P0` (zero headroom). The droop gain `1/R` is then `0` and `ΔPm`
+#     starts at `0`, so `dΔPm/dt = −ΔPm/Tg` holds it at zero forever and the
+#     machine behaves exactly as it did in M2. Every M2 model therefore still
+#     describes a real system rather than an accidentally-governed one — which is
+#     why the three new fields are *defaulted* positional arguments.
+#   - **There is no down-regulation floor**, deliberately, exactly as in M1: only
+#     the up-headroom saturates. A machine held above nominal frequency commands
+#     unboundedly negative `ΔPm`. That is a known limit of the tier (it matters for
+#     the over-frequency side of a two-area split), recorded rather than papered
+#     over with a floor nobody has validated.
+#
+# What droop does **not** do, said here because the obvious assumption is wrong:
+# it does not give the system an equilibrium after a generator trip. At settle
+# `Δω = −ΔP/(1/R_eq + D)`, which is non-zero because part of the deficit is carried
+# by load damping rather than by mechanical power — so the angles still drift
+# forever and `find_fixpoint` still cannot be called on a post-trip state. Only
+# secondary control (AGC) would settle them, and it is deliberately out of scope
+# (docs/plans/m3-context.md D3).
 #
 # Conventions (docs/SPEC.md §6, and standard utility practice):
 #   - Powers and voltages at the data boundary are ENGINEERING units (MVA, MW, kV).
@@ -124,8 +143,26 @@ state `(δ, ω)`.
   - `P0`      — MW, mechanical power. **Negative means the machine absorbs**,
                 which is how M2a represents a load.
 
-Governor droop and `Pmax` are deliberately absent — the classical tier holds
-mechanical power constant. See the GOVERNORS note at the top of this file.
+Governor data (M3 step 1), all **optional** and defaulting to governor-free so
+every M2 model still describes a real system:
+
+  - `R`       — pu **on the machine's own base**, governor droop. The gain is
+                `1/R`, so `R = Inf` (the default) means *no primary response*.
+  - `Pmax`    — MW, the **net-injection ceiling**; up-reserve is `Pmax − P0`, and
+                the default `Pmax = P0` is zero headroom.
+
+                **On an aggregated area machine this is not a fleet nameplate.**
+                Such a machine is generation *minus* load, so its `P0` is the
+                area's net injection into the network (which is routinely
+                negative — an importing area). `Pmax` there means
+                `P0 + the area's up-reserve` and has to be set deliberately;
+                putting an installed-capacity figure in it silently hands the area
+                hundreds of GW of reserve (docs/plans/m3-context.md D4).
+  - `Tg`      — s, the governor/turbine first-order lag. Validated (`> 0`, it is a
+                denominator) even when `R = Inf` makes it unobservable.
+
+See the GOVERNORS note at the top of this file for what droop does and — more
+importantly — what it does not do.
 """
 struct Machine
     id::Symbol
@@ -136,6 +173,9 @@ struct Machine
     Xd′::Float64       # pu    — transient reactance, on the machine's own base
     E′::Float64        # pu    — internal voltage magnitude
     P0::Float64        # MW    — mechanical power (negative = load)
+    R::Float64         # pu    — governor droop, on the machine's own base (Inf = none)
+    Pmax::Float64      # MW    — net-injection ceiling; headroom = Pmax - P0
+    Tg::Float64        # s     — governor/turbine first-order lag
 
     # Reject a machine that is wrong on its face rather than letting it poison a
     # solve — the spirit of `GeneratingUnit`'s headroom guard. `H > 0` is strict
@@ -145,8 +185,14 @@ struct Machine
     # converter is a real thing and M1's aggregate model supports it — but as a
     # *vertex* in a swing network it has no differential state, which is the
     # grid-forming/following tier, not this one.
+    #
+    # The three governor arguments are **defaulted, positional** rather than
+    # keyword: every M2 call site keeps working untouched, and what it builds is
+    # exactly the governor-free machine it always was (`1/R = 0`, zero headroom),
+    # so the existing suite stays a valid oracle for the state-layout change.
     function Machine(id::Symbol, bus::Symbol, S_rated::Real, H::Real, D::Real,
-                     Xd′::Real, E′::Real, P0::Real)
+                     Xd′::Real, E′::Real, P0::Real,
+                     R::Real = Inf, Pmax::Real = P0, Tg::Real = 1.0)
         S_rated > 0 || throw(ArgumentError(
             "Machine $id: S_rated ($S_rated) must be > 0 MVA."))
         H > 0 || throw(ArgumentError(
@@ -159,8 +205,26 @@ struct Machine
             "it is validated anyway so the data is sound when M2b's network reduction does.)"))
         E′ > 0 || throw(ArgumentError(
             "Machine $id: E′ ($E′) must be > 0 pu."))
+        # `R` is a divisor (the gain is 1/R), so zero is not a degenerate-but-valid
+        # droop setting, it is a division by zero. `Inf` is the sanctioned way to
+        # say "no governor" and satisfies this guard.
+        R > 0 || throw(ArgumentError(
+            "Machine $id: R ($R) must be > 0 pu — droop is a divisor (the gain is 1/R). " *
+            "Use R = Inf for a governor-free machine."))
+        # `Tg` divides the governor lag, so it is guarded even when `R = Inf` makes
+        # it unobservable — data that is only sometimes read is exactly the data
+        # that gets set wrong and noticed a milestone later.
+        Tg > 0 || throw(ArgumentError(
+            "Machine $id: Tg ($Tg) must be > 0 s — it is the governor lag's denominator."))
+        # Zero reserve is legal; negative is not. On an aggregated area machine
+        # Pmax is P0 + the area's up-reserve, NOT a fleet nameplate (see the
+        # docstring, and m3-context.md D4).
+        Pmax ≥ P0 || throw(ArgumentError(
+            "Machine $id: Pmax ($Pmax) must be ≥ P0 ($P0) — headroom < 0. On an aggregated " *
+            "area machine Pmax means P0 + the area's up-reserve, not a fleet nameplate."))
         return new(id, bus, Float64(S_rated), Float64(H), Float64(D),
-                   Float64(Xd′), Float64(E′), Float64(P0))
+                   Float64(Xd′), Float64(E′), Float64(P0),
+                   Float64(R), Float64(Pmax), Float64(Tg))
     end
 end
 
@@ -370,7 +434,7 @@ through here, so none of them can hold a different convention.
 @inline _coupling(mi::Machine, mj::Machine, br::Branch) = mi.E′ * mj.E′ / br.X
 
 """
-    machine_arrays(net::NetworkModel) -> (; H, D, Pm, E, Xd)
+    machine_arrays(net::NetworkModel) -> (; H, D, Pm, E, Xd, invR, headroom, Tg)
 
 The machine parameters as contiguous `Vector{Float64}`s **indexed by vertex**
 (entry `v` belongs to `net.buses[v]`), all converted to the **system base** — the
@@ -386,6 +450,21 @@ struct-of-arrays view the engine integrates against (SPEC §4).
            not read this** — it is here, on the right base, for M2b. Folding it
            into the coupling is the mistake point 2 of the tier note describes.
 
+Governor data (M3 step 1), on the same system base:
+
+  - `invR`     — pu/pu, the droop **gain** `(1/Rᵢ)·(Sᵢ/S_base)`. It is the gain and
+                 not the droop that converts and that sums: `sum(invR)` is exactly
+                 M1's aggregate `1/R_eq` (`aggregates`, engines/frequency_response.jl),
+                 which is the whole reason this is the only place the conversion
+                 happens. A governor-free machine has `R = Inf`, and `1/Inf` is
+                 `0.0` — zero gain, no `NaN`, nothing special-cased.
+  - `headroom` — pu on `S_base`, up-reserve `(Pmaxᵢ − P0ᵢ)/S_base`; the ceiling at
+                 which that machine's `ΔPm` saturates. **Per machine**, not pooled:
+                 one area's reserve cannot answer another area's deficit except
+                 through the network, which is the point of the tier.
+  - `Tg`       — s, the governor lag, passed straight through (seconds are
+                 base-independent, like `E`).
+
 Derived on call, never stored: one canonical model, compiled views (SPEC §3.2).
 """
 function machine_arrays(net::NetworkModel)
@@ -396,6 +475,9 @@ function machine_arrays(net::NetworkModel)
     Pm = Vector{Float64}(undef, n)
     E  = Vector{Float64}(undef, n)
     Xd = Vector{Float64}(undef, n)
+    invR     = Vector{Float64}(undef, n)
+    headroom = Vector{Float64}(undef, n)
+    Tg       = Vector{Float64}(undef, n)
     for (v, m) in pairs(net.machines)
         w = m.S_rated / S_base          # machine base -> system base, for powers
         H[v]  = m.H * w
@@ -403,8 +485,14 @@ function machine_arrays(net::NetworkModel)
         Pm[v] = m.P0 / S_base
         E[v]  = m.E′
         Xd[v] = m.Xd′ / w               # impedance scales inversely
+        # The GAIN converts with the power weight (same as H and D), not the droop
+        # itself — writing `m.R * w` here would be the mirror-image of the `Xd′`
+        # mistake above and would still look plausible.
+        invR[v]     = (1.0 / m.R) * w
+        headroom[v] = (m.Pmax - m.P0) / S_base
+        Tg[v]       = m.Tg
     end
-    return (; H, D, Pm, E, Xd)
+    return (; H, D, Pm, E, Xd, invR, headroom, Tg)
 end
 
 """
@@ -528,10 +616,10 @@ The mapping, machine by machine (in bus order):
 | `GeneratingUnit.id`  | `Machine.id`               |                               |
 | `.S_rated`, `.H`     | **raw, machine base**      | `aggregates` applies the weight |
 | `.P0`                | `Machine.P0` (MW)          | negative = load, carried as-is  |
-| `.R`                 | `Inf`                      | no governors in this tier       |
-| `.Pmax`              | `= P0` ⇒ zero headroom     | no governors in this tier       |
+| `.R`                 | `Machine.R` (machine base) | `aggregates` applies the weight |
+| `.Pmax`              | `Machine.Pmax` (MW)        | headroom = `Pmax − P0`          |
 | `SystemModel.D`      | `sum(machine_arrays(net).D)` | **pre-weighted, system base** |
-| `SystemModel.Tg`     | `1.0`                      | unobservable — see below        |
+| `SystemModel.Tg`     | droop-gain-weighted mean   | a choice with no oracle — below |
 
 **The H/D asymmetry is deliberate and is the trap in this function.** `H` and
 `S_rated` go through *raw* on the machine's own base, because `aggregates`
@@ -543,19 +631,39 @@ summed **after** conversion. Both halves therefore come through
 `SwingEngine`. Do not "fix" the inconsistency by weighting `H` here too; the test
 suite asserts against that exact wrong conversion by name.
 
-**`Tg = 1.0` is arbitrary because the governor state is identically zero**, and it
-is zero for *two* reasons that must both hold: `R_eq = Inf` (no droop command) and
-`ΔPm(0) = 0` (M1's state is a deviation, so the governor starts at rest). Then
-`dΔPm/dt = (−Δω/∞ − 0)/Tg = 0` forever and `Tg` never enters the answer — asserted
-in `test/` by compiling a second model with `Tg = 100` and getting the same
-trajectory. If a droop tier ever lands, `Tg` becomes load-bearing and this line
-becomes a real modelling choice.
+**`Tg` is the one field with no oracle, and that is said out loud rather than
+hidden in a formula.** `SystemModel` carries *one* system-wide lag; the network
+model carries one per machine. An aggregate of several first-order lags is only
+exactly first-order when they are all equal, so any single number here is a
+modelling choice. The choice made is the **droop-gain-weighted mean**
+`Σ (invRᵢ·Tgᵢ) / Σ invRᵢ` — weighting by the gain because a machine that does not
+respond should not get a say in how fast the aggregate responds — falling back to
+`1.0` when no machine has droop at all (the weights are then all zero).
 
-**No governors is what makes the comparison honest** (the GOVERNORS note at the top
-of this file): both models then hold mechanical power constant, so they differ by
-network dynamics alone rather than by one of them having primary response the
-other lacks. The `R = Inf` / zero-headroom combination is the same shape M1
-already validates for inverter-based resources.
+Nothing in the validation suite can distinguish this from another aggregation: the
+droop settling value `Δω = −ΔP/(1/R_eq + D)` is **Tg-independent**, so it pins the
+gain and not the lag. Treat the number as unvalidated until something measures the
+*shape* of the aggregate response, not just where it lands.
+
+For a governor-free network the fallback fires and this reduces exactly to M2's
+`Tg = 1.0`, which was arbitrary for a stronger reason: the governor state was
+identically zero, needing *both* `R_eq = Inf` (no droop command) and `ΔPm(0) = 0`
+(M1's state is a deviation, so the governor starts at rest). `test/` asserts that
+invariance by compiling a second model with `Tg = 100` and getting a bit-identical
+trajectory — which remains true of a governor-free model and is no longer true in
+general.
+
+**What the cross-fidelity comparison now compares** (the open question in
+m3-context.md, settled here). M2 hard-coded `R = Inf` / `Pmax = P0` so that the two
+tiers differed by inter-machine dynamics *alone*. Compiling the real droop through
+is the choice made instead, because the alternative breaks SPEC §3.2: a view that
+deletes a property of the canonical model is not a compiled view of it, it is a
+different model, and the first governed network would have been compared against
+an aggregate with no primary response — a difference that would look like network
+dynamics. So the comparison now differs by inter-machine dynamics *and* by the
+aggregation of several governors into one lag. For every governor-free model —
+which is every fixture M2 shipped — this is byte-identical to what M2 produced,
+and the difference is exactly zero.
 
 **Two consequences worth naming before they surprise someone.**
 
@@ -580,12 +688,21 @@ function coi_model(net::NetworkModel)
     ma = machine_arrays(net)                 # the one per-unit converter (see above)
     units = Vector{GeneratingUnit}(undef, length(net.machines))
     for (v, m) in pairs(net.machines)
-        # H and S_rated raw on the machine base — `aggregates` weights them itself.
-        # R = Inf and Pmax = P0: no governor, no headroom (the tier holds Pm fixed).
-        units[v] = GeneratingUnit(m.id, m.S_rated, m.H, m.P0, Inf, m.P0)
+        # H, S_rated, R and Pmax raw on the machine base — `aggregates` applies the
+        # weight to H and to 1/R itself, and reads headroom straight off Pmax − P0
+        # in MW. A governor-free machine passes through as `R = Inf`, `Pmax = P0`,
+        # which is exactly what M2 hard-coded here.
+        units[v] = GeneratingUnit(m.id, m.S_rated, m.H, m.P0, m.R, m.Pmax)
     end
     # D pre-weighted onto the system base, because `SystemModel.D` is a system-base
     # scalar that nothing downstream re-weights. This is the asymmetry above.
     D_sys = sum(ma.D)
-    return SystemModel(net.S_base, net.f0, D_sys, 1.0, units)
+    # The one field with no oracle (see the docstring): several first-order governor
+    # lags collapsed into one, weighted by droop gain so a machine that does not
+    # respond does not vote on the response speed. `Σ invR == 0` is a fully
+    # governor-free network, where the weights vanish and `Tg` is unobservable —
+    # M2's arbitrary 1.0, reproduced exactly rather than by a 0/0.
+    Σg = sum(ma.invR)
+    Tg_sys = Σg > 0 ? sum(ma.invR[v] * ma.Tg[v] for v in eachindex(ma.Tg)) / Σg : 1.0
+    return SystemModel(net.S_base, net.f0, D_sys, Tg_sys, units)
 end

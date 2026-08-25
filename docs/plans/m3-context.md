@@ -79,6 +79,48 @@ reached the same end point in *fewer* steps.
   record the new value beside the old. If the margin shrinks materially, that is a
   finding about the assertion, not a licence to loosen it.
 
+#### D1 — measured outcome after step 1: the re-pin was not needed, and why
+
+The plan announced a re-pin in advance and was right to. The measurement says it
+did not happen: **every gauge-free quantity is bit-identical between M2 and M3**
+on the shipped fixtures. Measured by running the same script against a pristine
+worktree of `9a1dd32` and against the M3 tree
+(`M:\claud_projects\temp\m3\bitcompare.jl`, outside the repo):
+
+| quantity | M2 (`9a1dd32`) | M3 step 1 |
+|:---|:---|:---|
+| `f_coi`, both fixtures, 10 samples over 30 s | — | **identical to the last bit** |
+| `naccept` / `nreject`, both fixtures | 1500 / 0 | **1500 / 0** |
+| δ₁−δ₂ at the fixpoint, both fixtures | — | **identical to the last bit** |
+| V3 measured gap `f_pred − f_meas` | `1.205e-4` | `1.205465e-4` |
+| V3 margin to the `2.0e-4` limit | 1.66× | **1.659×** |
+| V4a max gap | 7.1e-15 Hz | 7.105e-15 Hz |
+| V4b peak gap / its time | 4.4325e-6 Hz / 0.26 s | 4.43246e-6 Hz / 0.26 s |
+| V4c late gap / early ratio | ~0.857 / ~2800 | 0.85714 / 2831.7 |
+
+**Why the probe did not transfer, which is the part worth keeping.** D1's reasoning
+about the error norm is correct — SciML averages over the state vector, so extra
+zero entries buy larger steps. It measured that on a **free-running** integration.
+This engine never runs free: `step!(integrator, dt, true)` forces a stop at every
+`dt`, and `naccept == nsteps` with `nreject == 0` in *both* versions says the
+controller was already taking exactly one internal step per `dt` and had no room to
+lengthen one. The mechanism the probe measured cannot act here.
+
+The general lesson, since it will recur: a numerical probe has to reproduce the
+**stepping discipline** of the code it is predicting, not just its RHS. A bare
+`solve` and a `step!`-driven integrator are different numerical objects.
+
+**The one thing that did move, and it is the invariant confirming itself.** On
+`two_machine_system` the absolute rotor angles from `find_fixpoint` shifted by
+`2.14455e-3 rad` — *the same constant on both machines*. That is a pure gauge
+shift: the fixpoint is degenerate under adding a constant to every `δ`, the solver
+lands wherever the extra state's Jacobian column sends it, and `swing.jl`'s header
+already says that number is meaningless and must never be asserted on. The
+difference δ₁−δ₂ is bit-identical. `three_machine_ring` did not shift at all.
+
+Nothing in the suite noticed, because M2's tests assert differences — which is the
+rule paying for itself rather than a lucky escape.
+
 ### D2 — Governor data lives on `Machine`, per machine, in its own base
 
 `R` (droop, pu on the machine's own base), `Pmax` (MW), `Tg` (s). Not system-wide
@@ -255,15 +297,37 @@ exact problem it was chosen to close.
 
 ## Open questions to resolve during M3
 
-- **What does `coi_model` compile now?** It deliberately produced a governor-free
-  `SystemModel` so the cross-fidelity comparison differed by inter-machine
-  dynamics *alone*. With real droop on the network model, either it compiles the
-  real aggregate droop (and the comparison changes meaning) or it keeps producing
-  a governor-free view (and the comparison is no longer like-for-like). Decide in
-  step 1 or 2, write it in the code, and record the choice here.
-- **Does the `isoutofdomain` predicate cost measurable time** in the hot loop when
-  it can never fire (governor-free networks)? M1 pays it on two states; M3 would
-  pay it on `3N`. Measure before assuming either way.
+- ~~**What does `coi_model` compile now?**~~ **SETTLED in step 1: it compiles the
+  real droop.** `R` and `Pmax` pass straight through to the `GeneratingUnit`, so a
+  governed network compiles to a governed aggregate. The alternative — keep
+  producing a governor-free view so the comparison stays like-for-like — was
+  rejected because it breaks SPEC §3.2: a view that *deletes* a property of the
+  canonical model is not a compiled view of it, and the first governed network
+  would have been compared against an aggregate with no primary response, a
+  difference that would read as network dynamics. The comparison therefore now
+  differs by inter-machine dynamics **and** by the collapse of several governors
+  into one lag. For every fixture M2 shipped this is byte-identical to M2's output,
+  so the change costs nothing today and is honest tomorrow.
+
+  **`Tg` is the loose end, and it is loose on purpose.** `SystemModel` carries one
+  system-wide lag; the network carries one per machine, and an aggregate of
+  first-order lags is only first-order when they are equal. The shipped choice is
+  the **droop-gain-weighted mean** `Σ(invRᵢ·Tgᵢ)/Σ invRᵢ`, falling back to `1.0`
+  when no machine has droop (reproducing M2's arbitrary value exactly rather than a
+  `0/0`). **Nothing in the validation suite can distinguish it from any other
+  aggregation**: V2's settling value `Δω = −ΔP/(1/R_eq + D)` is `Tg`-independent, so
+  it pins the gain and not the lag. The tests assert that the *weighting* is by gain
+  rather than by MVA or unweighted — which pins the choice against silent drift, not
+  against being wrong. Treat the number as unvalidated until something measures the
+  **shape** of the aggregate response.
+- ~~**Does the `isoutofdomain` predicate cost measurable time?**~~ **MEASURED in
+  step 1: yes, and it does not matter.** On `three_machine_ring` (governor-free, so
+  the predicate can never fire) the predicate costs **271 ns/call** against
+  **1974 ns** for the `step!` it guards — about **14 %**, and the solver calls it
+  once per proposed step, not once per RHS evaluation. Not free, and not worth
+  branching the engine into guarded and unguarded variants to avoid: that would be
+  two numerical paths for a seventh of one step, and the second path would be the
+  one nobody tests. Revisit only if a profile of a large network says so.
 - **Does the out-of-step threshold belong to the branch or to the protection
   object?** `Branch` already carries a `rating` it does not use. Resist the pull to
   put protection settings on the topology type — the ladder is a separate object
