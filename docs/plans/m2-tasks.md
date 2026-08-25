@@ -284,33 +284,88 @@ Checklist for the Milestone 2 batches. See `m2-plan.md` for the approach and
       new exported name, `coi_model`, was already checked clear against GLMakie in
       step 2 and was re-verified.
 
-## Step 7 — UI
+## Step 7 — UI (DONE)
 
-- [ ] Per-machine rotor angle / speed traces plus the aggregate overlay.
-- [ ] **The trajectory carries no record that a line opened.** The recorder's
-      channels are fixed at construction (`δ_*`, `ω_*`, `f_coi`); a generator trip is
-      at least partly reconstructible from the traces (a machine's `ω` goes flat and
-      its inertia leaves the aggregate), but a **line** trip leaves no trace at all —
-      play a run back and nothing says which line opened, or when. M1 recorded
-      `tripped_mw` for exactly this reason. Decide here whether the swing engine gets
-      an event-marker channel; the channel set of an already-running engine cannot be
-      changed afterwards.
-- [ ] **The event vocabulary diverges in both directions, and step 7 owns the
-      consequence.** Step 6 asserted that `TripLine` on the compiled COI view is a
-      `MethodError` (a `SystemModel` has no branches). The mirror is equally true:
-      `StepLoad` has no `SwingEngine` method, because a classical-tier load is a
-      machine and there is no aggregate imbalance to move. So the set of controls a
-      window can offer is per-engine, not per-interface — decide that here rather
-      than discovering it while wiring buttons.
-- [ ] **`is_online(eng, from, to)` is a linear scan over branches.** Nothing at three
-      branches, but it is the accessor a UI calls once per line per frame, so it lands
-      in the redraw path — the same concern that puts the traces on fixed-capacity
-      buffers. Index it (or hoist the lookup out of the frame) before wiring it in.
-- [ ] Offscreen render verified before anything is claimed about the live window —
-      the M1 practice, and the reason M1's UI claims held up.
-- [ ] Pinned axes for any comparison render (the M1 fix at `bb644f4`: an unpinned
-      pair of panels argues against itself).
-- [ ] Draw from fixed-capacity buffers, not from engine trajectory vectors.
+- [x] Per-machine frequency traces with the COI overlay, and a second panel of
+      per-machine rotor angles. `ui/src/network_window.jl`, a **sibling** of the M1
+      window rather than a generalisation of it, reached by `launch(::NetworkModel)`
+      and `smoke_render(::NetworkModel; ...)`.
+- [x] **HZ EVERYWHERE ON THE FREQUENCY AXIS, decided rather than defaulted.** A
+      machine's `ω` is a per-unit deviation and the aggregate is Hz; they cannot
+      share an axis as they stand. Each machine is converted to `f0·(1 + ωᵢ)` at the
+      UI boundary and nowhere else (the project's per-unit-internally rule), so the
+      aggregate is genuinely an overlay of the same quantity rather than a second
+      thing drawn in the same box.
+- [x] **The trajectory carries no record that a line opened — resolved as an event
+      LOG, not a marker channel**, and the reasoning is the finding. A trip is a
+      single-sample spike and decimation is precisely the operation that deletes
+      those: the recorder halves its buffer by keeping every other retained sample,
+      so a one-sample marker has even odds of vanishing at each halving — the datum
+      whose *exact instant* matters would be the first thing thrown away. And a
+      channel is a `Float64`, while "which line" is a pair of bus names. So
+      `EngineEvent` entries are written **inside `inject!`** (never in the UI's click
+      handler — a scripted or headless driver never clicks, and a log that only
+      exists when a human is watching is not a record of the run), timestamped from
+      the integrator's own clock, and only on the paths that actually change
+      something. Bounded at 256 with the earliest kept and the rest counted.
+- [x] **`δ_coi` DID become a channel, and that is the other half of the decision.**
+      The individual angles are gauge-arbitrary, so an absolute angle is not a
+      plottable number; the aggregate carries the same gauge, which is the point —
+      `δ − δ_coi` is gauge-free, asserted by shifting the whole state and watching
+      the relative angles not move. It is a channel because the channel set of a
+      running engine cannot be changed afterwards, and because recomputing it later
+      would force every consumer to reproduce the live COI weights that change at
+      each generator trip.
+- [x] **The event vocabulary diverges in both directions — settled by dispatch on
+      the model type.** Two sibling windows, not one window with a runtime switch:
+      the set of buttons is a property of the engine. Asserted from the UI suite in
+      both directions (`TripLine` on the aggregate engine and `StepLoad` on the
+      swing engine are both `MethodError`), which is the first test in the repo to
+      pin the *mirror* half.
+- [x] **`is_online(eng, from, to)` is indexed.** A `Dict` keyed by the unordered bus
+      pair, placed inside `_find_branch` — which the read-out and the event share —
+      so a fast path for one and a scan for the other could not become the second
+      meaning that function exists to prevent.
+- [x] **FINDING, from the first render rather than from review: a tripped rotor was
+      scaling the panel it had left.** Its angle relative to the COI grows without
+      bound, so expand-only limits driven by every machine put a survivor spread of
+      0.1 rad on an axis 300 rad tall — every trace the panel exists to show was a
+      flat line at zero. A tripped machine is now **drawn but scales nothing**, and
+      it walks off the top of the frame, which is the honest picture. The same
+      argument fixed the read-out: the difference between a dead rotor coasting at
+      nominal and a system sinking at 2.7 % is not a spread, it is two unrelated
+      numbers subtracted (the read-out said 2669 mHz; over the online machines it is
+      0.2 mHz).
+- [x] **NaN was checked in the render, not assumed.** `f_coi` is NaN once nothing is
+      online; a NaN loses every comparison, so the running nadir and the axis box are
+      never poisoned by it, and the read-out prints the NaN rather than a fabricated
+      zero — pinned by a test that trips every machine.
+- [x] Offscreen render verified before anything was claimed about the live window,
+      and it earned its keep: the tripped-rotor scaling bug, the read-out clipped off
+      the top of the control column, and the event list clipped off the bottom were
+      all found by looking at PNGs, not by reading code.
+- [x] Pinned axes for any comparison render — `ylims_f` / `ylims_δ`, with the pin
+      asserted against a run that would otherwise have forced the box open.
+- [x] Draw from fixed-capacity buffers, not from engine trajectory vectors. One
+      `RollingTrace` per machine per panel, plus the aggregate.
+- [x] **The UI environment was the stale one, exactly as the M2 note warned.**
+      `ui/Manifest.toml` is gitignored, so it still predated step 1's dependency
+      bump and `using GridSimUI` failed with "GridSim does not have Graphs in its
+      dependencies". `Pkg.resolve()` in `ui/` fixes it; nothing in the repo needed
+      changing, which is why it can sit undetected until the first UI work after a
+      core dependency change.
+- [x] 1234/1234 core + 74/74 UI green (1187 / 33 entering step 7).
+
+### Known limits, recorded not patched
+
+- The control column is sized for the shipped examples. A network with many more
+  machines or branches overflows it; a scrolling control panel is the real answer
+  and is deliberately not this step's work. Top-aligned so overflow runs off the
+  bottom, where the least important widgets sit.
+- The written event list shows the most recent 6 with a `(+N earlier)` prefix. The
+  dashed markers on the plots are never trimmed — the plot is where "when" lives.
+- No network canvas (node positions, a one-line diagram). Still the different and
+  much larger piece of work the context doc calls it.
 
 ## Carried over from M1 — decide, don't drift
 

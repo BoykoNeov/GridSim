@@ -700,14 +700,65 @@ integrating harmlessly and are excluded from the aggregate read-out.
   the damping the undamped closed form omits (V3 above).
 - ~~**The trajectory-buffer decision stops being deferrable at step 3.**~~ **DONE —
   it was step 3's opening commit**, exactly as this note demanded.
-- **How does the UI consume two different `state_series` shapes?** Newly open, from
-  the conformance finding above. The window currently reads `state_series` and
-  `current_state` by name against M1's fixed channels; M2's are per-machine and
-  model-dependent. Step 7 has to resolve this by reading channels by name, not by
-  widening the engine interface now on speculation.
-- **How much UI does M2 need?** Per-machine traces are clearly in scope; a network
-  canvas with node positions is a different (and much larger) piece of work, and
-  SPEC §3.5's render-state-is-not-simulation-state rule bites the moment it starts.
+- ~~**How does the UI consume two different `state_series` shapes?**~~ **RESOLVED
+  at step 7, and the answer was not "read channels by name" after all.** It is one
+  window per engine, reached by dispatch on the model type. Reading by name would
+  have let one window survive both shapes, but it would not have made the window
+  *correct*: the two engines reject each other's events (`TripLine` on the
+  aggregate view and `StepLoad` on the swing engine are both `MethodError`), so the
+  set of controls is a property of the engine, and a single window would have had
+  to branch on that at run time anyway. The interface was not widened, which is
+  what this question was really guarding.
+- ~~**How much UI does M2 need?**~~ **ANSWERED by building it.** Per-machine traces,
+  the aggregate overlay, both trip controls and an event record — no network canvas.
+  A canvas with node positions remains a different and much larger piece of work,
+  and SPEC §3.5's render-state-is-not-simulation-state rule bites the moment it
+  starts.
+
+### FINDING — a tripped rotor was scaling the panel it had left
+
+Found in the **first offscreen render**, not in review, and it is the batch's
+argument for rendering before claiming.
+
+After a generator trip the tripped machine's rotor is decoupled and undriven, so
+its angle relative to the centre of inertia grows without bound — 142 rad by the
+end of a 20 s run. Expand-only axis limits driven by *every* machine therefore put
+a survivor spread of 0.1 rad on an axis 300 rad tall, and every trace the panel
+exists to show was a flat line at zero. The same mistake reached the read-out: the
+"spread" between a dead rotor coasting at nominal and a system sinking at 2.7 %
+read 2669 mHz, which is not a spread but two unrelated numbers subtracted (over
+the online machines it is 0.2 mHz).
+
+The fix is that a tripped machine is **drawn but scales nothing**. It walks off the
+top of the frame, which is the honest picture of what happened to it, while the
+axis and both machine-to-machine read-outs are over the machines still online.
+
+Worth naming because the *reference* choice was reviewed carefully in advance and
+was right — plotting against the aggregate rather than against a reference machine
+is what keeps the survivors readable at all, and a reference machine would have
+failed outright the moment it was the machine that tripped. The scaling bug sat one
+level below that decision and no amount of reasoning about the reference would have
+surfaced it. A picture did, immediately.
+
+Two smaller ones from the same render, in the same category: the read-out was
+clipped off the top of the control column (a second button group made the column
+taller than the figure, and centring it overflowed at both ends), and the event
+list off the bottom.
+
+### FINDING — the gitignored UI Manifest is the one that goes stale
+
+`ui/Manifest.toml` is gitignored by design (this is a package, not a pinned app),
+which means it is never refreshed by a pull. It still predated step 1's dependency
+bump, so the first `using GridSimUI` of step 7 failed with *"Package GridSim does
+not have Graphs in its dependencies"* — the core had gained `Graphs` and
+`NetworkDynamics` six steps earlier and the UI environment had never been told.
+
+`Pkg.resolve()` in `ui/` is the whole fix and nothing in the repo changed. The
+trap is that it cannot be detected by any test or CI run that resolves fresh: only
+a long-lived working copy has a manifest old enough to break, so it surfaces at the
+first UI work after a core dependency change and nowhere else. This is the same
+class as the M2 finding about the dev machine being the stale one, on the other
+environment.
 
 ## Reference
 

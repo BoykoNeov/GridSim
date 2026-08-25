@@ -127,7 +127,7 @@ export SwingEngine, machine_ids
 # report one shared wording for an event. All four checked clear against GLMakie's
 # exports; note that the obvious `events` is NOT clear, which is why the accessor
 # is `event_log`.
-export EngineEvent, event_log, n_events_dropped, describe
+export EngineEvent, event_log, n_events, n_events_dropped, describe
 
 # --- real-time orchestration ---
 # (`push!`/`isempty`/`length`/`empty!` on an EventQueue are Base generics we

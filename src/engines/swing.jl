@@ -520,6 +520,16 @@ scripted driver that exceeds it keeps the earliest events while
 event_log(eng::SwingEngine) = copy(eng.log)
 
 """
+    n_events(eng::SwingEngine) -> Int
+
+How many events the log currently holds. `event_log` copies, and a UI has to ask
+"has anything happened since the last frame?" on every frame — so the cheap
+question gets its own answer rather than being asked by copying the vector and
+measuring it, the same reason the bus-pair lookup is indexed.
+"""
+n_events(eng::SwingEngine) = length(eng.log)
+
+"""
     n_events_dropped(eng::SwingEngine) -> Int
 
 How many applied events the bounded log had to discard (`0` in any real session).

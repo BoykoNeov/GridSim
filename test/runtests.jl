@@ -1845,6 +1845,8 @@ end
 
         log = event_log(eng)
         @test length(log) == 2
+        # The cheap question a redraw asks every frame, answered without copying.
+        @test n_events(eng) == length(log)
         # The timestamp is the integrator's own clock at the moment of injection —
         # not a wall clock, and not a time the caller supplied.
         @test log[1].t == t_line
@@ -1895,6 +1897,7 @@ end
         end
         log = event_log(eng)
         @test length(log) == cap
+        @test n_events(eng) == cap               # the count stops at the cap too
         @test n_events_dropped(eng) == 10
         @test log[1].a === :G1                   # the start survives...
         @test log[end].a === Symbol("G", cap)    # ...and the tail is what was cut

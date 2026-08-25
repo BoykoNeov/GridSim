@@ -101,8 +101,20 @@ boundary, not a shortcut.
    inter-machine swings. V4 therefore runs three cases (below) instead of one, and
    the swing content is isolated on a fixture built for it: **4.4 µHz reaching the
    aggregate out of a 3.9 mHz machine-to-machine spread.**
-7. **UI** — extend the window with per-machine rotor angle / speed traces and the
-   COI overlay. Verified offscreen first, as in M1.
+7. **UI — DONE.** `ui/src/network_window.jl`: per-machine frequency traces with the
+   COI overlaid on the same (Hz) axis, a second panel of rotor angles *relative to
+   the COI*, event markers, and both kinds of trip button. It is a **sibling** of
+   the M1 window reached by dispatch on the model type, not a generalisation of
+   it — the two engines reject each other's events, so the control set is a
+   property of the engine and the UI suite now asserts both directions of that.
+   The three decisions the step was gated on resolved as: an event **log** written
+   inside `inject!` rather than a marker channel (decimation deletes single-sample
+   spikes, and "which line" is not a `Float64`); `δ_coi` as a channel, because the
+   individual angles are gauge-arbitrary and the aggregate is the gauge-free
+   reference to plot against; and the bus-pair lookup indexed inside the function
+   both callers share. Verified offscreen first, as in M1, and that is what caught
+   the batch's finding — a **tripped rotor was scaling the panel it had left**,
+   flattening every surviving trace to a line at zero.
 
 ## Validation (assert in `test/`)
 
