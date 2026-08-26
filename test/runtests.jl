@@ -2963,6 +2963,317 @@ end
         @test [e.kind for e in event_log(eng)] == [:trip_generator, :trip_line]
     end
 
+    # ---- M3 step 5: generation lost as a ramp, not an instant --------------------
+    # `governed_ring` (above) is the fixture throughout, with the reserve opened up
+    # where the closed form needs no saturation. The ramp is always on G1 — the one
+    # machine with NO governor — so the response the survivors mount is unambiguously
+    # primary response to the ramp and not the ramped machine partly answering itself.
+
+    @testset "M3 step 5: a zero-rate ramp is the un-ramped machine, to the bit" begin
+        # The parameter addition must not have perturbed a single existing scenario,
+        # and "the tests still pass" is far too weak a bar for that (M2 step 6's
+        # lesson, re-applied at M3 step 1). The bar is BIT identity, `naccept`
+        # included — and the comparison is between two engines built in THIS process,
+        # which is what makes it a real check rather than the stale-precompile
+        # artefact a cross-process "bit-identical" can be.
+        function ramprun(net; ramp = Pair{Symbol,GenerationRamp}[], n = 1500, dt = 0.01)
+            eng = init!(SwingEngine, net; dt = dt, ramp = ramp)
+            for _ in 1:n; step!(eng, dt); end
+            return eng
+        end
+        bare  = ramprun(governed_ring())
+        zeroR = ramprun(governed_ring(); ramp = [:G2 => GenerationRamp(0.0, 1.0, 2.0)])
+        @test zeroR.integrator.u == bare.integrator.u                 # every digit
+        @test zeroR.integrator.stats.naccept == bare.integrator.stats.naccept
+        @test state_series(zeroR).f_coi == state_series(bare).f_coi
+        # …and it is zero-rate that does it, not zero-*duration*: the ramp above has
+        # a real 2 s window and a real start, and is still exactly nothing.
+        @test generation_ramp(zeroR, :G2).duration == 2.0
+
+        # An un-ramped machine carries `rate = 0` in the live parameter vector, which
+        # is what makes `Pm + rate·clamp(…)` arithmetically `Pm`.
+        for net in (two_machine_system(), three_machine_ring(), governed_ring())
+            eng = init!(SwingEngine, net; dt = 0.02)
+            @test all(iszero, eng.params[eng.rate_pidx])
+            @test_throws KeyError generation_ramp(eng, first(machine_ids(eng)))
+        end
+
+        # WHY THE CONSTRUCTOR PINS `find_fixpoint`'s TIME, asserted rather than left
+        # in a comment. NetworkDynamics defaults that solve to `t = NaN`, which was
+        # harmless while no vertex RHS read `t` and is fatal the moment one does:
+        # `clamp(NaN − t_start, 0, d)` is `NaN` and `0.0 * NaN` is `NaN`, so a
+        # ZERO-rate machine is enough to NaN the whole steady-state solve. The default
+        # is not a defence — this is what would break if `t = t0f` were ever dropped.
+        dv = zeros(3)
+        pv = [1.0, 2.0, 3.0, 314.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0]
+        GridSim.swing_vertex!(dv, [0.0, 0.0, 0.0], [0.0], pv, NaN)
+        @test isnan(dv[2])                       # …at t = NaN, with rate = 0
+        GridSim.swing_vertex!(dv, [0.0, 0.0, 0.0], [0.0], pv, 0.0)
+        @test dv[2] == 1.0 / (2 * 2.0)           # …and finite at a real time
+    end
+
+    @testset "M3 step 5: the ramp delivers rate*duration, and the path does not matter" begin
+        # The strongest claim available about a ramp on this tier: where the system
+        # SETTLES depends only on the total delivered `rate·duration`, never on how it
+        # was delivered. So one closed form validates the magnitude AND the shape at
+        # once — a ramp that leaked, double-counted, or failed to stop at its own end
+        # would land somewhere else.
+        #
+        # The closed form is step 2's V2 with the ramp as the imbalance:
+        #   Δω = ΔP / (Σ 1/Rᵢ + Σ Dᵢ)   over the machines still online (D11)
+        # and nothing trips here, so both sums run over all three.
+        net = governed_ring(; hr2 = 5000.0, hr3 = 5000.0)
+        ma  = machine_arrays(net)
+        pred = (-1.5) / (sum(ma.invR) + sum(ma.D))
+        @test isapprox(pred, -0.009375; atol = 1e-12)
+        for (rate, dur) in ((-0.5, 3.0), (-1.5, 1.0), (-0.15, 10.0))
+            @test rate * dur ≈ -1.5                       # same magnitude, three shapes
+            eng = init!(SwingEngine, net; dt = 0.01,
+                        ramp = [:G1 => GenerationRamp(rate, 1.0, dur)])
+            peak = 0.0
+            for _ in 1:20_000
+                step!(eng, 0.01)
+                peak = max(peak, maximum(current_state(eng).ΔPm))
+            end
+            @test isapprox(current_state(eng).ω_coi, pred; rtol = 1e-9)
+            # THE PRECONDITION, SIZED AGAINST THE PEAK AND NOT THE SETTLED VALUE
+            # (step 2's lesson). The governor overshoots on the way in: G3 settles at
+            # 0.9375 pu of extra power but PEAKS near 1.19 pu, 26 % higher. A headroom
+            # chosen from the settled figure would silently saturate the run and the
+            # closed form above would then be asserting the ceiling, not the droop.
+            @test peak > 1.0                              # …the overshoot is real
+            @test peak < minimum(ma.headroom[2:3])        # …and well inside the reserve
+            @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        end
+    end
+
+    @testset "M3 step 5: the ramp is inert at the fixpoint solve (flat start survives)" begin
+        # M2's acceptance criterion, carried into a right-hand side that now depends
+        # on `t`: a model placed off its own equilibrium rings from `t = 0` with a
+        # plausible oscillation that is pure initialisation artefact. The ramp is the
+        # first thing in the repo that could seed that quietly.
+        net = governed_ring()
+        bare = init!(SwingEngine, net; dt = 0.01)
+        eng  = init!(SwingEngine, net; dt = 0.01,
+                     ramp = [:G1 => GenerationRamp(-0.5, 2.0, 3.0)])
+        @test eng.integrator.u == bare.integrator.u        # same steady state, to the bit
+        @test maximum(abs, current_state(eng).ω) == 0.0    # …and it is flat
+        # The armed ramp really is in the live system — the identity above is inertness
+        # at the solve, not a ramp that failed to arm.
+        @test eng.params[eng.rate_pidx[1]] == -0.5
+        @test generation_ramp(eng, :G1) == GenerationRamp(-0.5, 2.0, 3.0)
+        # Nothing happens until `t_start`, to the bit; and then something does.
+        for _ in 1:199; step!(eng, 0.01); step!(bare, 0.01); end
+        @test eng.integrator.u == bare.integrator.u        # t = 1.99 s, still identical
+        for _ in 1:200; step!(eng, 0.01); step!(bare, 0.01); end
+        @test current_state(eng).f_coi < current_state(bare).f_coi - 0.01
+    end
+
+    @testset "M3 step 5: ramp guards, one message each" begin
+        # Each rule gets its own asserted message, the M2/M3 discipline: a bad ramp
+        # usually breaks more than one at once and "it threw" would not say which.
+        @test_throws "rate (Inf) must be finite"     GenerationRamp(Inf, 1.0, 2.0)
+        @test_throws "rate (NaN) must be finite"     GenerationRamp(NaN, 1.0, 2.0)
+        @test_throws "t_start (Inf) must be finite"  GenerationRamp(-0.5, Inf, 2.0)
+        @test_throws "duration (0.0) must be > 0"    GenerationRamp(-0.5, 1.0, 0.0)
+        @test_throws "duration (-2.0) must be > 0"   GenerationRamp(-0.5, 1.0, -2.0)
+        @test_throws "duration (Inf) must be finite" GenerationRamp(-0.5, 1.0, Inf)
+        # A zero RATE is legal and is the whole point of the identity test above.
+        @test GenerationRamp(0.0, 1.0, 2.0).rate == 0.0
+
+        net = governed_ring()
+        @test_throws "no machine named `:G9`" init!(SwingEngine, net;
+            ramp = [:G9 => GenerationRamp(-0.5, 1.0, 2.0)])
+        @test_throws "two ramps on machine `:G1`" init!(SwingEngine, net;
+            ramp = [:G1 => GenerationRamp(-0.5, 1.0, 2.0),
+                    :G1 => GenerationRamp(-0.2, 3.0, 2.0)])
+        # THE MIS-SIGNED START, which is the one that would not have thrown anything:
+        # a ramp already under way at `t0` is folded into the steady state and the run
+        # rings from the first step with an artefact that looks like physics.
+        @test_throws "before the run's own t0" init!(SwingEngine, net;
+            ramp = [:G1 => GenerationRamp(-0.5, -1.0, 2.0)])
+        # …and it is measured against the run's OWN `t0`, not against zero.
+        @test_throws "before the run's own t0" init!(SwingEngine, net; t0 = 5.0,
+            ramp = [:G1 => GenerationRamp(-0.5, 1.0, 2.0)])
+        e = init!(SwingEngine, net; t0 = 5.0,
+                  ramp = [:G1 => GenerationRamp(-0.5, 5.0, 2.0)])
+        @test maximum(abs, current_state(e).ω) == 0.0      # t_start == t0 is legal and flat
+    end
+
+    @testset "M3 step 5: the ramp's ends are corners, and protection root-finds through them" begin
+        # `clamp` makes `Pm_eff` continuous with a KINK in its slope at `t_start` and
+        # at `t_start + duration` — a corner, never a jump. That is the whole reason
+        # D7 rejected a staircase of N discrete trips: a jump would put a root in the
+        # very signal the shed ladder and the out-of-step relay are root-finding on,
+        # and the instants they report would be artefacts of N.
+        #
+        # The check with teeth is NOT "arm protection that never fires and watch it not
+        # fire" — that passes with the ramp deleted from the RHS. It is a ladder whose
+        # threshold the ramp DOES cross, at a time that must come out of the crossing
+        # and not out of a corner.
+        R = GenerationRamp(-0.5, 1.0, 3.0)                 # corners at t = 1.0 and 4.0
+        function fire_at(dt, th)
+            eng = init!(SwingEngine, governed_ring(; hr2 = 5000.0, hr3 = 5000.0); dt = dt,
+                        ramp = [:G1 => R],
+                        shed = [:G2 => [LoadShedStage(th, 0.02; label = :s1)]])
+            for _ in 1:round(Int, 15.0 / dt); step!(eng, dt); end
+            return eng, shed_log(shed_ladder(eng, :G2))
+        end
+        # 49.15 Hz is deliberately chosen so the crossing lands 10 ms BEFORE the ramp's
+        # far corner — as close to it as the trace allows without being it. If the
+        # corner were leaking a root, this is where it would show.
+        eng, lg = fire_at(0.01, 49.15)
+        @test length(lg.t) == 1
+        @test isapprox(lg.t[1], 3.989737027; atol = 1e-7)
+        @test abs(lg.t[1] - 4.0) > 1e-2                    # …near the corner, not at it
+        @test abs(lg.t[1] - 1.0) > 1.0
+        # It is the crossing of the recorded trace, to the recorder's own linear
+        # interpolation error — the shed is where the frequency actually got there.
+        s  = state_series(eng)
+        f2 = eng.model.f0 .* (1 .+ s.ω_G2)
+        k  = findfirst(i -> f2[i] >= 49.15 > f2[i + 1], 1:length(f2) - 1)
+        tx = s.t[k] + (f2[k] - 49.15) / (f2[k] - f2[k + 1]) * (s.t[k + 1] - s.t[k])
+        @test isapprox(lg.t[1], tx; atol = 1e-3)
+        # …and 100× closer to that crossing than to the corner it nearly touches.
+        @test abs(lg.t[1] - tx) < abs(lg.t[1] - 4.0) / 100
+
+        # V6's own discriminator, applied to the corners: a root-found instant must not
+        # move with the OUTER step size. Measured at four thresholds spanning before,
+        # straddling and after both corners; worst movement over a 4× change in `dt` is
+        # 6.2e-8 s. That measurement is also why NO `tstops` are pinned at the corners:
+        # there is nothing left for them to buy, and pinning them would change the step
+        # sequence and destroy the zero-rate bit-identity above.
+        for th in (49.9, 49.15, 49.0, 48.9)
+            _, a = fire_at(0.02, th)
+            _, b = fire_at(0.005, th)
+            @test length(a.t) == 1 && length(b.t) == 1
+            @test abs(a.t[1] - b.t[1]) < 1e-6
+            @test abs(a.t[1] - 1.0) > 1e-3 && abs(a.t[1] - 4.0) > 1e-3
+        end
+
+        # And an out-of-step relay live across both corners, on the branch the ramp
+        # swings HARDEST: |δ_B1 − δ_B2| starts at 0.0378 rad and is driven to 0.1177 —
+        # a 3× excursion that comes within 10 % of the 0.13 rad threshold and must not
+        # cross it. A corner that leaked a root would fire it regardless of the margin.
+        eng2 = init!(SwingEngine, governed_ring(; hr2 = 5000.0, hr3 = 5000.0); dt = 0.01,
+                     ramp = [:G1 => R], out_of_step = [(:B1, :B2) => OutOfStepTrip(0.13)])
+        peak = 0.0
+        for _ in 1:2000
+            st = step!(eng2, 0.01)
+            peak = max(peak, abs(st.δ[1] - st.δ[2]))
+        end
+        @test isapprox(peak, 0.117655; atol = 1e-4)        # …the excursion is real
+        @test peak < 0.13 && peak > 0.9 * 0.13             # …and it came within 10 %
+        rl = out_of_step_log(out_of_step_relay(eng2, :B1, :B2))
+        @test !rl.tripped && rl.armed
+        @test is_online(eng2, :B1, :B2)
+        @test isempty(event_log(eng2))
+    end
+
+    @testset "M3 step 5: a ramp on a GOVERNED machine — the ceiling, and a ladder on top" begin
+        # Everything above runs its ramp on G1, the governor-free machine, so the
+        # response is unambiguously the survivors'. That leaves the configuration
+        # step 6 actually needs untested: ONE machine carrying the cascade, its own
+        # droop, and its own defence plan — which is the Iberian shape exactly. Step
+        # 3's rule ("test the configuration the NEXT step needs, not just the one
+        # this step changed") applies here rather than after step 6 goes wrong.
+        #
+        # It is also the counterfactual for a claim `GenerationRamp`'s docstring
+        # makes in prose and nothing else asserted: **headroom does not move with the
+        # ramp.** The governor still saturates at `Pmax − P0`, so the machine's TOTAL
+        # mechanical ceiling travels down with the generation that is leaving, ending
+        # at `Pmax + rate·duration`. If anyone later "fixes" headroom to track
+        # `Pm_eff`, this is what goes red.
+        net = governed_ring(; hr2 = 20.0, hr3 = 5000.0)   # G2: 20 MW of reserve only
+        ma  = machine_arrays(net)
+        R   = GenerationRamp(-0.5, 1.0, 3.0)              # −1.5 pu, all of it on G2
+        @test ma.headroom[2] == 0.2
+
+        eng = init!(SwingEngine, net; dt = 0.01, ramp = [:G2 => R])
+        for _ in 1:20_000; step!(eng, 0.01); end          # 200 s — well past settling
+        st = current_state(eng)
+        # G2's droop would command `−ω·invR = 0.433 pu`; it holds at its 0.2 pu
+        # ceiling, and the rest of the deficit goes to G3 and to damping:
+        #   −1.5 + headroom₂ + (−ω)(invR₃ + ΣD) = 0  ⇒  ω = −1.3/120
+        @test isapprox(st.ω_coi, -1.3 / 120; rtol = 1e-9)
+        @test -st.ω_coi * ma.invR[2] > 2 * ma.headroom[2]   # …it really is saturated
+        @test isapprox(st.ΔPm[2], ma.headroom[2]; atol = 1e-10)
+        @test st.ΔPm[2] <= ma.headroom[2] + 1e-10           # the step-rejecting slack
+        # THE CEILING TRAVELLED WITH THE LOSS. Total mechanical power is
+        # `Pm_eff + ΔPm`, and at settle that is exactly `Pmax + rate·duration` — the
+        # machine ends up ABSORBING 1.0 pu, which is the right physics for a fleet
+        # that lost 150 MW of plant and has 20 MW of reserve left to answer with.
+        total = (ma.Pm[2] + R.rate * R.duration) + st.ΔPm[2]
+        @test isapprox(total, (ma.Pm[2] + ma.headroom[2]) + R.rate * R.duration; atol = 1e-10)
+        @test isapprox(total, -1.0; atol = 1e-10)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+
+        # …and now the ladder on that same machine. A shed steps `Pm`; the ramp adds
+        # to `Pm`; headroom sits on `P0` and moves with neither. Three independent
+        # decisions, and it is their AGREEMENT that would break silently — so it is
+        # asserted rather than reasoned. The block lands at 2.84 s, i.e. while the
+        # ramp is still running, which is the case worth covering.
+        eng2 = init!(SwingEngine, net; dt = 0.01, ramp = [:G2 => R],
+                     shed = [:G2 => [LoadShedStage(49.6, 0.3; label = :s1)]])
+        for _ in 1:20_000; step!(eng2, 0.01); end
+        st2 = current_state(eng2)
+        lg  = shed_log(shed_ladder(eng2, :G2))
+        @test length(lg.t) == 1
+        @test R.t_start < lg.t[1] < R.t_start + R.duration   # …fired mid-ramp
+        @test isapprox(eng2.params[eng2.Pm_pidx[2]], ma.Pm[2] + 0.3; atol = 1e-12)
+        # The ramp still delivered exactly `rate·duration`: the shed moved the settling
+        # point by its own block over the same denominator and by nothing else.
+        @test isapprox(st2.ω_coi, -1.0 / 120; rtol = 1e-9)
+        @test isapprox(st2.ω_coi - st.ω_coi, 0.3 / 120; rtol = 1e-7)
+        # …and the ceiling is untouched by the shed, which is the decision that would
+        # break silently if a shed ever adjusted headroom along with `Pm`.
+        @test eng2.params[eng2.hr_pidx[2]] == ma.headroom[2]
+        @test isapprox(st2.ΔPm[2], ma.headroom[2]; atol = 1e-10)
+    end
+
+    @testset "M3 step 5: a generator trip takes its ramp with it" begin
+        # `Pm_eff = Pm + rate·clamp(…)`, so zeroing `Pm` alone would leave the ramp
+        # standing: a machine that is offline, decoupled from every branch and undriven
+        # would go on being injected into. `m3-context.md` predicted exactly this
+        # re-opening — explicit `t`-dependence in the vertex RHS puts the "a dead
+        # machine injects power" case back on the table that step 3 found unreachable.
+        #
+        # Observed from OUTSIDE the parameter vector, deliberately: reading `rate` back
+        # would pass even if the RHS ignored it. What is asserted is the dead rotor's
+        # own motion. Once tripped it is islanded (its couplings are zero) and undriven,
+        # so it obeys `dω/dt = −Dω/2H` exactly — a pure decay with time constant
+        # `2H/D = 2·12/6 = 4 s` on this machine's system-base values. A ramp still
+        # running would drive it instead, and by t = 20 s that is not a subtle difference.
+        net = governed_ring(; hr2 = 5000.0, hr3 = 5000.0)
+        eng = init!(SwingEngine, net; dt = 0.01,
+                    ramp = [:G1 => GenerationRamp(-0.5, 1.0, 3.0)])
+        for _ in 1:200; step!(eng, 0.01); end              # t = 2.0 s, mid-ramp
+        @test eng.params[eng.rate_pidx[1]] == -0.5
+        inject!(eng, TripGenerator(:G1))
+        ω_trip = current_state(eng).ω[1]
+        @test ω_trip < -1e-3                               # the ramp had already bitten
+        ma = machine_arrays(net)
+        τ  = 2 * ma.H[1] / ma.D[1]
+        @test isapprox(τ, 4.0; atol = 1e-12)
+        for _ in 1:1800; step!(eng, 0.01); end             # t = 20 s
+        st = current_state(eng)
+        @test isapprox(st.ω[1], ω_trip * exp(-(st.t - 2.0) / τ); rtol = 1e-6)
+        @test abs(st.ω[1]) < abs(ω_trip)                   # …decayed, not driven
+        # THE DISCRIMINATING NUMBER, stated rather than left implicit. Had the ramp
+        # survived the trip it would have finished delivering its full −1.5 pu into a
+        # rotor with nowhere to send it, and that rotor would have settled at
+        # `−ΔP/D = −1.5/6 = −0.25` pu. What is actually here is four orders of
+        # magnitude smaller — this is not a tolerance, it is a different outcome.
+        @test abs(st.ω[1]) < 1e-4
+        # The other half of the picture, deliberately labelled as the half that CANNOT
+        # tell the two runs apart (step 4's V6 lesson): the survivors settle on the
+        # post-trip closed form either way, because a tripped machine's power reaches
+        # nobody — its branches are already open. Only the dead rotor discriminates.
+        for _ in 1:8000; step!(eng, 0.01); end             # t = 100 s
+        surv = -0.8 / (sum(ma.invR[2:3]) + sum(ma.D[2:3]))
+        @test isapprox(current_state(eng).ω_coi, surv; rtol = 1e-8)
+    end
+
     @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
         # The sharper half of step 5, and why it leads. A GENERATOR trip breaks
         # `Σ Pm = 0` and this tier has no governors, so nothing settles (see the
@@ -3628,7 +3939,7 @@ end
             net = big_ring(n)
             eng = init!(SwingEngine, net; dt = 0.02)
             nb, ne = length(net.buses), length(net.branches)
-            @test length(eng.params) == 7nb + ne       # 7 per machine, 1 per branch
+            @test length(eng.params) == 10nb + ne      # 10 per machine, 1 per branch
             @test length(eng.integrator.u) == 3nb      # (δ, ω, ΔPm) per machine
             @test sum(length, eng.incident) == 2ne     # each branch at exactly 2 buses
             @test length(eng.K_pidx) == ne
@@ -3652,16 +3963,31 @@ end
         # deliberately NOT in that list: `ΔPm` is read through `current_state`
         # rather than recorded as 1 channel per machine, which would have added
         # another n to the sample buffer and a per-machine trace nothing asked for.
-        @test counts == [98, 242, 962]                 # exactly 24n + 2
+        #
+        # And again at M3 step 5, by exactly 4n, accounted for the same way: the
+        # generation ramp's three vertex parameters (`rate`, `t_start`, `duration`)
+        # add 3n, and ONE new index vector (`rate_pidx`) adds n. `t_start` and
+        # `duration` deliberately get no index — they are written once at
+        # construction and nothing may move them, so a handle to them would be a
+        # handle to something with no writer. 24n + 2 → 28n + 2. `eng.ramps` is a
+        # vector too, but it holds one entry per *armed* ramp and these rings arm
+        # none, so it contributes zero here and cannot scale with n at all.
+        @test counts == [114, 282, 1122]               # exactly 28n + 2
 
         # Linear, asserted as such: equal slope over both intervals. A dense n×n
         # anywhere would make the second slope 30× the first.
         @test (counts[2] - counts[1]) / (10 - 4) == (counts[3] - counts[2]) / (40 - 10)
         # The positive control, stated as a number: at n = 40 the engine's ENTIRE
-        # array storage is 962 elements, while one dense Y-bus alone would be 1600.
-        # The margin narrowed when the governor state landed (it was 722), which is
-        # the honest reading — a linear model with a bigger constant is still linear,
-        # and the slope assertion above is what actually rules out the n² structure.
+        # array storage is 1122 elements, while one dense Y-bus alone would be 1600.
+        # The margin has narrowed twice — 722 before the governor state, 962 before
+        # the ramp — which is the honest reading: a linear model with a bigger
+        # constant is still linear, and the slope assertion above is what actually
+        # rules out the n² structure. It is also worth saying that this control
+        # expires: at n = 40 the gap to 1600 is 478 elements, i.e. about twelve more
+        # per-machine terms — six more parameters each carrying its own index vector
+        # — would put the count past 40² while the model stayed perfectly linear. So
+        # the slope is the claim and this line is a sanity check with a known shelf
+        # life.
         @test counts[3] < 40^2
     end
 

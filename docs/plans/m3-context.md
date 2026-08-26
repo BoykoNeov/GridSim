@@ -339,6 +339,87 @@ quantity `rate·duration` represents (generation lost, not apparent imbalance), 
 reconcile the staged discrete losses *before* the ramp with the cumulative 5,750 MW
 at 12:33:20.560. It is a checklist item, not a discovery to be made mid-step.
 
+
+**What step 5 found, and it was not on the checklist.** Three things, all of which
+changed the shipped code rather than only its comments.
+
+1. **`find_fixpoint` had been evaluating the vertex RHS at `t = NaN` since M2, and
+   nothing had noticed.** NetworkDynamics' `find_fixpoint` defaults its evaluation
+   time to `NaN` (it wraps the network in a `NetworkFixedT` and passes that through
+   verbatim). That was harmless for four milestones because no vertex RHS read `t`
+   at all. The moment one does it is fatal, and **not only for a real ramp**:
+   `clamp(NaN − t_start, 0, d)` is `NaN`, `0.0 · NaN` is `NaN`, so a machine with
+   `rate = 0` — every machine in every existing model — would have NaN'd the
+   steady-state solve of the whole repo. The constructor now passes `t = t0`
+   explicitly. That is also just the right question ("what is this system's
+   equilibrium at the instant the run begins?"), and it is what makes the ramp
+   *structurally* inert at the solve rather than inert by luck: `t_start ≥ t0` is
+   enforced, so `clamp(t0 − t_start, 0, duration)` is exactly `0` there. Asserted
+   directly, `swing_vertex!` at `t = NaN` and at `t = 0`, so the line cannot later
+   be deleted as decoration.
+
+2. **A generator trip has to take its ramp with it.** `Pm_eff = Pm + ramp`, so
+   `inject!(::TripGenerator)` zeroing `Pm` alone leaves the ramp term standing on
+   its own — and an offline machine is decoupled from every branch, so it would be
+   a dead, undriven rotor still being injected into. This is precisely the
+   re-opening the D5 note above predicted when it said *"step 5's ramp puts
+   `t`-dependence into the vertex RHS, which is exactly what would re-open the
+   physical case quietly."* It is closed by construction (the rate is zeroed with
+   `Pm`, the droop gain and the headroom), and asserted from **outside** the
+   parameter vector: the dead rotor's own undriven decay `ω_trip·e^{−t·D/2H}` to
+   `rtol = 1e-6`. Reading `rate` back would have passed even if the RHS ignored it.
+   The survivors' settling frequency is asserted too and labelled as the half that
+   **cannot** tell the two runs apart, since a tripped machine's power reaches
+   nobody either way — step 4's V6 lesson, applied before it could bite.
+
+3. **The planned corner check was vacuous, and the rewrite is what has teeth.**
+   "Arm protection whose threshold the run never reaches; assert nothing fires at
+   `t_start` or `t_start + duration`" passes with the ramp term deleted from the
+   RHS — nothing fires because nothing happens. That is step 3's V5 trap and step
+   4's V6 third clause for a third time. What is asserted instead is a ladder whose
+   threshold the ramp *does* cross, at 49.15 Hz, chosen so the crossing lands **10
+   ms before** the far corner: it fires at `3.989737 s`, sits 100× closer to the
+   recorded frequency crossing than to the corner it nearly touches, and moves by
+   less than `6.2e-8 s` over a 4× change in `dt`.
+
+**No `tstops` are pinned at the corners, and that was decided by measurement.** The
+defensive move is to hand `init` a `tstops` at each kink so the solver lands exactly
+on it. The `dt`-halving measurement above — four thresholds, crossings before,
+straddling and after both corners — says the root-found instant is already stable to
+`6.2e-8 s`, orders below anything asserted. And `tstops` would change the step
+sequence, which would destroy the zero-rate bit-identity that proves this whole
+parameter addition perturbed nothing. Cost with no benefit, so: none.
+
+**`rate` is in pu/s on `S_base`, not MW/s.** The tempting choice is MW/s, to match
+`Machine.P0`. It is wrong here for the reason the model file already states:
+`machine_arrays`/`branch_arrays` are the *single* place model data converts to the
+system base. A ramp is not model data — it is an engine-armed setting, and the
+precedent is `LoadShedStage(threshold_hz, ΔP_pu)`, which takes pu for exactly this
+reason. MW/s would have opened a second conversion site next to the invariant that
+forbids one.
+
+**Headroom deliberately does NOT move with the ramp**, and that is a physics
+decision rather than an omission. The governor still saturates at `Pmax − P0`, so a
+ramping machine's *total* mechanical ceiling is `Pmax + rate·(elapsed)` — it travels
+down with the generation that is leaving. That is the right behaviour for a fleet
+losing units, and it is already what `Pmax` means here: a net-injection ceiling, not
+a nameplate (D4). It ships with the counterfactual step 1's rule demands — a governed
+machine with 20 MW of reserve carrying a 150 MW ramp pins its `ΔPm` at exactly its
+headroom and ends up **absorbing** 1.0 pu, which is asserted as a number. That same
+fixture is also the first place a nonzero ramp, real droop and a shed ladder all sit
+on ONE machine — the Iberian shape, and a configuration every other step-5 test
+avoided by ramping the governor-free machine.
+
+**The magnitude claim, which is what step 6 actually needs.** Where the system
+settles depends only on the total `rate·duration`, never on the path — so one
+closed form validates the ramp's magnitude *and* its shape at once. Three shapes
+delivering the same −1.5 pu (`−0.5×3`, `−1.5×1`, `−0.15×10`) all land on step 2's
+droop closed form `Δω = ΔP/(Σ1/Rᵢ + ΣDᵢ) = −0.009375` to `rtol = 1e-9`. Sizing that
+run's reserve needs the **peak** governor command (≈1.19 pu) and not the settled one
+(0.9375 pu) — 26 % apart, and a reserve chosen from the settled figure would have
+silently saturated the run so the "closed form" was asserting the ceiling instead of
+the droop. Step 2's lesson, and it recurred here unprompted.
+
 ### D8 — A real system base, chosen once
 
 M1's Iberian script used `s_base(H_tot) = KE/H_tot`, making the base an artefact

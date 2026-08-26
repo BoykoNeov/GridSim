@@ -8,8 +8,21 @@
 # a pure ODE and `Tsit5` still applies. Per machine, on `S_base`:
 #
 #     dδᵢ/dt   = ω₀·ωᵢ
-#     dωᵢ/dt   = (Pmᵢ + ΔPmᵢ − Σⱼ K_ij·sin(δᵢ−δⱼ) − Dᵢ·ωᵢ) / (2Hᵢ)
+#     dωᵢ/dt   = (Pm_effᵢ + ΔPmᵢ − Σⱼ K_ij·sin(δᵢ−δⱼ) − Dᵢ·ωᵢ) / (2Hᵢ)
 #     dΔPmᵢ/dt = (−ωᵢ·(1/Rᵢ) − ΔPmᵢ) / Tgᵢ      saturated at headroomᵢ (M3 step 1)
+#     Pm_effᵢ  = Pmᵢ + rateᵢ·clamp(t − t_startᵢ, 0, durationᵢ)          (M3 step 5)
+#
+# THE SCHEDULED RAMP (M3 step 5, D7) is the only `t`-dependence in the whole RHS,
+# and it earns two notes here because it changes what the file can assume:
+#
+#   - **The steady-state solve now has to be told a time.** `find_fixpoint` defaults
+#     to `t = NaN`, which was harmless while nothing read `t` and is fatal the moment
+#     something does (`0.0 * clamp(NaN, …)` is `NaN`). The constructor pins it to the
+#     run's own `t0`, and `t_start ≥ t0` is enforced — so the ramp contributes exactly
+#     zero at the solve and M2's flat-start criterion survives unchanged.
+#   - **A ramp leaves with its machine.** `Pm_eff` is `Pm` plus the ramp, so
+#     `inject!(::TripGenerator)` zeroes the rate as well as `Pm`, or a dead rotor
+#     would go on being injected into.
 #
 # `ωᵢ` is a **per-unit speed deviation of one machine** and is NOT M1's aggregate
 # `Δω`. The system-wide quantity is the inertia-weighted mean
@@ -163,11 +176,17 @@ describe_event(ev::EngineEvent) =
 
 One machine's RHS. State `v = (δ, ω, ΔPm)` — rotor angle (rad), per-unit speed
 deviation, and the governor's extra mechanical power (pu on the system base).
-Parameters `p = (Pm, H, D, ω₀, invR, headroom, Tg)`, all on the system base.
+Parameters `p = (Pm, H, D, ω₀, invR, headroom, Tg, rate, t_start, duration)`, all on
+the system base.
 
 `ΔPm` is a **deviation**: it starts at zero and rides on top of the scheduled `Pm`,
 so a machine's total mechanical power is `Pm + ΔPm`. It is per machine, and there
 is no aggregate counterpart by design (see the head of this file).
+
+`(rate, t_start, duration)` are the scheduled **generation ramp** (M3 step 5, D7):
+the scheduled power itself becomes `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)`.
+A machine with no ramp carries `rate = 0`, which is arithmetically the machine it
+always was — asserted in `test/`, to the bit.
 
 `ω₀` rides in the parameter vector rather than being captured in a closure so that
 every model compiles to the *same* `Network` type: a closure over `ω₀` would make
@@ -180,10 +199,26 @@ function swing_vertex!(dv, v, esum, p, t)
     δ, ω, ΔPm = v[1], v[2], v[3]
     Pm, H, D, ω₀ = p[1], p[2], p[3], p[4]
     invR, headroom, Tg = p[5], p[6], p[7]
+    rate, t_start, duration = p[8], p[9], p[10]
     dv[1] = ω₀ * ω
+    # The scheduled generation ramp (M3 step 5, D7). Continuous in `t`: it holds at
+    # `Pm` until `t_start`, travels linearly for `duration`, then holds. The two ends
+    # are corners in the SLOPE, never jumps — and that is the whole reason this is a
+    # ramp inside the RHS rather than the obvious alternative, **a staircase of N
+    # discrete trips**. A staircase's edges are jump discontinuities in exactly the
+    # signal step 3's shed ladder and step 4's out-of-step relay root-find on, so the
+    # instants they report would be artefacts of the slice count N — a number that
+    # moves when you change N and still looks like a result. That is the class of
+    # error step 6's sweep exists to rule out, so it must not be built into the input
+    # the sweep varies. Cost, stated: the vertex RHS now carries a scenario input.
+    #
+    # `rate == 0` is the un-ramped machine and is arithmetically identical to the
+    # pre-M3-step-5 line (`Pm + 0.0` is `Pm`, bit for bit), which is what lets every
+    # existing model keep its recorded run to the digit.
+    Pm_eff = Pm + rate * clamp(t - t_start, 0.0, duration)
     # `esum` is MINUS the electrical power exported from this bus — see the sign
     # convention note in the file header — hence `+ esum[1]`, not `-`.
-    dv[2] = (Pm + ΔPm + esum[1] - D * ω) / (2 * H)
+    dv[2] = (Pm_eff + ΔPm + esum[1] - D * ω) / (2 * H)
     # Governor/turbine first-order lag toward the droop-commanded power. `invR` is
     # the GAIN `1/R` already converted to the system base (`machine_arrays`), so a
     # governor-free machine is `invR = 0` — no droop command, and no `Inf` in the
@@ -231,8 +266,8 @@ parameter vector (`eng.params === eng.integrator.p`,
 the M1 pattern that lets an event change the system without disturbing the
 continuous state — inherited here from NetworkDynamics rather than assumed, and
 asserted in `test/`); flat index vectors into the state and parameter arrays
-(`δ_idx`/`ω_idx`/`ΔPm_idx`/`Pm_pidx`/`K_pidx`/`invR_pidx`/`hr_pidx`), resolved once through NetworkDynamics'
-symbolic interface so nothing here assumes a memory layout; `branch_to_edge` and
+(`δ_idx`/`ω_idx`/`ΔPm_idx`/`Pm_pidx`/`K_pidx`/`invR_pidx`/`hr_pidx`/`rate_pidx`), resolved once through
+NetworkDynamics' symbolic interface so nothing here assumes a memory layout; `branch_to_edge` and
 `incident`, the graph bookkeeping the header describes; `branch_of_buses`, the
 bus-pair index behind `is_online`; the pre-trip inertias `H` (kept for step 6's
 `coi_model`, never mutated) beside the live COI weights `w` (a machine's inertia
@@ -258,6 +293,7 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     K_pidx::Vector{Int}
     invR_pidx::Vector{Int}
     hr_pidx::Vector{Int}
+    rate_pidx::Vector{Int}
     branch_to_edge::Vector{Int}
     incident::Vector{Vector{Int}}
     branch_of_buses::Dict{Tuple{Symbol,Symbol},Int}
@@ -271,6 +307,7 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     nadir::Float64
     ladders::Vector{ShedLadder}
     relays::Vector{OutOfStepRelay}
+    ramps::Vector{Pair{Symbol,GenerationRamp}}
 end
 
 # `isoutofdomain` predicate, built per engine because it has to close over the
@@ -449,6 +486,47 @@ function _guard_out_of_step_start(bound::AbstractVector, u0::Vector{Float64})
     return nothing
 end
 
+# --- how a scheduled generation ramp reaches THIS engine's parameters (step 5, D7)
+#
+# Unlike a ladder or a relay, a ramp holds **no live state**: it is three numbers
+# that sit in the vertex parameter vector and are read by the RHS. So there is
+# nothing to bind by closure and nothing an engine could accidentally share with
+# another — this only validates and normalises what the caller asked for.
+#
+# `ramp` is a **vector of pairs**, not a `Dict`, for `shed`'s and `out_of_step`'s
+# reason: two runs of the same script must produce the same engine, and a `Dict`'s
+# iteration order is not the caller's. Here it decides nothing about callbacks, but
+# it does decide the order `generation_ramp`'s owner reports them in, and one rule
+# for all three arming arguments is cheaper than a rule with an exception.
+#
+# THE `t_start ≥ t0` GUARD IS THE ONE THAT MATTERS, and it lives here rather than on
+# `GenerationRamp` because only the engine knows `t0`. A ramp already under way at
+# the start of the run would be folded into the steady state `find_fixpoint` places
+# the engine on, and the run would then begin **off** the equilibrium of its own
+# system: it would ring from `t = 0` with a plausible oscillation that is pure
+# initialisation artefact. That is precisely M2's flat-start acceptance criterion
+# (V1), and a mis-signed `t_start` is exactly how it would be lost quietly. Refused
+# at construction instead.
+function _bind_ramps(ramp, ids::Vector{Symbol}, t0::Float64)
+    out = Pair{Symbol,GenerationRamp}[]
+    for (machine, setting) in ramp
+        findfirst(==(machine), ids) === nothing && throw(ArgumentError(
+            "ramp: no machine named `:$machine` in this network; have $(ids)"))
+        any(pr -> first(pr) === machine, out) && throw(ArgumentError(
+            "ramp: two ramps on machine `:$machine`; give it one ramp, or only the " *
+            "last would be armed and the other would silently do nothing"))
+        r = setting::GenerationRamp
+        r.t_start >= t0 || throw(ArgumentError(
+            "ramp: the ramp on `:$machine` starts at t_start = $(r.t_start) s, before " *
+            "the run's own t0 = $t0 s. A ramp already under way when the run starts " *
+            "is folded into the steady state the engine is placed on, and the run " *
+            "then rings from t0 with an oscillation that is initialisation artefact " *
+            "rather than physics. Set t_start >= t0."))
+        push!(out, machine => r)
+    end
+    return out
+end
+
 function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
     return function (u, p, t)
         @inbounds for k in eachindex(ΔPm_idx)
@@ -460,7 +538,7 @@ end
 
 """
     SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
-                out_of_step=[], capacity=200_000)
+                out_of_step=[], ramp=[], capacity=200_000)
 
 Compile `net` into a NetworkDynamics `Network`, place it on its steady state, and
 return a ready-to-step engine.
@@ -495,12 +573,24 @@ engine's own `inject!(::TripLine)`. Latching, and disarmed rather than fired if 
 branch is opened by anything else or a generator at either end trips (decision D6;
 see `protection/out_of_step.jl` for why the threshold lives on the relay and not on
 `Branch`). Owned by the engine for the ladders' reason. Default: no relays.
+
+`ramp` schedules a **generation ramp** per machine, as a vector of pairs
+`[:G1 => GenerationRamp(rate_pu_per_s, t_start, duration)]` (M3 step 5, D7). The
+machine's scheduled power becomes `Pm + rate·clamp(t − t_start, 0, duration)` — a
+continuous linear change rather than the instant `TripGenerator` applies, which is
+what the report's 2.46 s cascade actually was and what step 6's sweep varies.
+Unlike a ladder or a relay it carries no live state: it is three vertex parameters,
+armed here and read by the RHS. `t_start` must be at or after `t0` (see
+`_bind_ramps` for what a mis-signed one would do to the flat start). Default: no
+ramps, which is `rate = 0` and is the machine every earlier model described, to the
+bit.
 """
 function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      dt::Real = _SWING_DT0,
                      solver = OrdinaryDiffEq.Tsit5(),
                      shed = Pair{Symbol,Vector{LoadShedStage}}[],
                      out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
+                     ramp = Pair{Symbol,GenerationRamp}[],
                      capacity::Integer = _TRAJ_CAPACITY)
     ma = machine_arrays(net)
     ba = branch_arrays(net)
@@ -523,7 +613,8 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     vertex = NetworkDynamics.VertexModel(f = swing_vertex!,
                                          g = NetworkDynamics.StateMask(1:1),
                                          sym = [:δ, :ω, :ΔPm],
-                                         psym = [:Pm, :H, :D, :ω₀, :invR, :headroom, :Tg],
+                                         psym = [:Pm, :H, :D, :ω₀, :invR, :headroom, :Tg,
+                                                 :rate, :t_start, :duration],
                                          name = :machine)
     edge = NetworkDynamics.EdgeModel(g = NetworkDynamics.AntiSymmetric(swing_edge!),
                                      outsym = [:P], psym = [:K], name = :branch)
@@ -561,6 +652,25 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
         s.p.v[i, :invR]     = ma.invR[i]
         s.p.v[i, :headroom] = ma.headroom[i]
         s.p.v[i, :Tg]       = ma.Tg[i]
+        # No ramp is the default, and it is `rate = 0` — arithmetically the machine
+        # this engine described before M3 step 5. `t_start`/`duration` are then
+        # unread; they are seeded to a self-consistent zero rather than to `Inf` so
+        # nothing in the RHS can multiply a zero by an infinity.
+        s.p.v[i, :rate]     = 0.0
+        s.p.v[i, :t_start]  = 0.0
+        s.p.v[i, :duration] = 0.0
+    end
+    # The armed ramps overwrite those defaults. Done through the symbolic interface
+    # for the same reason every other parameter is (`test/` asserts the flat indices
+    # round-trip against a symbolic read), and BEFORE the fixpoint solve, so the
+    # steady state the engine is placed on is the steady state of the system the
+    # ramp is armed on — not of a different one that gets the ramp bolted on after.
+    ramps = _bind_ramps(ramp, ids0, Float64(t0))
+    for (machine, r) in ramps
+        i = findfirst(==(machine), ids0)::Int
+        s.p.v[i, :rate]     = r.rate
+        s.p.v[i, :t_start]  = r.t_start
+        s.p.v[i, :duration] = r.duration
     end
 
     branch_to_edge = Vector{Int}(undef, length(ba.K))
@@ -591,6 +701,11 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     K_pidx    = [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, :K)) for e in 1:ne]
     invR_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :invR)) for i in 1:nb]
     hr_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :headroom)) for i in 1:nb]
+    # Only the ramp's RATE gets a flat index: it is the one ramp parameter anything
+    # writes at an event boundary (`inject!(::TripGenerator)` zeroes it — see there).
+    # `t_start` and `duration` are set once at construction and never move, so an
+    # index into them would be a handle to something nothing may write.
+    rate_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :rate)) for i in 1:nb]
 
     # Built BEFORE the integrator and shared with it, the same construction order
     # M1 uses: the callbacks close over these exact ladders and the engine keeps the
@@ -614,10 +729,24 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
         _bind_out_of_step(out_of_step, net, ba, δ_idx, branch_of_buses, eng_box)
 
     # --- steady state, then the integrator -------------------------------------
-    fp = NetworkDynamics.find_fixpoint(nw, s)
+    t0f = Float64(t0)
+    # `t = t0f`, EXPLICITLY, and this is not decoration. `find_fixpoint` defaults its
+    # evaluation time to **`NaN`** (NetworkDynamics passes `t = NaN` straight into the
+    # RHS through `NetworkFixedT`), which every model up to M3 step 4 got away with
+    # only because no vertex RHS read `t` at all. Step 5's ramp does read it — and
+    # `clamp(NaN − t_start, 0, d)` is `NaN`, `0.0 * NaN` is `NaN`, so an un-ramped
+    # machine would have been enough to NaN out the steady-state solve of every model
+    # in the repo. Evaluating at the run's own start time is also simply the right
+    # question to ask: "what is this system's equilibrium at the instant the run
+    # begins?"
+    #
+    # This is what makes THE RAMP INERT AT THE FIXPOINT SOLVE. `_bind_ramps` refuses
+    # `t_start < t0`, so `clamp(t0 − t_start, 0, duration)` is exactly `0` here for
+    # every armed ramp: the fixpoint is the equilibrium of the un-ramped system, the
+    # engine starts flat on it, and the ramp begins from that flat start.
+    fp = NetworkDynamics.find_fixpoint(nw, s; t = t0f)
     u0 = collect(NetworkDynamics.uflat(fp))
     p0 = collect(NetworkDynamics.pflat(fp))
-    t0f = Float64(t0)
     # The one relay guard that needs the steady state, so it runs here rather than
     # with the other three.
     _guard_out_of_step_start(bound_oos, u0)
@@ -673,10 +802,10 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     eng = SwingEngine(net, nw, Set(ids), Set(eachindex(net.branches)),
                       integrator.p, Float64(dt), integrator,
                       net.f0, ω₀, ids, δ_idx, ω_idx, ΔPm_idx, Pm_pidx, K_pidx,
-                      invR_pidx, hr_pidx,
+                      invR_pidx, hr_pidx, rate_pidx,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
-                      EngineEvent[], 0, net.f0, ladders, relays)
+                      EngineEvent[], 0, net.f0, ladders, relays, ramps)
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -936,6 +1065,26 @@ function out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol)
 end
 
 """
+    generation_ramp(eng::SwingEngine, machine::Symbol) -> GenerationRamp
+
+The generation ramp armed on `machine` — what was scheduled, for annotation and for
+step 6's sweep to read back what it set. Throws `KeyError` if that machine has no
+ramp, the contract `shed_ladder` and `out_of_step_relay` already set.
+
+**What was armed, not what is left.** A ramp is inert data; the live quantity is the
+`rate` parameter in the running system, which `inject!(::TripGenerator)` zeroes when
+the machine goes offline. This accessor does not track that, deliberately: two
+different questions ("what did this scenario schedule?" and "what is the system
+doing now?") must not share one answer.
+"""
+function generation_ramp(eng::SwingEngine, machine::Symbol)
+    for (m, r) in eng.ramps
+        m === machine && return r
+    end
+    throw(KeyError(machine))
+end
+
+"""
     is_online(eng::SwingEngine, id::Symbol) -> Bool
 
 Whether machine `id` is still online. Unknown ids are simply `false` (a *button*
@@ -974,6 +1123,10 @@ This is a **generator** trip only. `inject!(::TripLine)` deliberately does *not*
 disarm anything: a line trip can island a live machine, which is exactly the
 situation its ladder exists for, and step 4's out-of-step protection fires through
 that same path.
+
+**Any scheduled generation ramp leaves with it too** (M3 step 5): the ramp adds to
+`Pm`, so zeroing `Pm` without zeroing the ramp's rate would leave an offline,
+decoupled machine still injecting the ramp — see the body.
 
 **The machine's governor leaves with it, and its `ΔPm` is re-seated to zero at the
 boundary** (M3 step 1). Zeroing the droop gain and the headroom is the physics — a
@@ -1021,6 +1174,18 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     # The governor leaves with the machine: no droop command, no reserve.
     p[eng.invR_pidx[v]] = 0.0
     p[eng.hr_pidx[v]]   = 0.0
+    # …and so does any scheduled generation ramp (M3 step 5). This is NOT tidiness.
+    # `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)`, so zeroing `Pm` alone
+    # leaves the ramp term standing on its own: a machine that is offline, decoupled
+    # from every branch and undriven would go on injecting `rate·(elapsed)` into a
+    # rotor that is no longer connected to anything. `m3-context.md` predicted this
+    # exact re-opening — it is the "a dead machine would shed and inject" case, which
+    # step 3 found unreachable through the shed ladder and which explicit
+    # `t`-dependence in the vertex RHS puts back on the table. Closed by construction
+    # rather than by argument, and `test/` observes it from OUTSIDE the parameter
+    # vector (the survivors' settling frequency), because reading the parameter back
+    # would pass even if the RHS ignored it.
+    p[eng.rate_pidx[v]] = 0.0
     # …and the state it had accumulated is re-seated at the boundary, or it would be
     # stranded above the ceiling that just went to zero and the `isoutofdomain`
     # guard would reject every step from here on (see the docstring).

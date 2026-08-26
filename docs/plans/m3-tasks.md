@@ -437,18 +437,108 @@ so the both-resolutions hazard is **clear here, not skipped**.
 - [x] **Every long-running test self-terminates on a fixed step count**, never on a
       condition. The longest here is a 30,000-step (300 s) pair of runs.
 
-## Step 5 — ramped generation loss
+## Step 5 — ramped generation loss (DONE)
 
-- [ ] `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)` in the vertex RHS, with
-      the staircase alternative rejected in a comment and why (`D7`).
-- [ ] A zero-rate ramp is exactly the old behaviour — asserted, so the parameter
-      addition cannot have perturbed existing scenarios.
-- [ ] Ramp end is a `C¹` corner, not a jump: assert no protection callback fires
+- [x] `Pm_eff = Pm + rate·clamp(t − t_start, 0, duration)` in the vertex RHS, with
+      the staircase alternative rejected in a comment and why (`D7`). Three vertex
+      parameters, armed at construction (`SwingEngine(net; ramp = [:G1 => …])`) as
+      `shed` and `out_of_step` are — a ramp is *scheduled* scenario data, not a
+      thing a user does to a running engine, so it is deliberately **not** a
+      `PerturbationEvent`.
+- [x] **`rate` is pu/s on `S_base`, not MW/s**, and the reason is the invariant:
+      `machine_arrays`/`branch_arrays` are the single place *model* data converts
+      to the system base. A ramp is an engine-armed *setting*, like
+      `LoadShedStage`'s `ΔP_pu`, which is in pu for exactly this reason. MW/s here
+      would have opened a second conversion site beside the one the rule names.
+- [x] A zero-rate ramp is exactly the old behaviour — asserted to the **bit**,
+      `naccept` included, between two engines built in the same process (which is
+      what makes it a real check rather than the stale-precompile artefact a
+      cross-process "bit-identical" can be).
+- [x] **THE FINDING: `find_fixpoint` was being evaluated at `t = NaN`, and nothing
+      had noticed.** NetworkDynamics defaults the steady-state solve's time to
+      `NaN` (`NetworkFixedT`), which was harmless for four milestones because no
+      vertex RHS read `t` at all. The moment one does, `clamp(NaN − t_start, 0, d)`
+      is `NaN` and `0.0 · NaN` is `NaN` — so a **zero-rate** machine would have been
+      enough to NaN out the steady-state solve of every model in the repo. The
+      constructor now pins `t = t0`, which is also simply the right question to ask.
+      Asserted directly (`swing_vertex!` at `t = NaN` really does return `NaN`), so
+      the line cannot be removed as decoration.
+- [x] **The ramp is inert at the fixpoint solve.** `_bind_ramps` refuses
+      `t_start < t0`, so `clamp(t0 − t_start, 0, duration)` is exactly `0` at the
+      solve: the steady state is the un-ramped one, **bit-identical** to the engine
+      with no ramp armed, and the run stays bit-identical until `t_start`. A
+      mis-signed `t_start` throws with its own message, and the guard is measured
+      against the run's own `t0` rather than against zero (asserted both ways).
+- [x] Ramp end is a `C¹` corner, not a jump: no protection callback fires
       spuriously at `t_start` or `t_start + duration`.
-- [ ] **The ramp is inert at the fixpoint solve.** It puts explicit `t`-dependence
-      into a RHS that `find_fixpoint` evaluates before `t_start`; M2's flat-start
-      criterion must survive, and a mis-signed `t_start` must be caught by a test
-      rather than showing up as an initialization artefact that looks like physics.
+
+      > **The planned check was vacuous and was rewritten.** "Arm protection whose
+      > threshold the run never reaches, assert nothing fires" passes with the ramp
+      > term deleted from the RHS — nothing fires because nothing happened. Same
+      > trap as step 3's V5 and step 4's V6 third clause. What is asserted instead
+      > is a ladder whose threshold the ramp **does** cross, at 49.15 Hz — chosen so
+      > the crossing lands **10 ms before** the far corner at `t = 4.0`, as close as
+      > the trace allows without being it. It fires at `3.989737 s`, matches the
+      > recorded frequency crossing to 100× better than its distance from the
+      > corner, and moves by **< 6.2e-8 s** over a 4× change in `dt` (V6's own
+      > discriminator, at four thresholds spanning before, straddling and after both
+      > corners).
+- [x] **No `tstops` at the corners, decided by that measurement rather than by
+      argument.** The obvious defensive move is to pin `tstops = [t_start,
+      t_start+duration]` so the solver lands exactly on both kinks. The measurement
+      says there is nothing left for it to buy — and pinning them would change the
+      step sequence and destroy the zero-rate bit-identity above, so it would have
+      cost a real assertion to fix nothing.
+- [x] **A generator trip takes its ramp with it** — not on the checklist, and the
+      one thing in this step that would have been a live bug. `Pm_eff = Pm + ramp`,
+      so `inject!(::TripGenerator)` zeroing `Pm` alone leaves the ramp standing: an
+      offline, decoupled, undriven machine goes on being injected into.
+      `m3-context.md` predicted this exact re-opening (the "a dead machine sheds and
+      injects" case step 3 found unreachable, put back on the table by explicit
+      `t`-dependence). Asserted from **outside** the parameter vector — the dead
+      rotor's own undriven decay `ω(t) = ω_trip·e^{−t/(2H/D)}` to `rtol = 1e-6` —
+      because reading `rate` back would pass even if the RHS ignored it. The
+      survivors' settling frequency is asserted too and **labelled as the half that
+      cannot tell the two runs apart** (a tripped machine's power reaches nobody
+      either way).
+- [x] The magnitude claim, which is the strongest one available: where the system
+      settles depends only on `rate·duration` and not on the path. Three shapes
+      (`−0.5×3`, `−1.5×1`, `−0.15×10`) all land on step 2's droop closed form
+      `Δω = ΔP/(Σ1/Rᵢ + ΣDᵢ) = −0.009375` to `rtol = 1e-9`. The no-saturation
+      precondition is sized against the **peak** governor command (≈1.19 pu), not
+      the settled one (0.9375 pu) — step 2's lesson, 26 % apart.
+- [x] Guards, one asserted message each: non-finite `rate`/`t_start`,
+      `duration ≤ 0` (a zero-duration ramp is the instantaneous step this type
+      exists to avoid), infinite `duration` (no total magnitude for step 6's sweep
+      to vary), unknown machine, two ramps on one machine, `t_start < t0`.
+- [x] The V5 tripwire moved by exactly `4n` and is accounted for rather than
+      re-pinned: three vertex parameters add `3n`, one new index vector
+      (`rate_pidx`) adds `n`. `24n + 2 → 28n + 2`. Only the *rate* gets a flat
+      index, because it is the only ramp parameter anything writes after
+      construction. Noted in passing: the "1122 < 40²" positive control now has a
+      visible shelf life — the gap is 478 elements, about six more per-machine
+      parameters each carrying an index vector — and the slope assertion is the
+      actual claim.
+- [x] Both new exports (`GenerationRamp`, `generation_ramp`) checked clear against
+      GLMakie — `intersect(names(GridSim), names(GLMakie))` is still empty. A third
+      (`ramp_magnitude`) was considered and dropped: a one-line product is not worth
+      an export to keep clear.
+- [x] **A nonzero ramp on a GOVERNED machine, and a ladder on top of it** — the
+      configuration step 6 needs, which every test above left out by ramping the
+      governor-free G1. It is also the counterfactual for the one claim
+      `GenerationRamp`'s docstring makes in prose: **headroom does not move with the
+      ramp**. The governor still saturates at `Pmax − P0`, so the machine's total
+      mechanical ceiling travels *down* with the loss and ends at `Pmax +
+      rate·duration` — asserted as a number (`−1.0 pu`, a machine that ends up
+      absorbing), so a later "fix" making headroom track `Pm_eff` goes red. Then the
+      shed on that same machine: three independent decisions (a shed steps `Pm`, the
+      ramp adds to `Pm`, headroom sits on `P0`) whose **agreement** is what would
+      break silently, so the composed settling point is asserted rather than reasoned.
+- [x] 1657 core / 78 UI tests green. The one `dt was forced below floating point
+      epsilon` warning in the suite was checked against `HEAD` and is **pre-existing
+      and unchanged** — it comes from `step!(integ, 0.01, true)` accumulating float
+      error and needing a sub-epsilon final step to land on `t = 10`, in step 1's
+      freeze test, whose state is bit-identical before and after this change.
 
 ## Step 6 — the Iberian two-area case, in-repo, with its sweep
 

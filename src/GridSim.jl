@@ -53,6 +53,10 @@ include("protection/load_shedding.jl")
 # Out-of-step (pole-slip) tripping of a tie, likewise root-found (M3 step 4, D6).
 include("protection/out_of_step.jl")
 
+# --- scenario inputs (scheduled, armed at construction — not user-injected) ---
+# A generation loss that arrives over seconds rather than instantly (M3 step 5, D7).
+include("scenarios/generation_ramp.jl")
+
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
 
@@ -106,6 +110,14 @@ export LoadShedStage, ShedLadder, shed_log, shed_total, shed_ladder
 # added (`intersect(names(GridSim), names(GLMakie))` is still empty) — the collision
 # hazard that cost a round in M1. `disarm!` stays internal for `ShedLadder`'s reason.
 export OutOfStepTrip, OutOfStepRelay, out_of_step_log, out_of_step_relay
+
+# --- scenario inputs ---
+# The scheduled generation ramp and the engine's read-back of what was armed (M3
+# step 5). Both checked clear against GLMakie's exports before being added — the
+# collision hazard that has now cost a round twice. Deliberately only two names: a
+# `ramp_magnitude(r) = r.rate * r.duration` helper was considered and dropped, since
+# a one-line product is not worth a third export to keep clear.
+export GenerationRamp, generation_ramp
 
 # --- post-processing ---
 export windowed_rocof
