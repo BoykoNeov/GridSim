@@ -186,7 +186,7 @@ step 1 wrote down after inheriting 1234/74 from memory.
 
 ## Step 3 — the shedding ladder, unbound from the M1 engine (refactor) (DONE)
 
-**Suite: 1388 → 1445 core (+57), 78 UI unchanged.** Both measured either side. This
+**Suite: 1388 → 1461 core (+73), 78 UI unchanged.** Both measured either side. This
 step *does* change `src/`, so unlike step 2 the two standing hazards had to be
 cleared rather than merely noted: `ui/`'s gitignored manifest was re-resolved (no
 packages added or removed) and its 78 tests run, and the new exports were checked
@@ -265,6 +265,34 @@ against `GLMakie` before any of it — **one** new export, `shed_ladder`, and
       agrees to **4.9e-10** relative on the shed machine's speed and **1.3e-11** on
       the firing instant, against the **1.7e-4** bias a single stale-derivative step
       would cost. Asserted non-vacuous: the unarmed run sits 0.0055 pu lower.
+- [x] **The bit-identity bar applied to the SWING engine too, not just M1.** The
+      easy thing to miss: before this step `SwingEngine` passed **no** `callback`
+      kwarg to `init`, and now every no-shed construction passes an empty
+      `CallbackSet` — a new argument on the integrator underneath every existing M2
+      and M3 network test, verified only by "the suite is green", which is precisely
+      what step 1 established cannot see a moved digit. Checked against a worktree at
+      `d7342ac`: the ring after a generator trip and the pair after a line trip agree
+      **to every digit** on per-machine speeds, gauge-free angle differences, `ω_coi`,
+      the nadir, and both `naccept` and `nreject`. The empty callback set costs
+      nothing and moves nothing, so step 2's pinned tolerances stand as measured
+      rather than merely as re-passed.
+- [x] **Droop and a ladder on the SAME machine, which nothing had run.** Every other
+      step-3 test uses governor-free machines, so the one configuration step 6
+      actually needs — an area with primary response *and* a defence plan — was
+      untested. It earns a test because it is where two independently-made decisions
+      meet: a shed steps `Pm` and leaves `headroom` alone, which is correct **only**
+      because D4 defines `Pmax` as a net-injection ceiling, so removing load raises
+      the ceiling by exactly the block. Asserted as the ceiling `Pm + headroom` moving
+      by exactly the block, so a later reinterpretation of `Pmax` as a generation
+      nameplate cannot break it silently. On a machine that is genuinely **out of
+      reserve when the stage fires**: `ΔPm` sits on the ceiling (max overshoot 7.5e-11,
+      inside the guard's own 1e-10 slack), the shed's own block drives the recovery —
+      step 2's release test used a load trip as the cause — and it settles on the
+      droop closed form with step 2's *survivors-only* denominator, to 1e-8. The
+      unarmed counterfactual stays pinned at the ceiling for the whole 120 s.
+      The step-rejecting guard does fire here (59 rejections in 12,050 steps), which
+      is step 1's measured behaviour at a live ceiling, and the run still advances its
+      full span.
 - [x] **Sheds stay out of the `EngineEvent` log**, and the header now says why rather
       than leaving a reader to wonder: the ladder's own log already carries the
       root-found instant, the threshold and the block, and the event log's stamp

@@ -2406,6 +2406,85 @@ end
         @test current_state(bare).ω[2] < current_state(coarse).ω[2] - 0.004
     end
 
+    @testset "M3 step 3: droop and a ladder on the SAME machine compose" begin
+        # Every other step-3 test runs governor-free machines, so the configuration
+        # step 6 actually needs — an area with primary response AND a defence plan —
+        # had never been run. It is worth its own test because it is where two
+        # independently-made decisions meet: a shed steps `Pm` upward and leaves
+        # `headroom` alone. That composes correctly only because D4 defines `Pmax` as
+        # a NET-INJECTION ceiling, so disconnecting load raises the ceiling by exactly
+        # the block shed and a constant `headroom` on a raised `Pm` is the right new
+        # limit. Reinterpret `Pmax` as a generation nameplate later and this breaks
+        # silently, which is what the ceiling assertion below is for.
+        gov_ring() =
+            NetworkModel(100.0, 50.0,
+                         [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+                         [Branch(:L12, :B1, :B2, 0.25, 500.0),
+                          Branch(:L23, :B2, :B3, 0.25, 500.0),
+                          Branch(:L31, :B3, :B1, 0.25, 500.0)],
+                         #       id    bus  S_rated    H    D   Xd′    E′      P0    R   Pmax  Tg
+                         [Machine(:G1, :B1,  300.0,  4.0, 2.0, 0.30, 1.05,   80.0),
+                          Machine(:G2, :B2,  200.0,  3.0, 2.0, 0.20, 1.03,   30.0, 0.5, 36.0, 1.0),
+                          Machine(:G3, :B3,  500.0,  5.0, 2.0, 0.50, 1.04, -110.0)])
+        net = gov_ring()
+        ma = machine_arrays(net)
+        @test ma.invR == [0.0, 4.0, 0.0]          # only G2 is governed…
+        @test ma.headroom == [0.0, 0.06, 0.0]     # …and its reserve is 6 MW
+
+        block = 0.60
+        function run(armed)
+            e = init!(SwingEngine, net; dt = 0.01,
+                      shed = armed ? [:G2 => [LoadShedStage(48.0, block; label = :g)]] :
+                                     Pair{Symbol,Vector{LoadShedStage}}[])
+            hr0 = e.params[e.hr_pidx[2]]; pm0 = e.params[e.Pm_pidx[2]]
+            inject!(e, TripGenerator(:G1))
+            peak = -Inf; on_ceiling = false; at_fire = NaN
+            for _ in 1:12000                       # 120 s, a fixed count
+                st = step!(e)
+                peak = max(peak, st.ΔPm[2])
+                on_ceiling |= st.ΔPm[2] >= hr0 - 1e-9
+                if armed && isnan(at_fire) && !isempty(shed_ladder(e, :G2).t_fired)
+                    at_fire = st.ΔPm[2]
+                end
+            end
+            return (; e, hr0, pm0, peak, on_ceiling, at_fire, st = current_state(e))
+        end
+        bare = run(false); armed = run(true)
+
+        # --- the composition, which is the point of the test ---------------------
+        @test armed.e.params[armed.e.hr_pidx[2]] == armed.hr0        # headroom untouched…
+        @test armed.e.params[armed.e.Pm_pidx[2]] - armed.pm0 ≈ block # …while Pm rose
+        # …so the net-injection ceiling `Pm + headroom` rose by exactly the block.
+        @test (armed.e.params[armed.e.Pm_pidx[2]] + armed.e.params[armed.e.hr_pidx[2]]) -
+              (armed.pm0 + armed.hr0) ≈ block
+
+        # --- saturated when it fired, and off the ceiling afterwards -------------
+        @test armed.on_ceiling                       # it really did run out of reserve
+        @test armed.at_fire >= armed.hr0 - 1e-9      # …and was still out of it at the shed
+        @test armed.peak <= armed.hr0 + 1e-10        # never above the guard's own slack
+        # Step 2's release test drove the recovery with a load trip; here the shed's
+        # own block is the cause, which is the case step 6 will actually run.
+        @test armed.st.ΔPm[2] < armed.hr0 - 0.01
+        # And it settles on the droop closed form, with step 2's correction to the
+        # denominator: the sum is over the SURVIVORS, G2 and G3.
+        ΣPm = ma.Pm[2] + block + ma.Pm[3]
+        ω_ss = ΣPm / (ma.D[2] + ma.D[3] + ma.invR[2] + ma.invR[3])
+        @test isapprox(armed.st.ω[2], ω_ss; rtol = 1e-8)
+        @test isapprox(armed.st.ΔPm[2], -ω_ss * ma.invR[2]; rtol = 1e-8)
+
+        # --- the counterfactual: with no ladder it stays pinned, forever ---------
+        @test bare.st.ΔPm[2] >= bare.hr0 - 1e-9
+        @test bare.st.ω[2] < armed.st.ω[2] - 0.03    # 47.36 Hz against 49.44 Hz
+
+        # --- and the step-rejecting guard behaves as step 1 measured -------------
+        # It DOES reject here — that is the guard absorbing adaptive-step overshoot
+        # at a live ceiling, which step 1 measured to be load-bearing — but boundedly,
+        # and the run still advances its whole span rather than collapsing `dt`.
+        @test 0 < armed.e.integrator.stats.nreject < 500
+        @test armed.e.integrator.stats.naccept > 12_000
+        @test isapprox(armed.e.integrator.t, 120.0; atol = 1e-9)
+    end
+
     @testset "M3 step 3: M1's aggregate ladder is the one-machine case" begin
         # The refactor's premise. M1 has one speed and one imbalance, so its ladder
         # carries the sentinel rather than a bus name, and `SwingEngine` refuses that
