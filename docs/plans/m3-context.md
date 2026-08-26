@@ -541,6 +541,155 @@ bound**. "Angle differences settle after a trip" is true of the synchronised,
 online set and false of the tripped machine — a distinction the step-2 tests assert
 in both directions rather than leaving to a reader of this paragraph.
 
+### D12 — What step 6 found, and the four things it had to correct
+
+Step 6 is the one step whose acceptance criterion is a *grid* rather than a run
+(D10). What follows is what the grid said, including where it contradicted this
+file's own earlier text.
+
+**1. The cascade magnitude is 5,187 MW over 4.100 s, and neither of the two
+figures D7 flagged is it.** Re-derived from Table 3-1 and now printed by the
+script rather than quoted (`docs/scenarios/iberia-2025-04-28.md` §2.1):
+
+- *top-down* — the report's cumulative for Spain at 12:33:20.560 (5,750 MW,
+  p.119) **less the 563 MW of generation already lost before the cascade began**
+  (clusters 2 and 3, complete by 12:32:57.220, i.e. 19 s in the past at cascade
+  onset and therefore part of the initial condition, not of the ramp);
+- *bottom-up* — Table 3-1's own cascade clusters 4a…13, summed: 4,907 MW, a
+  **floor**, since the 7–13 row is stated as ≥2,600 MW.
+
+The two are consistent: the floor is 280 MW short, inside the report's own `≥`.
+Do **not** read the matching 280 MW shortfall at the earlier checkpoint as
+corroboration — ">2.5 GW" is itself a floor, so that gap is "≥280", not "280".
+What corroborates is only that the bottom-up floor lies below the top-down
+figure, which is the actual claim.
+
+D7 was right that 2,773 MW is unsourced and it is worse than that: §7.4's ±30 %
+cells (1,941 / 3,605) are exactly ±30 % of it, so the entire magnitude axis of
+the old sweep was centred on a number nothing supports. And 5,750 MW is not the
+answer either — using it unreduced double-counts those 563 MW. Both now appear as
+**labelled cells of the in-repo grid**, which is the only way a replaced figure
+can be shown to be wrong rather than merely asserted to be.
+
+**2. The pre-event tie flow's SIGN is a second conflicting-figure problem, and
+one headline conclusion turns on it.** D8's table says Iberia `P0 = −1,000 MW`,
+"net import over the tie". `entsoe-iberia-reproduction.md` §7.3(d) computes its
+export swing as `3,500 − 1,000 = 2,500`, i.e. it had Iberia **exporting** 1,000
+MW. The report as extracted states neither level — §1.2 gives only the *change*
+(ES–FR active power fell ≈1,500 MW over 12:32:00–12:33:00, and since the HVDC was
+in constant-power mode the whole fall landed on the AC corridor, which is what
+makes an importing peninsula the defensible reading at cascade onset).
+
+It is not cosmetic. The swing against the pre-event flow is `P_max − P_tie,0`,
+so the tie strength needed to produce the report's ≈5,000 MW is `5,000 + P_tie,0`
+— while the slip boundary moves the *other* way with the same parameter. Measured
+across the axis, the two cross: importing at −1,000 MW the swing needs
+`P_max ≈ 4,000` against a boundary of ≈5,500, so **both** the separation and the
+swing magnitude are reproducible at once; exporting at +1,000 it needs 6,000
+against a boundary of ≈3,500 and §7.3(d)'s "not both" ceiling holds. So that
+ceiling is not a property of the tier, as it was written — it is a function of a
+quantity the report gives only the derivative of. Both readings are asserted in
+`test/`, so neither can be quietly adopted later.
+
+**3. D9's optimisation was for a cost that does not exist, and buying it would
+have cost the flat start.** D9 says the sweep should "mutate `K` in the live
+parameter vector … rather than rebuilding a `NetworkModel` per cell". It should
+not, and the reason is the acceptance criterion M2 already set: the two-machine
+equilibrium is `δ₀ = asin(P0/K)`, so mutating `K` on a live engine leaves the run
+**off its equilibrium**, ringing from `t = 0` with a plausible oscillation that is
+pure initialisation artefact. The only sanctioned re-solve is the constructor
+(`find_fixpoint`); computing the `asin` by hand is the hand-rolled power flow
+SPEC §8 forbids. Measured, there was nothing to buy: **1.4 ms** to build a cell
+against **6 ms** to run it, so a 1,300-cell grid rebuilds in under two seconds.
+The sweep rebuilds per cell. Consequence, handled: each rebuild draws a fresh
+arbitrary angle gauge, so every quantity the sweep compares across cells is
+gauge-free (angle *differences*, speeds, powers, instants) and no absolute `δ`
+crosses a cell boundary.
+
+**4. The planned V7 was vacuous — the fourth time in this milestone.** As the
+plan words it ("stiffer tie ⇒ later slip; above a boundary, never") it passes
+**with the ramp term deleted from the vertex RHS**: with no cascade nothing slips
+at any tie strength, so "never" is true in every cell and the monotonicity clause
+has no slips left to order. Same trap as step 3's V5, step 4's V6 third clause and
+step 5's corner check. What ships instead carries three controls the plan did not
+name: a **positive control** (the weakest scanned tie must slip, or every ordering
+clause below it is vacuous), an **anti-vacuity control** (the same sweep with the
+cascade set to zero must find no slip anywhere), and the monotonicity clause
+asserted **strictly inside** the slipping band with the boundary cell excluded, so
+a solver version that nudged one cell across the boundary cannot break the
+assertion for a reason unrelated to the claim.
+
+**And the boundary is scanned, not bisected, for that same reason.** Bisection
+assumes the slip predicate is monotone in tie strength; scanning **measures** it
+and returns `monotone` alongside the answer. It is true in all twenty cells of
+section 4a, but a cell where it were not would be visible rather than silently
+halved into the wrong half.
+
+**What the sweep then said, beyond the corrections.**
+
+- *The separation is reproduced across the whole plausible corridor*, not at a
+  tuned point: every tie from 2,500 MW to ≈5,500 MW loses synchronism at the
+  derived cascade, at every remote inertia scanned, and the 90° crossing lands
+  within one second of the report's 12:33:19.62 over a wide band of it. The
+  nominal cell's 31 ms agreement is **one row of that band** and is labelled as
+  such in the script's own output — quoting it alone is precisely what went wrong
+  in the probe being replaced.
+- *The defence plan cannot prevent this separation, and the reason is timing
+  rather than magnitude.* The ladder's first stage arms at 49.8 Hz; Iberian
+  frequency does not reach 49.8 Hz until **after** the angle has passed 90°. So
+  the 90° crossing is identical to the millisecond armed and disarmed while the
+  frequency nadir moves by nearly 3 Hz. Only in a narrow band of tie strengths
+  near the boundary does the angle run away slowly enough for the frequency to get
+  there first. This replaces §7.3(c)'s retracted knife-edge inference with a
+  mechanism instead of a retraction.
+- *Duration insensitivity survives — against the reasoning that predicted it would
+  not.* At the derived magnitude the cascade is still arriving when synchronism is
+  lost (~76 % delivered at the 90° crossing), which says magnitude and duration
+  should not be separable. Measured, the boundary moves by one or two 100 MW scan
+  steps across a 4× change in ramp duration, against ~2,700 MW across the
+  magnitude axis. Useful, because the report states the ordering *inside* the
+  cascade is uncertain (§5) while the cumulative total is comparatively solid.
+- *The Iberian governor saturates within the first second*, and that is physics
+  rather than an artefact: with 5 % droop on a 48.6 GVA base the droop **law**
+  would command ~19 GW at −1 Hz, so what an area delivers is set by its reserve
+  and not by `R`. This is D4's "net-injection ceiling, not a nameplate" doing real
+  work in a real scenario for the first time. The reserve is a stated `[CHOICE]`
+  (500 MW, Iberia's share of the 3,000 MW area-wide containment reserve) and is on
+  no sweep axis, so no surviving claim rests on the exact figure.
+
+**Two mechanical findings, both of which cost a round.**
+
+*A perturbation written straight into `integrator.u` does nothing, silently.* The
+obvious way to excite the inter-area mode for the reference check is
+`eng.integrator.u[eng.δ_idx[1]] += 0.005`. The next `step!` integrates from
+`uprev`, so the mutation is overwritten and the run stays **exactly** on its
+equilibrium — and a mode measured from a flat trace still returns a number. The
+shipped excitation is a 5 MW / 50 ms `GenerationRamp`, i.e. the same API the
+scenario uses.
+
+*A tolerance alone would not have identified the reference check's residual.* The
+measured mode sits 3.5e-5–4.2e-4 below the closed form, which any reasonable
+`rtol` would pass — and so would a per-unit error of the same size. What is
+asserted instead is the residual's *signature*: the measurement is **below** the
+closed form in every cell (a pendulum's period lengthens with amplitude) and the
+gap **shrinks monotonically with the swing amplitude**, an order of magnitude
+across four cells. Finite-amplitude nonlinearity tracks amplitude; a coupling or
+conversion error does not.
+
+**Still open after step 6.** §7.3(a)'s bracket-closure result — that adding a
+second area fixes the pre-separation frequency window regardless of how the tie is
+parameterised — is **not** re-derived in-repo and remains a throwaway-probe
+result, labelled as one. It needs the 12:32:00–12:33:16 window, which needs five
+discrete injections on one machine, and this tier has one scheduled ramp per
+machine and no step-injection event for a *named* machine (`StepLoad` is M1's and
+carries no machine id). Adding one is a new mechanism and a new export, which step
+6 is not; it is the natural first item if a step 8 wants that window. The
+consequence is stated in the direction it points: the in-repo run starts at
+cascade onset at exactly 50.000 Hz with zero governor deployment, where reality
+was near 49.94 Hz with ~880 MW of loss and load rise already standing — both of
+which give the model **more** margin than the real system had, so every boundary
+the sweep reports is a *conservative* bound on tie stiffness.
+
 ## Open questions to resolve during M3
 
 - ~~**What does `coi_model` compile now?**~~ **SETTLED in step 1: it compiles the

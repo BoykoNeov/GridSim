@@ -540,31 +540,159 @@ so the both-resolutions hazard is **clear here, not skipped**.
       error and needing a sub-epsilon final step to land on `t = 10`, in step 1's
       freeze test, whose state is bit-identical before and after this change.
 
-## Step 6 — the Iberian two-area case, in-repo, with its sweep
+## Step 6 — the Iberian two-area case, in-repo, with its sweep (DONE)
 
-- [ ] **Re-derive the cascade magnitude from Table 3-1 before writing the ramp**
-      — do **not** inherit it. The doc being replaced quotes 5,750 MW and 2,773 MW
-      for the same cascade (`D7`), differing by more than 2×, and the sweep's own
-      finding is that the slip boundary tracks magnitude almost one-for-one. Record
-      which quantity `rate·duration` represents (generation lost, **not** apparent
-      imbalance — §2 of the plan doc shows ≈5,000 MW of the 6,150 MW imbalance was
-      export swing), and reconcile the staged pre-ramp losses against the
-      cumulative 5,750 MW at 12:33:20.560.
-- [ ] Two-machine `NetworkModel` on `S_base = 10,000 MVA`, both machines rated away
-      from the base (`D8`), `Σ P0 = 0`.
-- [ ] Tie strength expressed as the reactance it is: `X = E′₁E′₂/(P_max/S_base)`
-      (`D9`), and the construction guard checked **at the weakest swept cell**.
-- [ ] Sweep over tie strength × remote inertia × cascade profile, **in the repo and
-      regenerable**, mutating `K` in the live parameter vector rather than
-      rebuilding a model per cell.
-- [ ] Every surviving single-point number labelled as one cell of the grid, or
-      deleted. **This is the acceptance criterion** (`D10`) — a port that prints
-      three tuned numbers has recreated the problem the milestone was chosen to
-      close.
-- [ ] `entsoe-iberia-reproduction.md` §7.3 updated to point at the in-repo run, and
-      the throwaway probe's provenance warning kept, not quietly dropped.
-- [ ] **V7** the sweep's *shape* asserted (stiffer tie ⇒ later slip; above a
-      boundary, never), not a cell value that a solver version could move.
+**Suite: 1657 → 1719 core (+62), 78 UI unchanged.** Both measured at `HEAD` either
+side rather than inherited — the rule step 1 wrote down after inheriting 1234/74
+from memory. This step adds **no `src/` change, no new export and no new
+dependency**: the deliverable is a script plus its assertions, so the `GLMakie`
+collision hazard is clear by construction (`intersect(names(GridSim), names(GLMakie))`
+is untouched because nothing was exported), and the `ui/` manifest was re-resolved
+and its 78 tests run anyway — because "it cannot have changed" is what was believed
+the last three times it had. **Measured, not assumed: 78/78 in 1m12s, on a manifest
+deleted and rebuilt from nothing.**
+
+> **And the re-resolve has a trap of its own, found here.** Deleting `ui/Manifest.toml`
+> and running `Pkg.instantiate()` fails outright — `expected package GridSim [eb5af87e]
+> to be registered` — because `ui/Project.toml` has no `[sources]` entry, so the dev
+> link to the core package lived *only* in the gitignored manifest. The re-resolve is
+> `Pkg.develop(path = "..")` **first**, then `Pkg.test()`. Worth writing down twice
+> over: deleting that file is a destructive act on something load-bearing *precisely
+> because* it is not in git, and the failure it produces reads as a broken dependency
+> rather than as a missing dev link. Budget for the rebuild too — GLMakie precompiles
+> from cold in about five minutes, which is long enough to look like a hang.
+
+- [x] **Re-derive the cascade magnitude from Table 3-1 before writing the ramp** —
+      done, and done **in code** (`print_derivation`) rather than quoted, so it is
+      reconstructible instead of assertable. **5,187 MW over 4.100 s**: the report's
+      cumulative for Spain at 12:33:20.560 (5,750 MW, p.119) **less the 563 MW of
+      generation already lost before the cascade began** (clusters 2 and 3, complete
+      19 s earlier and therefore part of the initial condition). Corroborated by
+      Table 3-1's own bottom-up sum of the cascade clusters, 4,907 MW — a floor,
+      since the 7–13 row is stated as ≥2,600 MW, and the 280 MW gap sits inside that
+      `≥`. Recorded in `docs/scenarios/iberia-2025-04-28.md` §2.1 with its arithmetic.
+      - **Which quantity it is, stated: generation LOST, not apparent imbalance.**
+        They differ by more than the correction itself here — the ≥6,150 MW imbalance
+        at the −1 Hz/s moment includes ≈5,000 MW of export swing — and a two-area
+        model **produces that swing itself**, so an imbalance figure would count it
+        twice.
+      - **Neither carried figure is used, and both are carried as labelled cells.**
+        5,750 unreduced double-counts the 563 MW. 2,773 reconstructs from nothing in
+        Table 3-1 by any grouping, and §7.4's ±30 % cells are exactly ±30 % of it —
+        so the old sweep's whole magnitude axis was centred on an unsourced number
+        1.87× too small. Both are rows of section 4a, which is the only way a
+        replaced figure is shown to be wrong rather than asserted to be.
+      - **A scope boundary rather than a repetition of the disease:** the 5,750 MW is
+        stated *for Spain* and every Table 3-1 cluster is a Spanish site, while the
+        machine is *Iberia*. Portuguese loss in the window is not in the table and is
+        therefore not in the ramp. Said in the script and the scenario doc.
+      - **And the corroboration is stated at the strength it has.** The itemisation is
+        also short at the earlier checkpoint by the same 280 MW, which reads like
+        confirmation and is not: ">2.5 GW" is itself a floor, so that gap is "≥280".
+        What corroborates is only that the bottom-up floor lies below the top-down
+        figure.
+- [x] Two-machine `NetworkModel` on `S_base = 10,000 MVA`, both machines rated away
+      from the base (`D8`), `Σ P0 = 0`. Asserted the way it has to be to mean
+      anything: `machine_arrays(net).H` must equal `KE/S_base` **exactly** at both
+      ends, which is the identity a missing or inverted per-unit conversion breaks.
+      The flat start is asserted gauge-free *and on its branch* — `find_fixpoint`
+      must land on `asin(P/K)` and not on its π-complement.
+- [x] Tie strength expressed as the reactance it is: `X = S_base/P_max` with `E′ = 1`
+      at both ends (`D9`), asserted through `branch_arrays` in both directions. The
+      construction guard is checked **at the weakest swept cell** (2,500 MW tie
+      against the deepest swept pre-event flow, −2,000 MW: legal, at a 53.13° steady
+      angle) and one step outside it is asserted to be a **construction error by its
+      own wording**, so a carelessly widened sweep crashes rather than returning a
+      wrong number.
+- [x] Sweep over tie strength × remote inertia × cascade profile (magnitude **and**
+      duration) × pre-event tie flow × defence plan, **in the repo and regenerable** —
+      the whole grid runs in under a minute.
+      - **And D9's mechanism was rejected on measurement.** D9 says to mutate `K` in
+        the live parameter vector rather than rebuild per cell. It cannot be done
+        soundly: `δ₀ = asin(P0/K)`, so mutating `K` on a live engine leaves the run
+        **off its equilibrium**, ringing from `t = 0` with exactly the initialisation
+        artefact M2 made an acceptance criterion — and the only sanctioned re-solve is
+        the constructor, since doing the `asin` by hand is the hand-rolled power flow
+        SPEC §8 forbids. Measured, there was nothing to buy: **1.4 ms to build a cell
+        against 6 ms to run it.** The sweep rebuilds. Consequence handled: every
+        cross-cell quantity is gauge-free, because each rebuild draws a fresh gauge.
+      - **The boundary is SCANNED, not bisected**, and `monotone` is returned beside
+        it. Bisection assumes the slip predicate is monotone in tie strength; scanning
+        measures it. True in all twenty cells of section 4a — and a cell where it were
+        not would be visible instead of silently halved into the wrong half.
+      - **"Slipped" is π, not π/2.** Passing 90° is a first-swing excursion a system
+        can recover from — step 4 measured exactly that on a healthy tie — whereas past
+        180° the synchronising power has reversed. The 90° crossing is still *reported*,
+        because it is the quantity comparable to the report's 12:33:19.62, and the
+        pole-slip count corroborates that each slipping cell really ran away.
+- [x] Every surviving single-point number labelled as one cell of the grid (`D10`).
+      The nominal cell reproduces the report's loss-of-synchronism instant to **31 ms**
+      with nothing fitted to it, and the script says in its own output that this is one
+      row of a band spanning about three seconds — quoting it alone is precisely what
+      went wrong in the probe being replaced.
+- [x] `entsoe-iberia-reproduction.md` §7.3 updated to point at the in-repo run, with
+      the throwaway probe's provenance warning **kept and given a reason to exist**
+      rather than quietly dropped: it is the record of how a tuned parameter became a
+      quoted result.
+- [x] **V7 — and the planned V7 was vacuous, for the fourth time in this milestone.**
+      "Stiffer tie ⇒ later slip; above a boundary, never" passes **with the ramp term
+      deleted from the vertex RHS**: with no cascade nothing slips anywhere, so
+      "never" holds in every cell and the ordering clause has no slips to order. Step
+      3's V5, step 4's V6 clause 3 and step 5's corner check in a fourth costume. What
+      ships carries three controls the plan did not name — a **positive control** (the
+      weakest scanned tie must slip), an **anti-vacuity control** (the same sweep at
+      zero cascade must find no slip anywhere), and monotonicity asserted **strictly
+      inside** the slipping band with the boundary cell excluded, so a solver version
+      that nudged one cell across the boundary cannot break it for an unrelated reason.
+- [x] **The reference check every engine ships (SPEC §6), and a tolerance alone would
+      not have been one.** The inter-area mode against §7.5(2)'s closed form, derived
+      through `machine_arrays`/`branch_arrays` with `δ₀` read off a **built engine**
+      rather than from `asin(P/K)` — so `find_fixpoint`'s answer is inside what is
+      checked. The measured mode sits 3.5e-5–4.2e-4 below the closed form, which any
+      reasonable `rtol` would pass and so would a per-unit error of the same size, so
+      what is asserted is the residual's **signature**: below the closed form in every
+      cell (a pendulum's period lengthens with amplitude) and shrinking monotonically
+      with the swing amplitude, an order of magnitude across four cells.
+- [x] **The excitation had to be rebuilt, because the obvious one does nothing
+      silently.** `eng.integrator.u[eng.δ_idx[1]] += 0.005` is overwritten by the next
+      `step!`, which integrates from `uprev` — the run stays **exactly** on its
+      equilibrium and a mode measured from the flat trace still returns a number. The
+      shipped excitation is a 5 MW / 50 ms `GenerationRamp`, i.e. the same API the
+      scenario uses.
+- [x] **A second conflicting-figure problem the checklist did not name: the sign of
+      the pre-event tie flow, and §7.3(d)'s headline conclusion turns on it.** `D8`
+      says −1,000 MW (importing); §7.3(d)'s own arithmetic (`3,500 − 1,000 = 2,500`)
+      assumes +1,000 (exporting); the report as extracted gives only the **change**.
+      The swing needs `P_max = 5,000 + P_tie,0` while the slip boundary moves the
+      other way with the same parameter, so the two cross: importing, both the
+      separation and the ~5,000 MW swing are reproducible at once; exporting, the
+      "not both" ceiling holds. Asserted **both ways round**, so neither reading can
+      be adopted later without going red.
+- [x] **Two prose claims were written ahead of the numbers and both were wrong** —
+      caught by reading the table rather than by a test. The duration-insensitivity
+      finding **survives** the correction (the boundary moves one or two scan steps
+      across a 4× change in ramp duration) *against* the reasoning that predicted it
+      would not, since ~76 % of the cascade has arrived at the 90° crossing; and the
+      defence plan **does** move the boundary slightly (one or two scan steps) rather
+      than not at all, because near the boundary the angle runs away slowly enough for
+      the frequency to reach 49.8 Hz first. Both corrected in place.
+- [x] **The defence plan cannot prevent this separation, and the reason is timing.**
+      Its first stage arms at 49.8 Hz; Iberian frequency does not reach 49.8 Hz until
+      **after** the angle has passed 90°, so the crossing is identical to the
+      millisecond armed and disarmed while the nadir moves by nearly 3 Hz. Asserted as
+      an **order between two root-found instants**, not as an outcome. This replaces
+      §7.3(c)'s retracted knife-edge inference with a mechanism.
+- [x] **Every long-running test self-terminates on a fixed step count.** The longest
+      here is a 2,000-step (20 s) cell, and the sweeps are fixed-length scans.
+- [x] **The bias is stated in the direction it points.** The run starts at cascade
+      onset at exactly 50.000 Hz with zero governor deployment, where reality was near
+      49.94 Hz with ~880 MW already standing (clusters 1–3 are folded into the initial
+      condition, because this tier has one scheduled ramp per machine and no
+      step-injection event for a *named* machine). Both give the model more margin
+      than the real system had, so every boundary reported is a **conservative** bound
+      on tie stiffness. §7.3(a)'s bracket closure is therefore **not** re-derived
+      in-repo and stays labelled as a throwaway-probe result — see `m3-context.md` D12
+      for what a step 8 would need to close it.
 
 ## Step 7 — Figure 3-67, or an explicit drop
 
@@ -600,6 +728,13 @@ so the both-resolutions hazard is **clear here, not skipped**.
       *(Re-resolved and green at step 2, step 3 and step 4, none of which changed a
       dependency. Left open because it has to be re-run by whichever later step does
       change one.)*
+      *(Step 6 went further and deleted `ui/Manifest.toml` outright rather than
+      re-resolving in place — 78/78 green afterwards, but only via
+      `Pkg.develop(path = "..")`, because `ui/Project.toml` carries no `[sources]`
+      entry and the dev link to the core package therefore lives nowhere else. A
+      `[sources]` entry would close this permanently and is the obvious fix; it is
+      deliberately NOT made here, because it is a dependency change and this step
+      made none.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 

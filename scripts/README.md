@@ -35,3 +35,34 @@ loss-of-synchronism export swing, and it is not to be closed by tuning.
 Three of the printed sections look like results and are not; each says so in its
 own output. The script's claims are asserted in `test/runtests.jl`, which
 includes this file as a module so the scenario data lives in exactly one place.
+
+## `iberia_two_area.jl`
+
+The same event on the **two-area** tier (`SwingEngine`), which is what adds the one
+mechanism the script above has no state for: a rotor angle and a nonlinear tie whose
+transfer peaks at 90°, falls while the angle keeps growing, and reverses past 180°.
+That reversal is the report's export swing, and it is why the aggregate model
+recovers where reality collapsed.
+
+**The result is the sweep, not the trace.** This is Milestone 3 step 6, and it exists
+to replace a throwaway probe whose tie strength had been tuned until the peninsula
+lost synchronism, so that three of its quoted numbers were artefacts of the tuning
+(`docs/plans/entsoe-iberia-reproduction.md` §7.3, `docs/plans/m3-context.md` D10).
+Five sections:
+
+1. **Reference check** — the inter-area mode against its closed form, derived through
+   `machine_arrays`/`branch_arrays` and with the residual *identified* (it tracks
+   swing amplitude) rather than merely bounded.
+2. **The cascade magnitude, re-derived from Table 3-1** and printed as arithmetic, not
+   quoted. 5,187 MW over 4.100 s. The two figures previously in circulation for this
+   one quantity differ by 1.87× and both appear below as labelled cells.
+3. **One cell** of the grid, labelled as one cell in its own output.
+4. **The sweep** — tie strength × cascade magnitude × ramp duration × remote inertia ×
+   pre-event tie flow × defence plan, regenerable in under a minute.
+5. **What survives the grid and what does not**, including one conclusion of §7.3 that
+   is overturned, one that survives against the reasoning that predicted it would not,
+   and one that turns out to depend on a quantity the report never states.
+
+Read `docs/plans/entsoe-iberia-reproduction.md` §7.6 before treating any of it as
+validation: voltage magnitude is constant behind a reactance here, so angle
+instability is in scope and the final voltage collapse to blackout is not.

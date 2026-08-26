@@ -372,6 +372,71 @@ is a step on the way.
 
 ### 7.3 What the probe establishes — and what it does not
 
+> **SUPERSEDED BY AN IN-REPO RUN (M3 step 6).** Everything in this subsection came
+> from a throwaway 90-line probe with a hand-rolled RK4, outside the repo. It has
+> been replaced by `scripts/iberia_two_area.jl`, which runs the same case on the
+> shipped `SwingEngine` with root-found protection, ships a closed-form reference
+> check, and regenerates its whole grid in under a minute. Its assertions live in
+> `test/runtests.jl` ("M3 step 6: Iberian two-area case").
+>
+> **The probe's own provenance warning stands and is the reason this section is
+> kept rather than deleted** — it is the record of how a tuned parameter became a
+> quoted result, and the milestone that replaced it was chosen for that reason
+> (`m3-context.md` D10). Read the four findings below with these corrections:
+>
+> 1. **The cascade magnitude was wrong, and it is the input everything else moves
+>    with.** The probe used 5,750 MW in §7.3's parameter list and 2,773 MW in
+>    §7.4's sweep — the same quantity, 1.87× apart. Re-derived from Table 3-1
+>    (`docs/scenarios/iberia-2025-04-28.md` §2.1): **5,187 MW over 4.100 s**,
+>    being the report's cumulative for Spain at 12:33:20.560 *less* the 563 MW of
+>    generation already lost before the cascade began, corroborated by the
+>    table's own bottom-up floor of 4,907 MW. 5,750 unreduced double-counts those
+>    563 MW; **2,773 reconstructs from nothing in Table 3-1 by any grouping**, and
+>    §7.4's ±30 % cells are simply ±30 % of it.
+> 2. **(b)'s 4,250 MW boundary does not survive**, and it was never a property of
+>    the corridor — it was a property of the 2,773 MW figure. At the derived
+>    cascade the in-repo sweep puts it at **≈5,500 MW**, and it lands at ≈3,300 MW
+>    when the old figure is fed back in as a labelled cell of the same grid.
+> 3. **(b)'s duration insensitivity DOES survive**, against the reasoning that
+>    predicted it would not: at the derived magnitude the cascade is still arriving
+>    when synchronism is lost (~76 % delivered at the 90° crossing), which says
+>    duration ought to matter. Measured, the boundary moves by one or two 100 MW
+>    scan steps across a 4× change in ramp duration, against ~2,700 MW across the
+>    magnitude axis.
+> 4. **(c) is replaced by a mechanism rather than a retraction.** The knife-edge
+>    inference was retracted here on the grounds that the slip/no-slip boundary
+>    *with* shedding sits inside the plausible band. The in-repo run says something
+>    sharper: at the nominal cell the defence plan **cannot** prevent the
+>    separation, because its first stage arms at 49.8 Hz and Iberian frequency does
+>    not reach 49.8 Hz until *after* the angle has passed 90°. The 90° crossing is
+>    identical to the millisecond armed and disarmed, while the frequency nadir
+>    moves by nearly 3 Hz. Arresting frequency and holding synchronism are
+>    different things, and the ladder can only do the first.
+> 5. **(d)'s ceiling turns on a parameter the report does not state.** Its
+>    arithmetic — "the swing peak *is* `P_max`, so 5,000 MW requires `P_max` ≈
+>    6,000" — assumes Iberia was **exporting** 1,000 MW pre-event. `m3-context.md`
+>    D8 says the opposite (−1,000 MW, *importing*), and the report as extracted
+>    gives only the **change** (ES–FR active power fell ≈1,500 MW over
+>    12:32:00–12:33:00, with the HVDC constant so the whole fall landed on the AC).
+>    Read as importing, the swing is `P_max + 1,000`, so 5,000 MW needs `P_max` ≈
+>    4,000 MW — **well inside the slipping band**, and both observations are
+>    reproducible at once. Read as exporting, the ceiling holds. The in-repo sweep
+>    carries the pre-event flow as an axis and asserts both readings, so the
+>    honest statement is now *"this conclusion flips on the sign of the pre-event
+>    AC tie flow"* rather than *"not both"* — weaker, and better, because it names
+>    the single observation that would settle it.
+> 6. **(a) is the one finding NOT re-derived in-repo**, and it stays a
+>    throwaway-probe result. The bracket closure is a claim about frequency at
+>    12:33:00, which needs the run to start at 12:32:00 and apply five discrete
+>    injections to one machine; this tier has one scheduled ramp per machine and no
+>    step-injection event, so the in-repo run starts at cascade onset with clusters
+>    1–3 folded into the initial condition. That start is also a **stated bias**:
+>    it begins at exactly 50.000 Hz with zero governor deployment where reality was
+>    near 49.94 Hz with ~880 MW already standing, both of which give the model more
+>    margin than the real system had — so every boundary above is a *conservative*
+>    bound on tie stiffness.
+
+
 A dependency-free 90-line probe (hand-rolled RK4, five states, scratch code in
 `M:/claud_projects/temp/entsoe/two_area_probe.jl` — deliberately **not** in
 the repo, so it cannot become a second maintained model) fed with the report's
