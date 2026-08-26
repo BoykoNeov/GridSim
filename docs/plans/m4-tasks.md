@@ -16,11 +16,11 @@ tests green, working tree clean.
 - [x] PowerDynamics established as resolving against the repo's pinned stack with
       nothing moved, and its component library enumerated.
 - [x] Plan trio written (`m4-plan.md`, `m4-context.md`, `m4-tasks.md`).
-- [ ] `docs/SPEC.md` §7.6 and §9 item 4 still name PSID. **Deliberately not
-      edited yet** — the SPEC gets amended when the oracle harness exists in step
-      4 and the role is filled in fact rather than in plan. Do not let this become
-      a carried item: it ticks in step 4 or it is explicitly re-deferred with a
-      criterion.
+- [x] `docs/SPEC.md` §7.6 and §9 item 4 still name PSID; the amendment is
+      **deliberately deferred to step 4**, where the oracle harness exists and the
+      role is filled in fact rather than in plan. Tracked in **one place only** —
+      step 4's list — because an item carried in two places is exactly how Figure
+      3-67 got carried through three milestones.
 
 ## Step 1 — `solve!`, the contract's unexecuted half
 
@@ -81,9 +81,20 @@ tests green, working tree clean.
       not reach PowerDynamics either.
 - [ ] Two-machine case run through PowerDynamics with `Library.ClassicalMachine`
       — **our fidelity, someone else's implementation**.
+- [ ] **The agreement band is derived and stated BEFORE the comparison runs** —
+      from the solver tolerance, the per-unit base conversion and the two sides'
+      initialisation conventions. Two independent implementations of the classical
+      machine will not agree to 1e-10, and a tolerance chosen after seeing the gap
+      tests nothing. This is the step-4 form of M3's "identify a residual by its
+      signature rather than bounding it with a tolerance", and it is the box most
+      likely to be quietly skipped.
 - [ ] Divergence read from step 2 applied across the two. Disagreement here is a
       bug in *our* engine, not a lesson about fidelity — record which it turned
       out to be.
+- [ ] **Positive control for the external check**: the comparison must read
+      *agreement* when agreement is real, inside the pre-stated band. Without it,
+      "the oracle agrees" cannot be distinguished from "the comparison always
+      agrees" — and for an external oracle this is the harder half of the pair.
 - [ ] Anti-vacuity control, **executed**: perturb one coefficient in our swing
       vertex equations; the external agreement check must fail.
 - [ ] Every mechanism now carries a label saying what checks it (D7). Write the

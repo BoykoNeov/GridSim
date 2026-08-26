@@ -26,7 +26,7 @@ The repo currently resolves to **181 packages** in total.
 
 ## The dependency probes (run before this plan was written)
 
-Four probes, all in throwaway projects under `M:\claud_projects\temp\`, never
+Five probes, all in throwaway projects under `M:\claud_projects\temp\`, never
 against the repo. The plan's whole shape depended on the answers, so they were
 **measured, not reasoned about** — the same discipline as `m2-context.md`'s spike,
 including its lesson that a bare environment and the real repo resolve
@@ -64,11 +64,15 @@ resolver can reach is **0.5.1** — years old. Current PSID wants SciMLBase 2.x.
 
 ### Probe 3 — was it just our `[compat]` ceiling?
 
-No. Raising GridSim's own bounds (`SciMLBase = "3.30.1, 4"`,
-`OrdinaryDiffEq = "7, 8"`, `NetworkDynamics = "1"`, `Graphs = "1"`) **still fails,
-identically** — because SciMLBase's newest registered version is 3.49.2, so
-widening upward cannot reach a version PSID accepts. PSID needs to go *down*, not
-us up.
+No, and the reason matters for anyone who re-litigates this later. Raising
+GridSim's own bounds (`SciMLBase = "3.30.1, 4"`, `OrdinaryDiffEq = "7, 8"`,
+`NetworkDynamics = "1"`, `Graphs = "1"`) **still fails, identically**.
+
+The binding constraint is our **floor, not our ceiling**. The resolver caps PSID
+at 0.5.1 *given* SciMLBase ≥ 3.30.1 — so raising the upper bound was never the
+lever, and a future reader who tries it will waste the attempt. The only lever
+that could work is dropping the floor below 3.x, which NetworkDynamics 1.1.0
+forbids outright. That is what probe 4 then measures the price of.
 
 ### Probe 4 — can PSID and NetworkDynamics coexist at all?
 
@@ -140,6 +144,13 @@ belong together and neither is sufficient alone.
 The stated ambition is that we can build parts of it better. That is a claim with
 a measurement attached — see `m4-plan.md` §Why the detailed tier is M5, last
 bullet.
+
+**This does not close the attribution risk permanently, by design.** D7 
+deliberately permits building beyond what PowerDynamics can express, and in that
+region the risk is back in full — there is no outside implementation to say which
+side is wrong. D7 handles it by labelling rather than by prohibition, which is the
+right mechanism; but D2 should not be read as "risk closed" when D7 reopens it on
+purpose.
 
 ### D3 — PowerDynamics lives in `reference/`, a third package, not in core
 
