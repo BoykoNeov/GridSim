@@ -936,6 +936,10 @@ end
 
 _record!(eng::SwingEngine) = _record_at!(eng, eng.integrator.t, eng.integrator.u)
 
+# The COI weight sum: the quantity `_record_at!` divides by, and so the one thing
+# that must not move underneath a batch of samples. See `engines/playback.jl`.
+_aggregate_weight(eng::SwingEngine) = eng.Σw
+
 """
     step!(eng::SwingEngine, dt=eng.dt) -> (; t, δ, ω, ΔPm, δ_coi, ω_coi, f_coi)
 

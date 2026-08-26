@@ -51,6 +51,23 @@
 # recording path with two entry points and no second copy of the channel layout.
 function _record_at! end
 
+# The one engine property a callback must not move mid-step, and the guard that
+# makes that structural instead of a comment somebody has to read.
+#
+# `_record_at!` weights each sample by the machines that are online RIGHT NOW: the
+# COI inertia sum for the network tier, the aggregate inertia for the aggregate
+# tier. The driver's drain-then-apply ordering keeps a SCHEDULED trip on the right
+# side of that. A trip issued from inside a CALLBACK would not be: it happens
+# during `step!`, so every sample the framework saved inside that step would come
+# back out weighted by a machine set from after the trip.
+#
+# No protection scheme does that today — a shed steps a power parameter and an
+# out-of-step relay opens a line, neither of which changes who is online — which
+# is exactly the kind of "true for now" that stops being true two milestones later
+# without anyone noticing. So the driver measures it across every step and says so
+# loudly instead of quietly mis-weighting a handful of samples.
+function _aggregate_weight end
+
 # Largest number of solver steps one `solve!` may take before it gives up. Not a
 # tuning knob: it is the "every long-running loop self-terminates on a fixed step
 # count, never on a condition" rule (M3, standing) applied at the source, so that
@@ -163,7 +180,9 @@ function _playback_grid(t0::Float64, t1::Float64, saveat::AbstractVector{<:Real}
     for (k, g) in enumerate(saveat)
         gf = Float64(g)
         t0 <= gf <= t1 || throw(ArgumentError(
-            "solve!: saveat[$k] = $gf lies outside the horizon [$t0, $t1]"))
+            "solve!: saveat[$k] = $gf lies outside the horizon [$t0, $t1]. " *
+            "(Distinct from the same phrase on a scheduled event — the two guards " *
+            "are named apart so a test cannot pass by reaching the wrong one.)"))
         k == 1 || gf > prev || throw(ArgumentError(
             "solve!: saveat must be strictly increasing, but saveat[$k] = $gf " *
             "does not exceed saveat[$(k - 1)] = $prev"))
@@ -240,13 +259,29 @@ function _playback!(eng::E, tspan, perturbations, saveat;
     for g in grid
         SciMLBase.add_saveat!(integ, g)
     end
-    # Everything already in `sol` (the initial point `init` saved) is somebody
-    # else's; only what arrives from here on is ours to record.
+    # Everything already in `sol` (the initial point `init` saved, plus whatever an
+    # earlier `solve!` on this engine left) is somebody else's; only what arrives
+    # from here on is ours to record.
+    #
+    # `sol` GROWS ACROSS CHAINED SOLVES, AND THAT IS ACCEPTED RATHER THAN
+    # OVERLOOKED. Unlike the `TrajectoryRecorder` it never decimates, so an engine
+    # solved four times over holds every output sample of all four runs in `sol` as
+    # well as the decimated copy in `traj` (measured: 51 / 101 / 151 / 201 entries
+    # for four 1 s solves at `saveat = 0.02`). That is one entry per sample the
+    # CALLER ASKED FOR, and it is a different thing from the unbounded history both
+    # constructors refuse: `save_everystep` on a live run grows with wall-clock time
+    # forever, with nobody having asked for any of it. Reclaiming it would mean
+    # resizing `sol` behind the integrator's own `saveiter` counter, which is
+    # internal state and would misalign the next `savevalues!`. Asserted as a
+    # property in `test/` so it is pinned rather than assumed.
     nsaved = length(integ.sol.t)
 
     # Anything scheduled for the very first instant applies before the first step,
     # matching `run_realtime!`, which drains its queue at the top of its loop.
     si = _playback_apply!(eng, sched, 1, t0)
+    # The baseline for the mid-step guard below, taken AFTER any t0 event: a
+    # scheduled `inject!` is allowed to move this, a callback is not.
+    w0 = _aggregate_weight(eng)
     iters = 0
 
     while integ.t < t1
@@ -273,17 +308,23 @@ function _playback!(eng::E, tspan, perturbations, saveat;
         # instant is the pre-event one, because the queue is drained only after the
         # previous step has already recorded.
         #
-        # The same argument bounds what a CALLBACK may do, and the bound holds
-        # today: a shed steps a power parameter and an out-of-step relay opens a
-        # line, neither of which changes which machines are online. A future
-        # protection scheme that tripped a GENERATOR from a callback would break
-        # this — samples inside its step would carry the post-trip weights — and
-        # would need the weights snapshotted per sample instead.
+        # The same argument bounds what a CALLBACK may do, and rather than trust
+        # the bound, the driver measures it (see `_aggregate_weight` above).
+        w = _aggregate_weight(eng)
+        w == w0 || error(
+            nameof(E), " playback: a callback changed which machines are online ",
+            "during the step ending at t = ", integ.t, " (aggregate weight ", w0,
+            " -> ", w, "). Every sample the framework saved inside that step would ",
+            "be weighted by the wrong machine set. Snapshot the weights per sample ",
+            "before allowing this.")
         @inbounds while nsaved < length(integ.sol.t)
             nsaved += 1
             _record_at!(eng, integ.sol.t[nsaved], integ.sol.u[nsaved])
         end
         si = _playback_apply!(eng, sched, si, integ.t)
+        # Re-baseline: a scheduled trip legitimately moves the weight, and every
+        # sample recorded before it was drained above, on the correct side.
+        w0 = _aggregate_weight(eng)
     end
 
     return state_series(eng)

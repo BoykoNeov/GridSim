@@ -4279,7 +4279,8 @@ end
         eng = SwingEngine(two_machine_system())
         out = solve!(eng, (0.0, 0.5))
         @test out === state_series(eng)
-        @test out.t[1] == 0.0 && out.t[end] ≈ 0.5
+        @test out.t[1] == 0.0
+        @test out.t[end] ≈ 0.5
         @test issorted(out.t)
     end
 
@@ -4495,6 +4496,92 @@ end
         @test maximum(abs.(a.f_coi .- b.f_coi)) < 1e-4
     end
 
+    @testset "M4 step 1: the RELAY path too, not just the ladder (D9 generalised)" begin
+        # The bug D9 records was measured on a shed ladder, whose affect steps a
+        # parameter. An out-of-step relay's affect does strictly more: it calls
+        # `inject!(::TripLine)`, which zeroes a coupling, logs an event, drops the
+        # FSAL cache AND calls `auto_dt_reset!`. That is the affect M3 built for the
+        # Iberian case, so "playback and real-time agree through a callback firing"
+        # has to be shown on it and not only on the cheaper one — otherwise a
+        # disagreement in step 4 would have two candidate causes.
+        net = _pole_slip_net()
+        dt, N, M = 0.01, 100, 500
+        mk() = init!(SwingEngine, net; dt = dt,
+                     out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR; label = :tie)])
+        a, b = pb_both(mk, TripGenerator(:ESG), N, M, dt, N * dt)
+
+        rt = mk(); pb_steps!(rt, N, dt); inject!(rt, TripGenerator(:ESG)); pb_steps!(rt, M, dt)
+        pb = mk(); solve!(pb, (0.0, (N + M) * dt);
+                          perturbations = [N * dt => TripGenerator(:ESG)], saveat = dt)
+        gr = out_of_step_log(out_of_step_relay(rt, :B1, :B3))
+        gp = out_of_step_log(out_of_step_relay(pb, :B1, :B3))
+        @test gr.tripped && gp.tripped            # it fires at all — the premise
+        @test !is_online(rt, :B1, :B3) && !is_online(pb, :B1, :B3)
+        # The root-found instant, reached through two completely different step
+        # sequences, and the angle it was found on.
+        @test abs(gr.t - gp.t) < dt / 100
+        @test abs(gr.δ - gp.δ) < 1e-9
+        # Both event logs say the same two things happened, in the same order.
+        @test [e.kind for e in event_log(rt)] == [e.kind for e in event_log(pb)]
+        # And the trajectories agree through the firing. Absolute, not a fraction of
+        # the band: after a pole slip the angles drift without bound, so the band
+        # would be enormous and would hide anything.
+        @test maximum(abs.(a.f_coi .- b.f_coi)) < 1e-4
+    end
+
+    @testset "M4 step 1: what `sol` does across chained solves, pinned not assumed" begin
+        # `add_saveat!` puts the output grid into the integrator's own solution
+        # object, which — unlike the `TrajectoryRecorder` behind `state_series` —
+        # never decimates. That is accepted (see the note in `engines/playback.jl`)
+        # because it is one entry per sample the CALLER ASKED FOR, which is a
+        # different thing from the unbounded live history both constructors refuse.
+        # Accepted is not the same as unmeasured, so it is asserted here: if a later
+        # change makes `sol` grow faster than the grid, this says so.
+        eng = SwingEngine(two_machine_system())
+        base = length(eng.integrator.sol.t)
+        @test base == 1                            # just the initial point
+        for k in 1:4
+            t = current_state(eng).t
+            solve!(eng, (t, t + 1.0); saveat = 0.02)
+            @test length(eng.integrator.sol.t) == base + 50k
+            @test length(state_series(eng).t) == 1 + 50k
+        end
+    end
+
+    @testset "M4 step 1: the mid-step weight guard watches a live quantity" begin
+        # `_playback!` errors if the aggregate COI weight moves DURING a step,
+        # because every sample the framework saved inside that step would then be
+        # weighted by a machine set from the wrong side of the change. Nothing can
+        # trip it today — a shed steps a power parameter, a relay opens a line, and
+        # only a scheduled trip changes who is online, which the driver applies
+        # after draining. That makes it a guard against a future change rather than
+        # against a present bug, and an unexercised guard is one refactor away from
+        # watching the wrong thing.
+        #
+        # So what is asserted is that the quantity is LIVE: it is the divisor
+        # `_record_at!` actually uses, and it moves when the online set moves. (The
+        # comparison itself is known live for a duller reason — it fired while this
+        # step was being written, on a baseline that had not been refreshed after a
+        # scheduled trip.)
+        eng = SwingEngine(two_machine_system())
+        @test GridSim._aggregate_weight(eng) == system_inertia(eng)
+        before = GridSim._aggregate_weight(eng)
+        inject!(eng, TripGenerator(:G2))
+        @test GridSim._aggregate_weight(eng) < before        # the trip moves it…
+        @test GridSim._aggregate_weight(eng) == system_inertia(eng)   # …and it is the read-out
+
+        fr = FrequencyResponseEngine(example_system())
+        @test GridSim._aggregate_weight(fr) == system_inertia(fr)
+        b2 = GridSim._aggregate_weight(fr)
+        # A load step is exactly the event that must NOT move it: it changes the
+        # imbalance, not the online set. This is the half that makes the guard
+        # usable rather than a tripwire on every event.
+        inject!(fr, StepLoad(0.05))
+        @test GridSim._aggregate_weight(fr) == b2
+        inject!(fr, TripGenerator(:G3))
+        @test GridSim._aggregate_weight(fr) < b2
+    end
+
     @testset "M4 step 1: the interpolant is the solver's own, armed or not" begin
         # THE TRAP THIS TEST EXISTS FOR. OrdinaryDiffEq decides for itself whether
         # to keep each step's interpolation coefficients, and with `dense=false`,
@@ -4550,13 +4637,16 @@ end
             () -> solve!(eng, (0.0, 1.0); perturbations = [TripGenerator(:G1)])))
         @test occursin("not a PerturbationEvent", argerr_msg(
             () -> solve!(eng, (0.0, 1.0); perturbations = [0.5 => :trip])))
-        @test occursin("outside the horizon", argerr_msg(
+        # Matched on the whole clause, not on "outside the horizon" alone: the
+        # `saveat` guard below uses the same phrase, and two guards that a test
+        # cannot tell apart is one guard that could be routed through the other.
+        @test occursin("event scheduled at t = 2.0 lies outside the horizon", argerr_msg(
             () -> solve!(eng, (0.0, 1.0); perturbations = [2.0 => TripGenerator(:G1)])))
         @test occursin("saveat must be a positive", argerr_msg(
             () -> solve!(eng, (0.0, 1.0); saveat = 0.0)))
         @test occursin("strictly increasing", argerr_msg(
             () -> solve!(eng, (0.0, 1.0); saveat = [0.3, 0.2])))
-        @test occursin("outside the horizon", argerr_msg(
+        @test occursin("saveat[2] = 1.5 lies outside the horizon", argerr_msg(
             () -> solve!(eng, (0.0, 1.0); saveat = [0.3, 1.5])))
         # None of the above may have advanced the engine.
         @test current_state(eng).t == 0.0

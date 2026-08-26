@@ -81,6 +81,33 @@ engine.
 - [x] Guards, one message each; an explicit irregular `saveat` grid; continuing a
       solve from where the engine is.
 
+**Added on review, after the first commit of the step:**
+
+- [x] **The relay path too, not just the ladder.** D9 was measured on a shed
+      ladder, whose affect steps a parameter. An out-of-step relay's affect does
+      strictly more — it opens a branch through `inject!(::TripLine)` and calls
+      `auto_dt_reset!` — and it is the affect M3 built for the Iberian case. Run
+      both ways on `_pole_slip_net()`: root-found instants agree to better than
+      `dt/100`, the angles at firing to 1e-9, both event logs match, and the
+      trajectories agree to <1e-4. The claim generalises.
+- [x] **`integ.sol` growth across chained solves, measured and pinned** rather
+      than left to be rediscovered. `add_saveat!` writes into the integrator's own
+      solution object, which never decimates: four 1 s solves at `saveat = 0.02`
+      leave 201 entries there against a decimating recorder. Accepted — it is one
+      entry per sample the caller asked for, not the wall-clock-unbounded history
+      the constructors refuse, and reclaiming it would mean resizing behind the
+      integrator's internal `saveiter`. Asserted as an equality so a later change
+      that made it grow faster says so.
+- [x] **The "no callback may change who is online" constraint made structural.**
+      It was a comment; it is now a per-step check in the driver with a named
+      error. Unexercised by design (nothing can trip it today), so what the test
+      asserts instead is that the watched quantity is live: it equals the engine's
+      own inertia read-out, moves on a generator trip, and does NOT move on a load
+      step.
+- [x] Two guards that both said "outside the horizon" now match on distinct
+      clauses, so a test cannot pass by reaching the wrong one; and one compound
+      `@test` split so a failure names which half broke.
+
 **Findings, written up in `m4-context.md` §What step 1 measured:** the `calck`
 flag depends on whether a relay is armed; the interpolant is retroactively
 invalidated by a callback affect (D9 — the round's real cost); `run_realtime!`

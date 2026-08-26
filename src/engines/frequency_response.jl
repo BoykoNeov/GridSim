@@ -322,6 +322,12 @@ function _record!(eng::FrequencyResponseEngine)
     return current_state(eng)
 end
 
+# This tier's counterpart of the network engine's `Σw`: the aggregate inertia,
+# which is what changes when a unit leaves the online set. A shed and a load step
+# move `ΔP_dist` and leave it alone, which is the point. See
+# `engines/playback.jl`.
+_aggregate_weight(eng::FrequencyResponseEngine) = eng.params.H_sys
+
 """
     step!(eng::FrequencyResponseEngine, dt=eng.dt) -> (; t, f, Δω, RoCoF, ΔPm)
 
