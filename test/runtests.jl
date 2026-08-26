@@ -2172,6 +2172,261 @@ end
         @test r.t ≈ 300.0 atol = 1e-6                        # …it advanced the whole way
     end
 
+    # ============ M3 step 3 — the shedding ladder, bound to a machine ============
+    #
+    # The refactor's oracle is M1's own shed testsets above, which are unchanged and
+    # still green; what follows is the half M1 cannot see, because M1 has exactly one
+    # frequency and one power imbalance, so "which one?" has no wrong answer there.
+    #
+    # THE FIXTURE, and why it is shaped like this. D5's hazard is a ladder driven by
+    # `f_coi`: it runs, it produces a plausible trace, and it sheds at the wrong
+    # instants. A test in which the bound machine's frequency and the COI average
+    # cross the threshold at nearly the same moment CANNOT see that bug. So the two
+    # signals are separated by construction: a small area (`:A` with its local
+    # generation `:C`) hangs off a very large one (`:B`) through a deliberately weak
+    # tie. `:B` carries 30x the area's inertia, so it owns the COI outright. Trip
+    # `:C` and the small area loses all its generation with a tie that cannot import
+    # the shortfall, so it pulls out of step and its own frequency collapses — while
+    # the average, anchored to `:B`, never reaches the threshold at all.
+    #
+    # That the area separates is the point, not an accident: this is precisely the
+    # state in which `swing.jl`'s header calls the single `f_coi` read-out a weighted
+    # average of two unrelated numbers. Step 4 adds the protection that trips such a
+    # tie; step 3 only has to make sure the defence plan is not listening to the
+    # wrong number while it happens.
+    _split_speed_net() =
+        NetworkModel(100.0, 50.0,
+                     [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+                     [Branch(:L12, :B1, :B2, 0.05, 500.0),   # inside the area: stiff
+                      Branch(:L13, :B1, :B3, 2.50, 500.0)],  # the tie: deliberately weak
+                     #       id   bus   S_rated    H    D   Xd′    E′      P0
+                     [Machine(:A, :B1,   500.0,  2.0, 0.5, 0.30, 1.03,  -35.0),
+                      Machine(:C, :B2,   300.0,  2.0, 0.5, 0.30, 1.03,   45.0),
+                      Machine(:B, :B3,  5000.0,  6.0, 0.5, 0.30, 1.05,  -10.0)])
+
+    @testset "M3 step 3 V5: the ladder reads its OWN machine, not the average" begin
+        net = _split_speed_net()
+        thr, dt = 49.5, 0.01
+        iA, iB = 1, 3                     # bus order B1,B2,B3 ⇒ machines A, C, B
+        @test [m.id for m in net.machines][[iA, iB]] == [:A, :B]
+
+        # --- what each candidate signal actually does, with nothing armed --------
+        bare = init!(SwingEngine, net; dt = dt)
+        inject!(bare, TripGenerator(:C))
+        t_cross_A = NaN; prev_A = Float64(bare.f0)
+        min_A = Inf; min_B = Inf; min_coi = Inf
+        for _ in 1:6000                   # 60 s, a fixed step count and not a condition
+            st = step!(bare)
+            fA = bare.f0 * (1 + st.ω[iA]); fB = bare.f0 * (1 + st.ω[iB])
+            if isnan(t_cross_A) && prev_A >= thr > fA
+                t_cross_A = st.t
+            end
+            prev_A = fA
+            min_A = min(min_A, fA); min_B = min(min_B, fB)
+            min_coi = min(min_coi, st.f_coi)
+        end
+        # THE DISCRIMINATING FACT, and the whole reason this fixture exists: over the
+        # entire run the bound machine goes 6.5 Hz BELOW the threshold while the COI
+        # average stays 0.09 Hz ABOVE it. So the two candidate signals do not merely
+        # cross at different instants — a ladder driven by `f_coi` fires ZERO times
+        # here, where the correctly-bound one fires. No near-coincidence can make the
+        # assertions below pass for the wrong reason.
+        @test min_A < thr - 5.0                       # measured 42.979 Hz
+        @test min_coi > thr + 0.05                    # measured 49.595 Hz
+        @test min_B > thr + 0.05                      # measured 49.814 Hz — nor does B
+        @test 1.0 < t_cross_A < 2.0                   # measured in (1.740, 1.750]
+
+        # --- the armed run: a ladder on A, and an identical one on B -------------
+        stage() = [LoadShedStage(thr, 0.10; label = :s1)]
+        eng = init!(SwingEngine, net; dt = dt, shed = [:A => stage(), :B => stage()])
+        @test [l.machine for l in eng.ladders] == [:A, :B]     # caller's order, not a Dict's
+        inject!(eng, TripGenerator(:C))
+        for _ in 1:600; step!(eng); end               # 6 s
+        lgA = shed_log(shed_ladder(eng, :A))
+        @test length(lgA.t) == 1
+        @test lgA.label == [:s1]
+        @test shed_ladder(eng, :A).armed == [false]   # latched
+        # It fired at A's OWN crossing: inside the one-`dt` bracket the bare run
+        # brackets that crossing to, and off the `dt` grid, i.e. root-found.
+        @test t_cross_A - dt < lgA.t[1] <= t_cross_A
+        @test !isapprox(lgA.t[1] / dt, round(lgA.t[1] / dt); atol = 1e-6)
+        # …and B's identical ladder did not fire — not "not yet", but never: the
+        # counterfactual below runs B's ladder over the whole 60 s.
+        @test isempty(shed_log(shed_ladder(eng, :B)).t)
+        @test shed_ladder(eng, :B).armed == [true]
+
+        b_only = init!(SwingEngine, net; dt = dt, shed = [:B => stage()])
+        inject!(b_only, TripGenerator(:C))
+        for _ in 1:6000; step!(b_only); end           # the full 60 s
+        @test isempty(shed_log(shed_ladder(b_only, :B)).t)
+    end
+
+    @testset "M3 step 3 V5: the bound machine's power moves, and no other's" begin
+        # The second half of D5: not just *when* it fires but *what it steps*. On this
+        # tier `Pm` is a net injection, so disconnecting load raises it by exactly the
+        # block — the same sign as M1's `ΔP_dist += ΔP_pu` and for the same reason.
+        net = _split_speed_net()
+        dt = 0.01
+        iA, iC, iB = 1, 2, 3
+        eng = init!(SwingEngine, net; dt = dt,
+                    shed = [:A => [LoadShedStage(49.5, 0.10; label = :s1)],
+                            :B => [LoadShedStage(49.5, 0.10; label = :s1)]])
+        PmA0 = eng.params[eng.Pm_pidx[iA]]
+        PmB0 = eng.params[eng.Pm_pidx[iB]]
+        @test PmA0 ≈ -0.35 && PmB0 ≈ -0.10          # the model's own per-unit values
+        inject!(eng, TripGenerator(:C))
+        for _ in 1:600; step!(eng); end
+        @test eng.params[eng.Pm_pidx[iA]] - PmA0 ≈ 0.10   # exactly the block, upward
+        @test eng.params[eng.Pm_pidx[iB]] == PmB0         # untouched, to the bit
+        @test eng.params[eng.Pm_pidx[iC]] == 0.0          # tripped, and still tripped
+        @test shed_total(shed_ladder(eng, :A)) ≈ 0.10
+        @test shed_total(shed_ladder(eng, :B)) == 0.0
+        # A machine with no ladder is a caller bug to ask about, not a silent empty one.
+        @test_throws KeyError shed_ladder(eng, :C)
+        @test isempty(init!(SwingEngine, net; dt = dt).ladders)
+    end
+
+    @testset "M3 step 3: a generator trip disarms that machine's ladder" begin
+        # THE CHOICE, and it is a choice: a ladder bound to a machine that has just
+        # tripped is latched without firing. Its rotor is islanded and undriven, so
+        # its `ω` is no longer the frequency of anything, and its affect would step
+        # the `Pm` the trip has just zeroed — a dead machine injecting power.
+        net = GridSim.three_machine_ring()
+        dt = 0.01
+        eng = init!(SwingEngine, net; dt = dt, shed = [:G2 => [LoadShedStage(49.0, 0.05)]])
+        l2 = shed_ladder(eng, :G2)
+        @test l2.armed == [true]
+        inject!(eng, TripGenerator(:G2))
+        @test l2.armed == [false]                    # latched…
+        @test isempty(shed_log(l2).t)                # …without firing, and the log is
+        @test shed_total(l2) == 0.0                  #    a record of what actually shed
+
+        # AND THE FINDING, because a defensive branch with no counterfactual is the
+        # thing this milestone keeps having to catch: for a genuine UNDER-frequency
+        # stage the disarm cannot change anything, and that is provable rather than
+        # hopeful. After a trip the machine has `Pm = 0`, every incident `K = 0`,
+        # `invR = 0` and `ΔPm` re-seated, so its rotor obeys `dω/dt = −Dω/2H` and
+        # decays MONOTONICALLY back toward nominal. A machine tripped below a
+        # threshold has therefore already fired; one tripped above it only moves
+        # away. Measured here, and the re-armed counterfactual is bit-identical.
+        function ring_run(rearm::Bool)
+            e = init!(SwingEngine, net; dt = dt,
+                      shed = [:G3 => [LoadShedStage(49.0, 0.05)]])
+            inject!(e, TripGenerator(:G1))
+            for _ in 1:300; step!(e); end            # 3 s: the ring is well down
+            f3 = e.f0 * (1 + current_state(e).ω[3])
+            inject!(e, TripGenerator(:G3))
+            rearm && fill!(shed_ladder(e, :G3).armed, true)
+            fs = Float64[]
+            for _ in 1:5000; push!(fs, e.f0 * (1 + step!(e).ω[3])); end
+            return (; e, f3, fs)
+        end
+        armed_off = ring_run(false); armed_on = ring_run(true)
+        @test armed_off.f3 < 49.0                    # measured 48.633 Hz at its own trip
+        # …which is the point: being below the threshold at the trip instant means the
+        # stage had ALREADY fired, at t ≈ 1.91 s, well before the machine died.
+        lg_on = shed_log(shed_ladder(armed_on.e, :G3))
+        @test length(lg_on.t) == 1 && lg_on.t[1] < 3.0
+        @test issorted(armed_on.fs)                  # monotone rise, the whole 50 s
+        @test armed_on.fs[end] > 49.99               # …back to nominal, so nothing left
+        @test shed_log(shed_ladder(armed_off.e, :G3)).t == lg_on.t   # re-arming added none
+        @test current_state(armed_off.e).ω == current_state(armed_on.e).ω  # bit-identical
+        @test current_state(armed_off.e).δ == current_state(armed_on.e).δ
+
+        # THE CONSTRUCTION THAT DOES REACH IT, so the disarm is not untested code. A
+        # dead rotor decaying toward nominal FROM ABOVE crosses every threshold
+        # between where it was and 50 Hz, downward. `LoadShedStage` does not forbid a
+        # threshold above nominal — M1's own crossing-polarity test uses 50.5 — so
+        # this is a legal ladder, and without the disarm a machine that has been
+        # offline for seven seconds sheds load and starts injecting.
+        function over_run(rearm::Bool)
+            e = init!(SwingEngine, net; dt = dt,
+                      shed = [:G2 => [LoadShedStage(50.2, 0.05)]])
+            inject!(e, TripGenerator(:G3))           # a load machine: frequency RISES
+            for _ in 1:200; step!(e); end
+            f2 = e.f0 * (1 + current_state(e).ω[2])
+            inject!(e, TripGenerator(:G2))
+            rearm && fill!(shed_ladder(e, :G2).armed, true)
+            for _ in 1:3000; step!(e); end
+            return (; e, f2, log = shed_log(shed_ladder(e, :G2)))
+        end
+        kept = over_run(false); undone = over_run(true)
+        @test kept.f2 > 50.2                         # measured 52.363 Hz at its trip
+        @test isempty(kept.log.t)                    # disarmed: nothing fires
+        @test kept.e.params[kept.e.Pm_pidx[2]] == 0.0        # …and it stays dead
+        @test length(undone.log.t) == 1              # counterfactual: it DOES fire
+        @test undone.log.t[1] > 2.0                  # measured t ≈ 9.41 s, long dead
+        @test undone.e.params[undone.e.Pm_pidx[2]] ≈ 0.05    # a dead rotor injecting
+    end
+
+    @testset "M3 step 3: shed binding guards, one message each" begin
+        # Each guard provoked ALONE and asserted by its own wording, the step-1
+        # discipline: a bad `shed` argument usually breaks more than one rule and
+        # "it threw" would not show which.
+        net = GridSim.three_machine_ring()
+        st() = [LoadShedStage(49.5, 0.05)]
+        @test occursin("sentinel", argerr_msg(
+            () -> init!(SwingEngine, net; shed = [GridSim.AGGREGATE_MACHINE => st()])))
+        @test occursin("no machine named", argerr_msg(
+            () -> init!(SwingEngine, net; shed = [:NOPE => st()])))
+        @test occursin("two ladders bound", argerr_msg(
+            () -> init!(SwingEngine, net; shed = [:G1 => st(), :G1 => st()])))
+        # The duplicate guard exists because two ladders on one machine shed its
+        # blocks twice at the same threshold, which reads as a working defence plan.
+        @test occursin("shed twice", argerr_msg(
+            () -> init!(SwingEngine, net; shed = [:G1 => st(), :G1 => st()])))
+    end
+
+    @testset "M3 step 3: the network shed is integrated, not just recorded" begin
+        # The same stale-FSAL hazard M1's refinement test pins, re-pinned for THIS
+        # engine, because it is a different path: `p` is a flat `Vector` and the
+        # affect writes an index, not a field of a mutable parameter struct. The
+        # error would again be invisible to a readout assertion, so only refining
+        # `dt` and demanding convergence discriminates.
+        net = GridSim.three_machine_ring()
+        function run_to(dt, tend)
+            e = init!(SwingEngine, net; dt = dt,
+                      shed = [:G2 => [LoadShedStage(49.5, 0.20; label = :fsal)]])
+            inject!(e, TripGenerator(:G1))
+            for _ in 1:round(Int, tend / dt); step!(e); end
+            return e
+        end
+        coarse = run_to(0.01, 3.0); fine = run_to(0.001, 3.0)
+        lc = shed_log(shed_ladder(coarse, :G2)); lf = shed_log(shed_ladder(fine, :G2))
+        @test length(lc.t) == 1 && length(lf.t) == 1
+        @test isapprox(lc.t[1], lf.t[1]; atol = 1e-8)        # measured 1.3e-11
+        # A single stale-derivative step would bias `ω_G2` by about `dt·ΔP/(2H)` =
+        # 1.7e-4, five orders above this tolerance; the runs agree to 4.9e-10.
+        @test isapprox(current_state(coarse).ω[2], current_state(fine).ω[2]; rtol = 1e-8)
+        # Non-vacuous: the shed has to have changed the answer for the agreement to
+        # be worth anything. Without it the same run sits ~0.0055 pu lower.
+        bare = init!(SwingEngine, net; dt = 0.01)
+        inject!(bare, TripGenerator(:G1))
+        for _ in 1:300; step!(bare); end
+        @test current_state(bare).ω[2] < current_state(coarse).ω[2] - 0.004
+    end
+
+    @testset "M3 step 3: M1's aggregate ladder is the one-machine case" begin
+        # The refactor's premise. M1 has one speed and one imbalance, so its ladder
+        # carries the sentinel rather than a bus name, and `SwingEngine` refuses that
+        # sentinel (asserted with the other guards above). M1's shed testsets earlier
+        # in this file are the behavioural oracle and are unchanged.
+        sys = example_system()
+        eng = init!(FrequencyResponseEngine, sys; dt = 0.01,
+                    shed = [LoadShedStage(49.5, 0.02; label = :s1)])
+        @test eng.ladder.machine === GridSim.AGGREGATE_MACHINE
+        @test GridSim.AGGREGATE_MACHINE === :system
+        @test ShedLadder(LoadShedStage[]).machine === GridSim.AGGREGATE_MACHINE
+        @test ShedLadder(:ES, LoadShedStage[]).machine === :ES
+        # `disarm!` latches without firing and without touching the log — the
+        # operation the generator trip performs.
+        l = ShedLadder(:ES, [LoadShedStage(49.5, 0.02)])
+        @test l.armed == [true]
+        @test GridSim.disarm!(l) === l
+        @test l.armed == [false]
+        @test isempty(shed_log(l).t) && shed_total(l) == 0.0
+    end
+
     @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
         # The sharper half of step 5, and why it leads. A GENERATOR trip breaks
         # `Σ Pm = 0` and this tier has no governors, so nothing settles (see the

@@ -98,6 +98,20 @@ Factored out as the single source of truth so `fr_rhs!` (integration) and
 """
 @inline _dΔω(Δω, ΔPm, p::FRParams) = (ΔPm - p.D * Δω + p.ΔP_dist) / (2 * p.H_sys)
 
+# --- how a shedding ladder reaches THIS engine's state (M3 step 3, D5) -----------
+#
+# `protection/load_shedding.jl` knows no state layout: a ladder is bound to a named
+# machine and the engine supplies two functions saying where that machine's speed
+# and power live. On the aggregate engine the "named machine" is the whole system
+# (`AGGREGATE_MACHINE`), so these are the identity bindings — the arithmetic the
+# ladder used to hard-code, moved to the one file that is entitled to know it.
+#
+# The state is `u = [Δω, ΔPm]`, so the aggregate speed deviation is `u[1]`.
+@inline _fr_speed(u) = @inbounds u[1]
+# `ΔP_dist` is generation-minus-load, so removing load is a POSITIVE step — the
+# exact mirror of `StepLoad`'s `ΔP_dist -= ΔP_pu`, pinned by an equivalence test.
+@inline _fr_shed!(integrator, ΔP_pu) = (integrator.p.ΔP_dist += ΔP_pu; nothing)
+
 """
     fr_rhs!(du, u, p::FRParams, t)
 
@@ -210,8 +224,11 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
     params = FRParams(a.H_sys, a.R_eq, a.D, a.Tg, 0.0, a.headroom)
     t0f = Float64(t0)
     # Built BEFORE the integrator and shared with it: the callbacks close over
-    # this exact `ladder`, and the engine keeps the same object as a field.
-    ladder = ShedLadder(shed)
+    # this exact `ladder`, and the engine keeps the same object as a field. The
+    # engine builds it rather than taking one, so two engines cannot share one
+    # latch. Its bound machine is the `AGGREGATE_MACHINE` sentinel: this tier has
+    # one speed for the whole system, so there is no per-machine name to give.
+    ladder = ShedLadder(AGGREGATE_MACHINE, shed)
     # Large *finite* tspan: we drive the integrator with `step!(integ, dt, true)`,
     # so the end is never reached, and a finite bound keeps OrdinaryDiffEq's
     # adaptive initial-step heuristic well-behaved (with `Inf`, `dtmax=Inf` and the
@@ -223,7 +240,8 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
     integrator = OrdinaryDiffEq.init(prob, solver;
                                      dt = Float64(dt),
                                      isoutofdomain = _fr_outofdomain,
-                                     callback = shed_callbacks(ladder, model.f0),
+                                     callback = shed_callbacks(ladder, model.f0,
+                                                               _fr_speed, _fr_shed!),
                                      save_everystep = false, dense = false)
     f0 = model.f0
     # Seed the trajectory with the pre-disturbance point (Δω=0 ⇒ f=f0, RoCoF=0,

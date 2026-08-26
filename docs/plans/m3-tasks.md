@@ -184,13 +184,92 @@ step 1 wrote down after inheriting 1234/74 from memory.
         guard only absorbs adaptive-step overshoot, and there was none worth
         absorbing.
 
-## Step 3 — the shedding ladder, unbound from the M1 engine (refactor)
+## Step 3 — the shedding ladder, unbound from the M1 engine (refactor) (DONE)
 
-- [ ] A ladder binds to **one named machine**; firing steps that machine's `Pm`.
-- [ ] M1's existing shed tests unchanged and still green — they are the oracle for
-      this refactor.
-- [ ] **V5** the right area sheds: the falling machine's `Pm` moves, the other's
-      does not, and a ladder bound to the other machine does not fire.
+**Suite: 1388 → 1445 core (+57), 78 UI unchanged.** Both measured either side. This
+step *does* change `src/`, so unlike step 2 the two standing hazards had to be
+cleared rather than merely noted: `ui/`'s gitignored manifest was re-resolved (no
+packages added or removed) and its 78 tests run, and the new exports were checked
+against `GLMakie` before any of it — **one** new export, `shed_ladder`, and
+`intersect(names(GridSim), names(GLMakie))` is empty. `AGGREGATE_MACHINE` and
+`disarm!` are deliberately internal.
+
+- [x] A ladder binds to **one named machine**; firing steps that machine's `Pm`.
+      `protection/load_shedding.jl` now knows **no state layout at all**: the engine
+      passes in a `speed(u)` and an `apply!(integrator, ΔP_pu)`, so the condition
+      reads that machine's own `ω` and the affect steps that machine's own `Pm`
+      parameter. On this tier `Pm` is a *net injection*, so removing load raises it
+      by exactly the block — the same sign as M1's `ΔP_dist += ΔP_pu`, and said in
+      the one comment that owns the convention.
+- [x] The kwarg is `shed = [:ES => stages, :PT => stages]`, a **vector of pairs and
+      not a `Dict`**, so the callback set is built in the caller's order; a `Dict`'s
+      iteration order is not the caller's and two runs of one script must arm the
+      same callbacks the same way. The engine **builds** its ladders rather than
+      accepting pre-built ones, because a `ShedLadder` holds a live latch and log and
+      handing one object to two engines would silently share both.
+- [x] Three construction guards, each provoked alone and asserted **by its own
+      wording** (the step-1 discipline): the `:system` sentinel reaching a network
+      engine, an unresolvable machine id, and two ladders on one machine — that last
+      one because double-arming sheds a block twice at one threshold, which reads as
+      a working defence plan.
+- [x] M1's existing shed tests unchanged and still green — they are the oracle for
+      this refactor. **And the bar was raised from "green" to bit-identical**: the
+      new arithmetic is `f0*(1+speed(u))` with `speed = u -> u[1]`, which is the old
+      expression, so a recorded run at `HEAD` before the edit is the real check. Root
+      -found instant, `Δω`, `f`, `ΔPm`, `ΔP_dist`, `naccept` and `nreject` all agree
+      **to every digit** across two scenarios. Green alone could not have said that.
+- [x] **V5 — and the planned V5 was vacuous.** As written in the plan ("the falling
+      machine's `Pm` moves, the other's does not, and a ladder bound to the other
+      does not fire") it is satisfied *in full* by a ladder that reads `f_coi` and
+      applies to a named machine — which is exactly the bug D5 exists to prevent. The
+      fixture therefore separates the two candidate signals **by construction**: a
+      small area (`:A` with its local generation `:C`) on a deliberately weak tie to a
+      machine carrying 30× its inertia. Trip `:C` and over the whole 60 s run
+      - the bound machine goes **6.52 Hz below** the threshold (min 42.979 Hz),
+      - the COI average stays **0.09 Hz above** it (min 49.595 Hz), as does `:B`,
+      so a `f_coi`-driven ladder fires **zero** times where the correct one fires
+      once. Not a near-coincidence a solver version could close. The firing instant
+      is additionally pinned inside the one-`dt` bracket of the bound machine's own
+      crossing, and asserted off the `dt` grid, i.e. root-found. `:B`'s identical
+      ladder is shown not to fire **ever**, on its own 60 s run, not merely "not yet".
+- [x] `Pm` moved by exactly the block on the bound machine and **to the bit**
+      unchanged on the other; `shed_ladder` on a machine with no ladder is a
+      `KeyError`, not a silent empty one.
+- [x] **The trip × shed interaction settled here rather than left to step 6**, where
+      trips and sheds first share a scenario. A generator trip **disarms** the ladder
+      bound to that machine — latched, not fired, so the log stays a record of what
+      actually shed. Generator trips only: a *line* trip can island a live machine,
+      which is the situation its ladder exists for, and step 4 fires through that
+      same path.
+- [x] **And the finding: for a genuine under-frequency stage that disarm cannot
+      change anything, and it is provable rather than hopeful.** After a trip the
+      machine has `Pm = 0`, every incident `K = 0`, `invR = 0` and `ΔPm` re-seated,
+      so its rotor obeys `dω/dt = −Dω/2H` and decays **monotonically back toward
+      nominal**. A machine tripped below a threshold has therefore already fired
+      (measured: 48.633 Hz at its own trip, having fired at t ≈ 1.91 s), and one
+      tripped above it only moves away. Re-arming it by hand after the trip leaves
+      the run **bit-identical** in every angle and speed.
+
+      So the counterfactual was built on the construction that **does** reach it: a
+      dead rotor decaying toward nominal *from above* crosses every threshold between
+      where it was and 50 Hz, downward. `LoadShedStage` does not forbid a threshold
+      above nominal — M1's own crossing-polarity test uses 50.5 — so with the disarm
+      removed, a machine that has been **offline for seven seconds** sheds load and
+      starts injecting `+0.05` pu. Kept, tested, and labelled as what it is: intent
+      made structural, plus real cover for step 5, whose ramp puts `t`-dependence
+      into the vertex RHS and could otherwise re-open the hazard silently.
+- [x] **The network engine gets its own `dt`-refinement test.** M1's pins the
+      *framework's* behaviour (`apply_callback!` sets `derivative_discontinuity`
+      before the affect); this path is a different one — `p` is a flat `Vector` and
+      the affect writes an index, not a field of a mutable struct. 10× refinement
+      agrees to **4.9e-10** relative on the shed machine's speed and **1.3e-11** on
+      the firing instant, against the **1.7e-4** bias a single stale-derivative step
+      would cost. Asserted non-vacuous: the unarmed run sits 0.0055 pu lower.
+- [x] **Sheds stay out of the `EngineEvent` log**, and the header now says why rather
+      than leaving a reader to wonder: the ladder's own log already carries the
+      root-found instant, the threshold and the block, and the event log's stamp
+      would be the `dt`-quantised one. Step 7 plots the two together; it does not
+      merge them.
 
 ## Step 4 — out-of-step protection (new mechanism, separate commit)
 
@@ -268,13 +347,13 @@ step 1 wrote down after inheriting 1234/74 from memory.
       returns the per-machine vector and nothing sums it. It is deliberately not a
       recorder channel either — see the V5 tripwire's own note.)*
 - [x] **Every long-running test self-terminates** on a fixed step count, never on a
-      condition. *(Holds for step 1's four new testsets and for step 2's four,
-      whose longest is a 30,000-step (300 s) run written as two fixed loops;
-      re-check per step.)*
+      condition. *(Holds for step 1's four new testsets, step 2's four, and step 3's
+      six, whose longest is a 6,000-step (60 s) run; re-check per step.)*
 - [ ] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
-      *(Re-resolved and green at step 2, which changed no dependency; left open
-      because it has to be re-run by whichever later step does change one.)*
+      *(Re-resolved and green at step 2 and again at step 3 — the first step to
+      change `src/` — neither of which changed a dependency. Left open because it
+      has to be re-run by whichever later step does change one.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 

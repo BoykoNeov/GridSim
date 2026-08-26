@@ -168,6 +168,32 @@ So: one ladder, one machine id, and firing steps **that machine's** `Pm`. M1's
 single-area behaviour is the one-machine case, so this is a refactor with M1's
 existing shed tests as the oracle — they must not change.
 
+**Built at step 3, with two corrections to what this entry assumed.**
+
+1. **The planned V5 could not have seen the bug it was written for.** "The right
+   area's `Pm` moves, the other's does not, and a ladder bound to the other does not
+   fire" is satisfied in full by a ladder that reads `f_coi` and applies to a named
+   machine. The check has to separate the two candidate *signals*, not just the two
+   machines, so the fixture puts a small weakly-tied area beside one carrying 30× its
+   inertia: over 60 s the bound machine goes 6.52 Hz below the threshold while the
+   COI average never comes within 0.09 Hz of it. A `f_coi`-driven ladder fires zero
+   times there. That gap is the assertion.
+
+2. **"A dead machine would shed and inject power" is not reachable on this tier**,
+   and finding that out was the price of writing the counterfactual for the disarm
+   the trip now performs. After a generator trip the rotor obeys `dω/dt = −Dω/2H`
+   and rises monotonically toward nominal, so no under-frequency stage can cross
+   downward afterwards: a machine tripped below a threshold has already fired, one
+   tripped above it moves away, and re-arming by hand leaves the run bit-identical.
+   The disarm is kept anyway — it is reachable through a threshold *above* nominal
+   (legal, and what M1's own polarity test uses), where without it a machine seven
+   seconds dead sheds and injects; and step 5's ramp puts `t`-dependence into the
+   vertex RHS, which is exactly what would re-open the physical case quietly.
+
+The refactor's own bar was raised in passing: the new expression is arithmetically
+identical to the old one, so "M1's tests still pass" is too weak a check. A recorded
+M1 run from before the edit matches after it **to every digit**, `naccept` included.
+
 ### D6 — Out-of-step protection is a root-found event on an angle difference
 
 Threshold on `|δ_from − δ_to|` for a named branch, `ContinuousCallback`, latching,
@@ -390,7 +416,10 @@ in both directions rather than leaving to a reader of this paragraph.
 - **Does the out-of-step threshold belong to the branch or to the protection
   object?** `Branch` already carries a `rating` it does not use. Resist the pull to
   put protection settings on the topology type — the ladder is a separate object
-  for good reasons and this probably should be too.
+  for good reasons and this probably should be too. **Step 3 makes the parallel
+  concrete**: a ladder is passed as `shed = [:ES => stages]` at engine construction
+  and the `NetworkModel` never hears about it, which is what lets one model be run
+  with the defence plan armed and disarmed without being two models.
 
 ## Reference
 

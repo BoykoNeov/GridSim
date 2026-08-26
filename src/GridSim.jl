@@ -98,7 +98,7 @@ export coi_model
 export PerturbationEvent, TripGenerator, StepLoad, TripLine
 
 # --- protection ---
-export LoadShedStage, ShedLadder, shed_log, shed_total
+export LoadShedStage, ShedLadder, shed_log, shed_total, shed_ladder
 
 # --- post-processing ---
 export windowed_rocof

@@ -269,6 +269,7 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     log::Vector{EngineEvent}
     n_dropped::Int
     nadir::Float64
+    ladders::Vector{ShedLadder}
 end
 
 # `isoutofdomain` predicate, built per engine because it has to close over the
@@ -286,6 +287,52 @@ end
 # The `1e-10` slack is roundoff tolerance so a step landing exactly *on* a ceiling
 # is not rejected. A machine with zero headroom (every governor-free one) has
 # `ΔPm ≡ 0` against a ceiling of `0`, which never trips it.
+# --- how a shedding ladder reaches THIS engine's state (M3 step 3, D5) -----------
+#
+# `protection/load_shedding.jl` knows no state layout: a ladder binds to a named
+# machine and the engine supplies two functions saying where that machine's speed
+# and power live. Here they close over the flat indices resolved below, which is the
+# whole point of the refactor — the condition reads **one machine's own** `ω`, never
+# the COI average, and the affect steps **that machine's own** `Pm`, never a
+# system-wide imbalance.
+#
+# `Pm` on this tier is a NET injection at the bus (generation minus load; see the
+# file header), so disconnecting load raises it by exactly the block that was shed.
+# That is the same sign as M1's `ΔP_dist += ΔP_pu` and for the same reason.
+_swing_speed(ω_index::Int) = u -> @inbounds u[ω_index]
+_swing_shed!(Pm_index::Int) =
+    (integrator, ΔP_pu) -> (@inbounds integrator.p[Pm_index] += ΔP_pu; nothing)
+
+# The ladders a `SwingEngine` is built with, validated and bound. Kept out of the
+# constructor body because it is three guards and their messages, and the M2/M3
+# discipline is that each guard is asserted by its own message — an invalid `shed`
+# argument usually breaks more than one rule at once, and "it threw" would not show
+# which one fired.
+#
+# `shed` is a **vector of pairs**, not a `Dict`: the callback set is built in the
+# caller's order, and a `Dict`'s iteration order is not the caller's. Two runs of
+# the same script must arm the same callbacks in the same order.
+function _bind_shed(shed, ids::Vector{Symbol}, ω_idx::Vector{Int},
+                    Pm_pidx::Vector{Int})
+    ladders = ShedLadder[]
+    bound = Any[]
+    for (machine, stages) in shed
+        machine === AGGREGATE_MACHINE && throw(ArgumentError(
+            "shed: `:$(AGGREGATE_MACHINE)` is the aggregate engine's sentinel, not " *
+            "a machine; on a network every ladder must name one of $(ids)"))
+        v = findfirst(==(machine), ids)
+        v === nothing && throw(ArgumentError(
+            "shed: no machine named `:$machine` in this network; have $(ids)"))
+        any(l -> l.machine === machine, ladders) && throw(ArgumentError(
+            "shed: two ladders bound to machine `:$machine`; give it one ladder " *
+            "with all its stages, or its blocks shed twice"))
+        ladder = ShedLadder(machine, collect(LoadShedStage, stages))
+        push!(ladders, ladder)
+        push!(bound, (ladder, _swing_speed(ω_idx[v]), _swing_shed!(Pm_pidx[v])))
+    end
+    return ladders, bound
+end
+
 function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
     return function (u, p, t)
         @inbounds for k in eachindex(ΔPm_idx)
@@ -296,7 +343,8 @@ function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
 end
 
 """
-    SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), capacity=200_000)
+    SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
+                capacity=200_000)
 
 Compile `net` into a NetworkDynamics `Network`, place it on its steady state, and
 return a ready-to-step engine.
@@ -310,14 +358,30 @@ oscillation that is pure initialization artifact. Validation V1 asserts it.
 Note that `find_fixpoint` picks an arbitrary **gauge**: shifting every `δ` by the
 same constant is still an equilibrium, so the absolute angles it returns are
 meaningless and only their differences are not. Tests must assert differences.
+
+`shed` arms low-frequency load shedding **per machine**, as a vector of pairs
+`[:ES => stages, :PT => stages]` (`LoadShedStage`). Each pair becomes one
+`ShedLadder` bound to that machine: its stages root-find crossings of **that
+machine's own** frequency and step **that machine's own** `Pm`. Binding to a name
+rather than to `f_coi` is decision D5, and it is the difference between Iberia's
+defence plan firing on Iberian frequency and firing on an inertia-weighted average
+of Iberia and Continental Europe — which is a number this file's header calls
+meaningless the moment the two are separating. Default: no ladders.
+
+The engine builds the ladders and owns them (`eng.ladders`, `shed_ladder`), because
+a ladder holds a live latch and log that two engines must not share.
 """
 function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      dt::Real = _SWING_DT0,
                      solver = OrdinaryDiffEq.Tsit5(),
+                     shed = Pair{Symbol,Vector{LoadShedStage}}[],
                      capacity::Integer = _TRAJ_CAPACITY)
     ma = machine_arrays(net)
     ba = branch_arrays(net)
     nb = length(net.buses)
+    # Machine ids in bus order, by construction. Resolved at the top because the
+    # shed ladders below are bound by id and their guard messages list them.
+    ids0 = Symbol[m.id for m in net.machines]
 
     # The same graph the model validated itself against (one edge per bus pair,
     # connected — both already enforced by the `NetworkModel` constructor).
@@ -402,6 +466,12 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     invR_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :invR)) for i in 1:nb]
     hr_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :headroom)) for i in 1:nb]
 
+    # Built BEFORE the integrator and shared with it, the same construction order
+    # M1 uses: the callbacks close over these exact ladders and the engine keeps the
+    # same objects as a field. They need the flat indices above, which is why they
+    # are built here and not with the rest of the engine's own bookkeeping.
+    ladders, bound_shed = _bind_shed(shed, ids0, ω_idx, Pm_pidx)
+
     # --- steady state, then the integrator -------------------------------------
     fp = NetworkDynamics.find_fixpoint(nw, s)
     u0 = collect(NetworkDynamics.uflat(fp))
@@ -429,9 +499,10 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      isoutofdomain = _swing_outofdomain(ΔPm_idx, hr_pidx),
+                                     callback = shed_callbacks(bound_shed, net.f0),
                                      save_everystep = false, dense = false)
 
-    ids = Symbol[m.id for m in net.machines]     # bus order, by construction
+    ids = ids0
     # `H` is the pre-trip baseline, kept unmutated; `w` is the live COI weight
     # (a machine's inertia while online, zero once tripped). Nothing in M2a reads
     # `H` yet — step 6's `coi_model` needs the original inertias to compile the
@@ -466,13 +537,14 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                       invR_pidx, hr_pidx,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
-                      EngineEvent[], 0, net.f0)
+                      EngineEvent[], 0, net.f0, ladders)
     _record!(eng)                                 # seed the pre-disturbance point
     return eng
 end
 
 """
-    init!(SwingEngine, net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), capacity=200_000)
+    init!(SwingEngine, net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
+          capacity=200_000)
 
 Interface entry point. Dispatches on the engine **type** and returns a freshly
 built, fully-typed engine — the same construction-order resolution M1 uses: the
@@ -688,6 +760,23 @@ trips.
 system_inertia(eng::SwingEngine) = eng.Σw
 
 """
+    shed_ladder(eng::SwingEngine, machine::Symbol) -> ShedLadder
+
+The load-shedding ladder bound to `machine`, for `shed_log` / `shed_total` and for
+step 7's annotated panel. Throws `KeyError` if that machine has no ladder — asking
+for one that was never armed is a caller bug, the same contract `_machine_vertex`
+sets for machine ids.
+
+Deliberately per machine and not pooled: see `shed_log`.
+"""
+function shed_ladder(eng::SwingEngine, machine::Symbol)
+    for l in eng.ladders
+        l.machine === machine && return l
+    end
+    throw(KeyError(machine))
+end
+
+"""
     is_online(eng::SwingEngine, id::Symbol) -> Bool
 
 Whether machine `id` is still online. Unknown ids are simply `false` (a *button*
@@ -713,6 +802,19 @@ never resized** — the machine's `(δ, ω)` keeps integrating, now decoupled an
 undriven, so it simply damps out; resizing mid-integration would force an
 integrator re-init and throw away the continuous-state-carries-through property
 that makes live injection clean.
+
+**Its shedding ladder is disarmed too** (M3 step 3), without firing and without
+touching what it already logged. A ladder bound to this machine would otherwise
+keep root-finding on a rotor that is now islanded, undriven and decaying to
+whatever `ω` damping leaves it at — a speed that is no longer the frequency of
+anything — and its affect would step the `Pm` this trip has just zeroed, so a dead
+machine would start injecting power. Disarming kills that by construction instead
+of by argument.
+
+This is a **generator** trip only. `inject!(::TripLine)` deliberately does *not*
+disarm anything: a line trip can island a live machine, which is exactly the
+situation its ladder exists for, and step 4's out-of-step protection fires through
+that same path.
 
 **The machine's governor leaves with it, and its `ΔPm` is re-seated to zero at the
 boundary** (M3 step 1). Zeroing the droop gain and the headroom is the physics — a
@@ -764,6 +866,11 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     # stranded above the ceiling that just went to zero and the `isoutofdomain`
     # guard would reject every step from here on (see the docstring).
     eng.integrator.u[eng.ΔPm_idx[v]] = 0.0
+    # The area's defence plan goes with its machine (see the docstring): latched,
+    # not fired, so the log stays a record of what actually shed.
+    for l in eng.ladders
+        l.machine === ev.id && disarm!(l)
+    end
     eng.w[v] = 0.0                           # out of the aggregate read-out...
     eng.Σw = sum(eng.w)                      # ...and out of the inertia indicator
     _log_event!(eng, :trip_generator, ev.id, Symbol(""))
