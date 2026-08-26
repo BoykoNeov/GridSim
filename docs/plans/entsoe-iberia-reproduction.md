@@ -258,7 +258,7 @@ draw rather than compute.
 |-----------|---------------|-------|
 | Frequency trace with nominal reference | 1-4, 3-8 (top) | The core M1 plot |
 | Stacked frequency + RoCoF panel | 3-8, 3-11 | Two linked axes, shared time cursor |
-| Frequency with **horizontal threshold lines** and shed annotations | **3-67** | The single highest-value target; needs §3.1 |
+| Frequency with **horizontal threshold lines** and shed annotations | **3-67** | **BUILT** (M3 step 7) — `docs/images/fig-3-67-two-area.png`, and on the two-area tier rather than this bucket's M1 one |
 | Cumulative tripped MW on a second axis | 1-3, 3-7, 3-9 | Needs §3.2 |
 | Dual-axis frequency + border exchange | 3-11 | Exchange is a scripted input at M1, not a simulated flow |
 | Shed-per-threshold bars + cumulative line | 3-64, 3-68 | Pure post-processing of the shed log |
@@ -313,9 +313,12 @@ as the demo, rather than being scheduled after it.
   12:33:20 row asserted as a known structural failure rather than banded. The
   script is included as a module by the test file so the scenario stays
   single-sourced.
-- **Next.** GLMakie UI, with the ENTSO-E chart archetypes in bucket A as the
-  layout targets rather than an ad-hoc plot. Figure 3-67 is the first target and
-  needs no further physics.
+- **Done.** GLMakie UI, with the ENTSO-E chart archetypes in bucket A as the
+  layout targets rather than an ad-hoc plot. Figure 3-67 was the first target and
+  is built (M3 step 7) — though not where this line expected it: the annotation
+  went into the **two-area** window, not the aggregate one, because by the time it
+  was drawn the frequency worth annotating was Iberia's own and not an
+  inertia-weighted mean of Iberia and Continental Europe (D5).
 - **M2 candidate.** Two-area + tie-line, motivated by the bracket in §1b.
 
 ---

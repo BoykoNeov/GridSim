@@ -55,6 +55,13 @@ using GridSim: SystemModel, GeneratingUnit, example_system,
 # engine accepts two kinds, and naming the type is how a caller says which.
 using GridSim: NetworkModel, SwingEngine, TripLine, machine_ids,
                PerturbationEvent, EngineEvent, event_log, n_events, describe_event
+# M3's armed mechanisms. The window does not *create* any of these — it forwards
+# them to the engine and then draws what the engine's own logs report, which is
+# why only the ladder accessors are needed and not `ShedLadder` itself. Every name
+# here was checked against `GLMakie` before a line of the panel was written (M3
+# step 7); none of the thirteen candidates collides, and the explicit `using
+# GridSim: x` above shadows anything that later would.
+using GridSim: GenerationRamp, OutOfStepTrip, shed_ladder, shed_log
 
 include("window.jl")
 include("network_window.jl")

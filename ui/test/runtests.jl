@@ -18,6 +18,9 @@ using GridSim: example_system, current_state, state_series, system_inertia,
 using GridSim: three_machine_ring, two_machine_system, SwingEngine, TripLine,
                StepLoad, PerturbationEvent, machine_ids, event_log, n_events,
                inject!, init!
+# M3 step 7's annotated panel. The engine's own logs are what the picture is
+# asserted against, so the accessors come in here as well as into the window.
+using GridSim: LoadShedStage, GenerationRamp, shed_ladder, shed_log
 
 GLMakie.activate!(visible = false)
 
@@ -26,6 +29,31 @@ const NBUILD = GridSimUI._build_network_window
 
 # Fire a widget's handler exactly as a click does.
 click!(b) = (b.clicks[] = b.clicks[] + 1)
+
+# ---- M3 step 7's fixture: a ladder walked PART of the way down ------------
+#
+# Four stages armed, three reachable, one not. Both halves matter — a fixture
+# where everything fires cannot tell "marks what fired" from "marks what was
+# armed", which is the shape of tripwire this milestone has needed five times.
+# Top level rather than inside the testset because `const` is not a thing a local
+# scope has, and because two testsets share it.
+const SHED_DT = 0.02
+const SHED_STAGES = [LoadShedStage(49.8, 0.01; label = :s_49_8),
+                     LoadShedStage(49.6, 0.01; label = :s_49_6),
+                     LoadShedStage(49.4, 0.01; label = :s_49_4),
+                     LoadShedStage(49.2, 0.01; label = :s_49_2)]
+const SHED_RAMP = GenerationRamp(-0.1, 0.0, 2.0)   # −10 MW over 2 s, on a 100 MVA base
+
+function shed_window(; kwargs...)
+    win = NBUILD(two_machine_system(); dt = SHED_DT, rtf = Inf,
+                 window_seconds = 20.0,
+                 shed = [:G1 => SHED_STAGES], ramp = [:G1 => SHED_RAMP],
+                 kwargs...)
+    run_realtime!(win.engine, win.state; control = win.control,
+                  queue = win.queue, duration = 12.0)
+    win.refresh!(; force = true)
+    return win
+end
 
 @testset "GridSimUI" begin
 
@@ -355,6 +383,85 @@ click!(b) = (b.clicks[] = b.clicks[] + 1)
         @test out == path
         @test isfile(path)
         @test filesize(path) > 10_000                   # a real rendered frame
+    end
+
+    # ---- M3 step 7: the shed-annotated panel (report Fig 3-67) -------------
+
+    @testset "the panel marks the ladder's root-found instants, not sampled ones" begin
+        win = shed_window()
+        @test length(win.shed_panels) == 1
+        panel = win.shed_panels[1]
+        @test panel.machine === :G1
+        # Every ARMED stage gets a threshold line, fired or not.
+        @test panel.thresholds == [st.threshold_hz for st in SHED_STAGES]
+
+        log = shed_log(shed_ladder(win.engine, :G1))
+        # Positive control: the fixture must actually walk part of the ladder, or
+        # every assertion below holds vacuously against an empty marker set.
+        @test 0 < length(log.t) < length(SHED_STAGES)
+
+        pts = panel.fired[]
+        @test length(pts) == length(log.t)
+        # The claim worth pinning is the COORDINATES, not the count: each marker is
+        # the log's own instant and the log's own threshold, to the bit. Sampling
+        # the plotted trace instead would land within `dt` of these and pass a
+        # count-only test.
+        @test all(k -> pts[k][1] == Float32(log.t[k]), eachindex(log.t))
+        @test all(k -> pts[k][2] == Float32(log.threshold_hz[k]), eachindex(log.t))
+        # PRECONDITION, not a picture check: the log's own instants must lie off
+        # the `dt` grid, or the two assertions above could not tell an exact marker
+        # from a sampled one and would pass either way.
+        @test any(t -> abs(t / SHED_DT - round(t / SHED_DT)) > 1e-6, log.t)
+        # ...and the same claim about the PICTURE, which is what the reader sees.
+        # Loose in `dt` units because a `Point2f` is Float32 — the gap being caught
+        # is a whole grid step, not a rounding one.
+        @test any(k -> (u = pts[k][1] / Float32(SHED_DT);
+                        abs(u - round(u)) > 1.0f-3), eachindex(pts))
+
+        # The written list is the same log, in MW at the seam and nowhere else.
+        @test occursin(String(log.label[1]), win.shed_text[])
+        @test occursin("−1 MW", win.shed_text[])        # 0.01 pu on a 100 MVA base
+        # A shed is not an injected event, so the OTHER log stays empty. The two
+        # are drawn in one panel and never merged.
+        @test n_events(win.engine) == 0
+        @test win.event_text[] == "(none yet)"
+    end
+
+    @testset "an unarmed model grows no phantom thresholds" begin
+        # The failure this catches: hlines driven by the stage table rather than by
+        # what is armed would put twelve Iberian thresholds across every window.
+        win = NBUILD(three_machine_ring(); window_seconds = 10.0)
+        @test isempty(win.shed_panels)
+        @test win.shed_text[] == "(none yet)"
+    end
+
+    @testset "show_coi = false drops the aggregate from the plot AND the read-out" begin
+        # On a two-area model the inertia-weighted mean is not a frequency (D5), and
+        # suppressing only the line would move that number to the top of the column
+        # where it reads as the answer.
+        on_ = shed_window()
+        @test occursin("f_COI", on_.readout[])
+        @test !occursin("no aggregate", on_.readout[])
+
+        off = shed_window(; show_coi = false)
+        @test !occursin("f_COI", off.readout[])
+        @test !occursin("nadir", off.readout[])
+        @test occursin("no aggregate", off.readout[])
+        # Everything else the read-out carries is unchanged — this is a suppression,
+        # not a second read-out that can drift from the first.
+        @test occursin("max |δ−COI|", off.readout[])
+        @test occursin("H_sys", off.readout[])
+    end
+
+    @testset "smoke_render carries the armed mechanisms into the file" begin
+        dir = mktempdir()
+        path = joinpath(dir, "fig367.png")
+        out = smoke_render(two_machine_system(); path = path, dt = SHED_DT,
+                           duration = 12.0, show_coi = false,
+                           shed = [:G1 => SHED_STAGES],
+                           ramp = [:G1 => SHED_RAMP])
+        @test out == path
+        @test filesize(path) > 10_000
     end
 
 end

@@ -257,13 +257,19 @@ satisfies each is named below. **177 tests green** at the time of that batch
       window close. Worth checking rather than reasoning about — had `display`
       not realised the window synchronously, the documented command would have
       exited instantly with no window and no error.
-- [ ] Report **Figure 3-67** as a layout target — **carried to M3 step 7, which
-      gives it an acceptance criterion for the first time.** It needs no new
-      physics (threshold lines, shed annotations and the cumulative second axis are
-      all computed already), and it ticked no acceptance criterion, which is
-      exactly why it drifted across two milestones. See `m3-tasks.md` step 7: it is
-      done when the annotated panel renders offscreen from the two-area run with
-      markers at the root-found shed instants — or it is dropped in writing.
+- [x] Report **Figure 3-67** as a layout target — **CLOSED at M3 step 7**, which
+      gave it an acceptance criterion for the first time and then met it:
+      `docs/images/fig-3-67-two-area.png`, rendered offscreen by
+      `ui/scripts/figure_3_67.jl` from the two-area run, markers at the root-found
+      shed instants. The original entry is kept below for the record, because the
+      lesson is the entry and not the figure — it needed no new physics from the
+      day it was written, and it drifted across two milestones anyway, purely
+      because nothing it could fail was ever attached to it.
+
+      > It needs no new physics (threshold lines, shed annotations and the
+      > cumulative second axis are all computed already), and it ticked no
+      > acceptance criterion, which is exactly why it drifted across two
+      > milestones.
 
 ### What the headless batch added to core
 

@@ -176,7 +176,7 @@ numbers are either deleted or explicitly labelled as one cell of that grid. A po
 that prints three tuned numbers again has recreated the exact problem this
 milestone was chosen to close (`entsoe-iberia-reproduction.md` §7.3–7.4).
 
-### Step 7 — Figure 3-67, or drop it explicitly
+### Step 7 — Figure 3-67, or drop it explicitly — **BUILT, not dropped**
 
 Frequency trace with horizontal threshold lines and shed annotations — the single
 highest-value figure in the report's catalogue, carried open across M1 **and** M2
@@ -186,6 +186,22 @@ root-found instant from the shed log, and the offscreen render is checked in as
 the proof.* If the batch runs short this is the item to drop — the sweep being
 in-repo is worth more — and dropping it means saying so, not carrying it a third
 time.
+
+> **Resolved by building it.** The drop clause is for a batch that has run short,
+> and this one had not: steps 1–6 were done and green, and the criterion above was
+> both small and, for once, falsifiable. `docs/images/fig-3-67-two-area.png`,
+> rendered by `ui/scripts/figure_3_67.jl`. It is an **annotation on the real
+> window**, not a bespoke figure — the repo's standing rule that a headless PNG
+> must be a picture of the window a user opens, or it drifts from it.
+>
+> Two things the criterion did not anticipate, both in `m3-tasks.md` step 7. The
+> aggregate overlay had to be **suppressible**, because on a two-area model it is
+> the quantity D5 calls meaningless and it is the heaviest line in the panel — and
+> suppressing the line alone would have moved that number to the top of the
+> read-out, where it reads as the answer. And the cell being drawn **still loses
+> synchronism with the defence plan armed**, which is the opposite of what the
+> older aggregate-tier notes led us to write, so the figure's caption says which
+> of the two failures the plan prevents and which it does not.
 
 ## Validation (assert in `test/`)
 
@@ -273,6 +289,9 @@ the report's post-separation collapse window.
 
 ## Carried over, still open
 
-- Figure 3-67 — now step 7, **with** an acceptance criterion for the first time.
+- ~~Figure 3-67 — now step 7, **with** an acceptance criterion for the first
+  time.~~ **CLOSED.** Built at step 7 rather than dropped;
+  `docs/images/fig-3-67-two-area.png`. The pointers in `m1-tasks.md` and
+  `m2-tasks.md` are ticked and say where it landed. Nothing carries into M4.
 - `m1-tasks.md` still records unbounded trajectory growth as open; M2 step 3
   closed it. Fix the stale line in the first docs commit of this batch.

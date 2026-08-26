@@ -694,16 +694,85 @@ deleted and rebuilt from nothing.**
       in-repo and stays labelled as a throwaway-probe result — see `m3-context.md` D12
       for what a step 8 would need to close it.
 
-## Step 7 — Figure 3-67, or an explicit drop
+## Step 7 — Figure 3-67, or an explicit drop (DONE — built, not dropped)
 
-- [ ] Shed-annotated frequency panel with threshold lines, markers at the
-      **root-found** shed instants from the log.
-- [ ] Rendered offscreen and the render checked in — render before claiming.
-- [ ] New exports checked against `GLMakie` **before** any UI code is written.
-- [ ] `ui/`'s own gitignored manifest re-resolved and its tests run, so a core
-      change the UI needs cannot hide for six steps.
-- [ ] If dropped: say so here and in `m3-plan.md`, rather than carrying it into a
-      fourth milestone.
+**Suite: 1719 core unchanged, 78 → 102 UI (+24).** Both measured at `HEAD`, and the core figure measured *after* this step's only `src/`-adjacent change (the `cascade_ramp` extraction in `scripts/iberia_two_area.jl`, which the core suite asserts) rather than before it. The drop clause was for a
+batch that had run short; this one had not, so it was built. **No `src/` change at
+all** — every quantity the figure needs (`shed_log`'s root-found instants, the
+thresholds, the block sizes) had been in the core since M1 step 4, which is the
+point the carried-forward entry in `m1-tasks.md` kept making: this was never
+blocked on physics, only on someone attaching a criterion it could fail.
+
+- [x] Shed-annotated frequency panel with threshold lines, markers at the
+      **root-found** shed instants from the log. *(An annotation on the REAL
+      window — `_build_network_window` gained `shed`/`ramp`/`out_of_step`
+      forwarding and draws what the engine's own ladders report — not a bespoke
+      figure. The repo's standing rule: a headless PNG has to be a picture of the
+      window a user opens, or the two drift.)*
+- [x] Rendered offscreen and the render checked in.
+      `docs/images/fig-3-67-two-area.png`, from `ui/scripts/figure_3_67.jl`, which
+      `include`s `scripts/iberia_two_area.jl` so the model, the cascade and the
+      twelve stages stay single-sourced in the script that derives them. **First
+      binary checked into this repo**, so the generating script sits beside it and
+      the picture is regenerable rather than an artifact.
+- [x] New exports checked against `GLMakie` **before** any UI code is written.
+      Thirteen candidate names, none defined in `GLMakie` at all. Recorded because
+      the check was run, not because it was close.
+- [x] `ui/`'s own gitignored manifest re-resolved and its tests run. No dependency
+      changed, and the 102 tests ran on the re-resolved environment.
+- [x] If dropped: say so here and in `m3-plan.md`. **Not dropped**; both files say
+      that instead, and the M1/M2 pointers are ticked rather than re-carried.
+
+### What the criterion did not anticipate
+
+- **The aggregate overlay had to be suppressible, in the read-out and not just on
+  the plot.** The window's heaviest line is `f_coi`, an inertia-weighted mean over
+  every online machine — which on a model of Iberia *and* Continental Europe is
+  the quantity D5 calls meaningless the moment the two separate. `show_coi = false`
+  drops it. It also drops `f_COI` and its nadir from the read-out, and that is the
+  substance rather than a tidy-up: suppressing only the line would have moved the
+  meaningless number from the middle of the plot to the top of the column, where it
+  reads as *the answer*. Asserted both ways, including that nothing else in the
+  read-out changes — a suppression, not a second read-out that can drift.
+- **The cell being drawn still loses synchronism with the defence plan armed**,
+  and the older notes said the opposite. Those notes are about the *aggregate*
+  tier, where arming the plan makes the model recover; on the two-area tier the
+  plan arrests the frequency fall (Iberian minimum 46.09 Hz → 49.14 Hz, six of
+  twelve stages, 5,072 MW of an armed 15,532 MW) and the angle runs away regardless
+  — 90° at 3.13 s, 180° at 4.26 s, four pole slips by 10 s. Shedding and separation
+  are two different failures here, and the figure's header says which one the plan
+  prevents rather than letting the picture imply both. **Measured before the
+  caption was written**, which is step 6's lesson applied rather than re-learned.
+- **The figure is the sweep's own cell, tie unprotected.** `run_cell` arms no
+  out-of-step relay, so slip is post-processed and nothing opens the tie. Rendering
+  a relay-armed run instead would have been the closer picture of the event — the
+  tie opens at 3.72 s and leaves two islands — and a *different run* from the one
+  the sweep reports. `render(; relay = true)` is that picture, one keyword away and
+  deliberately not the default. Both were rendered and compared before choosing.
+- **The y-box is pinned below anything the run reaches** (47.7 Hz, against a 49.14
+  Hz minimum), so all twelve armed thresholds are in frame. The six that never
+  fired are the figure's other half — an expand-only box crops them off *because*
+  nothing happened there, which is exactly backwards.
+
+### The anti-vacuity control, run rather than asserted
+
+The milestone's standing rule is that every check ships a positive control and an
+anti-vacuity control. Here:
+
+- **Positive control.** The fixture walks four armed stages *part* of the way down
+  — three fire, one does not — and the test asserts `0 < fired < armed`. A fixture
+  where everything fires cannot tell "marks what fired" from "marks what was
+  armed".
+- **Anti-vacuity control, executed.** The marker source was mutated to quantise
+  each instant onto the `dt` grid — the exact bug the whole "read the log, not the
+  trace" design exists to prevent — and the suite was re-run: 2 failures, in the
+  coordinate check and in the off-grid check on the *markers*. Reverted and green
+  again. That second assertion was added *because* the first mutation run exposed
+  it: the original off-grid check read `shed_log`'s own times, so it passed under
+  the mutation. It is still there, relabelled as what it actually is — a
+  **precondition** proving the fixture's instants are off-grid, without which the
+  coordinate check could not discriminate — with a second assertion beside it that
+  makes the same claim about the picture.
 
 ## Known hazards to check off explicitly
 

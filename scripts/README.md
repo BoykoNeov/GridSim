@@ -66,3 +66,9 @@ Five sections:
 Read `docs/plans/entsoe-iberia-reproduction.md` §7.6 before treating any of it as
 validation: voltage magnitude is constant behind a reactance here, so angle
 instability is in scope and the final voltage collapse to blackout is not.
+
+**The picture of one cell** is `ui/scripts/figure_3_67.jl` (M3 step 7), which
+`include`s this file so the model and the twelve shed stages live in exactly one
+place, and renders `docs/images/fig-3-67-two-area.png`. It lives under `ui/`
+rather than here for this directory's own reason: it imports Makie, and nothing
+in `scripts/` may.

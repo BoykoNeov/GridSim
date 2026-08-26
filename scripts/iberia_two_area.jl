@@ -126,6 +126,21 @@ cascade_magnitude() = REPORT_CUMULATIVE_2056 - gen_pre()   # 5,187 MW [DERIVED]
 const CASCADE_END_CEST = 20.560
 cascade_duration() = CASCADE_END_CEST - T0_CEST            # 4.100 s [DERIVED]
 
+"""
+    cascade_ramp(; magnitude_mw, duration_s) -> GenerationRamp
+
+The cascade as the engine takes it: a linear loss of `magnitude_mw` over
+`duration_s`, starting at `t = 0`, in per-unit on `S_BASE` per second.
+
+One function rather than the expression written twice, because the sweep and the
+Fig 3-67 render (`ui/scripts/figure_3_67.jl`) both need it and the figure's whole
+claim is that it draws **the sweep's own cell**. Written out in two places that
+claim would hold by coincidence; here it holds by construction.
+"""
+cascade_ramp(; magnitude_mw::Real = cascade_magnitude(),
+               duration_s::Real = cascade_duration()) =
+    GenerationRamp(-magnitude_mw / S_BASE / duration_s, 0.0, Float64(duration_s))
+
 # The two figures this replaces, kept so the sweep CONTAINS them as labelled cells
 # rather than merely contradicting them in prose.
 const MAG_OLD_UNSOURCED = 2_773.0   # §7.4's sweep centre, labelled "(report)"
@@ -299,7 +314,7 @@ function run_cell(; P_max_mw::Real = P_MAX_NOMINAL, KE_ce::Real = KE_CE,
     net = two_area_model(; P_max_mw = P_max_mw, KE_ce = KE_ce,
                            P_tie0_mw = P_tie0_mw, kwargs...)
     K   = branch_arrays(net).K[1]
-    ramp = GenerationRamp(-magnitude_mw / S_BASE / duration_s, 0.0, Float64(duration_s))
+    ramp = cascade_ramp(; magnitude_mw = magnitude_mw, duration_s = duration_s)
     stages = shed ? [:IB => defence_plan()] : Pair{Symbol,Vector{LoadShedStage}}[]
     eng = SwingEngine(net; dt = dt, ramp = [:IB => ramp], shed = stages)
 

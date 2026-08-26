@@ -43,8 +43,15 @@
 # fixed-height column and would otherwise push the widgets below it off the figure.
 const _EVENTS_SHOWN = 6
 
+# A stage label is unique within its ladder but not across ladders — the Iberian
+# plan and a Continental one could both carry `:lfdd_49_0`. With one ladder armed
+# the machine name is noise; with two it is the only thing telling the rows apart.
+_shed_label(panels, panel, label::Symbol) =
+    length(panels) == 1 ? String(label) : string(panel.machine, ":", label)
+
 """
-    _build_network_window(net; dt, rtf, window_seconds, title, ylims_f, ylims_δ)
+    _build_network_window(net; dt, rtf, window_seconds, title, ylims_f, ylims_δ,
+                          shed, ramp, out_of_step, show_coi)
 
 Assemble the figure, the `SwingEngine`, and the live wiring for a network model,
 returning `(; fig, engine, control, queue, state, status, readout, refresh!,
@@ -55,6 +62,29 @@ Shared by `launch` and `smoke_render` for the same reason the M1 builder is: the
 PNG a headless session looks at has to be a picture of the window a user opens,
 not of a test figure that can drift away from it.
 
+`shed`, `ramp` and `out_of_step` are forwarded verbatim to the engine (M3 steps
+1–5), so the window can be opened on a system with its protection armed rather
+than only on a bare one. A `shed` ladder additionally *annotates* the frequency
+panel — this is report Fig 3-67, and M3 step 7:
+
+  - one dotted horizontal line per **armed** stage, at its threshold, in that
+    machine's own colour. Drawn only for machines that actually have a ladder, so
+    an unarmed model grows no phantom lines;
+  - one marker per **fired** stage at `(t_fired, threshold_hz)` — read from
+    `shed_log`, not from the plotted trace. Both coordinates are then exact: the
+    log's instant is root-found rather than `dt`-quantised, and a downward
+    crossing means the frequency *is* the threshold at that instant.
+
+The two logs are drawn together and stay separate (`protection/load_shedding.jl`):
+dashed **vertical** lines are the event log — what a user, or an out-of-step
+relay, injected — and the markers are the ladder's. Nothing merges them.
+
+`show_coi = false` drops the aggregate overlay. It is not cosmetic: `f_coi` is an
+inertia-weighted mean over every online machine, which on a model of two *areas*
+losing synchronism with each other is the quantity decision D5 calls meaningless.
+On such a model the heaviest line in the panel would otherwise be the one the docs
+say not to read.
+
 Nothing is started here — no window is displayed and no task is spawned.
 """
 function _build_network_window(net::NetworkModel;
@@ -63,8 +93,13 @@ function _build_network_window(net::NetworkModel;
                                window_seconds::Real = 30.0,
                                title::AbstractString = "GridSim — multi-machine swing",
                                ylims_f = nothing,
-                               ylims_δ = nothing)
-    engine = init!(SwingEngine, net; dt = dt)
+                               ylims_δ = nothing,
+                               shed = Pair{Symbol,Vector{LoadShedStage}}[],
+                               ramp = Pair{Symbol,GenerationRamp}[],
+                               out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
+                               show_coi::Bool = true)
+    engine = init!(SwingEngine, net; dt = dt, shed = shed, ramp = ramp,
+                   out_of_step = out_of_step)
     queue = EventQueue()
     control = RealtimeControl(; rtf = rtf)
 
@@ -125,7 +160,33 @@ function _build_network_window(net::NetworkModel;
     end
     # Drawn last and heavier: the aggregate is the same quantity as the thin traces
     # (Hz), so it reads as their weighted centre rather than as a separate series.
-    lines!(ax_f, coitrace.points; color = :black, linewidth = 2.5, label = "COI")
+    # Suppressed on a model where that centre is not a frequency — see `show_coi`.
+    show_coi && lines!(ax_f, coitrace.points; color = :black, linewidth = 2.5,
+                       label = "COI")
+
+    # ---- the shed annotation (report Fig 3-67) ------------------------------
+    # One entry per armed ladder, each carrying its own thresholds and its own
+    # marker buffer. Per machine and never pooled, for `shed_log`'s reason: on a
+    # multi-area model "when did it shed?" has one answer per area.
+    shed_panels = NamedTuple{(:machine, :thresholds, :fired),
+                             Tuple{Symbol,Vector{Float64},
+                                   Observable{Vector{Point2f}}}}[]
+    for (mid, stages) in shed
+        i = findfirst(==(mid), ids)
+        i === nothing && continue          # the engine already rejected this; be quiet
+        col = machine_color(i)
+        thresholds = Float64[st.threshold_hz for st in stages]
+        # Thin and dashed, under everything: twelve of these is the real Iberian
+        # defence plan, and they are a backdrop the traces cross, not data.
+        hlines!(ax_f, thresholds; color = (col, 0.45), linestyle = :dot,
+                linewidth = 1.0)
+        fired = Observable(Point2f[])
+        scatter!(ax_f, fired; color = col, marker = :dtriangle, markersize = 11,
+                 strokecolor = :black, strokewidth = 0.6,
+                 label = String(mid) * " shed")
+        push!(shed_panels, (; machine = mid, thresholds, fired))
+    end
+
     axislegend(ax_f; position = :rb, framevisible = false, labelsize = 11,
                orientation = :horizontal)
 
@@ -216,7 +277,18 @@ function _build_network_window(net::NetworkModel;
     Label(gc[10, 1], event_text; halign = :left, justification = :left,
           tellwidth = false, fontsize = 13, word_wrap = true)
 
-    Label(gc[11, 1], status; halign = :left, tellwidth = false, color = :firebrick,
+    # The ladder's own log, in words, beside its markers — and deliberately a
+    # SECOND list rather than more lines in the one above. A shed is not an
+    # `EngineEvent`: nobody injected it, and its instant here is the root-found one
+    # the event log could not carry (`protection/load_shedding.jl`).
+    shed_text = Observable("(none yet)")
+    if !isempty(shed_panels)
+        Label(gc[11, 1], "load shed"; halign = :left, tellwidth = false)
+        Label(gc[12, 1], shed_text; halign = :left, justification = :left,
+              tellwidth = false, fontsize = 13, word_wrap = true)
+    end
+
+    Label(gc[13, 1], status; halign = :left, tellwidth = false, color = :firebrick,
           word_wrap = true)
 
     rowsize!(fig.layout, 2, Relative(0.42))
@@ -235,6 +307,7 @@ function _build_network_window(net::NetworkModel;
     greyed = Set{Symbol}()     # machines already marked offline
     greyed_lines = Set{Tuple{Symbol,Symbol}}()
     drawn_events = Ref(0)      # how many log entries the markers already show
+    drawn_sheds = Ref(0)       # ditto, for the ladders' own log
     # A TRIPPED MACHINE IS DRAWN BUT SCALES NOTHING. Its rotor is decoupled and
     # undriven, so its angle relative to the COI grows without bound — the first
     # render of this window put a survivor spread of 0.1 rad on an axis 300 rad
@@ -288,9 +361,16 @@ function _build_network_window(net::NetworkModel;
         # fabricated 0.0 or a blanked field would both read as a working system.
         # The nadir beside it stays finite — NaN loses every comparison, so it
         # never becomes the running minimum.
-        readout[] = @sprintf("t            %7.2f s\nf_COI        %7.3f Hz\nnadir        %7.3f Hz\nspread       %7.1f mHz\nmax |δ−COI|  %7.3f rad\nH_sys        %7.3f s\n(spread and |δ−COI| over online machines)",
-                             s.t, s.f_coi, nadir[], spread, δwidest,
-                             system_inertia(engine))
+        # `show_coi` governs the READ-OUT as well as the line, and that is the point
+        # of it rather than a tidy-up: suppressing the overlay while leaving `f_COI`
+        # and its nadir at the top of the column would move the meaningless number
+        # from the plot to the headline, where it reads as the answer.
+        coi_rows = show_coi ?
+            @sprintf("f_COI        %7.3f Hz\nnadir        %7.3f Hz\n", s.f_coi, nadir[]) : ""
+        coi_note = show_coi ? "" : "\n(no aggregate: this model's areas separate)"
+        readout[] = @sprintf("t            %7.2f s\n", s.t) * coi_rows *
+                    @sprintf("spread       %7.1f mHz\nmax |δ−COI|  %7.3f rad\nH_sys        %7.3f s\n(spread and |δ−COI| over online machines)",
+                             spread, δwidest, system_inertia(engine)) * coi_note
 
         for (id, b) in machine_buttons
             if !(id in greyed) && !is_online(engine, id)
@@ -323,6 +403,29 @@ function _build_network_window(net::NetworkModel;
                    @sprintf("(+%d earlier)\n", length(log) - _EVENTS_SHOWN) : ""
             event_text[] = isempty(log) ? "(none yet)" :
                 head * join((@sprintf("%6.2f s  %s", e.t, describe_event(e)) for e in shown), "\n")
+        end
+
+        # Same rule as the event markers: rebuilt only when a ladder has grown.
+        # Coordinates come from the log and never from `ftraces` — the buffer is
+        # sampled every `dt` and decimates, the log is exact and is the entire
+        # reason a shed is not folded into the event log.
+        if !isempty(shed_panels)
+            logs = [shed_log(shed_ladder(engine, p.machine)) for p in shed_panels]
+            total = sum(length(l.t) for l in logs)
+            if total != drawn_sheds[]
+                drawn_sheds[] = total
+                for (p, l) in zip(shed_panels, logs)
+                    p.fired[] = Point2f[Point2f(l.t[k], l.threshold_hz[k])
+                                        for k in eachindex(l.t)]
+                end
+                # MW at the UI seam and nowhere else: the log is per-unit on
+                # `S_base`, which is the project convention (SPEC §6).
+                rows = [@sprintf("%6.2f s  %-18s %5.2f Hz  −%.0f MW",
+                                 l.t[k], _shed_label(shed_panels, p, l.label[k]),
+                                 l.threshold_hz[k], l.ΔP_pu[k] * net.S_base)
+                        for (p, l) in zip(shed_panels, logs) for k in eachindex(l.t)]
+                shed_text[] = isempty(rows) ? "(none yet)" : join(rows, "\n")
+            end
         end
 
         for tr in ftraces; notify(tr.points); end
@@ -364,8 +467,12 @@ function _build_network_window(net::NetworkModel;
     # that the buffers take every published state while only the repaint is rate
     # limited — nothing is dropped from the picture, it just arrives in batches.
     traces = (; frequency = ftraces, angle = δtraces, coi = coitrace)
+    # `shed_panels` rides along for `traces`' reason: so a test can assert what the
+    # picture CONTAINS — that a marker sits at the log's instant and threshold, not
+    # merely that some marker appeared. A count-only check would pass against
+    # coordinates sampled off the `dt` grid, which is the bug worth catching.
     return (; fig, engine, control, queue, state, status, readout, event_text,
-              refresh!, widgets, axes, traces)
+              shed_text, refresh!, widgets, axes, traces, shed_panels)
 end
 
 """
@@ -435,6 +542,15 @@ survives followed by the generator loss it does not.
 Pass `ylims_f` / `ylims_δ` as `(lo, hi)` to pin the axes. Required whenever two
 renders are meant to be *compared*: with per-run limits each picture fills its own
 frame, so a swing three times larger draws the same shape as a small one.
+
+`shed`, `ramp`, `out_of_step` and `show_coi` are forwarded to the window builder,
+which is what lets a render show an *armed* system: a scheduled cascade ramp, a
+defence plan annotating the frequency panel at its root-found instants, and a tie
+that opens on loss of synchronism. That render is M3 step 7 — see
+`ui/scripts/figure_3_67.jl`, which is the one checked in.
+
+The returned window is discarded, so nothing here reads the run back. A caller
+that wants the numbers as well as the picture should build the window itself.
 """
 function smoke_render(net::NetworkModel;
                       path::AbstractString,
@@ -445,13 +561,19 @@ function smoke_render(net::NetworkModel;
                       window_seconds::Real = 0.0,
                       title::AbstractString = "GridSim — multi-machine swing",
                       ylims_f = nothing,
-                      ylims_δ = nothing)
+                      ylims_δ = nothing,
+                      shed = Pair{Symbol,Vector{LoadShedStage}}[],
+                      ramp = Pair{Symbol,GenerationRamp}[],
+                      out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
+                      show_coi::Bool = true)
     GLMakie.activate!(; visible = false)
     # Default the rolling window to the whole run, so the saved frame shows the
     # entire event rather than its tail.
     ws = window_seconds > 0 ? Float64(window_seconds) : Float64(duration)
     win = _build_network_window(net; dt = dt, rtf = Inf, window_seconds = ws,
-                                title = title, ylims_f = ylims_f, ylims_δ = ylims_δ)
+                                title = title, ylims_f = ylims_f, ylims_δ = ylims_δ,
+                                shed = shed, ramp = ramp, out_of_step = out_of_step,
+                                show_coi = show_coi)
     win.control.rtf[] = Inf     # flat out: no wall-clock pacing for a file render
 
     t_now = 0.0

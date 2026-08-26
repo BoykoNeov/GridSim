@@ -17,8 +17,9 @@ tier**, and which one you get is decided by the model you hand `launch`:
 - **`NetworkModel` → the multi-machine window.** One frequency trace per machine
   with the centre-of-inertia aggregate overlaid on the same axis, a second panel
   of rotor angles *relative to that aggregate*, dashed markers and a written list
-  wherever a perturbation was applied, and two groups of buttons — trip a
-  machine, trip a line.
+  wherever a perturbation was applied, two groups of buttons — trip a machine,
+  trip a line — and, on a model whose protection is armed, the shed annotation
+  described below.
 
 They are siblings rather than one window with a switch, because the two engines
 do not accept the same events: `TripLine` has no method on the aggregate view (a
@@ -111,13 +112,72 @@ smoke_render(three_machine_ring(); path = "swing.png", duration = 20.0,
 
 Its axis pins are `ylims_f` and `ylims_δ`.
 
+## The shed annotation (report Figure 3-67)
+
+Hand the network window an armed low-frequency shedding ladder and the frequency
+panel annotates itself: a faint dotted line at every **armed** stage's threshold,
+a marker wherever a stage actually **fired**, and the ladder's log written out
+beside the plot in MW.
+
+```julia
+using GridSimUI, GridSim
+stages = [LoadShedStage(49.8, 0.01; label = :s_49_8),
+          LoadShedStage(49.6, 0.01; label = :s_49_6),
+          LoadShedStage(49.4, 0.01; label = :s_49_4)]
+smoke_render(two_machine_system(); path = "shed.png", dt = 0.02, duration = 12.0,
+             shed = [:G1 => stages],                       # bound to ONE machine
+             ramp = [:G1 => GenerationRamp(-0.1, 0.0, 2.0)])   # −10 MW over 2 s
+```
+
+That one runs as written. The real thing — the twelve-stage Iberian defence plan
+on the two-area model — is `ui/scripts/figure_3_67.jl`, below.
+
+Three things about it are deliberate:
+
+- **The markers come from the ladder's log, never from the plotted trace.** Both
+  coordinates are then exact — the log's instant is root-found rather than
+  sampled on the `dt` grid, and a downward crossing means the frequency *is* the
+  threshold at that instant. Sampling the buffer instead would land within one
+  step of the same place and look identical, which is why the test asserts the
+  coordinates and not the marker count.
+- **The two logs are drawn together and never merged.** Dashed *vertical* lines
+  are the event log — what a user, or an out-of-step relay, injected. The markers
+  are the ladder's. A shed is not an injected event: nobody chose it, and its
+  instant is more precise than an event stamp could carry.
+- **Thresholds are drawn per armed ladder**, so a model with no protection grows
+  no lines, and a two-area model with one plan draws that plan's thresholds and
+  not some global table's.
+
+`show_coi = false` drops the centre-of-inertia overlay **and** the `f_COI` /
+nadir rows from the read-out. Reach for it whenever the model's machines are
+areas that can separate: an inertia-weighted mean over two areas losing
+synchronism is not a frequency, and leaving it in the read-out while removing it
+from the plot would just move the meaningless number somewhere more prominent.
+
+`shed`, `ramp` and `out_of_step` are forwarded to the engine untouched, so the
+window can be opened on a fully armed system rather than only on a bare one.
+
+## Figure 3-67, checked in
+
+```
+julia --project=ui ui/scripts/figure_3_67.jl
+```
+
+Writes `docs/images/fig-3-67-two-area.png` — the 28 April 2025 Iberian separation
+on the two-area tier, with the real ES + PT defence plan armed and annotated. It
+is one cell of the sweep in `scripts/iberia_two_area.jl`, which is the script that
+owns the model and the data; this one only adds the window. **Read that file's
+header before quoting anything off the picture**: the defence plan arrests the
+frequency fall and does not save the tie, the tie in this cell is unprotected, and
+voltage collapse is out of scope on this tier at any point of the figure.
+
 ## Tests
 
 ```
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-78 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+102 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both windows, including that the two engines really do reject each
