@@ -109,7 +109,17 @@ reads as forbidding the guard it contains.
 
 ### Step 2 — what primary response actually does, asserted
 
-Validation only (V1–V4 below). No new mechanism.
+Validation only (V1–V4 below). No new mechanism, no `src/` change, no new export.
+
+> **Outcome (step 2): green, +68 tests, and two things the plan had wrong.**
+> The settling denominator sums the survivors, not every machine (D11, above and
+> in `m3-context.md`) — a 3.75 % error that would have read as broken physics. And
+> V1's real content turned out not to be the three closed-form constants, which the
+> M2 testsets already assert against this engine, but **invariance to the governor
+> parameters** now that `Tg` and `Pmax` are read by the fixpoint solve: three of
+> four variants come out bit-identical and the fourth differs by 4 ulp, which a
+> gauge-shift probe then attributes to the fixpoint's arbitrary gauge rather than
+> to `Tg` — step 1's D1 finding, in a second place.
 
 ### Step 3 — the shedding ladder, unbound from the M1 engine (refactor)
 
@@ -180,9 +190,17 @@ time.
   measurement that must still satisfy an independent prediction, not a new
   baseline that defines its own success. Both old and new measured values are
   recorded in `m3-context.md`.
-- **V2 — the droop closed form.** Single machine plus load, step imbalance `ΔP`:
-  speed settles at `Δω = −ΔP/(1/R_eq + D)` and mechanical power rises by
-  `−Δω/R_eq`. Asserted on the **running engine**, not on the formula.
+- **V2 — the droop closed form.** Step imbalance `ΔP`: speed settles at
+  `Δω = −ΔP/(1/R_eq + D)` and mechanical power rises by `−Δω/R_eq`. Asserted on
+  the **running engine**, not on the formula.
+
+  > **Corrected in step 2 (`m3-context.md` D11): the sums run over the SURVIVING
+  > machines.** The line above is M1's, where `D` is one system-wide *load* damping
+  > that a trip does not change. Here `D` is per machine and bolted to a rotor, and
+  > `inject!` zeroes the coupling of every branch incident to a tripped bus — so the
+  > dead rotor is electrically islanded, holds `ω ≡ 0` exactly, and its damping
+  > enters nobody's balance. The two readings differ by 3.75 % on `governed_ring`,
+  > which is too big to hide in a tolerance and too small to look like a bug.
 - **V3 — angle differences settle, absolute angles do not.** Post-trip, assert
   `δᵢ − δⱼ` converges and assert that the common mode keeps drifting at
   `ω₀·Δω_settle`. This pins the correction above as a *tested property* rather

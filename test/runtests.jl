@@ -1889,6 +1889,284 @@ end
         @test current_state(eng).ΔPm[3] > 0.1
     end
 
+    # ---------------------------------------------------------------------
+    # M3 step 2 — VALIDATION OF PRIMARY RESPONSE (V1–V4, m3-plan.md).
+    #
+    # No new mechanism and no `src/` change: step 1 built the governor state,
+    # this is what it is asserted to *do*. Fixtures stay local for the same
+    # reason step 1's did — step 2 ships no scenario either.
+    # ---------------------------------------------------------------------
+
+    @testset "M3 step 2 V1: governor-free is invariant to every governor parameter" begin
+        # M2's closed forms are already asserted against the running engine
+        # ("two-machine closed form" and "SwingEngine V3" above), and they are
+        # asserted against DERIVED numbers — `K = 4.284`, `δ₀ = 0.140518`,
+        # `f_osc = 1.5911075` — precisely so that step 1's re-pinning could not
+        # define its own success. (Step 1 then measured that the re-pin was not
+        # needed at all; the discipline still stands, because the baseline COULD
+        # have moved and the check must not depend on it having not.)
+        #
+        # What is NOT yet asserted, and is the non-redundant half of V1: with
+        # `R = Inf` those numbers are invariant to every *governor* parameter.
+        # `Tg` and `Pmax` are now read by the fixpoint solve and by the RHS, so
+        # "they cannot matter" is a claim about the code, not a tautology.
+        twomach(; Tg = 1.0, extra_hr = 0.0) = NetworkModel(100.0, 50.0,
+            [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+            [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+            [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  60.0, Inf,  60.0 + extra_hr, Tg),
+             Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -60.0, Inf, -60.0 + extra_hr, Tg)])
+
+        # The same small-signal excitation "SwingEngine V3" uses, reduced to the
+        # gauge-free trace and the largest `|ΔPm|` seen anywhere in the window.
+        function swingrun(net)
+            eng = init!(SwingEngine, net; dt = 0.002)
+            eng.integrator.u[eng.δ_idx[1]] += 0.01          # 10 mrad, small-signal
+            SciMLBase.derivative_discontinuity!(eng.integrator, true)
+            ys, mx = Float64[], 0.0
+            for _ in 1:6000                                  # 12 s, finite by construction
+                s = step!(eng, 0.002)
+                push!(ys, s.δ[1] - s.δ[2])
+                mx = max(mx, maximum(abs, s.ΔPm))
+            end
+            return ys, mx, eng.integrator.stats.nreject
+        end
+
+        base, base_mx, base_nrej = swingrun(two_machine_system())
+        @test base_mx < 1e-20                    # the third state is inert, as V1 needs
+        @test base_nrej == 0
+        # The closed form, on this very trace — so the invariance below is an
+        # invariance of something already known to be right, not of an artefact.
+        δ₀ = asin(machine_arrays(two_machine_system()).Pm[1] /
+                  branch_arrays(two_machine_system()).K[1])
+        @test δ₀ ≈ 0.1405180 atol = 1e-6
+
+        # `Tg` over three decades and headroom from zero to 500 MW. Note the two
+        # headroom variants take DIFFERENT branches of the saturation: at the
+        # equilibrium `ΔPm >= headroom` is `0 >= 0` (true, saturated) when
+        # `Pmax == P0` and false when there is reserve. They agree only because the
+        # droop command is identically zero, so `min(0, 0) == 0` either way — worth
+        # saying, or the agreement reads as an untested coincidence.
+        for (Tg, extra_hr) in ((0.1, 0.0), (100.0, 0.0), (1.0, 500.0), (0.1, 500.0))
+            ys, mx, nrej = swingrun(twomach(; Tg, extra_hr))
+            @test mx < 1e-20                                  # still inert
+            @test nrej == 0
+            # Measured: three of the four are BIT-identical to the shipped fixture;
+            # `Tg = 100` differs by 6.4e-16 — about 4 ulp on a 0.14 rad quantity.
+            @test maximum(abs, ys .- base) < 1e-14
+        end
+
+        # And that 6.4e-16 is not `Tg` doing something. What actually differs
+        # between those four models at `t = 0` is the fixpoint's ARBITRARY GAUGE:
+        # the absolute angles land up to 0.11 rad apart while the difference
+        # `δ₁ − δ₂` is bit-identical in all four. Shifting only the gauge, on ONE
+        # model with `Tg` held fixed, reproduces the residual — which is step 1's
+        # D1 finding again, in a second place.
+        function gauge_shifted(shift)
+            eng = init!(SwingEngine, two_machine_system(); dt = 0.002)
+            for i in eng.δ_idx; eng.integrator.u[i] += shift; end
+            eng.integrator.u[eng.δ_idx[1]] += 0.01
+            SciMLBase.derivative_discontinuity!(eng.integrator, true)
+            ys = Float64[]
+            for _ in 1:6000
+                s = step!(eng, 0.002)
+                push!(ys, s.δ[1] - s.δ[2])
+            end
+            return ys
+        end
+        @test gauge_shifted(0.0018) == base                   # a small shift: bit-identical
+        # A shift the size of the Tg=100 model's gauge offset reproduces the
+        # residual, in the same order of magnitude and with no governor involved.
+        big = maximum(abs, gauge_shifted(0.108) .- base)
+        @test 1e-16 < big < 1e-14
+    end
+
+    @testset "M3 step 2 V2: droop settles on the closed form, on the running engine" begin
+        # THE DENOMINATOR IS THE FINDING (m3-context.md D11). `m3-plan.md` states
+        # V2 as M1's `Δω = −ΔP/(1/R_eq + D)`, where `D` is ONE system-wide load
+        # damping that a trip does not change. On the network tier `D` is per
+        # machine and attached to a rotor, so "which machines are in the sum?" is a
+        # real question with two plausible answers — and they differ by 3.75 % here,
+        # which is far too big to hide inside a tolerance.
+        #
+        # The answer is SURVIVORS ONLY, and the reason is not that `inject!` zeroes
+        # the dead machine's `D` (it does not — `D` is not even a mutable parameter).
+        # It is that `inject!` zeroes the coupling of every branch incident to that
+        # bus, which electrically ISLANDS the dead rotor: it can draw nothing from
+        # the survivors to feed its own damping. So summing the antisymmetric edge
+        # terms over the survivors alone still gives zero, and the balance closes
+        # over the survivors alone.
+        net = governed_ring(; hr2 = 5000.0, hr3 = 5000.0)   # see the headroom note below
+        ma = machine_arrays(net)
+        surv = [2, 3]                                        # G1 is the one tripped
+        ω_ss    = sum(ma.Pm[surv]) / (sum(ma.invR[surv]) + sum(ma.D[surv]))
+        ω_all_D = sum(ma.Pm[surv]) / (sum(ma.invR[surv]) + sum(ma.D))       # the wrong one
+        ω_no_R  = sum(ma.Pm[surv]) / sum(ma.D[surv])            # no governors at all (M2)
+        ω_no_D  = sum(ma.Pm[surv]) / sum(ma.invR[surv])         # droop alone, no damping
+        @test ω_ss ≈ -0.8 / 154 atol = 1e-15
+
+        eng = init!(SwingEngine, net; dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        peak = zeros(3)
+        for _ in 1:15000                                     # 150 s, finite by construction
+            s = step!(eng, 0.01)
+            for i in 1:3; peak[i] = max(peak[i], s.ΔPm[i]); end
+        end
+        s = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+
+        # THE PRECONDITION, ASSERTED RATHER THAN ASSUMED: no machine touched its
+        # ceiling at any point in the run. The binding constraint is the PEAK
+        # command during the dip, not the settled one — measured peaks are 0.284 and
+        # 0.712 pu against settled 0.208 and 0.519, which is why the fixture carries
+        # 50 pu of reserve rather than the shipped `governed_ring` defaults (step 1's
+        # own saturation test records that 60 MW puts G3 on its ceiling). Without
+        # this the closed form could be asserted straight through a saturated
+        # transient and would mean much less than it looks like it means.
+        @test peak[2] < 0.5 * ma.headroom[2]
+        @test peak[3] < 0.5 * ma.headroom[3]
+        @test peak[2] > 0.25 && peak[3] > 0.6                # …and it was a real excursion
+
+        # The settling speed. Measured relative error at 150 s: 8.7e-14.
+        @test s.ω_coi ≈ ω_ss rtol = 1e-9
+        # Every machine is at the SAME speed — the common drift the tier predicts,
+        # not an average over two machines doing different things.
+        @test s.ω[2] ≈ ω_ss rtol = 1e-9
+        @test s.ω[3] ≈ ω_ss rtol = 1e-9
+
+        # Discriminating power, by name. All three near misses are physically
+        # plausible readings of the same sentence and all three land far outside.
+        for wrong in (ω_all_D, ω_no_R, ω_no_D)
+            @test abs(s.ω_coi - wrong) > 1e-4                # ≥ 3.75 % of ω_ss
+        end
+
+        # Mechanical power rises by exactly `−Δω/R`, per machine. This is the half
+        # of V2 that pins the GAIN conversion (`machine_arrays` weights `1/R` by the
+        # MVA ratio) all the way through to a running trajectory.
+        @test s.ΔPm[2] ≈ -ω_ss * ma.invR[2] atol = 1e-9
+        @test s.ΔPm[3] ≈ -ω_ss * ma.invR[3] atol = 1e-9
+        @test s.ΔPm[1] == 0.0                                # the tripped machine: re-seated
+        # Not an aggregate read-out: G3 supplies 2.5× what G2 does, because its
+        # gain is 2.5× larger. A pooled figure would have hidden that.
+        @test s.ΔPm[3] / s.ΔPm[2] ≈ ma.invR[3] / ma.invR[2] rtol = 1e-6
+
+        # It never came close to stalling: the guard is attached and rejected
+        # nothing over 15,000 steps (measured: 0 rejections, one accepted step per
+        # `dt`), which is what "governors are acting and the solver is fine" looks
+        # like from outside.
+        @test eng.integrator.stats.nreject == 0
+    end
+
+    @testset "M3 step 2 V3: angle differences settle, the common mode does not" begin
+        # The tested form of the correction `m3-plan.md` is written against:
+        # droop does NOT give a post-trip equilibrium. `Δω` settles at a NON-zero
+        # value, so `dδ/dt = ω₀·Δω` is non-zero forever and every absolute angle
+        # grows without bound — while the DIFFERENCES between synchronised machines
+        # stop moving. Both halves are asserted here, because asserting only the
+        # first would also pass on a model that had quietly reached a fixpoint.
+        net = governed_ring(; hr2 = 5000.0, hr3 = 5000.0)
+        ma = machine_arrays(net)
+        ω_ss = sum(ma.Pm[2:3]) / (sum(ma.invR[2:3]) + sum(ma.D[2:3]))
+        ω₀ = 2π * net.f0
+
+        eng = init!(SwingEngine, net; dt = 0.01)
+        inject!(eng, TripGenerator(:G1))
+        for _ in 1:14000; step!(eng, 0.01); end              # 140 s, finite by construction
+        a = current_state(eng)
+        for _ in 1:1000; step!(eng, 0.01); end               # …plus a 10 s measuring window
+        b = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        Δt = b.t - a.t
+
+        # The common mode: `δ_coi` (over ONLINE machines) drifts at exactly `ω₀·Δω`.
+        # Measured as a finite difference over a whole 10 s window, not from one
+        # sample. Measured relative error: 1.0e-13.
+        drift = (b.δ_coi - a.δ_coi) / Δt
+        @test drift ≈ ω₀ * ω_ss rtol = 1e-6
+        @test drift < -1.6                                   # …and it is a real drift
+        # Over 140 s that has taken the absolute angles a long way from anywhere a
+        # fixpoint solver could have put them — which is the standing "never call
+        # `find_fixpoint` post-trip, never assert on an absolute angle" rule, shown.
+        @test abs(b.δ_coi) > 100.0
+
+        # The synchronised pair: the difference between the two machines that are
+        # still coupled has stopped moving. Measured rate: 1.5e-13 rad/s.
+        d23 = (b.δ[2] - b.δ[3]) - (a.δ[2] - a.δ[3])
+        @test abs(d23 / Δt) < 1e-9
+        @test abs(b.δ[2] - b.δ[3]) > 0.1                     # a real angle, not zero
+
+        # AND THE TRIPPED MACHINE IS NOT IN THAT SET, which is worth its own
+        # assertion because "angle differences settle" is only true of the
+        # connected, online ones. `inject!` zeroes the dead rotor's couplings, so
+        # nothing drives it: from a flat start its speed stays exactly zero, its
+        # angle freezes, and its difference against the survivors therefore grows
+        # at the full drift rate.
+        @test b.ω[1] == 0.0
+        @test b.δ[1] == a.δ[1]
+        d12 = ((b.δ[1] - b.δ[2]) - (a.δ[1] - a.δ[2])) / Δt
+        @test d12 ≈ -ω₀ * ω_ss rtol = 1e-6                   # opposite sign: δ₁ is the still one
+    end
+
+    @testset "M3 step 2 V4: the ceiling holds, releases unaided, and never stalls" begin
+        # Step 1 asserted that a machine STOPS at its ceiling. The two halves V4
+        # adds are the ones the header claims and nothing yet measured: it comes
+        # back OFF the ceiling unaided when frequency recovers, and the guard does
+        # not stall the integration while it is pinned.
+        net = governed_ring(; hr2 = 5.0, hr3 = 300.0)        # G2: 5 MW of reserve
+        ma = machine_arrays(net)
+        eng = init!(SwingEngine, net; dt = 0.01)
+        pred = GridSim._swing_outofdomain(eng.ΔPm_idx, eng.hr_pidx)
+
+        inject!(eng, TripGenerator(:G1))
+        fired, over = 0, -Inf
+        for _ in 1:10000                                     # 100 s, finite by construction
+            s = step!(eng, 0.01)
+            pred(eng.integrator.u, eng.params, s.t) && (fired += 1)
+            over = max(over, s.ΔPm[2] - ma.headroom[2])
+        end
+        pinned = current_state(eng)
+        @test pinned.ΔPm[2] ≈ ma.headroom[2] atol = 1e-9     # pinned, the step 1 property
+        @test pinned.ΔPm[3] < ma.headroom[3]                 # G3 is not: it is per machine
+        @test pinned.f_coi < net.f0 - 0.3                    # …with a real deficit driving it
+
+        # WHY IT CANNOT FIRE, measured rather than argued: the largest excursion
+        # above the ceiling over the whole run is 2.4e-11, inside the predicate's
+        # own 1e-10 roundoff slack. The derivative saturation is what holds the
+        # solution AT the ceiling; the guard only has to absorb adaptive-step
+        # overshoot, and here there was none worth absorbing.
+        @test 0 < over < 1e-10
+
+        # Recovery, unaided: trip G3 (`P0 = −110 MW`, the net LOAD of the ring) and
+        # the remaining machine is left in surplus. Frequency rises, the droop
+        # command turns negative, and `ΔPm` comes off the ceiling on its own — no
+        # clamp released, no state written. It then keeps going negative, which is
+        # legal and deliberate: this tier has no down-regulation floor (swing.jl).
+        inject!(eng, TripGenerator(:G3))
+        for k in 1:20000                                     # 200 s, finite by construction
+            s = step!(eng, 0.01)
+            pred(eng.integrator.u, eng.params, s.t) && (fired += 1)
+            k == 100 && @test s.ΔPm[2] < -0.01               # off the ceiling within 1 s
+        end
+        r = current_state(eng)
+        @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+        @test r.f_coi > net.f0                               # it really did recover
+        # G2 alone, decoupled from everything: `ω → Pm/(1/R + D)` and `ΔPm = −ω/R`.
+        ω_r = ma.Pm[2] / (ma.invR[2] + ma.D[2])
+        @test r.ω[2] ≈ ω_r rtol = 1e-9
+        @test r.ΔPm[2] ≈ -ω_r * ma.invR[2] atol = 1e-9       # measured: −0.2727272727
+        @test r.ΔPm[2] < -0.25                               # a long way below the ceiling
+
+        # What is actually observable about the guard, worded to the assertion and
+        # no further: the predicate is FALSE on every one of the 30,016 accepted
+        # states, and the run rejected 20 steps in total — error control, not a
+        # collapsing `dt`. This does NOT establish "the predicate never returned
+        # true" inside the solver; that cannot be seen from outside `init!`, and
+        # this file has already paid once for a check claimed before it was run.
+        @test fired == 0
+        @test eng.integrator.stats.nreject < 100
+        @test eng.integrator.stats.naccept > 30000
+        @test r.t ≈ 300.0 atol = 1e-6                        # …it advanced the whole way
+    end
+
     @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
         # The sharper half of step 5, and why it leads. A GENERATOR trip breaks
         # `Σ Pm = 0` and this tier has no governors, so nothing settles (see the

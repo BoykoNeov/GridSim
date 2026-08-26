@@ -96,19 +96,93 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
       exactly zero while droop commands it upward. A sweep cell zeroing an area's
       reserve is an obvious thing to try in step 6, and it would have found this.
 
-## Step 2 — validation of primary response
+## Step 2 — validation of primary response (DONE)
 
-- [ ] **V1** governor-free network still satisfies M2's **closed-form** predictions
+Validation only: **no `src/` change, no new export, no new dependency**, so the
+`GLMakie` collision hazard and the `ui/`-manifest hazard are *clear here*, not
+skipped — `ui/`'s manifest was re-resolved and its 78 tests run anyway, because
+"it cannot have changed" is what was believed the last two times it had.
+
+**Suite: 1332 → 1388 core (+56), 78 UI unchanged.** Both measured either side —
+and measuring the "before" caught a stale number in this very file. Step 1's line
+above records "After: 1320", which was true at `e402f0a` and not at the end of the
+step: `f7cfd95` added the counterfactual tests and took it to **1332**. The count
+was re-run at `HEAD` rather than inherited from the doc, which is the same rule
+step 1 wrote down after inheriting 1234/74 from memory.
+
+- [x] **V1** governor-free network still satisfies M2's **closed-form** predictions
       (`K = 4.284 pu`, `δ₀ = 0.140518 rad`, `f_osc = 1.5911075 Hz`, the V3 gap
-      inside its bound) — **not** M2's re-pinned measured values, which step 1
-      itself moves and against which the check would pass by construction.
-- [ ] **V2** droop settling `Δω = −ΔP/(1/R_eq + D)` measured on the **running
-      engine**, and mechanical power up by `−Δω/R_eq`.
-- [ ] **V3** angle *differences* converge while the common mode keeps drifting at
-      `ω₀·Δω_settle` — the tested form of the corrected premise.
-- [ ] **V4** headroom: stops exactly at the ceiling, releases unaided on recovery,
-      predicate never fires during continuous integration, and the predicate is
-      asserted to ignore a large drifted `δ`.
+      inside its bound) — **not** M2's re-pinned measured values, against which the
+      check would pass by construction. *(The reason survived step 1 but changed:
+      step 1 measured that the re-pin never happened, so the risk is no longer "the
+      baseline moved" but "the baseline could have, and the check must not depend
+      on its not having".)* Those three are asserted by the M2 testsets that
+      already run against this engine, so what V1 adds is **the non-redundant
+      half — invariance to every governor parameter** now that `Tg` and `Pmax` are
+      read by the fixpoint solve and the RHS. `Tg` over three decades × headroom
+      zero / 500 MW, all with `R = Inf`:
+      - Three of the four variants are **bit-identical** to the shipped fixture's
+        trace; `Tg = 100` differs by **6.4e-16**, about 4 ulp on a 0.14 rad quantity.
+      - **And that residual is not `Tg`.** What differs between the four models at
+        `t = 0` is the fixpoint's **arbitrary gauge** — absolute angles up to
+        0.11 rad apart, with `δ₁ − δ₂` bit-identical in all four. Shifting *only*
+        the gauge, on one model with `Tg` fixed, reproduces it: 0.0018 rad → bit
+        identical, 0.108 rad → 9.4e-16, 0.7 rad → 3.9e-15. **Step 1's D1 finding in
+        a second place**, and it is asserted, not narrated.
+      - The zero-headroom and 500 MW variants take **different branches** of the
+        saturation (`ΔPm >= headroom` is `0 >= 0` at the equilibrium when
+        `Pmax == P0`). They agree only because the command is identically zero —
+        said in the test, or the agreement reads as an untested coincidence.
+- [x] **V2** droop settling measured on the **running engine**, and mechanical
+      power up by `−Δω/R` per machine (`0.2078` / `0.5195` pu, matching
+      `−ω_ss·invR` to 3e-14; their ratio is the gain ratio, not a pooled figure).
+      Settled `ω_coi = −0.0051948052` against the closed form to **8.7e-14
+      relative** after 150 s.
+      - **The finding, and it is a correction to this plan's own V2 line
+        (`m3-context.md` D11): the denominator is SURVIVORS ONLY.** `−0.8/154`,
+        not `−0.8/160`. The plan states V2 as M1's `Δω = −ΔP/(1/R_eq + D)` where
+        `D` is one system-wide *load* damping a trip does not change; on this tier
+        `D` is per machine and bolted to a rotor, so "which machines are in the
+        sum" has two plausible answers **3.75 % apart** — far too big to hide in a
+        tolerance, and the wrong one would have read as a physics bug.
+      - Three named near misses (all-`D`, no-droop, no-damping) are each asserted
+        **outside** the tolerance by more than 1e-4.
+      - **Non-saturation asserted as a precondition over the whole run**, because
+        the binding constraint is the *peak* command in the dip, not the settled
+        one: peaks `0.284` / `0.712` pu against settled `0.208` / `0.519`. The
+        shipped `governed_ring` defaults are unusable for this test for exactly
+        that reason — step 1's own saturation testset records that 60 MW of reserve
+        puts G3 on its ceiling. The fixture therefore carries 50 pu.
+      - 15,000 steps, **0 rejections**, one accepted step per `dt`.
+- [x] **V3** angle *differences* converge while the common mode keeps drifting at
+      `ω₀·Δω_settle` — the tested form of the corrected premise. Drift measured as
+      a finite difference of `δ_coi` over a whole 10 s window at t ≈ 140–150 s:
+      **1.0e-13 relative** to `ω₀·ω_ss`, with `|δ_coi| > 100 rad` by then (the
+      "never assert on an absolute angle" rule, shown rather than asserted).
+      Synchronised pair `δ₂ − δ₃`: rate **1.5e-13 rad/s**, i.e. stopped.
+      - **And the tripped machine is not in that set.** `inject!` zeroes the
+        couplings of every branch incident to the dead bus, so nothing drives that
+        rotor: from a flat start its speed stays **exactly** `0.0`, its angle
+        freezes, and its difference against the survivors grows at the *full* drift
+        rate. "Angle differences settle" is a statement about the connected, online
+        machines — asserted both ways round.
+- [x] **V4** headroom: stops exactly at the ceiling, **releases unaided on
+      recovery** (trip the ring's net load, `ΔPm` off the ceiling inside 1 s and
+      settling at `−0.2727` — negative, legal, no down-regulation floor on this
+      tier), and the predicate is asserted to ignore a large drifted `δ` *(that
+      half already lives in step 1's saturation testset)*.
+      - **The claim about the predicate is worded to what is observable.** It is
+        false on every one of the 30,016 **accepted** states, the run rejected 20
+        steps total (error control, not a collapsing `dt`), and it advanced the
+        full 300 s. That is *not* "the predicate never returned true" — which
+        cannot be seen from outside `init!` — and the tasks line above has been
+        rewritten to stop claiming it. This file has already paid once for a check
+        claimed before it was run.
+      - **Why it cannot fire, measured rather than argued**: the largest excursion
+        above the ceiling anywhere in the run is **2.4e-11**, inside the
+        predicate's own 1e-10 slack. The derivative saturation does the work; the
+        guard only absorbs adaptive-step overshoot, and there was none worth
+        absorbing.
 
 ## Step 3 — the shedding ladder, unbound from the M1 engine (refactor)
 
@@ -194,7 +268,9 @@ Checklist for the Milestone 3 batches. See `m3-plan.md` for the approach and
       returns the per-machine vector and nothing sums it. It is deliberately not a
       recorder channel either — see the V5 tripwire's own note.)*
 - [x] **Every long-running test self-terminates** on a fixed step count, never on a
-      condition. *(Holds for step 1's four new testsets; re-check per step.)*
+      condition. *(Holds for step 1's four new testsets and for step 2's four,
+      whose longest is a 30,000-step (300 s) run written as two fixed loops;
+      re-check per step.)*
 - [ ] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
 

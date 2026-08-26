@@ -295,6 +295,65 @@ every surviving single-point number labelled as one cell of it.
 If step 6 ports the probe and prints three numbers again, it has recreated the
 exact problem it was chosen to close.
 
+### D11 — The droop settling denominator sums the SURVIVORS, not every machine
+
+Found in step 2, and it is a correction to `m3-plan.md`'s own V2 line rather than
+a detail of it. The plan states the settling speed as M1's closed form:
+
+```
+Δω = −ΔP / (1/R_eq + D)
+```
+
+In M1 that `D` is **one system-wide load-damping constant** which a generator trip
+does not change — M1 has no per-machine anything. On the network tier `D` is per
+machine and attached to a **rotor**, so transplanting the formula leaves a real
+question the plan does not answer: after tripping G1, is `ΣD` taken over the
+survivors, or over all three machines?
+
+Both are defensible on inspection, and on `governed_ring` they are **3.75 % apart**
+— `−0.8/154 = −0.0051948` against `−0.8/160 = −0.0050000`. That is far too large to
+absorb into a tolerance and far too small to look like a bug: the wrong one would
+have shipped as a validation failure that read as broken physics.
+
+**The answer is survivors only, and the mechanism is not the one to reach for
+first.** The tempting argument is "a dead rotor is still a mass with damping, still
+coupled, so the survivors must feed its damping and its `D` belongs in the sum."
+That would be right if the machine were still connected. It is not:
+`inject!(::TripGenerator)` zeroes `Pm`, the governor gain, the headroom **and the
+coupling `K` of every branch incident to that bus** (`src/engines/swing.jl`). The
+dead rotor is therefore *electrically islanded*. Its RHS becomes
+`dω/dt = −Dω/(2H)` and, from a flat start, `ω ≡ 0` exactly — it draws nothing,
+supplies nothing, and its damping never enters anyone's balance.
+
+Note what this is **not**: `inject!` does not zero `D`, and `D` is not even a
+mutable parameter of the compiled network. Checking "does the trip zero `D`?" —
+the obvious check — gives the wrong reason for the right answer, and would leave
+the conclusion resting on a fact that a later refactor could quietly change. The
+load-bearing fact is the coupling.
+
+Two consequences worth carrying forward:
+
+- **The balance closes over the survivors** because the edge terms are
+  antisymmetric and every edge touching the dead bus now contributes zero, so
+  `Σ_survivors esum = 0` still holds:
+
+  ```
+  ω_settle = Σ Pm_survivors / (Σ_survivors 1/Rᵢ + Σ_survivors Dᵢ)
+  ```
+
+  Measured against the running engine to **8.7e-14 relative** after 150 s.
+- **`is_online` for a line and "the line carries something" are different
+  questions**, which `swing.jl` already says of the read-out and which this makes
+  quantitative: the lines out of a tripped bus stay *in service* and carry
+  *nothing*. A future reader summing damping over "connected" machines has to mean
+  connected-with-non-zero-coupling.
+
+This also sharpens V3. The dead rotor's speed is pinned at exactly zero while the
+survivors drift at `ω_settle`, so its **angle difference against them grows without
+bound**. "Angle differences settle after a trip" is true of the synchronised,
+online set and false of the tripped machine — a distinction the step-2 tests assert
+in both directions rather than leaving to a reader of this paragraph.
+
 ## Open questions to resolve during M3
 
 - ~~**What does `coi_model` compile now?**~~ **SETTLED in step 1: it compiles the
