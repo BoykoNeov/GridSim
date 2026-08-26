@@ -301,7 +301,7 @@ against `GLMakie` before any of it — **one** new export, `shed_ladder`, and
 
 ## Step 4 — out-of-step protection (new mechanism, separate commit) (DONE)
 
-**Suite: 1461 → 1556 core (+95), 78 UI unchanged.** Both measured at `HEAD` either
+**Suite: 1461 → 1560 core (+99), 78 UI unchanged.** Both measured at `HEAD` either
 side rather than inherited — the rule step 1 wrote down after inheriting 1234/74
 from memory, and step 2 needed after this file's own "After: 1320" went stale. This
 step changes `src/`, so the two standing hazards were cleared rather than noted:
@@ -414,6 +414,17 @@ so the both-resolutions hazard is **clear here, not skipped**.
       branch, and a threshold below the steady-state angle (the fourth needs the
       fixpoint, so it runs past `find_fixpoint`). The last is tested from both sides —
       0.38 rad legal, 0.30 rejected, against a steady-state angle of 0.3789.
+- [x] **And checking the fourth guard's own justification overturned it.** It was
+      written against "such a relay could never fire: the condition starts below zero
+      and a downward crossing needs a positive side to fall from" — a claim about the
+      rootfinder that nothing observes from outside `init`, i.e. the shape of wording
+      step 2's V4 already had to rewrite. Measured instead of asserted, **and it is
+      false**: `|δ|` is not monotone, because the export swing carries the angle down
+      *through zero* first. A relay set at 0.30 rad starts at `g = −0.0789`, is carried
+      inside its own threshold at **t = 0.41 s**, and fires on the way back out at
+      **t = 1.25 s** — 1.7 s before the genuine slip at 2.9336 s, on an ordinary
+      disturbance excursion. So the guard prevents a relay that trips a healthy tie
+      early and **looks like it worked**, not an inert one. Both crossings pinned.
 - [x] **`auto_dt_reset!` inside a callback affect was measured, not assumed.**
       `inject!` calls it, which is safe between `step!`s but is a different situation
       inside a `ContinuousCallback`, where the integrator has just been interpolated

@@ -380,13 +380,16 @@ end
 # `Dict`, so the callback set is built in the caller's order (`shed`'s reason). A
 # bare number is accepted for the threshold, because a relay with no label to give
 # should not have to name a type to say "trip at 120°".
+#
+# It takes the engine's own `branch_of_buses` rather than building a second bus-pair
+# lookup: "which line is this?" must not have two implementations, which is the
+# reason `_find_branch` exists at all (see its comment).
 function _bind_out_of_step(out_of_step, net::NetworkModel, ba, δ_idx::Vector{Int},
+                           branch_of::Dict{Tuple{Symbol,Symbol},Int},
                            box::Base.RefValue{Any})
     relays = OutOfStepRelay[]
     bound = Any[]
     pairs_seen = Set{Tuple{Symbol,Symbol}}()
-    branch_of = Dict{Tuple{Symbol,Symbol},Int}(
-        _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
     for (buspair, setting) in out_of_step
         from, to = buspair
         key = _bus_pair(from, to)
@@ -411,20 +414,37 @@ function _bind_out_of_step(out_of_step, net::NetworkModel, ba, δ_idx::Vector{In
 end
 
 # The fourth guard, which can only be checked once the steady state exists: a relay
-# whose threshold is already exceeded at `t = 0` is armed on a system that is
-# *by its own definition* out of step before the run begins — and it would never
-# fire, because the condition starts negative and a downward crossing needs a
-# positive side to fall from. Silent, and the trace would look like a defence plan
-# that simply never operated. Checked against the fixpoint, so it catches a
-# threshold set below a perfectly ordinary pre-fault transfer angle.
+# whose threshold is already exceeded at `t = 0` is armed on a system that is *by its
+# own definition* out of step before the run begins. Checked against the fixpoint, so
+# it catches a threshold set below a perfectly ordinary pre-fault transfer angle.
+#
+# WHAT SUCH A RELAY ACTUALLY DOES — and this is NOT what the guard was first written
+# against, which is why the wording is now what was measured rather than what was
+# reasoned. The obvious argument is "it can never fire: the condition starts negative
+# and a downward crossing needs a positive side to fall from." That argument is
+# wrong, and the measurement is in `test/`. The condition is `threshold − |δ|`, and
+# `|δ|` is not monotone: the export swing carries the angle DOWN THROUGH ZERO before
+# it runs away (the report's flow reversal, and this tier's version of it). So on the
+# step-4 fixture a relay set at 0.3 rad against a 0.3789 rad steady state starts at
+# `g = −0.079`, is carried *inside* its own threshold at t ≈ 0.41 s, and then fires
+# on the way back out at **t ≈ 1.25 s** — 1.7 s before the genuine slip at 2.93 s,
+# on an angle excursion that is an ordinary consequence of the disturbance and not a
+# loss of synchronism at all.
+#
+# So the guard is not preventing an inert relay; it is preventing one that trips a
+# healthy tie early and looks like it worked. Refused at construction, because both
+# readings of a below-operating-point threshold ("trip immediately" and "trip on the
+# swing") are things the caller did not ask for.
 function _guard_out_of_step_start(bound::AbstractVector, u0::Vector{Float64})
     for (r, δdiff, _) in bound
         d = δdiff(u0)
         abs(d) < r.threshold_rad || throw(ArgumentError(
             "out_of_step: relay on `:$(r.from)`–`:$(r.to)` has threshold_rad " *
             "$(r.threshold_rad) rad, but the steady-state angle across that " *
-            "branch is already $(abs(d)) rad. It could never fire, because the " *
-            "trip is a downward crossing and the condition starts below zero."))
+            "branch is already $(abs(d)) rad. Such a relay protects nothing: it is " *
+            "inert until the swing carries the angle back inside its threshold, and " *
+            "then fires on the way out — at an instant set by the disturbance's " *
+            "angle excursion rather than by any loss of synchronism."))
     end
     return nothing
 end
@@ -582,7 +602,16 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # through — see the note above `_swing_trip_branch!` for why it has to be a box
     # and what that costs.
     eng_box = Base.RefValue{Any}(nothing)
-    relays, bound_oos = _bind_out_of_step(out_of_step, net, ba, δ_idx, eng_box)
+    # Bus pair ⇒ branch index. Built HERE rather than with the rest of the engine's
+    # bookkeeping because the relay binding below resolves branches through it, and
+    # one lookup is the point (see `_find_branch`). The key is the *unordered* pair,
+    # matching `TripLine`'s "either order" contract. It exists in the first place
+    # because a UI asks `is_online` once per line per frame, which puts it in the
+    # redraw path.
+    branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
+        _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
+    relays, bound_oos =
+        _bind_out_of_step(out_of_step, net, ba, δ_idx, branch_of_buses, eng_box)
 
     # --- steady state, then the integrator -------------------------------------
     fp = NetworkDynamics.find_fixpoint(nw, s)
@@ -626,13 +655,6 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # aggregate model, and recovering them from `w` after a trip is impossible.
     H = copy(ma.H)
     w = copy(ma.H)
-
-    # Bus pair ⇒ branch index, so "which line is this?" is a hash lookup rather
-    # than a scan over `model.branches`. It exists because a UI asks it once per
-    # line per frame (`is_online`), which puts it in the redraw path; the key is
-    # the *unordered* pair, matching `TripLine`'s "either order" contract.
-    branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
-        _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
 
     # One channel per machine angle, one per machine speed, then the two
     # aggregates. `:t` is prepended by the recorder itself (engines/recorder.jl).
@@ -1105,6 +1127,9 @@ function inject!(eng::SwingEngine, ev::TripLine)
     # something" structural: reaching the affect at all requires being armed, and
     # an open branch disarms. Placed AFTER the no-op guard above, for `_log_event!`'s
     # reason — this records what changed the system, not what was asked for.
+    # At most one relay can match: `NetworkModel` rejects parallel circuits, so a
+    # bus pair names one branch, and `_bind_out_of_step` rejects two relays on it.
+    # The loop is a scan over a handful of relays, not a case that can hit twice.
     br0 = eng.model.branches[b]
     for r in eng.relays
         r.from === br0.from && r.to === br0.to && disarm!(r)

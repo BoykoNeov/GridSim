@@ -2878,8 +2878,43 @@ end
         # a threshold below the pre-fault transfer angle could never fire, because the
         # trip is a downward crossing and the condition would start below zero. Silent
         # otherwise — the trace would read as a defence plan that simply never operated.
-        @test occursin("could never fire", argerr_msg(
+        @test occursin("protects nothing", argerr_msg(
             () -> init!(SwingEngine, net; out_of_step = [(:B1, :B3) => 0.3])))
+        # THE GUARD'S REASON, MEASURED — AND THE MEASUREMENT OVERTURNED IT. The
+        # obvious justification is "such a relay can never fire: the condition starts
+        # negative and a downward crossing needs a positive side to fall from." That
+        # is a claim about the rootfinder that nothing here observes (the wording step
+        # 2's V4 already had to rewrite once), so it is checked instead of asserted —
+        # and it is false. `|δ|` is not monotone: the export swing carries the angle
+        # down THROUGH ZERO first, so the condition goes positive at t ≈ 0.41 s and
+        # then falls back through zero at t ≈ 1.25 s. A relay set below the operating
+        # point therefore trips a healthy tie 1.7 s before the genuine slip, and looks
+        # like it worked. The guard prevents that, not an inert relay.
+        b0 = init!(SwingEngine, net; dt = 0.01)
+        r0 = OutOfStepRelay(:B1, :B3, OutOfStepTrip(0.3))
+        # The angle across the branch, resolved the way the engine resolves it — off
+        # `branch_arrays`' own `src`/`dst` and the engine's symbolically-resolved flat
+        # indices, not off an assumed state layout. (It is not the obvious one: the
+        # three states of a vertex are NOT contiguous.)
+        ba0 = branch_arrays(net)
+        i, j = b0.δ_idx[ba0.src[2]], b0.δ_idx[ba0.dst[2]]
+        cb = GridSim._out_of_step_callback(r0, u -> u[i] - u[j], _ -> nothing)
+        gcond() = cb.condition(b0.integrator.u, b0.integrator.t, b0.integrator)
+        ts = [b0.integrator.t]; g = [gcond()]
+        inject!(b0, TripGenerator(:ESG))
+        for _ in 1:600                                   # 6 s, a fixed step count
+            s = step!(b0); push!(ts, s.t); push!(g, gcond())
+        end
+        @test isapprox(g[1], -0.0788547578; atol = 1e-8)  # starts below zero, as argued
+        # …and then does exactly what the argument says it cannot.
+        up = [ts[k] for k in 2:length(g) if g[k-1] < 0 <= g[k]]
+        dn = [ts[k] for k in 2:length(g) if g[k-1] >= 0 > g[k]]
+        @test length(up) == 1 && isapprox(up[1], 0.41; atol = 1e-9)
+        @test length(dn) == 1 && isapprox(dn[1], 1.25; atol = 1e-9)
+        # The spurious trip lands 1.7 s before the genuine one (2.9336 s, pinned by the
+        # V6 testset above), which is what makes it dangerous rather than merely wrong:
+        # it would read as protection that worked.
+        @test dn[1] < 2.9335882899 - 1.5
         # …and it is a real boundary, not a blanket refusal: the steady-state angle is
         # 0.3789 rad, so 0.38 is legal and 0.30 is not.
         @test init!(SwingEngine, net; out_of_step = [(:B1, :B3) => 0.38]) isa SwingEngine

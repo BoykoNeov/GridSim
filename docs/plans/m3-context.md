@@ -237,13 +237,24 @@ happened — breaking the engine's own rule that a log records what changed the 
 not what was asked for. One line in `inject!(::TripLine)`, placed after the no-op
 guard, covers the user's trip, another relay's trip and the relay's own.
 
-**A fourth guard that only exists because the fixpoint is solved in the constructor.**
-A threshold *below* the pre-fault transfer angle could never fire — the trip is a
-downward crossing of `threshold − |δ|` and the condition would start below zero — and
-the trace would read as a defence plan that simply never operated. Checked against
-the steady state, so it catches a threshold set below an ordinary transfer angle.
-On `_pole_slip_net` the boundary is real and tested from both sides: the steady-state
-angle is 0.3789 rad, so 0.38 is legal and 0.30 throws.
+**A fourth guard that only exists because the fixpoint is solved in the constructor
+— and the measurement overturned the reason it was written for.** A threshold *below*
+the pre-fault transfer angle was refused on the argument that it "could never fire":
+the trip is a downward crossing of `threshold − |δ|`, the condition starts below zero,
+and a downward crossing needs a positive side to fall from. That argument is a claim
+about the rootfinder that nothing observes from outside `init` — the exact shape of
+wording step 2's V4 had to rewrite — so it was checked instead of asserted, **and it
+is false.**
+
+`|δ|` is not monotone. The export swing carries the angle *down through zero* before
+it runs away, so on `_pole_slip_net` a relay set at 0.30 rad against a 0.3789 rad
+steady state starts at `g = −0.0789`, is carried **inside** its own threshold at
+t ≈ 0.41 s, and fires on the way back out at **t ≈ 1.25 s** — 1.7 s before the genuine
+slip at 2.9336 s, on an angle excursion that is an ordinary consequence of the
+disturbance and not a loss of synchronism at all. The guard is therefore preventing a
+relay that trips a healthy tie early **and looks like it worked**, which is a great
+deal worse than an inert one. Both crossings are pinned in `test/`, and the boundary
+is tested from both sides: 0.38 rad legal, 0.30 rejected.
 
 **How the relay reaches `inject!`, and what that costs.** The affect calls the engine's
 **real** `inject!(::TripLine)` — not a copy of its body — so the no-op guard,
