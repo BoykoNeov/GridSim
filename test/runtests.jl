@@ -4242,4 +4242,357 @@ end
         end
     end
 
+    # ======================= M4 step 1: `solve!` ================================
+    #
+    # THE AGREEMENT BAND, WRITTEN DOWN BEFORE ANY OF THE COMPARISONS BELOW RAN.
+    # Real-time and playback integrate the SAME equations under the SAME error
+    # control; they differ only in where the solver's steps are allowed to land.
+    # `run_realtime!` truncates the adaptive step at every output sample
+    # (`step!(integ, dt, true)`); `solve!` lets the solver choose its steps and
+    # reads the output grid off each step's interpolant. So the two trajectories
+    # differ by the sum of two independently controlled errors, and there is no
+    # reason whatever to expect agreement better than the tolerance itself.
+    #
+    #     band = 3 · reltol · (that channel's own peak excursion over the run)
+    #
+    # Three because two paths contribute two errors and neither is exact at the
+    # final time; the channel's excursion because a relative tolerance is relative
+    # to the signal the solver is resolving, not to zero. At the default
+    # `reltol = 1e-3` that is 0.3% of the swing. Asserting anything tighter than
+    # this would be asserting a fact about roundoff, not about the two modes
+    # agreeing — and a tolerance picked after seeing the gap tests nothing
+    # (m4-tasks.md step 4's rule, which applies here for the same reason).
+    #
+    # The band alone is still only half a check, so two controls sit beside it: an
+    # event placed where the real-time grid CANNOT represent it must land outside
+    # the band, and the same event deliberately delayed by one output step must
+    # too. Without those, "inside the band" cannot be told apart from "this
+    # comparison is always inside the band".
+    @testset "M4 step 1: solve! exists, for both engines" begin
+        # The whole point of the step: until now `solve!` was a docstring. It is
+        # still CommonSolve's generic (asserted at the top of this file); what is
+        # new is that GridSim engines answer to it.
+        @test hasmethod(solve!, Tuple{SwingEngine,Tuple{Float64,Float64}})
+        @test hasmethod(solve!, Tuple{FrequencyResponseEngine,Tuple{Float64,Float64}})
+        # And it returns the trajectory, which is the same object `state_series`
+        # hands back — playback does not invent a second history format.
+        eng = SwingEngine(two_machine_system())
+        out = solve!(eng, (0.0, 0.5))
+        @test out === state_series(eng)
+        @test out.t[1] == 0.0 && out.t[end] ≈ 0.5
+        @test issorted(out.t)
+    end
+
+    # N output steps EXACTLY.
+    #
+    # `run_realtime!` stops on `t < t_stop`, so a `duration` that is an exact
+    # multiple of `dt` is decided by floating-point accumulation. Measured while
+    # writing this block: `duration = 1.0` at `dt = 0.1` ran ELEVEN steps, not ten,
+    # because ten accumulated `0.1`s fall a hair short of `1.0` — so the real-time
+    # event landed a whole output step away from where playback put it and the
+    # agreement check failed for a reason with nothing to do with playback. Half a
+    # step of slack cannot be decided by roundoff.
+    #
+    # Left as a property of `run_realtime!` rather than "fixed" here: `while t <
+    # t_stop` is a correct reading of "run for `duration` seconds of simulation
+    # time", and rounding instead would move the step count of every existing
+    # caller. Recorded in m4-tasks.md as a finding for a later step to weigh.
+    pb_steps!(eng, n, dt) = run_realtime!(eng, nothing; rtf = Inf,
+                                          duration = (n - 0.5) * dt, dt = dt)
+    # A channel's own peak excursion from where it started — the scale the band is
+    # a fraction of.
+    pb_exc(v) = maximum(abs.(v .- v[1]))
+    # One scenario, run both ways. `mk` builds a fresh engine (so the two runs
+    # cannot share state), `N`/`M` are output steps before and after the event, and
+    # `t_pb` is where PLAYBACK is told to put it — normally `N*dt`, i.e. the same
+    # instant, and deliberately elsewhere for the two controls.
+    function pb_both(mk, ev, N, M, dt, t_pb)
+        rt = mk()
+        pb_steps!(rt, N, dt)
+        inject!(rt, ev)
+        pb_steps!(rt, M, dt)
+        pb = mk()
+        solve!(pb, (0.0, (N + M) * dt); perturbations = [t_pb => ev], saveat = dt)
+        return state_series(rt), state_series(pb)
+    end
+
+    @testset "M4 step 1: real-time and playback agree, and the gap tracks the tolerance" begin
+        net = two_machine_system()
+        sys = example_system()
+        dt, N, M = 0.02, 50, 200
+
+        # --- the network tier ------------------------------------------------
+        function swing_gap(rtol, atol)
+            a, b = pb_both(() -> SwingEngine(net; reltol = rtol, abstol = atol),
+                           TripGenerator(:G2), N, M, dt, N * dt)
+            # Same number of samples and the same time base. NOT bit-identical:
+            # real-time accumulates `t` by repeated addition of `dt` while the
+            # playback grid is `t0 + k*dt`, which is a different roundoff path.
+            @test length(a.t) == length(b.t) == N + M + 1
+            @test maximum(abs.(a.t .- b.t)) < 1e-12
+            return (f = maximum(abs.(a.f_coi .- b.f_coi)),
+                    δ = maximum(abs.((a.δ_G1 .- a.δ_G2) .- (b.δ_G1 .- b.δ_G2))),
+                    ω = maximum(abs.(a.ω_G1 .- b.ω_G1)),
+                    band_f = 3e-3 * pb_exc(b.f_coi),
+                    band_δ = 3e-3 * pb_exc(b.δ_G1 .- b.δ_G2),
+                    band_ω = 3e-3 * pb_exc(b.ω_G1))
+        end
+        loose = swing_gap(1e-3, 1e-6)
+        @test loose.f <= loose.band_f
+        @test loose.δ <= loose.band_δ
+        @test loose.ω <= loose.band_ω
+        # The gauge-free angle is checked, not the raw angles: `find_fixpoint`
+        # picks an arbitrary common offset, so only differences mean anything (the
+        # lesson M2 spent four names learning).
+
+        # THE SECOND TOLERANCE, AND WHAT IT IS FOR. M3's standing rule is not "run
+        # it twice" — it is that a number this small is only a result if it MOVES
+        # when the tolerance moves. Tighten `reltol` by 1000× and the gap must
+        # collapse; a gap that sat still would be a fixed disagreement (a
+        # misplaced event, a wrong weight) wearing a small number as a disguise.
+        tight = swing_gap(1e-6, 1e-9)
+        @test tight.f <= tight.band_f
+        @test tight.f * 10 < loose.f
+        @test tight.δ * 10 < loose.δ
+        @test tight.ω * 10 < loose.ω
+
+        # --- the aggregate tier ----------------------------------------------
+        # Both engines, because `solve!` is one shared driver and a bug in it
+        # would not be visible in only one of them — but the channel sets differ,
+        # so the assertion has to be written twice however shared the code is.
+        function fr_gap(rtol, atol)
+            a, b = pb_both(() -> FrequencyResponseEngine(sys; reltol = rtol, abstol = atol),
+                           TripGenerator(:G3), N, M, dt, N * dt)
+            @test length(a.t) == length(b.t) == N + M + 1
+            @test maximum(abs.(a.t .- b.t)) < 1e-12
+            return (f = maximum(abs.(a.f .- b.f)),
+                    P = maximum(abs.(a.ΔPm .- b.ΔPm)),
+                    band_f = 3e-3 * pb_exc(b.f), band_P = 3e-3 * pb_exc(b.ΔPm))
+        end
+        floose = fr_gap(1e-3, 1e-6)
+        @test floose.f <= floose.band_f
+        @test floose.P <= floose.band_P
+        ftight = fr_gap(1e-6, 1e-9)
+        @test ftight.f <= ftight.band_f
+        @test ftight.f * 10 < floose.f
+        @test ftight.P * 10 < floose.P
+    end
+
+    @testset "M4 step 1: the two controls — an event the real-time grid cannot place" begin
+        # POSITIVE CONTROL. The agreement above says the comparison reads "same"
+        # when the two runs are the same run. This says it reads "different" when
+        # they are not — and it picks the difference playback exists to make
+        # possible: an event at an instant the real-time grid cannot represent.
+        # Real-time can only inject at a step boundary; `solve!` lands the
+        # integrator on the exact instant with a tstop. Half an output step apart.
+        #
+        # `dt = 0.1` rather than 0.02 deliberately: the size of the discrepancy IS
+        # the offset, so a coarse output grid makes the control separate cleanly
+        # instead of hovering at the band's edge. This is the honest way to
+        # strengthen a control — make the effect bigger, not the band tighter.
+        net = two_machine_system()
+        sys = example_system()
+        dt, N, M = 0.1, 10, 40
+
+        a, b = pb_both(() -> SwingEngine(net), TripGenerator(:G2), N, M, dt,
+                       (N + 0.5) * dt)
+        band = 3e-3 * pb_exc(b.f_coi)
+        @test maximum(abs.(a.f_coi .- b.f_coi)) > 3 * band
+        a, b = pb_both(() -> FrequencyResponseEngine(sys), TripGenerator(:G3), N, M, dt,
+                       (N + 0.5) * dt)
+        @test maximum(abs.(a.f .- b.f)) > 3 * (3e-3 * pb_exc(b.f))
+
+        # ANTI-VACUITY CONTROL. The mechanism that makes the agreement real is the
+        # `add_tstop!` that lands the integrator exactly on the event instant. Put
+        # the event one whole output step late — what a broken schedule compilation
+        # would do — and the agreement check must go red. Run here on the SAME
+        # 0.02 s grid the agreement check uses, so it is that check being falsified
+        # and not a different one.
+        dt2, N2, M2 = 0.02, 50, 200
+        a, b = pb_both(() -> SwingEngine(net), TripGenerator(:G2), N2, M2, dt2,
+                       (N2 + 1) * dt2)
+        @test maximum(abs.(a.f_coi .- b.f_coi)) > 3e-3 * pb_exc(b.f_coi)
+        a, b = pb_both(() -> FrequencyResponseEngine(sys), TripGenerator(:G3), N2, M2, dt2,
+                       (N2 + 1) * dt2)
+        @test maximum(abs.(a.f .- b.f)) > 3e-3 * pb_exc(b.f)
+    end
+
+    @testset "M4 step 1: the sample AT an event is the pre-event one, in both modes" begin
+        # The record-then-apply ordering inside `_playback!`, asserted from outside
+        # it. `inject!` writes through the integrator in place, so the moment it
+        # runs the finished step's interpolant is void — every sample inside that
+        # step has to be recorded first. Nothing in the loop's shape says that, so
+        # a later edit could reorder the two halves and only this test would notice.
+        #
+        # `tripped_mw` is the cleanest witness: it is a step function that moves
+        # exactly when `inject!` runs, so "which side of the event is this sample
+        # on" is readable straight off the trajectory.
+        sys = example_system()
+        dt, N, M = 0.02, 50, 200
+        a, b = pb_both(() -> FrequencyResponseEngine(sys), TripGenerator(:G3), N, M, dt,
+                       N * dt)
+        i = N + 1                                  # the sample at t = 1.0 (t0 is #1)
+        @test a.t[i] ≈ N * dt && b.t[i] ≈ N * dt
+        @test a.tripped_mw[i] == 0.0               # real-time: pre-event…
+        @test b.tripped_mw[i] == 0.0               # …and playback agrees
+        @test a.tripped_mw[i + 1] > 0.0            # the NEXT sample is post-event
+        @test b.tripped_mw[i + 1] > 0.0
+        @test a.tripped_mw[i + 1] == b.tripped_mw[i + 1]
+    end
+
+    @testset "M4 step 1: protection stays a callback in playback (D4)" begin
+        # The decision that makes every comparison in M4 mean anything: scheduled
+        # events go through `perturbations=`, state-triggered protection does NOT.
+        # A ladder root-finds its own firing instant off the system's own state, in
+        # BOTH modes, from the callback the constructor built. If playback had
+        # flattened it into a preset time, the two modes would be different systems.
+        net = two_machine_system()
+        stages = [LoadShedStage(49.0, 0.10), LoadShedStage(48.5, 0.10)]
+        mk() = SwingEngine(net; shed = [:G2 => stages])
+        dt, N, M = 0.02, 50, 200
+        # Trip the GENERATOR (G1, +60 MW): the load machine G2 is left undriven and
+        # its own frequency falls, which is the condition its ladder exists for.
+        a, b = pb_both(mk, TripGenerator(:G1), N, M, dt, N * dt)
+
+        # Rebuild each side once more to reach the ladders themselves (pb_both
+        # returns trajectories, and the ladder's log is not a trajectory channel).
+        rt = mk(); pb_steps!(rt, N, dt); inject!(rt, TripGenerator(:G1)); pb_steps!(rt, M, dt)
+        pb = mk(); solve!(pb, (0.0, (N + M) * dt);
+                          perturbations = [N * dt => TripGenerator(:G1)], saveat = dt)
+        lr = shed_log(shed_ladder(rt, :G2))
+        lp = shed_log(shed_ladder(pb, :G2))
+        @test !isempty(lr.t)                      # it fires at all — the premise
+        @test length(lr.t) == length(lp.t)        # …the same number of times…
+        @test lr.ΔP_pu == lp.ΔP_pu                # …shedding the same blocks…
+        @test lr.threshold_hz == lp.threshold_hz
+        # …at the same instants. These are ROOT-FOUND, not grid points: the two
+        # modes reach them through completely different step sequences, so their
+        # agreeing to well inside an output step is the actual claim.
+        @test maximum(abs.(lr.t .- lp.t)) < dt / 10
+        @test shed_total(shed_ladder(rt, :G2)) == shed_total(shed_ladder(pb, :G2))
+
+        # AND THE TRAJECTORIES AGREE THROUGH THE FIRINGS. This line is the
+        # regression test for the bug that writing this step found, and it is
+        # worth naming because a reader will otherwise see a line that looks like
+        # a duplicate of the agreement check above.
+        #
+        # The first implementation of playback stepped freely and read each output
+        # sample off the finished step's interpolant. That is wrong for exactly one
+        # step per callback firing: the framework shortens the step to the root,
+        # runs the affect, and recomputes the end-of-step derivative against the
+        # NEW parameters, which bends the interpolant back across the interval that
+        # has just closed. Every sample inside that one step came out wrong by up
+        # to 3.4e-2 Hz — SIX TIMES the band — while its neighbours on either side
+        # were right to 1e-9, and the error did not shrink cleanly with the
+        # tolerance because its size is set by the step length. No scenario without
+        # protection could see it; this one is the only place it shows.
+        @test maximum(abs.(a.f_coi .- b.f_coi)) <= 3e-3 * pb_exc(b.f_coi)
+        # Firing two stages must not degrade the agreement at all — the same
+        # comparison on the same network with no ladder armed reaches ~1e-6, and a
+        # scenario that root-finds twice on the way has no business being worse.
+        # Stated as an absolute number rather than as a ratio to the band, because
+        # the band is 1e4 times looser than either run and would hide the bug.
+        @test maximum(abs.(a.f_coi .- b.f_coi)) < 1e-4
+    end
+
+    @testset "M4 step 1: the interpolant is the solver's own, armed or not" begin
+        # THE TRAP THIS TEST EXISTS FOR. OrdinaryDiffEq decides for itself whether
+        # to keep each step's interpolation coefficients, and with `dense=false`,
+        # `save_everystep=false` and no `saveat` it decides NO — unless a
+        # root-finding callback happens to be present, which flips it back on.
+        # Measured on this repo before the fix: a bare `SwingEngine` came out with
+        # `calck = false` and the same engine with one relay armed came out `true`.
+        # Playback reads samples from INSIDE a step, so that would have made the
+        # accuracy of a recorded trajectory depend on whether the scenario happened
+        # to arm a relay — quietly, and only in the third decimal.
+        net = two_machine_system()
+        bare = SwingEngine(net)
+        armed = SwingEngine(net; out_of_step = [(:B1, :B2) => OutOfStepTrip(2π / 3)])
+        fr = FrequencyResponseEngine(example_system())
+        @test bare.integrator.opts.calck
+        @test armed.integrator.opts.calck
+        @test fr.integrator.opts.calck
+        # Still off, so the fix is `calck` and not the unbounded-history one both
+        # constructors refuse.
+        @test !bare.integrator.opts.dense
+        @test !bare.integrator.opts.save_everystep
+
+        # And the behavioural half, ON A TRANSIENT — at the flat start every state
+        # is ~1e-20 and a correct interpolant, a linear fallback and a stale cache
+        # all return the same number, so a check there proves only that the call
+        # does not throw. Two runs of one scenario: one reads t* off an
+        # interpolant, the other is forced to land on t* exactly.
+        tstar = 1.337
+        free = SwingEngine(net)
+        solve!(free, (0.0, 1.0); perturbations = [1.0 => TripGenerator(:G2)], saveat = 0.5)
+        solve!(free, (1.0, 3.0); saveat = [tstar])
+        forced = SwingEngine(net)
+        solve!(forced, (0.0, 1.0); perturbations = [1.0 => TripGenerator(:G2)], saveat = 0.5)
+        solve!(forced, (1.0, tstar); saveat = tstar - 1.0)
+        s_free, s_forced = state_series(free), state_series(forced)
+        @test s_free.t[end] ≈ tstar
+        @test s_forced.t[end] ≈ tstar
+        @test s_free.f_coi[end] ≈ s_forced.f_coi[end] rtol = 1e-6
+        @test s_free.δ_G1[end] - s_free.δ_G2[end] ≈
+              s_forced.δ_G1[end] - s_forced.δ_G2[end] rtol = 1e-6
+    end
+
+    @testset "M4 step 1: playback guards, one message each" begin
+        net = two_machine_system()
+        eng = SwingEngine(net)
+        # The horizon must start where the engine actually is: an engine carries
+        # its integrator's position, so solving "from 0" one already stepped to 3 s
+        # would produce a trajectory whose time base is a lie.
+        @test occursin("the engine is at t", argerr_msg(() -> solve!(eng, (1.0, 2.0))))
+        @test occursin("must run forwards", argerr_msg(() -> solve!(eng, (0.0, 0.0))))
+        @test occursin("must be (t_start, t_end)", argerr_msg(() -> solve!(eng, (0.0, 1.0, 2.0))))
+        @test occursin("time => event", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); perturbations = [TripGenerator(:G1)])))
+        @test occursin("not a PerturbationEvent", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); perturbations = [0.5 => :trip])))
+        @test occursin("outside the horizon", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); perturbations = [2.0 => TripGenerator(:G1)])))
+        @test occursin("saveat must be a positive", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); saveat = 0.0)))
+        @test occursin("strictly increasing", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); saveat = [0.3, 0.2])))
+        @test occursin("outside the horizon", argerr_msg(
+            () -> solve!(eng, (0.0, 1.0); saveat = [0.3, 1.5])))
+        # None of the above may have advanced the engine.
+        @test current_state(eng).t == 0.0
+        @test length(state_series(eng).t) == 1
+    end
+
+    @testset "M4 step 1: an explicit saveat grid, and continuing a solve" begin
+        net = two_machine_system()
+        eng = SwingEngine(net)
+        grid = [0.0, 0.15, 0.4, 0.41, 1.0]     # irregular, and containing t0
+        solve!(eng, (0.0, 1.0); saveat = grid)
+        s = state_series(eng)
+        # `t0` appears ONCE: the constructor already seeded it, so an explicit grid
+        # naming it does not record it twice.
+        @test s.t == [0.0, 0.15, 0.4, 0.41, 1.0]
+        # Playback continues from where the engine is, so a run can be built in
+        # pieces — which is what the interpolant test above relies on.
+        solve!(eng, (1.0, 1.5); saveat = 0.25)
+        @test state_series(eng).t ≈ [0.0, 0.15, 0.4, 0.41, 1.0, 1.25, 1.5]
+        @test current_state(eng).t ≈ 1.5
+    end
+
+    @testset "M4 step 1: playback self-terminates on a step count" begin
+        # Standing rule since M3: a long-running loop stops on a fixed step count,
+        # never on a condition. Here it is in the driver itself, so a collapsed step
+        # size surfaces as a named error instead of a hung session — asserted by
+        # setting the cap absurdly low rather than by engineering a collapse.
+        eng = SwingEngine(two_machine_system())
+        msg = try
+            solve!(eng, (0.0, 100.0); saveat = 0.1, maxiters = 3)
+            "NO ERROR THROWN"
+        catch e
+            e isa ErrorException ? e.msg : "NOT-ErrorException: $(typeof(e))"
+        end
+        @test occursin("exceeded 3 solver steps", msg)
+        @test occursin("SwingEngine", msg)
+    end
+
 end

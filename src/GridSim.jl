@@ -66,6 +66,13 @@ include("engines/interface.jl")
 # exported) — engines expose their history through `state_series`.
 include("engines/recorder.jl")
 
+# --- the shared run-then-playback driver (M4 step 1) ---
+# The second execution mode, and the half of the engine contract that had no
+# implementation anywhere until M4. Included BEFORE the engines because it
+# declares the `_record_at!` hook each of them adds a method to, and each engine's
+# `solve!` is one line on top of `_playback!`.
+include("engines/playback.jl")
+
 # --- M1's FrequencyResponseEngine ---
 # Center-of-inertia aggregate frequency model: `aggregates`, the engine struct,
 # and init! / step! / current_state / inject!. See docs/plans/m1-plan.md.

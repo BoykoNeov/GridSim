@@ -73,8 +73,10 @@ scheduled generator trip. It is **false of everything M3 built**: the shed ladde
 and the out-of-step relay fire on the system's own state at an instant nobody can
 know in advance. So:
 
-- `perturbations=` carries **scheduled** events only (trip at `t = 3.2 s`) —
-  compiled to a `PresetTimeCallback`.
+- `perturbations=` carries **scheduled** events only (trip at `t = 3.2 s`).
+  *(As built: a tstop at the event instant plus the same `inject!` the real-time
+  loop uses, not a `PresetTimeCallback` — see `m4-context.md` D8 for why that is
+  both the only reachable option and the better one for D4.)*
 - **State-triggered protection stays exactly where it is**, as the callbacks the
   `SwingEngine` constructor already builds. Playback changes *who drives the
   integrator*, not what the physics is allowed to do.

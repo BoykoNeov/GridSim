@@ -217,6 +217,8 @@ instant. Default: an empty ladder, i.e. no protection scheme. See
 function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
                                  dt::Real = _FR_DT0,
                                  solver = OrdinaryDiffEq.Tsit5(),
+                                 reltol::Real = _ENGINE_RELTOL,
+                                 abstol::Real = _ENGINE_ABSTOL,
                                  shed::Vector{LoadShedStage} = LoadShedStage[],
                                  capacity::Integer = _TRAJ_CAPACITY)
     online = Set(u.id for u in model.units)
@@ -237,12 +239,20 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
     # saved solution (`save_everystep`/`dense`) — we keep our own trajectory
     # vectors, and the integrator's would grow unbounded over a long live run.
     prob = OrdinaryDiffEq.ODEProblem(fr_rhs!, [0.0, 0.0], (t0f, t0f + 1.0e6), params)
+    #
+    # `calck = true` and the explicit tolerances: see `engines/playback.jl`, where
+    # both constants live and where the reason each is named is written out. In
+    # short — playback reads samples from inside a step, and whether those
+    # coefficients exist must not depend on whether a shed ladder happens to be
+    # armed; and a tolerance that cannot be passed cannot be varied.
     integrator = OrdinaryDiffEq.init(prob, solver;
                                      dt = Float64(dt),
+                                     reltol = Float64(reltol), abstol = Float64(abstol),
                                      isoutofdomain = _fr_outofdomain,
                                      callback = shed_callbacks(ladder, model.f0,
                                                                _fr_speed, _fr_shed!),
-                                     save_everystep = false, dense = false)
+                                     save_everystep = false, dense = false,
+                                     calck = _ENGINE_CALCK)
     f0 = model.f0
     # Seed the trajectory with the pre-disturbance point (Δω=0 ⇒ f=f0, RoCoF=0,
     # nothing tripped yet). `:t` is prepended by the recorder itself.
@@ -291,11 +301,25 @@ end
 # The nadir is tracked HERE, incrementally, and deliberately not read back out of
 # the trajectory later: the recorder decimates once it fills, so `minimum` over the
 # retained samples is the lowest sample still kept, not the lowest that occurred.
+# The `(t, u)` form is the general one — playback records interpolated points from
+# *inside* a completed step, where the integrator's own `t`/`u` are the step's far
+# endpoint and not the sample wanted (see `engines/playback.jl`). `_record!` below
+# is then just the "at the integrator" case of it, so the channel layout and the
+# nadir bookkeeping have one implementation rather than two that must agree.
+function _record_at!(eng::FrequencyResponseEngine, t::Real, u::AbstractVector{<:Real})
+    Δω, ΔPm = u[1], u[2]
+    f = eng.f0 * (1 + Δω)
+    # Same `_dΔω` the RHS and `current_state` use — the single source of truth, so
+    # a recorded RoCoF cannot drift from the integrated swing equation.
+    RoCoF = eng.f0 * _dΔω(Δω, ΔPm, eng.params)
+    record!(eng.traj, t, f, RoCoF, ΔPm, eng.tripped_mw)
+    f < eng.nadir && (eng.nadir = f)
+    return nothing
+end
+
 function _record!(eng::FrequencyResponseEngine)
-    s = current_state(eng)
-    record!(eng.traj, s.t, s.f, s.RoCoF, s.ΔPm, eng.tripped_mw)
-    s.f < eng.nadir && (eng.nadir = s.f)
-    return s
+    _record_at!(eng, eng.integrator.t, eng.integrator.u)
+    return current_state(eng)
 end
 
 """
@@ -333,6 +357,25 @@ different quantities and must not be conflated. `tripped_mw` is the cumulative
 generation lost so far (MW), the second axis of report Figs 1-3 / 3-7 / 3-9.
 """
 state_series(eng::FrequencyResponseEngine) = series(eng.traj)
+
+"""
+    solve!(eng::FrequencyResponseEngine, tspan; perturbations=[], saveat=eng.dt)
+        -> state_series(eng)
+
+Playback: solve the whole horizon in one call and record onto the `saveat` grid.
+The second method of `solve!` in this repo, added with `SwingEngine`'s in M4 step
+1; the driver, the ordering rules and the reasoning are in `engines/playback.jl`.
+
+`tspan` must start where the engine is (`(0.0, 20.0)` on a fresh engine).
+`perturbations` is a list of `time => event` pairs — **scheduled** events only;
+an armed shedding ladder keeps firing from its own root-finding callback exactly
+as it does under `run_realtime!`. `saveat` is either an output step or an explicit
+grid; the default reproduces the sample times `run_realtime!` would have produced,
+which is what makes the two modes directly comparable.
+"""
+solve!(eng::FrequencyResponseEngine, tspan; perturbations = (),
+       saveat = eng.dt, maxiters::Integer = _PLAYBACK_MAXITERS) =
+    _playback!(eng, tspan, perturbations, saveat; maxiters = maxiters)
 
 """
     timestep(eng::FrequencyResponseEngine) -> Float64

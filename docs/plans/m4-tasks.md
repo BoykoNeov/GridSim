@@ -5,8 +5,8 @@ decisions and the measurements behind them). Living document: each step ticks it
 own boxes and records what it found, including what it found that the plan did
 not anticipate.
 
-Status: **planned, nothing built.** Entering at `ab3a87f`, 1719 core / 102 UI
-tests green, working tree clean.
+Status: **step 1 done.** Entered at `ab3a87f` with 1719 core / 102 UI tests
+green; step 1 leaves 1787 / 102 green.
 
 ## Step 0 — planning (this batch)
 
@@ -24,23 +24,69 @@ tests green, working tree clean.
 
 ## Step 1 — `solve!`, the contract's unexecuted half
 
-- [ ] `solve!(eng::SwingEngine, tspan; perturbations=[], saveat=…)` — the first
+**DONE.** 1787 core / 102 UI green (from 1719 / 102). New file
+`src/engines/playback.jl` — the shared driver — plus a one-line `solve!` per
+engine.
+
+- [x] `solve!(eng::SwingEngine, tspan; perturbations=[], saveat=…)` — the first
       method of `solve!` in the repo's history.
-- [ ] `solve!(eng::FrequencyResponseEngine, tspan; …)` — the second, so the
+- [x] `solve!(eng::FrequencyResponseEngine, tspan; …)` — the second, so the
       overlay pair of step 3 has two playback-capable engines.
-- [ ] Scheduled perturbations compiled to a `PresetTimeCallback`; **state-triggered
+- [x] Scheduled perturbations landed on exactly with `add_tstop!` and applied
+      through the same `inject!` the real-time loop uses; **state-triggered
       protection left exactly as the constructor already builds it** (D4).
-- [ ] `interface.jl`'s "supplied up front rather than injected live" docstring
+      **Deviation from this plan, recorded as D8**: not a `PresetTimeCallback`,
+      which is unreachable without changing both engines' types and which would
+      have created a second path for a scheduled trip to reach the engine — the
+      shape D4 exists to forbid.
+- [x] `interface.jl`'s "supplied up front rather than injected live" docstring
       **corrected**, not inherited — it is false for M3's protection.
-- [ ] Agreement check: same scenario via `run_realtime!` and via `solve!`, equal
-      to solver tolerance.
-- [ ] **Run at two tolerances.** A number below the solver's own tolerance is not
-      a result until it survives the tolerance changing (M3's standing rule).
-- [ ] Positive control: a scenario where the two paths *should* differ (a
-      perturbation at a time the real-time grid cannot represent) and does.
-- [ ] Anti-vacuity control, **executed**: mutate the scheduled-event compilation
-      so a trip lands one step late; the agreement check must fail. Revert; green.
-- [ ] Every new long-running test self-terminates on a fixed step count.
+- [x] Agreement check: same scenario via `run_realtime!` and via `solve!`.
+      **The band was written down before the comparison ran**: `3 · reltol ×
+      that channel's own peak excursion`. Three because two independently
+      controlled paths contribute two errors; the excursion because a relative
+      tolerance is relative to the signal being resolved. Measured at the default
+      tolerance: 1.3e-6 Hz against a band of 1.1e-2 (network tier), 9.4e-4 against
+      4.2e-3 (aggregate tier).
+- [x] **Run at two tolerances**, and asserted as *convergence*, not as "it passed
+      twice": tightening `reltol` 1000× must shrink the gap at least 10×. It does,
+      on every channel of both engines.
+- [x] Positive control: a perturbation at a time the real-time grid cannot
+      represent (half an output step off) — outside the band by 6.5× and 12.8×.
+      Run on a **coarse** grid on purpose: the discrepancy IS the offset, so a
+      coarse grid separates the control cleanly instead of leaving it at the
+      band's edge. Strengthening a control by making the effect bigger, never by
+      making the band tighter.
+- [x] Anti-vacuity control, **executed against the source** on 2026-08-26: the
+      tstops for scheduled events deleted, so a trip lands late. Every assertion
+      in the agreement testset went red, plus the pre-event-sample test and the
+      protection test. Reverted; green. The in-suite form (schedule the event one
+      output step late) ships alongside it and stays red for the same reason.
+- [x] Every new long-running test self-terminates on a fixed step count — and so
+      does the driver itself (`maxiters`), asserted by setting the cap to 3.
+
+**Written beyond the list, and one of them found the round's bug:**
+
+- [x] **Protection under playback is asserted, not argued** (D4). A two-stage shed
+      ladder run both ways: same number of firings, same blocks, same thresholds,
+      root-found instants agreeing to 1.6e-6 s, and the trajectories agreeing
+      through both firings. This check was not in the plan; it is the only
+      scenario shape in which D9's bug is visible.
+- [x] **The interpolant is the solver's own, armed or not** — `calck` asserted on
+      a bare engine, an armed engine and the aggregate engine, plus a behavioural
+      check **on a transient** (at the flat start every state is ~1e-20 and a
+      correct interpolant, a linear fallback and a stale cache all agree).
+- [x] The record-then-apply ordering asserted from outside the driver: the sample
+      AT an event instant is the pre-event one, in both modes.
+- [x] Guards, one message each; an explicit irregular `saveat` grid; continuing a
+      solve from where the engine is.
+
+**Findings, written up in `m4-context.md` §What step 1 measured:** the `calck`
+flag depends on whether a relay is armed; the interpolant is retroactively
+invalidated by a callback affect (D9 — the round's real cost); `run_realtime!`
+runs `N` or `N+1` steps for `duration = N*dt` depending on floating point; and
+neither constructor forwarded solver tolerances, so the "two tolerances" rule was
+not expressible against these engines until now.
 
 ## Step 2 — resampling and divergence in `postprocess.jl`
 

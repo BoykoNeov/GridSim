@@ -49,9 +49,25 @@ function init! end
 #   loop), recording the trajectory point. Extends CommonSolve.step! — the
 #   method is added by each real-time engine in its own batch.
 #
-# solve!(engine, tspan; perturbations=[])
-#   Solve a whole horizon offline (playback engines). Perturbations are supplied
-#   up front rather than injected live. Extends CommonSolve.solve!.
+# solve!(engine, tspan; perturbations=[], saveat=timestep(engine))
+#   Solve a whole horizon offline (playback engines), recording onto a chosen
+#   output grid and returning the trajectory. Extends CommonSolve.solve!. The
+#   shared driver is `engines/playback.jl`; each engine adds a one-line method.
+#
+#   `perturbations` carries SCHEDULED events only — `t => event` pairs, applied at
+#   exactly that instant through the same `inject!` the real-time loop uses.
+#
+#   IT DOES NOT CARRY PROTECTION, AND AN EARLIER VERSION OF THIS COMMENT SAID
+#   OTHERWISE. Until M4 the line above read "perturbations are supplied up front
+#   rather than injected live", which was written before there was anything to
+#   falsify it. M3 falsified it: a load-shedding ladder and an out-of-step relay
+#   fire on the system's own state, at an instant nobody can know in advance, so
+#   there is no "up front" to supply them at. They stay exactly where the engine
+#   constructor puts them — as root-finding solver callbacks — in BOTH execution
+#   modes. Playback changes who drives the integrator, not what the physics is
+#   allowed to do; if it changed the latter, a playback run and a real-time run of
+#   one scenario would be two different systems and no comparison between them
+#   would mean anything (m4-context.md D4).
 
 # --- state access (mode-agnostic) ---------------------------------------
 

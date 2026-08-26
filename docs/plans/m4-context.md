@@ -215,6 +215,65 @@ gitignored-manifest trap that has now cost this repo time twice.
   inter-machine swings. Presenting it as the cross-fidelity payoff would repeat
   M3's pattern of numbers that look like results and are not.
 
+### D8 — Scheduled events reach playback through `inject!`, not a `PresetTimeCallback`
+
+`m4-plan.md` step 1 said "compiled to a `PresetTimeCallback`". Step 1 did not do
+that, and the reason is worth more than a code comment.
+
+**It is not reachable.** Both engines are parametric on their concrete integrator
+type; the callback set is fixed when `init` runs, and an already-built integrator
+does not accept a new callback. Honouring the letter would have meant either a
+second integrator type per engine or a schedule field threaded through both
+constructors, to be filled by `solve!` — real structural cost for a mechanism that
+is not the point.
+
+**And the replacement is better for what D4 actually asks.** A `PresetTimeCallback`
+needs its own affect: a SECOND way for a scheduled trip to reach the engine,
+alongside the `inject!` the real-time loop uses. Two paths that must stay identical
+is precisely the shape D4 exists to forbid. `add_tstop!` at the event instant plus
+a call to the very same `inject!` gives one path, and it is the path
+`run_realtime!` already exercises. (`inject!` also already performs its own
+`derivative_discontinuity!` / `auto_dt_reset!` at the boundary — the work a
+callback's `u_modified!` would have signalled.)
+
+**The anti-vacuity control survives the change intact**, which is the thing worth
+confirming when a mechanism is swapped out from under a control written against
+it. `m4-tasks.md` step 1 named the mutation "make a trip land one step late". With
+tstops that is "delete the tstops": the solver then steps straight over the event
+instant and `_playback_apply!` fires it at the end of whichever step passed it.
+**Run** on 2026-08-26, against the source: every assertion in the agreement testset
+went red, plus the pre-event-sample test and the protection test. Reverted; green.
+
+### D9 — The output grid is handed to the integrator, not read off the interpolant
+
+The obvious playback loop steps freely and then reads each output sample off the
+finished step's interpolant with `integ(t)`. **It is wrong, and only sometimes**,
+which is what makes it worth a numbered decision instead of a comment.
+
+When a `ContinuousCallback` fires, the framework shortens the step to the root,
+runs the affect (which steps a *parameter*), and marks the state modified — which
+makes it recompute the end-of-step derivative against the NEW parameters, bending
+the interpolant back across the interval that has just closed. Measured on a
+two-stage shed ladder: every sample inside the step a shed ended was wrong by up to
+**3.4e-2 Hz, six times the agreement band**, while its neighbours on either side
+were right to 1e-9. The error did not shrink cleanly with the tolerance either,
+because its size is set by the step length, which moves around unpredictably as
+the tolerance changes — so a convergence check alone would have muddied rather
+than exposed it.
+
+The framework's own `savevalues!` runs inside `apply_callback!` **after** the step
+is shortened to the root and **before** the affect — the one instant at which the
+interpolant is both complete and still valid, and an instant no caller can reach
+from outside `step!`. So `_playback!` hands the grid over with `add_saveat!` and
+drains the samples back out of `integ.sol`. This does **not** put the solver back
+on forced steps: `saveat` interpolates inside freely chosen steps, unlike a tstop,
+so playback stays a genuinely different numerical path from `run_realtime!`.
+
+Two consequences worth carrying: the fix depends on `calck` (below), which is the
+second reason that flag is set; and the drain must happen before the scheduled
+`inject!` for the same instant, because a trip changes the COI weights
+`_record_at!` uses.
+
 ### D7 — The oracle is a floor, not a ceiling
 
 Going **outside** PowerDynamics' scope and fidelity is explicitly allowed, and
@@ -245,3 +304,42 @@ speak as though checked. The rule is therefore about bookkeeping, not permission
   the shared part was right. Turning on a mechanism the oracle lacks *and*
   discovering a discrepancy in the same run leaves the discrepancy unattributable,
   which is the failure D2 exists to prevent.
+
+## What step 1 measured that the plan did not anticipate
+
+Four, recorded here rather than only in code comments because three of them are
+properties of the *framework* and one is a property of an M1 file, and none is
+discoverable by reading this repo.
+
+- **Whether a step's interpolation coefficients exist depends on whether a relay
+  happens to be armed.** OrdinaryDiffEq derives `calck` at `init` from roughly
+  `dense || !isempty(saveat) || <a rootfinding callback is present>`. Measured:
+  `SwingEngine(net)` came out with `calck = false`, and the same engine with one
+  out-of-step relay armed came out `true`. Playback reads inside a step, so this
+  would have made a recorded trajectory's accuracy depend on an unrelated
+  configuration switch, quietly and in the third decimal. Both constructors now
+  pass `calck = true` explicitly — **not** `dense = true`, which stores the whole
+  history and is the unbounded growth both constructors already refuse.
+
+- **The interpolant is retroactively invalidated by a callback affect.** See D9.
+  This is the round step 1 actually cost, and the check that caught it — the
+  protection-under-playback comparison — was not in the plan's step-1 list at all.
+  It was written because D4 demanded the claim be asserted, and it turned out to
+  be the only scenario shape in which the bug is visible.
+
+- **`run_realtime!(duration = N*dt)` runs `N` or `N+1` steps, decided by floating
+  point.** The loop stops on `t < t_stop` and `t` is accumulated by repeated
+  addition, so at `dt = 0.1` a `duration = 1.0` ran **eleven** steps, not ten: ten
+  accumulated `0.1`s fall a hair short of `1.0`. The real-time event then landed a
+  whole output step from where playback put it, and the agreement check failed for
+  a reason with nothing to do with playback. The tests take `(n - 0.5) * dt`, which
+  roundoff cannot decide. **Deliberately not "fixed"**: `while t < t_stop` is a
+  correct reading of "run for `duration` seconds of simulation time", and rounding
+  instead would move the step count of every existing caller. A later step may
+  weigh it; it is written down so it is weighed rather than rediscovered.
+
+- **Neither engine constructor forwarded anything to `init`**, so `reltol` and
+  `abstol` were unreachable and M3's standing "a number below the solver's own
+  tolerance is not a result until it survives the tolerance changing" rule was not
+  expressible against these engines at all. Both constructors now take them,
+  defaulted to OrdinaryDiffEq's own `Float64` defaults so nothing moved.

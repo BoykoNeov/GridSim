@@ -588,6 +588,8 @@ bit.
 function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      dt::Real = _SWING_DT0,
                      solver = OrdinaryDiffEq.Tsit5(),
+                     reltol::Real = _ENGINE_RELTOL,
+                     abstol::Real = _ENGINE_ABSTOL,
                      shed = Pair{Symbol,Vector{LoadShedStage}}[],
                      out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
                      ramp = Pair{Symbol,GenerationRamp}[],
@@ -770,12 +772,22 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # continuous integration it cannot stall, because the derivative is already zero
     # at the ceiling, which puts the solution *at* `headroom`, not above it.
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
+    #
+    # `calck = true` and the explicit tolerances are M4 step 1's additions; both
+    # constants live in `engines/playback.jl` with the reason each is named.
+    # Briefly: playback reads samples from inside a step, and whether the
+    # interpolation coefficients exist must not depend on whether this particular
+    # scenario happened to arm a relay (measured: a bare engine had them off, the
+    # same engine with one relay had them on); and a tolerance no constructor
+    # accepts is a tolerance the standing "run it again tighter" rule cannot vary.
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
+                                     reltol = Float64(reltol), abstol = Float64(abstol),
                                      isoutofdomain = _swing_outofdomain(ΔPm_idx, hr_pidx),
                                      callback = SciMLBase.CallbackSet(
                                          shed_callbacks(bound_shed, net.f0),
                                          out_of_step_callbacks(bound_oos)),
-                                     save_everystep = false, dense = false)
+                                     save_everystep = false, dense = false,
+                                     calck = _ENGINE_CALCK)
 
     ids = ids0
     # `H` is the pre-trip baseline, kept unmutated; `w` is the live COI weight
@@ -896,8 +908,19 @@ end
 # As in M1, the nadir is tracked HERE, incrementally, and never read back out of
 # the trajectory: the recorder decimates once full, so the lowest retained sample
 # is not the lowest that occurred (see engines/recorder.jl).
-function _record!(eng::SwingEngine)
-    u = eng.integrator.u
+#
+# The `(t, u)` form is the general one, and playback needs it: the samples it
+# records are interpolated points from *inside* a completed step, so the
+# integrator's own `t`/`u` are the step's far endpoint and not the sample wanted
+# (see `engines/playback.jl`). `_record!` is then the "at the integrator" case of
+# it — one channel layout and one nadir rule, not two that have to agree.
+#
+# The live COI weights `eng.w` are read as they stand. That is correct and not an
+# approximation: `w` changes only at a generator trip, which is an event boundary,
+# and the loop in `_playback!` records every sample of a step BEFORE applying
+# anything due at its end — so no interpolated sample is ever weighted by a `w`
+# from the wrong side of a trip.
+function _record_at!(eng::SwingEngine, t::Real, u::AbstractVector{<:Real})
     n = length(eng.ids)
     @inbounds for i in 1:n
         eng.sample[i]     = u[eng.δ_idx[i]]
@@ -906,10 +929,12 @@ function _record!(eng::SwingEngine)
     f_coi = eng.f0 * (1 + _ω_coi(eng, u))
     eng.sample[2n + 1] = _δ_coi(eng, u)
     eng.sample[2n + 2] = f_coi
-    record!(eng.traj, eng.integrator.t, eng.sample)
+    record!(eng.traj, t, eng.sample)
     f_coi < eng.nadir && (eng.nadir = f_coi)
     return nothing
 end
+
+_record!(eng::SwingEngine) = _record_at!(eng, eng.integrator.t, eng.integrator.u)
 
 """
     step!(eng::SwingEngine, dt=eng.dt) -> (; t, δ, ω, ΔPm, δ_coi, ω_coi, f_coi)
@@ -955,6 +980,29 @@ a *particular* set of channels does not. See the conformance finding in
 `docs/plans/m2-context.md`.
 """
 state_series(eng::SwingEngine) = series(eng.traj)
+
+"""
+    solve!(eng::SwingEngine, tspan; perturbations=[], saveat=eng.dt)
+        -> state_series(eng)
+
+Playback: solve the whole horizon in one call and record onto the `saveat` grid.
+**The first method of `solve!` in this repo** — `interface.jl` has documented the
+verb since the scaffold and no engine implemented it until M4 step 1. The driver,
+the record-then-apply ordering and the reasoning all live in
+`engines/playback.jl`; this is the one-line entry point.
+
+`tspan` must start where the engine is (`(0.0, 20.0)` on a fresh engine).
+`perturbations` is a list of `time => event` pairs and carries **scheduled** events
+only: a shed ladder or an out-of-step relay armed at construction goes on
+root-finding its own firing instant exactly as it does under `run_realtime!`, in
+this mode too, and pre-baking either into a schedule would make the two modes
+different systems (m4-context.md D4). `saveat` is either an output step or an
+explicit grid; the default reproduces the sample times `run_realtime!` would have
+produced, which is what makes the two modes directly comparable.
+"""
+solve!(eng::SwingEngine, tspan; perturbations = (),
+       saveat = eng.dt, maxiters::Integer = _PLAYBACK_MAXITERS) =
+    _playback!(eng, tspan, perturbations, saveat; maxiters = maxiters)
 
 """
     timestep(eng::SwingEngine) -> Float64
