@@ -273,6 +273,8 @@ step 1 wrote down after inheriting 1234/74 from memory.
       re-check per step.)*
 - [ ] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
+      *(Re-resolved and green at step 2, which changed no dependency; left open
+      because it has to be re-run by whichever later step does change one.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 

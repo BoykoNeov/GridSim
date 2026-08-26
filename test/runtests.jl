@@ -2161,9 +2161,14 @@ end
         # collapsing `dt`. This does NOT establish "the predicate never returned
         # true" inside the solver; that cannot be seen from outside `init!`, and
         # this file has already paid once for a check claimed before it was run.
+        #
+        # `naccept` is deliberately NOT asserted. It measured 30,016 — the 16 above
+        # one-step-per-`dt` being the two `auto_dt_reset!` calls re-estimating after
+        # each trip — and pinning a solver statistic to a 0.05 % margin would go red
+        # on a patch release that changed that re-estimation, reading as "V4 broke".
+        # The claim it would have made is `r.t` at `dt = 0.01`, asserted below.
         @test fired == 0
         @test eng.integrator.stats.nreject < 100
-        @test eng.integrator.stats.naccept > 30000
         @test r.t ≈ 300.0 atol = 1e-6                        # …it advanced the whole way
     end
 
