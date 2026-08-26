@@ -299,15 +299,132 @@ against `GLMakie` before any of it — **one** new export, `shed_ladder`, and
       would be the `dt`-quantised one. Step 7 plots the two together; it does not
       merge them.
 
-## Step 4 — out-of-step protection (new mechanism, separate commit)
+## Step 4 — out-of-step protection (new mechanism, separate commit) (DONE)
 
-- [ ] `ContinuousCallback` on `|δ_from − δ_to|` for a named branch, latching,
-      firing through the existing `inject!(::TripLine)` path.
-- [ ] Threshold lives on the protection object, **not** on `Branch` (open question
-      in `m3-context.md`; settle it here).
-- [ ] **V6** the trip instant is a root, not a step: halving `dt` moves it by less
-      than solver tolerance; the tie's power reverses sign before the trip; the
-      trip leaves two islands each holding their own frequency.
+**Suite: 1461 → 1556 core (+95), 78 UI unchanged.** Both measured at `HEAD` either
+side rather than inherited — the rule step 1 wrote down after inheriting 1234/74
+from memory, and step 2 needed after this file's own "After: 1320" went stale. This
+step changes `src/`, so the two standing hazards were cleared rather than noted:
+`ui/`'s gitignored manifest was re-resolved (no packages added or removed) and its
+78 tests run, and the four new exports were checked against `GLMakie`
+**before** any of it — `OutOfStepTrip`, `OutOfStepRelay`, `out_of_step_log`,
+`out_of_step_relay`, all clear, and `intersect(names(GridSim), names(GLMakie))` is
+still empty. `disarm!` stays internal, for `ShedLadder`'s reason. No new dependency,
+so the both-resolutions hazard is **clear here, not skipped**.
+
+- [x] `ContinuousCallback` on `|δ_from − δ_to|` for a named branch, latching,
+      firing through the existing `inject!(::TripLine)` path — and it is the **real**
+      `inject!`, not a shared helper, so the no-op guard, `lines_online`, the event
+      log and both integrator-boundary calls are the shipped ones by construction.
+      The price is stated where it is paid: the affect reaches the engine through a
+      `Base.RefValue{Any}` the constructor fills on its last line, because the
+      callbacks are arguments to `init` and the integrator is one of the engine's own
+      type parameters. A closure capture, **not** a struct field, so SPEC §4 is
+      untouched; one dynamic dispatch per relay per run.
+- [x] Threshold lives on the protection object, **not** on `Branch` — the open
+      question in `m3-context.md` is closed with the reasoning, not left standing.
+- [x] **V6** all three clauses, and the third one needed correcting before it could
+      be asserted:
+      - **the instant is a root, not a step** — 10× `dt` refinement moves it by
+        **4.4e-15** (1.5e-15 relative), against the up-to-one-whole-`dt` bias a
+        step-boundary detector would carry. It lands inside the one-`dt` bracket the
+        bare run puts the crossing in, off the `dt` grid, and `|δ|` at the firing
+        instant equals the threshold **to the bit**;
+      - **the tie's power reverses before the trip** — the area exports 0.10 pu
+        pre-fault, the flow reverses at **t = 0.91 s**, and the relay fires at
+        **t = 2.9336 s**, 2.02 s later. The reversal passes through `abs`'s kink at
+        zero harmlessly, which is a *maximum* of the condition and so carries no sign
+        change for the rootfinder to mistake for a crossing;
+      - **two islands, each holding its own frequency** — each converges on its own
+        closed form with step 2's survivors-only denominator (`:ES` alone at −0.04 pu
+        = 48.00 Hz, `:FR` at −0.005 = 49.75 Hz) to **3.0e-10** and **1.3e-9**, flat to
+        7.6e-10 peak-to-peak, with the tie transferring **exactly 0.0**.
+- [x] **And the finding: that third clause, asserted alone, would have passed with
+      the relay deleted.** The unarmed run reaches the *same* two island frequencies
+      to ~3e-5, because a fully slipping tie transfers almost no NET power — `K·sin`
+      of a monotonically growing angle averages to zero. This is step 3's V5 trap in a
+      new place. What actually discriminates is asserted instead, and by four orders
+      of magnitude: 300 s in, the unarmed tie is still swinging the **whole** way from
+      `+K` to `−K` and never decaying (0.5407 pu peak-to-peak = 2K), and the residual
+      ripple in the two speeds is 3.1e-4 / 1.2e-4 against the armed run's 7.6e-10 /
+      2.1e-9 — a factor of 4.1e5 and 5.7e4. The closed forms are asserted **as well**,
+      labelled as the half that does not tell the two runs apart.
+- [x] **The step-3 fixture was measured and rejected, not reused.** On
+      `_split_speed_net` the two ends already sit at their own islanded closed forms
+      **with the tie in service** (A at −0.14 pu, B at −0.004, which are exactly the
+      unarmed minima step 3 recorded), so V6's third clause is true there before the
+      relay does anything. `_pole_slip_net` is sized to the question instead: the
+      tie's maximum transfer (`K = 0.2704 pu`) is **below the area's own load**
+      (0.40 pu), so after the trip the surviving network has no equilibrium at all —
+      not a marginal one a solver version could push either way.
+- [x] **Two interactions the plan's three bullets did not mention, both provoked
+      alone and both non-vacuous.**
+      - **A generator trip at either end disarms the relay.** Step 2's V3 measured
+        why: the dead rotor's `δ` freezes while the survivors' common mode drifts on
+        at `ω₀·ω_ss`, so the angle across a branch with one dead end grows at the
+        *full drift rate* and crosses any threshold whatever. Measured: after `:ESG`
+        trips, `L12`'s coupling is exactly `0.0` and `|δ_B1 − δ_B2|` blows through
+        120° at **t = 2.36 s**, reaching ~199 rad by 30 s — so without the disarm the
+        relay opens a line that has carried nothing for over two seconds and calls it
+        a pole slip. Latched, not fired, so the log still says it never operated. The
+        disarm is **selective** (only branches incident to that bus) and asserted so:
+        the tie's own relay survives the same trip and still works.
+      - **Opening a branch disarms every relay on it, whoever opened it.**
+        `inject!(::TripLine)` no-ops on an already-open branch, so a relay left armed
+        would root-find a crossing, change nothing, and then log a protection
+        operation that never happened — breaking the engine's rule that a log records
+        what changed the system. One line, after the no-op guard, covering the user's
+        trip, another relay's trip and the relay's own. Non-vacuous: after a hand trip
+        of the tie the threshold *is* crossed, at t = 2.53 s.
+- [x] **Polarity and branch orientation settled by one fixture.** The condition is
+      `threshold − |δ|`, so exceeding the threshold is a **downward** crossing and the
+      trip goes in the `affect_neg!` slot; wired to the other slot the relay would
+      open the tie when the areas came back **into** step. The construction guard
+      forces the condition to start positive, so the discriminating scenario is one
+      where the angle overshoots and recovers — `three_machine_ring` after an `L23`
+      trip peaks at 0.3989 rad at t = 0.435 s and settles at 0.2629, so a 0.35
+      threshold is crossed once up and once down. The relay fires at **t = 0.3330**,
+      on the way up. That same fixture settles the orientation: `L31` is declared
+      `:B3 → :B1` while `Graphs` holds the edge as `(1, 3)`, so the two orientations
+      differ by a sign — the log carries the **branch's**, `−0.35`, and `|δ|` alone
+      could never have caught a swap.
+- [x] **Bit-identity, not "still green", for everything that already worked.** The
+      easy thing to miss: `init`'s `callback` argument is now a `CallbackSet` wrapping
+      the shed set and the relay set, and both `inject!` methods grew a loop over
+      `eng.relays`. Checked against a worktree at `871a20e` (whose gitignored manifest
+      had to be instantiated first — the trap again): the ring after a generator trip,
+      the pair after a splitting line trip, the ring with a shed ladder that fires,
+      and the governed ring all agree **to every digit** on per-machine angles,
+      speeds, `ΔPm`, `ω_coi`, the nadir, the shed log's root-found instant, and both
+      `naccept` and `nreject`.
+- [x] **A ladder and a relay in one engine, which nothing had run** — the pairing
+      step 6 actually needs. Both fire in one run; the relay's *line* trip does **not**
+      disarm the ladder, which is the asymmetry `inject!(::TripGenerator)` documents;
+      and the two logs stay separate, with the line trip in the event log and the shed
+      not.
+
+      **And the order is the opposite of what the test first asserted.** The tie
+      separates at **2.93 s** and the area only falls through 49.5 Hz at **5.51 s**, so
+      the ladder operates on an area that is *already islanded* — the sequence the
+      report describes (separation, then the island's own defence plan), not a defence
+      plan that saves the tie. The assumed ordering went into the test first and the
+      measurement corrected it; both instants are now pinned.
+- [x] Four construction guards, each provoked alone and asserted **by its own
+      wording**: a non-positive threshold, an unknown bus pair, two relays on one
+      branch, and a threshold below the steady-state angle (the fourth needs the
+      fixpoint, so it runs past `find_fixpoint`). The last is tested from both sides —
+      0.38 rad legal, 0.30 rejected, against a steady-state angle of 0.3789.
+- [x] **`auto_dt_reset!` inside a callback affect was measured, not assumed.**
+      `inject!` calls it, which is safe between `step!`s but is a different situation
+      inside a `ContinuousCallback`, where the integrator has just been interpolated
+      back to the root mid-acceptance. Patched out of the `TripLine` path — with a
+      printed marker to prove the patch was live, because "bit-identical" is also what
+      a stale precompile cache produces — the trip instant and every digit of the state
+      are identical at three step sizes. Inert on this path and harmless, which is what
+      made calling the real `inject!` the right design rather than a hopeful one
+      (`m3-context.md` D6).
+- [x] **Every long-running test self-terminates on a fixed step count**, never on a
+      condition. The longest here is a 30,000-step (300 s) pair of runs.
 
 ## Step 5 — ramped generation loss
 
@@ -379,9 +496,9 @@ against `GLMakie` before any of it — **one** new export, `shed_ladder`, and
       six, whose longest is a 6,000-step (60 s) run; re-check per step.)*
 - [ ] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
-      *(Re-resolved and green at step 2 and again at step 3 — the first step to
-      change `src/` — neither of which changed a dependency. Left open because it
-      has to be re-run by whichever later step does change one.)*
+      *(Re-resolved and green at step 2, step 3 and step 4, none of which changed a
+      dependency. Left open because it has to be re-run by whichever later step does
+      change one.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 

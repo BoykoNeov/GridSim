@@ -2506,6 +2506,428 @@ end
         @test isempty(shed_log(l).t) && shed_total(l) == 0.0
     end
 
+
+    # ======================= M3 step 4 — out-of-step protection ===================
+    #
+    # THE FIXTURE, and why the step-3 one would not do. `_split_speed_net` above is
+    # built so a machine's own frequency and the COI average say different things.
+    # It is *useless* for this step, and it takes a measurement to see why: with the
+    # tie still in service its two ends already sit at their own islanded closed
+    # forms (A at −0.14 pu, B at −0.004), so "the trip leaves two islands each
+    # holding their own frequency" is true there **before the relay does anything**.
+    # That is step 3's own V5 trap in a new place — an assertion that passes for a
+    # reason unrelated to the mechanism under test.
+    #
+    # So this fixture is sized to the question instead. A generating area (`:ES` at
+    # B1, its local generation `:ESG` at B2 behind a stiff line) exports 10 MW to a
+    # larger area (`:FR`) across a tie deliberately weaker than the area's own load:
+    # the tie's maximum transfer is `K = 0.2704 pu` against the 0.40 pu that B1 must
+    # import once `:ESG` is gone. Below its own load, so after the trip the surviving
+    # network has **no equilibrium at all** — not a marginal one that a solver
+    # version could push either way. The angle across the tie therefore grows
+    # monotonically, the transfer peaks at 90°, falls back through zero at 180° and
+    # reverses: a pole slip, which is what this protection exists to catch.
+    _pole_slip_net() =
+        NetworkModel(100.0, 50.0,
+                     [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+                     [Branch(:L12, :B1, :B2, 0.05, 500.0),   # inside the area: stiff
+                      Branch(:L13, :B1, :B3, 4.00, 500.0)],  # the tie: weaker than the load
+                     #       id     bus   S_rated    H    D   Xd′    E′      P0
+                     [Machine(:ES,  :B1, 2000.0, 4.0, 0.5, 0.30, 1.03, -40.0),
+                      Machine(:ESG, :B2, 1000.0, 4.0, 0.5, 0.30, 1.03,  50.0),
+                      Machine(:FR,  :B3, 4000.0, 5.0, 0.5, 0.30, 1.05, -10.0)])
+
+    # 120°, the low end of the range D6 records for the report's separation. It is a
+    # *scenario parameter, not a constant of the tier* — step 6's sweep varies it —
+    # so it is named here rather than defaulted anywhere in `src/`.
+    _SLIP_THR = 2π / 3
+
+    @testset "M3 step 4 V6: the separation instant is a root, not a step" begin
+        net = _pole_slip_net()
+        ba = branch_arrays(net)
+        K13 = ba.K[2]
+        @test isapprox(K13, 0.270375; atol = 1e-9)      # the tie's maximum transfer
+        @test isapprox(machine_arrays(net).Pm[1], -0.40; atol = 1e-12)
+        @test K13 < abs(machine_arrays(net).Pm[1])      # ⇒ no post-trip equilibrium
+
+        # --- the bare run: where the crossing is, with nothing armed -------------
+        dt = 0.01
+        bare = init!(SwingEngine, net; dt = dt)
+        d0 = (s -> s.δ[1] - s.δ[3])(current_state(bare))
+        @test isapprox(K13 * sin(d0), 0.10; atol = 1e-9)   # pre-fault: 10 MW exported
+        inject!(bare, TripGenerator(:ESG))
+        t_bracket = NaN
+        prevd = d0
+        for _ in 1:600                                    # 6 s, a fixed step count
+            s = step!(bare)
+            d = s.δ[1] - s.δ[3]
+            isnan(t_bracket) && abs(prevd) < _SLIP_THR <= abs(d) && (t_bracket = s.t)
+            prevd = d
+        end
+        @test 2.93 < t_bracket <= 2.94                    # measured 2.94, one `dt` wide
+
+        # --- the armed run ------------------------------------------------------
+        eng = init!(SwingEngine, net; dt = dt,
+                    out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR; label = :tie)])
+        inject!(eng, TripGenerator(:ESG))
+        for _ in 1:600; step!(eng); end
+        lg = out_of_step_log(out_of_step_relay(eng, :B1, :B3))
+        @test lg.tripped && lg.label === :tie && !lg.armed
+        # Inside the one-`dt` bracket the bare run puts the crossing in, and OFF the
+        # `dt` grid — i.e. root-found, not detected at a step boundary.
+        @test t_bracket - dt < lg.t <= t_bracket
+        @test !isapprox(lg.t / dt, round(lg.t / dt); atol = 1e-6)
+        # The root was found on the intended quantity: the angle at the firing
+        # instant IS the threshold. Measured exact, asserted with slack.
+        @test isapprox(abs(lg.δ), _SLIP_THR; atol = 1e-12)
+        # …and it really opened the branch, through the ordinary `TripLine` path, so
+        # the read-out and the event log both know. The event stamp is the root-found
+        # instant here — unlike a shed, which is why a shed keeps its own log and this
+        # does not need one (`protection/load_shedding.jl`, `out_of_step.jl`).
+        @test !is_online(eng, :B1, :B3)
+        evs = event_log(eng)
+        @test [e.kind for e in evs] == [:trip_generator, :trip_line]
+        @test (evs[2].a, evs[2].b) == (:B1, :B3)
+        @test evs[2].t == lg.t
+
+        # --- V6's first clause: refine `dt` 10x and the instant does not move ----
+        function trip_at(dtx)
+            e = init!(SwingEngine, net; dt = dtx,
+                      out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR)])
+            inject!(e, TripGenerator(:ESG))
+            for _ in 1:round(Int, 6.0 / dtx); step!(e); end
+            return out_of_step_log(out_of_step_relay(e, :B1, :B3)), current_state(e)
+        end
+        lc, sc = trip_at(0.01)
+        lf, sf = trip_at(0.001)
+        @test isapprox(lc.t, lf.t; atol = 1e-10)          # measured 4.4e-15
+        @test isapprox(sc.ω[1], sf.ω[1]; rtol = 1e-8)
+        @test isapprox(sc.ω[3], sf.ω[3]; rtol = 1e-8)
+        # Non-vacuous: a `dt`-quantised trip would have moved by up to a whole step,
+        # which is seven orders above that tolerance.
+        @test 0.001 > 1e-10
+    end
+
+    @testset "M3 step 4 V6: the tie's power reverses before the relay fires" begin
+        # The report's export swing, and the physical reason a *threshold on the
+        # angle* is the right detector. Pre-fault the area EXPORTS 10 MW. Losing its
+        # generation reverses that inside a second — the same tie now imports —
+        # and only later does the angle run away far enough to be a slip. So the
+        # reversal is a precondition the relay passes straight through, not the thing
+        # it triggers on: an `abs` has a kink at zero, and this asserts the kink is
+        # crossed harmlessly (it is a MAXIMUM of the condition, so it carries no sign
+        # change for the rootfinder to mistake for a crossing).
+        net = _pole_slip_net()
+        K13 = branch_arrays(net).K[2]
+        eng = init!(SwingEngine, net; dt = 0.01,
+                    out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR)])
+        P(s) = K13 * sin(s.δ[1] - s.δ[3])
+        @test isapprox(P(current_state(eng)), 0.10; atol = 1e-9)     # exporting
+        inject!(eng, TripGenerator(:ESG))
+        t_rev = NaN
+        prevP = P(current_state(eng))
+        peak_import = 0.0
+        for _ in 1:600
+            s = step!(eng)
+            p = P(s)
+            isnan(t_rev) && prevP > 0 >= p && (t_rev = s.t)
+            prevP = p
+            is_online(eng, :B1, :B3) && (peak_import = min(peak_import, p))
+        end
+        lg = out_of_step_log(out_of_step_relay(eng, :B1, :B3))
+        @test !isnan(t_rev)
+        @test 0.90 < t_rev < 0.92                       # measured 0.91
+        @test t_rev < lg.t                              # …and well before the trip
+        @test lg.t - t_rev > 1.5                        # measured 2.02 s apart
+        # The swing is a real reversal, not a graze: it imports essentially the whole
+        # of what the tie can carry before the angle runs away.
+        @test peak_import < -0.9 * K13                  # measured -0.2704, i.e. -K
+    end
+
+    @testset "M3 step 4 V6: two islands, and what does NOT tell them apart" begin
+        # THE FINDING, and it is why this testset does not assert what the plan's V6
+        # line says on its own. "The trip leaves two islands, each holding its own
+        # frequency" is TRUE — but it is *also* true of the unarmed run, to five
+        # decimal places, because a fully slipping tie transfers almost no NET power:
+        # `K·sin` of a monotonically growing angle averages to zero. So the islanded
+        # closed forms alone cannot tell an opened tie from one that is still there
+        # and slipping. Both are asserted, and so is the thing that DOES discriminate.
+        net = _pole_slip_net()
+        ma = machine_arrays(net)
+        K13 = branch_arrays(net).K[2]
+        # Per-island closed forms, with step 2's D11 correction applied: the sum runs
+        # over the SURVIVORS of that island. `:ESG` is tripped, so its damping enters
+        # nobody's balance, and island {B1,B2} is `:ES` alone.
+        isl_ES, isl_FR = ma.Pm[1] / ma.D[1], ma.Pm[3] / ma.D[3]
+        @test isapprox(isl_ES, -0.04; atol = 1e-12)      # 48.00 Hz
+        @test isapprox(isl_FR, -0.005; atol = 1e-12)     # 49.75 Hz
+        function trace(armed)
+            kw = armed ?
+                (out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR)],) : NamedTuple()
+            e = init!(SwingEngine, net; dt = 0.01, kw...)
+            inject!(e, TripGenerator(:ESG))
+            wES = Float64[]; wFR = Float64[]; Pt = Float64[]
+            Klive() = e.params[e.K_pidx[e.branch_to_edge[2]]]
+            for _ in 1:30000                             # 300 s, a fixed step count
+                s = step!(e)
+                push!(wES, s.ω[1]); push!(wFR, s.ω[3])
+                push!(Pt, Klive() * sin(s.δ[1] - s.δ[3]))
+            end
+            return (; wES, wFR, Pt, e)
+        end
+        A, U = trace(true), trace(false)
+        late = 28001:30000                               # the last 20 s
+        p2p(v) = maximum(v) - minimum(v)
+
+        # --- what IS true of the armed run --------------------------------------
+        @test isapprox(A.wES[end], isl_ES; atol = 1e-8)   # measured 3.0e-10 off
+        @test isapprox(A.wFR[end], isl_FR; atol = 1e-8)   # measured 1.3e-9 off
+        @test p2p(A.wES[late]) < 1e-7                     # measured 7.6e-10: flat
+        @test p2p(A.wFR[late]) < 1e-7                     # measured 2.1e-9
+        # The tripped machine is in NEITHER island's balance: nothing drives it.
+        @test current_state(A.e).ω[2] == 0.0
+        # Separated means separated: the tie transfers exactly zero, to the bit.
+        @test all(==(0.0), A.Pt[3000:end])
+
+        # --- and the half that does NOT discriminate ----------------------------
+        # The unarmed run reaches the same two island frequencies to ~3e-5. An
+        # assertion on the closed forms alone would have passed with the relay
+        # removed entirely, which is step 3's V5 trap.
+        @test isapprox(U.wES[end], isl_ES; atol = 1e-4)
+        @test isapprox(U.wFR[end], isl_FR; atol = 1e-4)
+
+        # --- what DOES discriminate, by four orders of magnitude -----------------
+        # 300 s in, the two areas are still grinding against each other at the full
+        # coupling: the tie swings the whole way from +K to −K and never decays.
+        @test maximum(abs, U.Pt[late]) > 0.99 * K13       # measured 0.27037 = K
+        @test p2p(U.Pt[late]) > 1.9 * K13                 # measured 0.5407 = 2K
+        @test p2p(U.wES[late]) > 1e-5                     # measured 3.1e-4
+        @test p2p(U.wFR[late]) > 1e-5                     # measured 1.2e-4
+        @test p2p(U.wES[late]) > 1e4 * p2p(A.wES[late])   # measured 4.1e5x
+        @test p2p(U.wFR[late]) > 1e4 * p2p(A.wFR[late])   # measured 5.7e4x
+        @test is_online(U.e, :B1, :B3) && !is_online(A.e, :B1, :B3)
+    end
+
+    @testset "M3 step 4: the trip is the UPcrossing of |δ|, in the branch's own sense" begin
+        # Two hazards in one fixture, because one construction settles both.
+        #
+        # POLARITY. `ContinuousCallback(cond, affect!, affect_neg!)` — `affect!` is
+        # the UPcrossing of the condition and `affect_neg!` the DOWNcrossing, and the
+        # condition here is `threshold − |δ|`, so exceeding the threshold is a DOWN
+        # crossing. Wire it into the other slot and the relay opens the tie when the
+        # areas come back INTO step, which is silent and exactly backwards. The
+        # construction guard (below) forces the condition to start positive, so the
+        # first crossing is necessarily the one that matters — which makes a scenario
+        # where the angle overshoots and recovers the discriminating one.
+        #
+        # ORIENTATION. `three_machine_ring`'s L31 is declared `:B3 → :B1`, while
+        # `Graphs` holds that edge as `(1, 3)`. The two orientations differ by a sign,
+        # and the relay logs the BRANCH's, from `branch_arrays`. `|δ|` cannot see the
+        # difference, so only the signed log bites.
+        net = three_machine_ring()
+        dt = 0.005
+        bare = init!(SwingEngine, net; dt = dt)
+        d0 = (s -> s.δ[3] - s.δ[1])(current_state(bare))
+        @test isapprox(abs(d0), 0.146222745876; atol = 1e-9)
+        inject!(bare, TripLine(:B2, :B3))
+        peak = 0.0; t_peak = 0.0; settled = 0.0
+        for _ in 1:4000                                  # 20 s, a fixed step count
+            s = step!(bare)
+            d = abs(s.δ[3] - s.δ[1])
+            d > peak && (peak = d; t_peak = s.t)
+            settled = d
+        end
+        # The window this test needs: pre-fault < settled < threshold < peak, so the
+        # threshold is crossed once on the way up and would be crossed again on the
+        # way down if the relay were still armed and wired to the wrong slot.
+        @test abs(d0) < settled < 0.35 < peak
+        @test isapprox(peak, 0.398864511; atol = 1e-8)
+        @test isapprox(t_peak, 0.435; atol = 1e-9)
+
+        eng = init!(SwingEngine, net; dt = dt,
+                    out_of_step = [(:B3, :B1) => OutOfStepTrip(0.35; label = :L31)])
+        inject!(eng, TripLine(:B2, :B3))
+        for _ in 1:4000; step!(eng); end
+        r = out_of_step_relay(eng, :B3, :B1)
+        @test out_of_step_relay(eng, :B1, :B3) === r     # either bus order, one relay
+        lg = out_of_step_log(r)
+        @test lg.tripped
+        @test lg.t < t_peak                              # on the way UP: measured 0.333
+        @test isapprox(lg.t, 0.333020558927; atol = 1e-9)
+        # THE SIGN. `δ_B3 − δ_B1` is negative here, so the branch's orientation gives
+        # −0.35 and the graph's would give +0.35. Both have the same magnitude, which
+        # is why the threshold itself cannot catch a swapped orientation.
+        @test isapprox(lg.δ, -0.35; atol = 1e-12)
+        @test lg.δ < 0
+        @test (r.from, r.to) == (:B3, :B1)               # the branch's own names
+
+        # A threshold above the peak is never reached: still armed after the full run,
+        # so "it did not fire" is a property of the whole trace, not of a short one.
+        far = init!(SwingEngine, net; dt = dt, out_of_step = [(:B3, :B1) => 0.45])
+        inject!(far, TripLine(:B2, :B3))
+        for _ in 1:4000; step!(far); end
+        lf = out_of_step_log(out_of_step_relay(far, :B3, :B1))
+        @test !lf.tripped && lf.armed && isnan(lf.t)
+        @test is_online(far, :B3, :B1)
+        @test lf.threshold_rad == 0.45                   # a bare number is a threshold
+        @test lf.label === :out_of_step                  # …and gets the default label
+    end
+
+    @testset "M3 step 4: opening the branch disarms the relay, whoever opens it" begin
+        # The hazard the plan's three V6 bullets do not mention. `inject!(::TripLine)`
+        # no-ops on a branch that is already open — so a relay left armed on one would
+        # root-find a crossing, run its affect, change nothing, and then log a
+        # protection operation that never happened. The engine's own rule is that
+        # `_log_event!` records what changed the system, not what was asked for, and
+        # this is the same rule one level up.
+        #
+        # The answer is structural: opening a branch latches every relay on it, so the
+        # user's trip, another relay's trip and the relay's own all go through one
+        # line. Provoked here by the case that has no other cover — a hand trip first.
+        net = _pole_slip_net()
+        dt = 0.01
+        eng = init!(SwingEngine, net; dt = dt,
+                    out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR)])
+        r = out_of_step_relay(eng, :B1, :B3)
+        @test r.armed
+        inject!(eng, TripGenerator(:ESG))
+        for _ in 1:100; step!(eng); end                  # t = 1 s, well before 2.93
+        @test r.armed                                    # a GENERATOR trip elsewhere
+        inject!(eng, TripLine(:B1, :B3))                 # …and now the user's own
+        @test !r.armed                                   # latched…
+        @test !out_of_step_log(r).tripped                # …without firing
+        for _ in 1:3000; step!(eng); end                 # 30 s more, past the crossing
+        @test !out_of_step_log(r).tripped
+        @test count(e -> e.kind === :trip_line, event_log(eng)) == 1
+
+        # NON-VACUOUS: the threshold really is crossed after that hand trip, so "it
+        # never fired" is not "nothing ever happened". Measured on a relay-free run of
+        # the identical scenario.
+        b = init!(SwingEngine, net; dt = dt)
+        inject!(b, TripGenerator(:ESG))
+        for _ in 1:100; step!(b); end
+        inject!(b, TripLine(:B1, :B3))
+        crossed = NaN
+        for _ in 1:3000
+            s = step!(b)
+            isnan(crossed) && abs(s.δ[1] - s.δ[3]) >= _SLIP_THR && (crossed = s.t)
+        end
+        @test !isnan(crossed) && crossed < 3.0           # measured 2.53 s
+    end
+
+    @testset "M3 step 4: a generator trip at either end disarms the relay" begin
+        # The second hazard the plan's bullets do not mention, and the one that would
+        # have shipped. Step 2's V3 measured what a generator trip does to a rotor:
+        # `inject!` zeroes every coupling incident to that bus, so nothing drives it,
+        # its `ω` stays exactly 0.0 and its `δ` FREEZES — while the survivors' common
+        # mode drifts on forever at `ω₀·ω_ss`. The angle across a branch with one dead
+        # end therefore grows at the FULL drift rate and crosses any threshold
+        # whatever, on a branch whose coupling that same trip set to zero.
+        #
+        # Same asymmetry as the shedding ladder, in the same direction: a LINE trip is
+        # what a relay exists for, a GENERATOR trip is what makes its signal
+        # meaningless.
+        net = _pole_slip_net()
+        dt = 0.01
+        eng = init!(SwingEngine, net; dt = dt,
+                    out_of_step = [(:B1, :B2) => OutOfStepTrip(_SLIP_THR; label = :inner),
+                                   (:B1, :B3) => OutOfStepTrip(_SLIP_THR; label = :tie)])
+        inner = out_of_step_relay(eng, :B1, :B2)
+        tie = out_of_step_relay(eng, :B1, :B3)
+        @test [x.label for x in eng.relays] == [:inner, :tie]   # caller's order, not a Dict's
+        inject!(eng, TripGenerator(:ESG))                # :ESG sits at B2
+        @test !inner.armed                               # incident to B2 ⇒ latched…
+        @test !out_of_step_log(inner).tripped            # …without firing
+        # …and the disarm is SELECTIVE, not a blanket: L13 does not touch B2.
+        @test tie.armed
+        for _ in 1:3000; step!(eng); end                 # 30 s
+        @test !out_of_step_log(inner).tripped
+        @test is_online(eng, :B1, :B2)                   # the inner line is still in service
+        @test out_of_step_log(tie).tripped               # the tie's relay still works
+
+        # NON-VACUOUS, and this is the whole point: on a relay-free run of the same
+        # scenario the inner branch's angle blows through the threshold at t ≈ 2.36 s
+        # and reaches ~199 rad by 30 s — while that branch's coupling has been exactly
+        # zero since the trip. Without the disarm the relay opens a line that has
+        # carried nothing for over two seconds, and calls it a pole slip.
+        b = init!(SwingEngine, net; dt = dt)
+        inject!(b, TripGenerator(:ESG))
+        k12 = b.branch_to_edge[1]
+        @test b.params[b.K_pidx[k12]] == 0.0
+        crossed = NaN
+        for _ in 1:3000
+            s = step!(b)
+            isnan(crossed) && abs(s.δ[1] - s.δ[2]) >= _SLIP_THR && (crossed = s.t)
+        end
+        @test !isnan(crossed) && 2.3 < crossed < 2.4     # measured 2.36
+        @test abs((s -> s.δ[1] - s.δ[2])(current_state(b))) > 100.0   # measured 199
+        @test b.params[b.K_pidx[k12]] == 0.0             # still carrying nothing
+    end
+
+    @testset "M3 step 4: relay construction guards, one message each" begin
+        # Each provoked ALONE and asserted by its own wording — the step-1 discipline.
+        net = _pole_slip_net()
+        @test occursin("must be > 0 rad", argerr_msg(() -> OutOfStepTrip(0.0)))
+        @test occursin("must be > 0 rad", argerr_msg(() -> OutOfStepTrip(-1.0)))
+        @test occursin("no branch joins", argerr_msg(
+            () -> init!(SwingEngine, net; out_of_step = [(:B2, :B3) => 1.0])))
+        @test occursin("two relays on the branch", argerr_msg(
+            () -> init!(SwingEngine, net;
+                        out_of_step = [(:B1, :B3) => 1.0, (:B3, :B1) => 1.0])))
+        # The fourth guard needs the steady state, so it lives past `find_fixpoint`:
+        # a threshold below the pre-fault transfer angle could never fire, because the
+        # trip is a downward crossing and the condition would start below zero. Silent
+        # otherwise — the trace would read as a defence plan that simply never operated.
+        @test occursin("could never fire", argerr_msg(
+            () -> init!(SwingEngine, net; out_of_step = [(:B1, :B3) => 0.3])))
+        # …and it is a real boundary, not a blanket refusal: the steady-state angle is
+        # 0.3789 rad, so 0.38 is legal and 0.30 is not.
+        @test init!(SwingEngine, net; out_of_step = [(:B1, :B3) => 0.38]) isa SwingEngine
+        # Asking about a branch that was never armed is a caller bug, not a silent
+        # nothing — the contract `shed_ladder` sets for machines.
+        e = init!(SwingEngine, net; out_of_step = [(:B1, :B3) => 1.0])
+        @test_throws KeyError out_of_step_relay(e, :B1, :B2)
+        @test isempty(init!(SwingEngine, net).relays)
+        # `disarm!` latches without firing and without touching the log.
+        r = OutOfStepRelay(:B1, :B3, OutOfStepTrip(1.0; label = :x))
+        @test r.armed && isnan(r.t_tripped)
+        @test GridSim.disarm!(r) === r
+        @test !r.armed && !out_of_step_log(r).tripped
+    end
+
+    @testset "M3 step 4: a ladder and a relay in one engine, both firing" begin
+        # Where the two protection schemes meet, which nothing had run: step 6 arms a
+        # defence plan AND a tie relay on the same area. They are independent by
+        # design and this is the assertion that they stay so — in particular that the
+        # relay's LINE trip does not disarm the ladder, which is the asymmetry
+        # `inject!(::TripGenerator)` documents (a line trip can island a live machine,
+        # and that is exactly the situation the ladder exists for).
+        net = _pole_slip_net()
+        eng = init!(SwingEngine, net; dt = 0.01,
+                    shed = [:ES => [LoadShedStage(49.5, 0.05; label = :es1)]],
+                    out_of_step = [(:B1, :B3) => OutOfStepTrip(_SLIP_THR; label = :tie)])
+        Pm0 = eng.params[eng.Pm_pidx[1]]
+        inject!(eng, TripGenerator(:ESG))
+        for _ in 1:6000; step!(eng); end                 # 60 s
+        sl = shed_log(shed_ladder(eng, :ES))
+        rl = out_of_step_log(out_of_step_relay(eng, :B1, :B3))
+        @test length(sl.t) == 1 && sl.label == [:es1]
+        @test rl.tripped
+        # THE ORDER, and it is the opposite of what this test first assumed. The tie
+        # separates at 2.93 s and the area only falls through 49.5 Hz at 5.51 s — so
+        # the ladder operates on an area that is ALREADY islanded, which is the
+        # sequence the report describes (separation, then the island's defence plan)
+        # rather than a defence plan that saves the tie. Asserted as measured.
+        @test isapprox(rl.t, 2.9335882899; atol = 1e-8)
+        @test isapprox(sl.t[1], 5.5143632378; atol = 1e-8)
+        @test rl.t < sl.t[1]
+        @test !is_online(eng, :B1, :B3)                  # …islanded when it shed
+        @test isapprox(eng.params[eng.Pm_pidx[1]] - Pm0, 0.05; atol = 1e-12)
+        # Both logs are separate and neither is the event log: the line trip is in the
+        # event log (topology a played-back trace cannot reconstruct), the shed is not.
+        @test [e.kind for e in event_log(eng)] == [:trip_generator, :trip_line]
+    end
+
     @testset "SwingEngine V6: a line trip settles on the closed-form equilibrium" begin
         # The sharper half of step 5, and why it leads. A GENERATOR trip breaks
         # `Σ Pm = 0` and this tier has no governors, so nothing settles (see the

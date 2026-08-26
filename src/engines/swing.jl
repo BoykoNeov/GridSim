@@ -270,6 +270,7 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     n_dropped::Int
     nadir::Float64
     ladders::Vector{ShedLadder}
+    relays::Vector{OutOfStepRelay}
 end
 
 # `isoutofdomain` predicate, built per engine because it has to close over the
@@ -333,6 +334,101 @@ function _bind_shed(shed, ids::Vector{Symbol}, ω_idx::Vector{Int},
     return ladders, bound
 end
 
+# --- how an out-of-step relay reaches THIS engine's state (M3 step 4, D6) --------
+#
+# `protection/out_of_step.jl` knows neither the state layout nor how to open a
+# branch; both arrive as functions, the same seam the shedding ladder uses.
+#
+# `δdiff` reads the angle across the branch **in the branch's own orientation**
+# (`from` minus `to`, straight out of `branch_arrays`), NOT the graph edge's. The
+# two differ: `Graphs` iterates edges in sorted `(src, dst)` order and may hold the
+# ends the other way round, which would silently negate the quantity. It does not
+# matter to the threshold, which is on `|·|` — but it matters to `δ_tripped` in the
+# log, and it would matter to anything that later reads the sign as a direction of
+# flow. The unsigned test would have hidden the signed bug, so the orientation is
+# taken from the place that defines it.
+#
+# `trip!` runs the engine's own `inject!(::TripLine)` — the real one, not a copy of
+# its body. That is the strongest reading of the plan's "fires through the existing
+# `inject!(::TripLine)` path": the no-op guard, `lines_online`, the event log and
+# both integrator-boundary calls are then the shipped ones by construction rather
+# than by a helper two call sites have to keep agreeing about.
+#
+# THE PRICE, STATED. `inject!` needs the engine, and the engine cannot exist yet:
+# the callbacks are arguments to `init`, whose integrator is one of the engine's own
+# type parameters. So the affect closes over a `Base.RefValue{Any}` that the
+# constructor fills with the finished engine on its last line. That box is a local
+# captured by one closure — it is **not** a field of any struct, so SPEC §4's
+# concrete-field rule is untouched — and it costs one dynamic dispatch on an event
+# that happens at most once per relay per run. The alternative (factoring `inject!`
+# into a helper over the pieces that do exist early) was rejected because the only
+# genuinely engine-bound piece is the event log's `n_dropped` counter: it would move
+# the log into its own object to buy back type stability on a once-per-run call, and
+# leave two ways to open a branch where the milestone's whole point is that there is
+# one.
+_swing_δdiff(i::Int, j::Int) = u -> @inbounds(u[i] - u[j])
+function _swing_trip_branch!(box::Base.RefValue{Any}, from::Symbol, to::Symbol)
+    ev = TripLine(from, to)                 # built once, not per fire
+    return integrator -> (inject!(box[]::SwingEngine, ev); nothing)
+end
+
+# The relays a `SwingEngine` is built with, validated and bound. Kept out of the
+# constructor body for `_bind_shed`'s reason: it is four guards and their messages,
+# and the M2/M3 discipline is that each is asserted by its own wording.
+#
+# `out_of_step` is a **vector of pairs** `[(:B1, :B3) => OutOfStepTrip(2π/3)]`, not a
+# `Dict`, so the callback set is built in the caller's order (`shed`'s reason). A
+# bare number is accepted for the threshold, because a relay with no label to give
+# should not have to name a type to say "trip at 120°".
+function _bind_out_of_step(out_of_step, net::NetworkModel, ba, δ_idx::Vector{Int},
+                           box::Base.RefValue{Any})
+    relays = OutOfStepRelay[]
+    bound = Any[]
+    pairs_seen = Set{Tuple{Symbol,Symbol}}()
+    branch_of = Dict{Tuple{Symbol,Symbol},Int}(
+        _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
+    for (buspair, setting) in out_of_step
+        from, to = buspair
+        key = _bus_pair(from, to)
+        b = get(branch_of, key, nothing)
+        b === nothing && throw(ArgumentError(
+            "out_of_step: no branch joins buses `:$from`–`:$to`; have " *
+            "$([(br.from, br.to) for br in net.branches])"))
+        key in pairs_seen && throw(ArgumentError(
+            "out_of_step: two relays on the branch `:$from`–`:$to`; give it one " *
+            "relay, or the second is armed on a tie the first has already opened"))
+        push!(pairs_seen, key)
+        s = setting isa OutOfStepTrip ? setting : OutOfStepTrip(setting)
+        br = net.branches[b]
+        # The branch's own bus names and orientation, not the caller's argument
+        # order — the rule `inject!(::TripLine)` already applies to the event log.
+        r = OutOfStepRelay(br.from, br.to, s)
+        push!(relays, r)
+        push!(bound, (r, _swing_δdiff(δ_idx[ba.src[b]], δ_idx[ba.dst[b]]),
+                      _swing_trip_branch!(box, br.from, br.to)))
+    end
+    return relays, bound
+end
+
+# The fourth guard, which can only be checked once the steady state exists: a relay
+# whose threshold is already exceeded at `t = 0` is armed on a system that is
+# *by its own definition* out of step before the run begins — and it would never
+# fire, because the condition starts negative and a downward crossing needs a
+# positive side to fall from. Silent, and the trace would look like a defence plan
+# that simply never operated. Checked against the fixpoint, so it catches a
+# threshold set below a perfectly ordinary pre-fault transfer angle.
+function _guard_out_of_step_start(bound::AbstractVector, u0::Vector{Float64})
+    for (r, δdiff, _) in bound
+        d = δdiff(u0)
+        abs(d) < r.threshold_rad || throw(ArgumentError(
+            "out_of_step: relay on `:$(r.from)`–`:$(r.to)` has threshold_rad " *
+            "$(r.threshold_rad) rad, but the steady-state angle across that " *
+            "branch is already $(abs(d)) rad. It could never fire, because the " *
+            "trip is a downward crossing and the condition starts below zero."))
+    end
+    return nothing
+end
+
 function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
     return function (u, p, t)
         @inbounds for k in eachindex(ΔPm_idx)
@@ -344,7 +440,7 @@ end
 
 """
     SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
-                capacity=200_000)
+                out_of_step=[], capacity=200_000)
 
 Compile `net` into a NetworkDynamics `Network`, place it on its steady state, and
 return a ready-to-step engine.
@@ -370,11 +466,21 @@ meaningless the moment the two are separating. Default: no ladders.
 
 The engine builds the ladders and owns them (`eng.ladders`, `shed_ladder`), because
 a ladder holds a live latch and log that two engines must not share.
+
+`out_of_step` arms out-of-step (pole-slip) protection **per branch**, as a vector of
+pairs `[(:B1, :B3) => OutOfStepTrip(2π/3)]`; a bare number is taken as the threshold
+in radians. Each pair becomes one `OutOfStepRelay` that root-finds the instant
+`|δ_from − δ_to|` crosses its threshold and then opens that branch through this
+engine's own `inject!(::TripLine)`. Latching, and disarmed rather than fired if the
+branch is opened by anything else or a generator at either end trips (decision D6;
+see `protection/out_of_step.jl` for why the threshold lives on the relay and not on
+`Branch`). Owned by the engine for the ladders' reason. Default: no relays.
 """
 function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      dt::Real = _SWING_DT0,
                      solver = OrdinaryDiffEq.Tsit5(),
                      shed = Pair{Symbol,Vector{LoadShedStage}}[],
+                     out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
                      capacity::Integer = _TRAJ_CAPACITY)
     ma = machine_arrays(net)
     ba = branch_arrays(net)
@@ -472,11 +578,20 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # are built here and not with the rest of the engine's own bookkeeping.
     ladders, bound_shed = _bind_shed(shed, ids0, ω_idx, Pm_pidx)
 
+    # The out-of-step relays, and the box their affect reaches the finished engine
+    # through — see the note above `_swing_trip_branch!` for why it has to be a box
+    # and what that costs.
+    eng_box = Base.RefValue{Any}(nothing)
+    relays, bound_oos = _bind_out_of_step(out_of_step, net, ba, δ_idx, eng_box)
+
     # --- steady state, then the integrator -------------------------------------
     fp = NetworkDynamics.find_fixpoint(nw, s)
     u0 = collect(NetworkDynamics.uflat(fp))
     p0 = collect(NetworkDynamics.pflat(fp))
     t0f = Float64(t0)
+    # The one relay guard that needs the steady state, so it runs here rather than
+    # with the other three.
+    _guard_out_of_step_start(bound_oos, u0)
     # Same integrator discipline as M1 (docs/SPEC.md §6): a large *finite* tspan
     # because we drive it with `step!(integ, dt, true)` and never reach the end,
     # an explicit seed `dt`, and the integrator's own saved solution switched off —
@@ -499,7 +614,9 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      isoutofdomain = _swing_outofdomain(ΔPm_idx, hr_pidx),
-                                     callback = shed_callbacks(bound_shed, net.f0),
+                                     callback = SciMLBase.CallbackSet(
+                                         shed_callbacks(bound_shed, net.f0),
+                                         out_of_step_callbacks(bound_oos)),
                                      save_everystep = false, dense = false)
 
     ids = ids0
@@ -537,14 +654,18 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                       invR_pidx, hr_pidx,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
-                      EngineEvent[], 0, net.f0, ladders)
+                      EngineEvent[], 0, net.f0, ladders, relays)
     _record!(eng)                                 # seed the pre-disturbance point
+    # The last line, and it has to be: an out-of-step relay's affect calls this
+    # engine's own `inject!(::TripLine)`, and until now there was no engine to call
+    # it on. Nothing can have fired before this point — `init` does not step.
+    eng_box[] = eng
     return eng
 end
 
 """
     init!(SwingEngine, net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
-          capacity=200_000)
+          out_of_step=[], capacity=200_000)
 
 Interface entry point. Dispatches on the engine **type** and returns a freshly
 built, fully-typed engine — the same construction-order resolution M1 uses: the
@@ -777,6 +898,22 @@ function shed_ladder(eng::SwingEngine, machine::Symbol)
 end
 
 """
+    out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol) -> OutOfStepRelay
+
+The out-of-step relay armed on the branch between buses `from` and `to`, in either
+order, for `out_of_step_log` and for step 7's annotated panel. Throws `KeyError` if
+that branch has no relay — asking about one that was never armed is a caller bug,
+the same contract `shed_ladder` sets for machines.
+"""
+function out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol)
+    key = _bus_pair(from, to)
+    for r in eng.relays
+        _bus_pair(r.from, r.to) === key && return r
+    end
+    throw(KeyError((from, to)))
+end
+
+"""
     is_online(eng::SwingEngine, id::Symbol) -> Bool
 
 Whether machine `id` is still online. Unknown ids are simply `false` (a *button*
@@ -871,6 +1008,20 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     for l in eng.ladders
         l.machine === ev.id && disarm!(l)
     end
+    # …and so does every out-of-step relay watching a branch that ends at this bus
+    # (M3 step 4). Same asymmetry as the ladder, in the same direction: a *line*
+    # trip is what a relay exists for, a *generator* trip is what makes its signal
+    # meaningless. This machine's rotor is now islanded and undriven, so its `δ`
+    # freezes while the survivors' common mode drifts on forever at `ω₀·ω_ss`
+    # (measured in step 2's V3) — so `|δ_from − δ_to|` across an incident branch
+    # grows at the FULL drift rate and crosses any threshold whatever, and the relay
+    # would open a line that has carried nothing since the instant this trip zeroed
+    # its coupling. Latched, not fired, so `out_of_step_log` still says it never
+    # operated.
+    bus = eng.model.machines[v].bus
+    for r in eng.relays
+        (r.from === bus || r.to === bus) && disarm!(r)
+    end
     eng.w[v] = 0.0                           # out of the aggregate read-out...
     eng.Σw = sum(eng.w)                      # ...and out of the inertia indicator
     _log_event!(eng, :trip_generator, ev.id, Symbol(""))
@@ -948,6 +1099,16 @@ function inject!(eng::SwingEngine, ev::TripLine)
     # NOT branch order (see the header). This is the one place that map is read,
     # and `test/` asserts it is a permutation *and* that the right line goes dead.
     eng.params[eng.K_pidx[eng.branch_to_edge[b]]] = 0.0
+    # Any out-of-step relay on this branch is latched, whoever opened it — the user
+    # here, another relay, or this relay itself firing (M3 step 4). One rule covers
+    # all three, which is what makes "a relay logs a trip only if it opened
+    # something" structural: reaching the affect at all requires being armed, and
+    # an open branch disarms. Placed AFTER the no-op guard above, for `_log_event!`'s
+    # reason — this records what changed the system, not what was asked for.
+    br0 = eng.model.branches[b]
+    for r in eng.relays
+        r.from === br0.from && r.to === br0.to && disarm!(r)
+    end
     # Logged by the branch's own bus names, not the caller's argument order, so two
     # runs that trip the same line agree on what the log says happened.
     br = eng.model.branches[b]

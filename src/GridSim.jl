@@ -50,6 +50,8 @@ include("events/events.jl")
 # --- protection schemes (armed, state-triggered — not user-injected) ---
 # Low-frequency load shedding as a root-finding ContinuousCallback per stage.
 include("protection/load_shedding.jl")
+# Out-of-step (pole-slip) tripping of a tie, likewise root-found (M3 step 4, D6).
+include("protection/out_of_step.jl")
 
 # --- the durable SimulationEngine abstraction (SPEC §3.3) ---
 include("engines/interface.jl")
@@ -99,6 +101,11 @@ export PerturbationEvent, TripGenerator, StepLoad, TripLine
 
 # --- protection ---
 export LoadShedStage, ShedLadder, shed_log, shed_total, shed_ladder
+# Out-of-step protection: the inert setting, the live relay, its log and the
+# engine's accessor. All four checked clear against GLMakie's exports before being
+# added (`intersect(names(GridSim), names(GLMakie))` is still empty) — the collision
+# hazard that cost a round in M1. `disarm!` stays internal for `ShedLadder`'s reason.
+export OutOfStepTrip, OutOfStepRelay, out_of_step_log, out_of_step_relay
 
 # --- post-processing ---
 export windowed_rocof

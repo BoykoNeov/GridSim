@@ -137,6 +137,15 @@ working code and ships as one, with M1's existing shed tests unchanged.
 
 ### Step 4 — out-of-step protection (new mechanism)
 
+> **Two interactions this section did not anticipate, both settled in step 4
+> (`m3-context.md` D6).** A **generator** trip at either end disarms the relay — the
+> dead rotor's angle freezes while the survivors drift on forever, so the angle across
+> an incident branch crosses any threshold on pure gauge drift, on a branch whose
+> coupling that same trip had already zeroed. And **opening a branch disarms every
+> relay on it, whoever opened it**, because `inject!` no-ops on an already-open branch
+> and a relay left armed would otherwise log a protection operation that opened
+> nothing. Same asymmetry as the shedding ladder, in the same direction.
+
 A `ContinuousCallback` root-finding the instant `|δ_from − δ_to|` crosses a
 threshold on a named branch, which then trips that branch through the existing
 `inject!(::TripLine)` path. Latching, like a shed stage: it does not re-close.
@@ -218,6 +227,18 @@ time.
   instant by less than solver tolerance; the tie's power reverses sign before the
   trip (the report's export swing); and the trip leaves two islands, each holding
   its own frequency.
+
+  > **Corrected in step 4 (`m3-context.md` D6): the third clause, asserted alone,
+  > passes with the relay deleted.** A fully slipping tie transfers almost no NET
+  > power — `K·sin` of a monotonically growing angle averages to zero — so both areas
+  > drift to their islanded closed forms whether or not anything opens the tie. On
+  > the step-4 fixture the unarmed run reaches the same two frequencies to ~3e-5.
+  > What discriminates, by four orders of magnitude, is the tie power itself (exactly
+  > `0.0` armed against a full `±K` swing that never decays) and the residual ripple
+  > in the two speeds (7.6e-10 against 3.1e-4). The closed forms are still asserted;
+  > they are just labelled as the half that cannot tell the two runs apart. This is
+  > step 3's V5 trap in a second place, and the step-3 fixture had to be measured and
+  > rejected before a new one was built.
 - **V7 — the sweep's shape, not its cells.** Assert the *monotone* property the
   sweep established (a stiffer tie slips later, and above a boundary never slips),
   not a tuned number. A cell value that moves with a solver version is not a

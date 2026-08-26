@@ -207,6 +207,75 @@ the 90° crossing followed by protection at ≈120–180°. The *threshold is a
 parameter of the scenario*, and the sweep varies it — it is not a constant of the
 tier.
 
+**Settled in step 4 — three things D6 did not say, two of which would have shipped.**
+
+*Where the threshold lives.* On the **relay**, not on `Branch`. The open question
+below is closed on the parallel step 3 made concrete: a relay is passed at engine
+construction (`out_of_step = [(:B1, :B3) => OutOfStepTrip(2π/3)]`) and the
+`NetworkModel` never hears about it, which is what lets **one** model be run with
+the plan armed and disarmed. That is not a convenience — the armed/unarmed pair is
+the counterfactual every step-4 test is built on, and step 6's sweep varies the
+threshold across cells of one model.
+
+*A generator trip at either end disarms the relay.* Step 2's V3 measured the
+mechanism: a tripped machine's rotor is islanded and undriven, so its `ω` is exactly
+`0.0` and its `δ` **freezes**, while the survivors' common mode drifts on forever at
+`ω₀·ω_ss`. The angle across a branch with one dead end therefore grows at the *full
+drift rate* and crosses **any** threshold — on a branch whose coupling that same trip
+had already set to zero. Measured on `_pole_slip_net`: after `:ESG` trips, `L12`'s
+coupling is exactly `0.0` and `|δ_B1 − δ_B2|` blows through 120° at **t ≈ 2.36 s**,
+reaching ~199 rad by 30 s. Without the disarm the relay opens a line that has carried
+nothing for over two seconds and calls it a pole slip. Same asymmetry as the shedding
+ladder and in the same direction: a *line* trip is what a relay exists for, a
+*generator* trip is what makes its signal meaningless. The disarm is **selective** —
+only branches incident to that bus — and asserted so.
+
+*Opening a branch disarms every relay on it, whoever opened it.* `inject!(::TripLine)`
+no-ops on an already-open branch, so a relay left armed on one would root-find a
+crossing, run its affect, change nothing, and log a protection operation that never
+happened — breaking the engine's own rule that a log records what changed the system,
+not what was asked for. One line in `inject!(::TripLine)`, placed after the no-op
+guard, covers the user's trip, another relay's trip and the relay's own.
+
+**A fourth guard that only exists because the fixpoint is solved in the constructor.**
+A threshold *below* the pre-fault transfer angle could never fire — the trip is a
+downward crossing of `threshold − |δ|` and the condition would start below zero — and
+the trace would read as a defence plan that simply never operated. Checked against
+the steady state, so it catches a threshold set below an ordinary transfer angle.
+On `_pole_slip_net` the boundary is real and tested from both sides: the steady-state
+angle is 0.3789 rad, so 0.38 is legal and 0.30 throws.
+
+**How the relay reaches `inject!`, and what that costs.** The affect calls the engine's
+**real** `inject!(::TripLine)` — not a copy of its body — so the no-op guard,
+`lines_online`, the event log and both integrator-boundary calls are the shipped ones
+by construction. `inject!` needs the engine and the engine cannot exist yet (the
+callbacks are arguments to `init`, whose integrator is one of the engine's own type
+parameters), so the affect closes over a `Base.RefValue{Any}` the constructor fills on
+its last line. That box is a local captured by one closure, **not a struct field**, so
+SPEC §4's concrete-field rule is untouched, and it costs one dynamic dispatch on an
+event that happens at most once per relay per run. The alternative — factoring
+`inject!` into a helper over the pieces that do exist early — was rejected because the
+only genuinely engine-bound piece is the event log's `n_dropped` counter: it would move
+the log into its own object to buy back type stability on a once-per-run call, and
+leave two ways to open a branch.
+
+**And the empirical half of that decision, because it was not obvious.** `inject!`
+calls `auto_dt_reset!`, which is safe between `step!`s but is a different situation
+inside a `ContinuousCallback` affect, where the integrator has just been interpolated
+back to the root mid-acceptance. Measured rather than argued: with that call patched
+out of the `TripLine` path (and a marker printed to prove the patch was live, since
+"bit-identical" is also what a stale precompile cache produces), the trip instant, both
+machine speeds and every digit of the state are **identical at three step sizes**. The
+call is inert on this path and harmless, so calling the real `inject!` is safe.
+
+**The event stamp is exact here, unlike a shed's would be.** Step 3 kept sheds out of
+the `EngineEvent` log partly because the event stamp would be `dt`-quantised. On this
+path it is not: `apply_callback!` interpolates the integrator back to the root *before*
+the affect, so `inject!`'s own `_log_event!` reads the root-found instant. Asserted as
+`evs[2].t == lg.t`, to the bit. A line trip is also exactly the change a played-back
+trajectory cannot reconstruct, which is what the event log is for — so this one is
+logged and a shed still is not, and the two decisions do not conflict.
+
 ### D7 — Generation loss ramps inside the RHS; it is not a staircase of trips
 
 Three extra vertex parameters (`rate`, `t_start`, `duration`) and
@@ -413,13 +482,14 @@ in both directions rather than leaving to a reader of this paragraph.
   branching the engine into guarded and unguarded variants to avoid: that would be
   two numerical paths for a seventh of one step, and the second path would be the
   one nobody tests. Revisit only if a profile of a large network says so.
-- **Does the out-of-step threshold belong to the branch or to the protection
-  object?** `Branch` already carries a `rating` it does not use. Resist the pull to
-  put protection settings on the topology type — the ladder is a separate object
-  for good reasons and this probably should be too. **Step 3 makes the parallel
-  concrete**: a ladder is passed as `shed = [:ES => stages]` at engine construction
-  and the `NetworkModel` never hears about it, which is what lets one model be run
-  with the defence plan armed and disarmed without being two models.
+- ~~**Does the out-of-step threshold belong to the branch or to the protection
+  object?**~~ **SETTLED in step 4: the protection object.** `Branch` carries a
+  `rating` the dynamics do not read, so there was an obvious pull to hang a
+  `slip_threshold` beside it; it is the wrong place for the reason the shedding
+  ladder is not a field of `Machine`. A threshold is a setting of a *defence plan*,
+  not a property of a conductor, and keeping it off the topology is what lets ONE
+  `NetworkModel` be run armed and disarmed — the counterfactual every step-4 test is
+  built on, and the axis step 6's sweep varies. See D6.
 
 ## Reference
 
