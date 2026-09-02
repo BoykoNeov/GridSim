@@ -4685,4 +4685,222 @@ end
         @test occursin("SwingEngine", msg)
     end
 
+
+    # ------------------------------------------------------------------------
+    # M4 step 2 — the divergence read (analysis/postprocess.jl).
+    #
+    # The step's finding is structural: both engines are built `dense = false`, so
+    # after `solve!` there is no interpolant left to resample with, and the read
+    # therefore REFUSES two grids rather than drawing lines between samples. The
+    # last testset below measures what that refusal is worth, on a real swing.
+    # ------------------------------------------------------------------------
+
+    @testset "M4 step 2: divergence by hand arithmetic" begin
+        t = [0.0, 1.0, 2.0]
+        a = [0.0, 0.0, 0.0]
+        b = [0.0, 1.0, 0.0]
+        d = divergence(t, a, b; band = 0.5)
+        @test d.max == 1.0
+        @test d.t_max == 1.0
+        @test d.rms ≈ sqrt(0.5)                 # trapezoid of gap² = [0, 1, 0] over 2 s
+        @test d.t_depart == 1.0
+        @test d.n == 3
+        # Symmetric in its two series.
+        d2 = divergence(t, b, a; band = 0.5)
+        @test d2.max == d.max && d2.rms == d.rms && d2.t_depart == d.t_depart
+        # A band never crossed reads NaN for the departure and still reports the gap.
+        d3 = divergence(t, a, b; band = 2.0)
+        @test isnan(d3.t_depart)
+        @test d3.max == 1.0
+        # The RMS is TIME-weighted, not sample-weighted — a decimated tail has fewer
+        # samples per second and must not be under-counted for it.
+        t4 = [0.0, 1.0, 3.0]
+        a4 = [0.0, 0.0, 0.0]
+        b4 = [1.0, 1.0, 0.0]                    # gap² = [1, 1, 0]: ∫ = 1 + 1 = 2 over 3 s
+        @test divergence(t4, a4, b4; band = 10.0).rms ≈ sqrt(2 / 3)
+        # Non-finite samples (a windowed RoCoF's unfilled head) are skipped, not
+        # propagated, and the RMS is over the spans actually compared.
+        t5 = [0.0, 1.0, 2.0, 3.0]
+        a5 = [NaN, 0.0, 0.0, 0.0]
+        b5 = [NaN, 0.0, 2.0, 0.0]
+        d5 = divergence(t5, a5, b5; band = 1.0)
+        @test d5.n == 3
+        @test d5.max == 2.0 && d5.t_max == 2.0 && d5.t_depart == 2.0
+        @test d5.rms ≈ sqrt(2.0)                # gap² = [4] between two zeros, over 2 s
+        # One compared sample: no span to average, the gap is the RMS.
+        @test divergence([0.0], [1.0], [3.0]; band = 1.0).rms == 2.0
+        # `tolerance_band`: factor · reltol · excursion, excursion from the FIRST
+        # finite sample, level ignored (50 Hz with a 0.1 Hz swing is a 0.1 Hz signal).
+        @test tolerance_band([50.0, 49.95, 49.9, 49.97]; reltol = 1e-3) ≈ 3e-4
+        @test tolerance_band([NaN, 50.0, 49.9]; reltol = 1e-3, factor = 1) ≈ 1e-4
+    end
+
+    @testset "M4 step 2: divergence guards, one message each" begin
+        t = [0.0, 1.0]
+        z = [0.0, 0.0]
+        @test_throws ArgumentError divergence(t, [0.0], z; band = 1.0)
+        @test_throws ArgumentError divergence(t, z, z; band = 0.0)
+        @test_throws ArgumentError divergence(t, z, z; band = -1.0)
+        @test_throws ArgumentError divergence(t, z, z; band = Inf)
+        @test_throws ArgumentError divergence([1.0, 0.0], z, z; band = 1.0)
+        @test_throws ArgumentError divergence(t, [NaN, NaN], z; band = 1.0)
+        @test_throws ArgumentError divergence(Float64[], Float64[], Float64[]; band = 1.0)
+        @test_throws ArgumentError tolerance_band(z; reltol = 0.0)
+        @test_throws ArgumentError tolerance_band([NaN, NaN]; reltol = 1e-3)
+        # Two series on different grids are REFUSED, never resampled — the
+        # structural half of "never straight-line between decimated samples".
+        sa = (; t = [0.0, 0.5, 1.0], f = [50.0, 50.0, 50.0])
+        sb = (; t = [0.0, 0.5],      f = [50.0, 50.0])
+        sc = (; t = [0.0, 0.6, 1.0], f = [50.0, 50.0, 50.0])
+        @test_throws ArgumentError divergence(sa, sb; band = 1.0)
+        @test_throws ArgumentError divergence(sa, sc; band = 1.0)
+        msg = try
+            divergence(sa, sc; band = 1.0)
+            "NO ERROR THROWN"
+        catch e
+            e isa ArgumentError ? e.msg : "NOT-ArgumentError: $(typeof(e))"
+        end
+        @test occursin("different grids", msg)
+        @test occursin("nothing here resamples", msg)
+        # …while the roundoff between two ways of building ONE grid (M4 step 1
+        # measured it below 1e-12 s) is not a different grid.
+        sd = (; t = [0.0, 0.5 + 1e-12, 1.0], f = [50.0, 50.0, 50.0])
+        @test divergence(sa, sd; band = 1.0).max == 0.0
+        # The cross-tier channel: `f_coi` first, then `f`, never a per-machine one.
+        @test system_frequency((; t = [0.0], f_coi = [49.0])) == [49.0]
+        @test system_frequency((; t = [0.0], f = [49.5])) == [49.5]
+        @test system_frequency((; t = [0.0], f = [1.0], f_coi = [2.0])) == [2.0]
+        @test_throws ArgumentError system_frequency((; t = [0.0], ω_G1 = [0.0]))
+        # An explicit selector is how anything else gets compared, deliberately.
+        se = (; t = [0.0, 1.0], δ_G1 = [0.0, 0.2], δ_G2 = [0.0, 0.1])
+        sf = (; t = [0.0, 1.0], δ_G1 = [0.0, 0.3], δ_G2 = [0.0, 0.1])
+        @test divergence(se, sf; band = 0.05, channel = s -> s.δ_G1 .- s.δ_G2).max ≈ 0.1
+    end
+
+    # The overlay pair M4 is built on: the aggregate tier compiled down from the
+    # network tier (`coi_model`) against the network tier itself, ONE scenario,
+    # solved by `solve!` in BOTH engines onto ONE `saveat` grid. This is the
+    # comparison `lockstep_coi` above could not make on recorded series (its own
+    # comment says why: differently-sampled histories); with a shared grid it can.
+    function overlay_pair(net, ev, t_ev, horizon; dt = 0.02, reltol = 1e-3, abstol = 1e-6)
+        sw = SwingEngine(net; reltol = reltol, abstol = abstol)
+        fr = FrequencyResponseEngine(coi_model(net); reltol = reltol, abstol = abstol)
+        solve!(sw, (0.0, horizon); perturbations = [t_ev => ev], saveat = dt)
+        solve!(fr, (0.0, horizon); perturbations = [t_ev => ev], saveat = dt)
+        return state_series(sw), state_series(fr)
+    end
+
+    @testset "M4 step 2: same series twice reads zero; the exact pair reads inside the band" begin
+        # ANTI-VACUITY: the read must say "identical" when it is handed one run
+        # twice, exactly, with no departure.
+        net = ratio_ring()                          # V4a's fixture: the aggregate is EXACT here
+        a, b = overlay_pair(net, TripGenerator(:G1), 0.0, 20.0)
+        same = divergence(a, a; band = 1e-12)
+        @test same.max == 0.0 && same.rms == 0.0 && isnan(same.t_depart)
+        @test same.n == length(a.t)
+
+        # POSITIVE CONTROL FOR AGREEMENT: where the two tiers are the same scalar
+        # ODE (V4a's derivation), two separately error-controlled solves must agree
+        # inside the band stated up front, and the band tracks the tolerance.
+        band = tolerance_band(a.f_coi; reltol = 1e-3)
+        d = divergence(a, b; band = band)
+        @test d.n == length(a.t) == 1001
+        @test d.max <= band
+        @test isnan(d.t_depart)
+        # Not vacuous: this is a real 2.5 Hz disturbance, not two flat lines.
+        @test a.f_coi[end] < 47.5
+        # Tightening the tolerance 1000× must shrink the gap at least 10× — a gap
+        # that sat still would be a fixed disagreement wearing a small number.
+        a2, b2 = overlay_pair(net, TripGenerator(:G1), 0.0, 20.0; reltol = 1e-6, abstol = 1e-9)
+        d2 = divergence(a2, b2; band = tolerance_band(a2.f_coi; reltol = 1e-6))
+        @test d2.max <= tolerance_band(a2.f_coi; reltol = 1e-6)
+        @test d2.max * 10 < d.max
+    end
+
+    @testset "M4 step 2: the departure is located, sized, and never before the event" begin
+        # POSITIVE CONTROL FOR DIVERGENCE: on the shipped ring the aggregate keeps
+        # the damping of the tripped machine and settles elsewhere (V4c, a derived
+        # number, not a band). The read must find that departure, place it AFTER
+        # the trip (both tiers start flat on their fixpoints), and size it.
+        net = three_machine_ring()
+        ma = machine_arrays(net)
+        t_trip = 1.0
+        a, b = overlay_pair(net, TripGenerator(:G1), t_trip, 60.0)
+        band = tolerance_band(a.f_coi; reltol = 1e-3)
+        d = divergence(a, b; band = band)
+        @test d.n == length(a.t) == 3001
+        @test !isnan(d.t_depart)
+        @test d.t_depart >= t_trip                 # nothing diverges before anything happens
+        @test d.t_depart > t_trip + 0.1            # …and they track early (V4c: < 5e-4 Hz at 0.1 s)
+        @test d.max > 0.8                          # ~0.86 Hz on this ring (V4c)
+        @test d.max > 3 * band                     # clearly outside the band, not at its edge
+        # The end gap is V4c's derived number, now read off two PLAYBACK series.
+        ΣPm_online = sum(ma.Pm) - ma.Pm[1]
+        f_swing = 50.0 * (1 + ΣPm_online / (sum(ma.D) - ma.D[1]))
+        f_coi   = 50.0 * (1 + ΣPm_online / sum(ma.D))
+        @test abs(a.f_coi[end] - b.f[end]) ≈ f_coi - f_swing atol = 1e-4
+        # Before the trip both sit on their own flat starts, so the gap there is
+        # fixpoint-solver residual, far inside the band.
+        pre = a.t .< t_trip
+        @test maximum(abs.(a.f_coi[pre] .- b.f[pre])) < 1e-6
+    end
+
+    @testset "M4 step 2: a physical residual below the band is invisible until the band moves" begin
+        # V4b isolated a 4.4325 µHz peak at t ≈ 0.26 s — the inter-machine swing
+        # content the aggregate averages away, stable to 8 figures across
+        # tolerances. That number sits BELOW the default-tolerance band, so the
+        # read must call it "indistinguishable" there, and must find it — located
+        # and sized — once the stated band drops beneath it. The read is only as
+        # sharp as the band it is handed; this is that fact, asserted.
+        net = ratio_ring(; D3 = 2.0)
+        a, b = overlay_pair(net, TripGenerator(:G1), 0.0, 3.0)
+        loose = divergence(a, b; band = tolerance_band(a.f_coi; reltol = 1e-3))
+        @test isnan(loose.t_depart)
+        a2, b2 = overlay_pair(net, TripGenerator(:G1), 0.0, 3.0; reltol = 1e-9, abstol = 1e-12)
+        band2 = tolerance_band(a2.f_coi; reltol = 1e-9)
+        @test band2 < 4.4325e-6                    # the band really is below the physics now
+        tight = divergence(a2, b2; band = band2)
+        @test !isnan(tight.t_depart)
+        @test tight.t_depart <= tight.t_max
+        @test tight.max ≈ 4.4325e-6 rtol = 5e-2
+        @test 0.2 < tight.t_max < 0.35
+    end
+
+    @testset "M4 step 2: what straight-line resampling would have cost (the second control)" begin
+        # THE ANTI-VACUITY CONTROL FOR THE REFUSAL. The read refuses two grids. Had
+        # it instead drawn straight lines between a coarser run's samples to land
+        # them on the finer grid — the obvious implementation — the line's own error
+        # would sit in the answer. Measure it: the SAME engine, the SAME scenario,
+        # once at the fine grid and once at a 10× coarser one, the coarse run
+        # interpolated linearly onto the fine grid. On a gauge-free angle difference
+        # swinging at ~1–2 Hz the interpolation error must sit far outside the band.
+        net = three_machine_ring()
+        ev = TripLine(:B3, :B1)                    # V6: an equilibrium survives, so it RINGS
+        solve_at(dt) = (eng = SwingEngine(net);
+                        solve!(eng, (0.0, 10.0); perturbations = [0.5 => ev], saveat = dt);
+                        state_series(eng))
+        fine, coarse = solve_at(0.02), solve_at(0.2)
+        @test length(fine.t) == 501 && length(coarse.t) == 51
+        chan(s) = s.δ_G1 .- s.δ_G2
+        band = tolerance_band(chan(fine); reltol = 1e-3)
+        # Control of the control: at the instants the two grids SHARE, the two runs
+        # agree inside the band — so whatever the next read finds is the resampling.
+        shared = (; t = fine.t[1:10:end], y = chan(fine)[1:10:end])
+        @test isnan(divergence(shared, (; t = coarse.t, y = chan(coarse));
+                               band = band, channel = s -> s.y).t_depart)
+        # Now the thing the read refuses to do, done by hand.
+        lerp(tq, tc, yc) = map(tq) do τ
+            j = clamp(searchsortedlast(tc, τ), 1, length(tc) - 1)
+            yc[j] + (yc[j + 1] - yc[j]) * (τ - tc[j]) / (tc[j + 1] - tc[j])
+        end
+        resampled = lerp(fine.t, coarse.t, chan(coarse))
+        d = divergence(fine.t, chan(fine), resampled; band = band)
+        @test !isnan(d.t_depart)
+        # Flat before the trip, so nothing to mis-draw — until the coarse span that
+        # STRADDLES the trip (0.4–0.6 s), where a straight line from a flat sample to
+        # a moved one is already wrong at 0.42 s. That is the mechanism, not slack.
+        @test d.t_depart > 0.4
+        @test d.max > 3 * band                     # far outside, not at the edge
+    end
+
 end

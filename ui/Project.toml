@@ -18,3 +18,13 @@ test = ["Test"]
 GLMakie = "0.13.13"
 Printf = "1.11.0"
 julia = "1.10"
+
+# The dev link to the core package, so a fresh clone resolves without a
+# `Pkg.develop(path = "..")` by hand (M4 step 5; the gap M3 step 6 recorded when
+# deleting `ui/Manifest.toml` left the link living nowhere else). Requires the
+# Pkg that ships with Julia ≥ 1.11 to be honoured; older Pkg ignores the section.
+# ADDED WITHOUT RE-RESOLVING (no Julia toolchain in the session that added it —
+# docs/plans/m4-tasks.md step 5): delete `ui/Manifest.toml`, instantiate, run both
+# suites, then tick the box.
+[sources]
+GridSim = {path = ".."}

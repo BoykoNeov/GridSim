@@ -127,7 +127,12 @@ export OutOfStepTrip, OutOfStepRelay, out_of_step_log, out_of_step_relay
 export GenerationRamp, generation_ramp
 
 # --- post-processing ---
-export windowed_rocof
+# `divergence`, `system_frequency` and `tolerance_band` are M4 step 2's cross-tier
+# read. Their names were chosen away from anything Makie is likely to export, but
+# the `intersect(names(GridSim), names(GLMakie))` check every earlier export went
+# through could not be run in the session that added them (no Julia toolchain
+# there — docs/plans/m4-tasks.md step 2); run it before the next `ui/` batch.
+export windowed_rocof, divergence, system_frequency, tolerance_band
 
 # --- engine interface ---
 # `step!`/`solve!` are CommonSolve's generics (imported in engines/interface.jl
