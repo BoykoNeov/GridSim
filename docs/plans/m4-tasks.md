@@ -174,7 +174,7 @@ straight-line between decimated samples" became structural rather than a rule.
 - [x] `Pkg.test()` green at the root — **1870 / 1870**, Julia 1.12.6, 2026-09-02.
       None of the three fragile points predicted here needed touching: the
       convergence assertion had 28× of margin (it wanted 10× and got 279×), the
-      µHz peak landed at 0.03 % of V4b's figure rather than the 5–8 % feared, and
+      µHz peak landed 0.001 % off V4b's figure rather than the 5–8 % feared, and
       the V4c end gap matched at `1e-4` unmodified. Recorded because the *prediction*
       was the honest part: the numbers were reconstructions from notes, and this
       repo has had reconstructed notes turn out wrong before (M3 step 6). This time
@@ -183,22 +183,26 @@ straight-line between decimated samples" became structural rather than a rule.
       exports (`divergence`, `system_frequency`, `tolerance_band`) — run from the
       `ui/` environment (never the root: putting Makie near the root project is the
       thing the invariant forbids), GLMakie 0.13.13, result `Symbol[]`.
-- [x] Measured numbers, replacing the estimates (also in `m4-context.md` D10). All
-      at `saveat = 0.02` unless stated; gaps are on the centre-of-inertia frequency
-      except D, which is the gauge-free angle difference `δ_G1 − δ_G2`.
+- [x] Measured numbers, replacing the estimates — the table below, also in
+      `m4-context.md` D10.
 
-      | read | band | max gap | when | note |
-      |---|---|---|---|---|
-      | A. exact pair (`ratio_ring`, V4a), reltol 1e-3 | 7.69e-3 Hz | 2.06e-5 Hz | never departs | rms 9.02e-6 |
-      | A. same, reltol 1e-6 | 7.69e-6 Hz | 7.39e-8 Hz | never departs | **279× smaller**, so it is solver error, not a fixed disagreement |
-      | B. shipped ring (`three_machine_ring`, V4c) | 8.57e-3 Hz | **0.8575 Hz** | departs 1.58 s, peaks 59.08 s | trip at 1.0 s; end gap 0.85706 Hz = V4c's derived number |
-      | C. swing residual (`ratio_ring D3=2`), reltol 1e-3 | 4.31e-3 Hz | 9.62e-6 Hz | never departs | the physics is *below* the band: invisible |
-      | C. same, reltol 1e-9 | 4.31e-9 Hz | **4.4325e-6 Hz** | located at 0.26 s | V4b's peak to five figures, now read under playback |
-      | D. straight-line resampling, 10× coarser | 8.45e-4 rad | 2.85e-2 rad | departs 0.42 s | **33.7× the band** — inside the plan's `h²/8·(2πf)²·A` estimate of 10–50× |
+### Step 2's measured numbers
 
-      D is the one that matters: 33.7× outside the band is what the refusal to
-      resample is worth, and 0.42 s is the coarse span straddling the 0.5 s trip —
-      the mechanism the test names, not slack.
+All at `saveat = 0.02` unless stated; gaps are on the centre-of-inertia frequency
+except D, which is the gauge-free angle difference `δ_G1 − δ_G2`.
+
+| read | band | max gap | when | note |
+|---|---|---|---|---|
+| A. exact pair (`ratio_ring`, V4a), reltol 1e-3 | 7.69e-3 Hz | 2.06e-5 Hz | never departs | rms 9.02e-6 |
+| A. same, reltol 1e-6 | 7.69e-6 Hz | 7.39e-8 Hz | never departs | **279× smaller**, so it is solver error, not a fixed disagreement |
+| B. shipped ring (`three_machine_ring`, V4c) | 8.57e-3 Hz | **0.8575 Hz** | departs 1.58 s, peaks 59.08 s | trip at 1.0 s; end gap 0.85706 Hz = V4c's derived number |
+| C. swing residual (`ratio_ring D3=2`), reltol 1e-3 | 4.31e-3 Hz | 9.62e-6 Hz | never departs | the physics is *below* the band: invisible |
+| C. same, reltol 1e-9 | 4.31e-9 Hz | **4.4325e-6 Hz** | located at 0.26 s | V4b's peak to five figures, now read under playback |
+| D. straight-line resampling, 10× coarser | 8.45e-4 rad | 2.85e-2 rad | departs 0.42 s | **33.7× the band** — inside the plan's `h²/8·(2πf)²·A` estimate of 10–50× |
+
+D is the one that matters: 33.7× outside the band is what the refusal to resample
+is worth, and 0.42 s is the coarse span straddling the 0.5 s trip — the mechanism
+the test names, not slack.
 
 ## Step 3 — the playback window: scrub, overlay, divergence
 
