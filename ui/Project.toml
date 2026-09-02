@@ -23,8 +23,8 @@ julia = "1.10"
 # `Pkg.develop(path = "..")` by hand (M4 step 5; the gap M3 step 6 recorded when
 # deleting `ui/Manifest.toml` left the link living nowhere else). Requires the
 # Pkg that ships with Julia ≥ 1.11 to be honoured; older Pkg ignores the section.
-# ADDED WITHOUT RE-RESOLVING (no Julia toolchain in the session that added it —
-# docs/plans/m4-tasks.md step 5): delete `ui/Manifest.toml`, instantiate, run both
-# suites, then tick the box.
+# Verified 2026-09-02 on Julia 1.12.6: `ui/Manifest.toml` deleted, `Pkg.instantiate()`
+# with NO `Pkg.develop` by hand resolved `GridSim v0.1.0 `..``, and `Pkg.test()` in
+# both environments is green (1870 core / 102 ui).
 [sources]
 GridSim = {path = ".."}

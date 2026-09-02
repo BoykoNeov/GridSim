@@ -373,8 +373,10 @@ between two recorded samples. Three consequences:
   the function has nothing to swap. Its replacement measures what the refusal is
   worth instead: the same engine on a fine and a 10× coarser grid, the coarse run
   straight-lined onto the fine grid by hand in the test, must read outside the
-  band — estimated `h²/8·(2πf)²·A ≈ 0.2·f²·A` against a band of `3e-3·A`, i.e.
-  tens of times over on a 1–2 Hz swing (⚠ not yet measured).
+  band. **Measured (2026-09-02): 2.85e-2 rad against a band of 8.45e-4 rad — 33.7×
+  over**, departing at 0.42 s, which is the coarse span straddling the 0.5 s trip.
+  The estimate `h²/8·(2πf)²·A ≈ 0.2·f²·A` predicted "tens of times over"; it was
+  right, and the measurement is what now stands.
 - The band is a **required** argument and `tolerance_band` derives it (step 1's
   `3·reltol·excursion`), so the "where do they part company" read (`t_depart`)
   cannot be taken against a band chosen after seeing the gap. The tests make the
@@ -387,7 +389,16 @@ function with an interpolating fallback for convenience, and this is the record
 of why that convenience would put its own error into the one number the
 milestone exists to produce.
 
-## What step 2 found by reading (nothing was run)
+## What step 2 found by reading (nothing was run *then*)
+
+Everything in this section was established by reading the code, in a session with
+no Julia. It was all executed on 2026-09-02 when step 2 was merged: 1870 / 102
+green, the `names` intersection empty, and every number reconstructed from the
+V4/V6 notes reproduced. The measurements are tabulated in `m4-tasks.md` step 2.
+Two reconstructions worth naming, because M3 step 6 is the precedent for them
+going the other way: V4b's inter-machine swing peak came back as 4.4325e-6 Hz at
+t = 0.26 s under playback (the notes' figure to five figures), and V4c's end gap
+as 0.85706 Hz (the derived closed form, at `1e-4`).
 
 - **`lockstep_coi`'s reason for existing has expired.** Its comment says recorded
   series cannot be compared because the two recorders decimate independently and
@@ -404,5 +415,7 @@ milestone exists to produce.
   network.
 - **`ui/Project.toml`'s `julia = "1.10"` floor and its new `[sources]` entry do
   not agree** — the section is honoured from Pkg 1.11. Soft for now (the
-  developer machine runs 1.12); flagged in step 5.
+  developer machine runs 1.12); flagged in step 5. The 2026-09-02 verification
+  run does **not** close this: it exercised the honoured path on 1.12 only, so
+  whether a 1.10 Pkg ignores the section or errors on it remains untested.
 

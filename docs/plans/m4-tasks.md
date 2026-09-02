@@ -5,12 +5,13 @@ decisions and the measurements behind them). Living document: each step ticks it
 own boxes and records what it found, including what it found that the plan did
 not anticipate.
 
-Status: **step 1 done; step 2 written but NOT executed.** Entered at `ab3a87f`
-with 1719 core / 102 UI tests green; step 1 leaves 1787 / 102 green. Step 2 was
-written on 2026-09-02 in a remote session with **no Julia toolchain and the Julia
-download/package hosts blocked**, so its six new testsets have never run. The
-first thing the next session with Julia does is `Pkg.test()` at the root; the
-boxes below that say "⚠ unexecuted" are ticked for *written*, not for *green*.
+Status: **steps 1–2 done and executed.** Entered at `ab3a87f` with 1719 core /
+102 UI tests green; step 1 leaves 1787 / 102, step 2 leaves **1870 / 102**. Step 2
+was *written* on 2026-09-02 in a remote session with **no Julia toolchain and the
+Julia download/package hosts blocked**, so its six new testsets shipped unrun; they
+were executed on merge the same day (Julia 1.12.6) and every one of them passed
+first time, including the four numeric assertions reconstructed from the V4/V6
+notes. Measured numbers are recorded under step 2 below.
 
 ## Step 0 — planning (this batch)
 
@@ -149,38 +150,55 @@ straight-line between decimated samples" became structural rather than a rule.
       derives it the way step 1 did (`3·reltol·excursion`), so `t_depart` — the
       first instant the gap leaves the band, the "where do they part company"
       number — cannot be read against a band chosen after seeing the gap.
-- [x] ⚠ unexecuted — Anti-vacuity control: same series twice reads exactly 0,
+- [x] Anti-vacuity control: same series twice reads exactly 0,
       `t_depart = NaN`.
-- [x] ⚠ unexecuted — Positive control for *agreement*: V4a's `ratio_ring`
+- [x] Positive control for *agreement*: V4a's `ratio_ring`
       (where the aggregate is the same scalar ODE) solved by **both** engines via
       `solve!` onto one grid reads inside the band, at two tolerances, with the
       gap shrinking ≥10× for 1000× tighter. This is the comparison
       `lockstep_coi` could not make on recorded series (its own comment says why);
       a shared grid makes it possible.
-- [x] ⚠ unexecuted — Positive control for *divergence*: `three_machine_ring`,
+- [x] Positive control for *divergence*: `three_machine_ring`,
       trip at `t = 1.0`: `t_depart` finite, after the event, after the early
       tracking window; end gap equals V4c's derived number; `max > 3·band`.
-- [x] ⚠ unexecuted — The 4.4325 µHz physical residual (V4b) reads as
+- [x] The 4.4325 µHz physical residual (V4b) reads as
       *indistinguishable* at the default band and is located (`0.2 < t_max <
       0.35`) and sized (5 %) once the tolerance is `1e-9` and the band drops
       beneath it. The read is only as sharp as the band it is handed, asserted.
-- [x] ⚠ unexecuted — Second anti-vacuity control, in the only form the finding
+- [x] Second anti-vacuity control, in the only form the finding
       leaves: the same engine at `saveat = 0.02` and `0.2`, the coarse run
       straight-lined onto the fine grid, must read outside the band by 3× on a
       ringing angle difference (estimated ~10–50× from `h²/8·(2πf)²·A`); and at
       the shared instants the two runs agree, so what the read finds *is* the
       resampling.
-- [ ] `Pkg.test()` green at the root. Expected fragile points if it is not, in
-      order of likelihood: the `d2.max * 10 < d.max` convergence assertion in the
-      exact-pair testset (if the loose gap is dominated by fixpoint residual rather
-      than solver error, relax to a band check only); the 5 % window on the µHz
-      peak under playback's free steps (widen to 10 % if it lands at 6–8 %, and
-      say so); `abs(a.f_coi[end] - b.f[end])` against V4c's number at `1e-4`.
-- [ ] `intersect(names(GridSim), names(GLMakie))` still empty with the three new
-      exports (`divergence`, `system_frequency`, `tolerance_band`). Could not be
-      run where they were added.
-- [ ] Record the measured numbers here (max gaps, the µHz peak under playback, the
-      resampling error factor) and in `m4-context.md` D10, replacing the estimates.
+- [x] `Pkg.test()` green at the root — **1870 / 1870**, Julia 1.12.6, 2026-09-02.
+      None of the three fragile points predicted here needed touching: the
+      convergence assertion had 28× of margin (it wanted 10× and got 279×), the
+      µHz peak landed at 0.03 % of V4b's figure rather than the 5–8 % feared, and
+      the V4c end gap matched at `1e-4` unmodified. Recorded because the *prediction*
+      was the honest part: the numbers were reconstructions from notes, and this
+      repo has had reconstructed notes turn out wrong before (M3 step 6). This time
+      they did not.
+- [x] `intersect(names(GridSim), names(GLMakie))` still empty with the three new
+      exports (`divergence`, `system_frequency`, `tolerance_band`) — run from the
+      `ui/` environment (never the root: putting Makie near the root project is the
+      thing the invariant forbids), GLMakie 0.13.13, result `Symbol[]`.
+- [x] Measured numbers, replacing the estimates (also in `m4-context.md` D10). All
+      at `saveat = 0.02` unless stated; gaps are on the centre-of-inertia frequency
+      except D, which is the gauge-free angle difference `δ_G1 − δ_G2`.
+
+      | read | band | max gap | when | note |
+      |---|---|---|---|---|
+      | A. exact pair (`ratio_ring`, V4a), reltol 1e-3 | 7.69e-3 Hz | 2.06e-5 Hz | never departs | rms 9.02e-6 |
+      | A. same, reltol 1e-6 | 7.69e-6 Hz | 7.39e-8 Hz | never departs | **279× smaller**, so it is solver error, not a fixed disagreement |
+      | B. shipped ring (`three_machine_ring`, V4c) | 8.57e-3 Hz | **0.8575 Hz** | departs 1.58 s, peaks 59.08 s | trip at 1.0 s; end gap 0.85706 Hz = V4c's derived number |
+      | C. swing residual (`ratio_ring D3=2`), reltol 1e-3 | 4.31e-3 Hz | 9.62e-6 Hz | never departs | the physics is *below* the band: invisible |
+      | C. same, reltol 1e-9 | 4.31e-9 Hz | **4.4325e-6 Hz** | located at 0.26 s | V4b's peak to five figures, now read under playback |
+      | D. straight-line resampling, 10× coarser | 8.45e-4 rad | 2.85e-2 rad | departs 0.42 s | **33.7× the band** — inside the plan's `h²/8·(2πf)²·A` estimate of 10–50× |
+
+      D is the one that matters: 33.7× outside the band is what the refusal to
+      resample is worth, and 0.42 s is the coarse span straddling the 0.5 s trip —
+      the mechanism the test names, not slack.
 
 ## Step 3 — the playback window: scrub, overlay, divergence
 
@@ -235,14 +253,16 @@ straight-line between decimated samples" became structural rather than a rule.
       the box M3 left open at `m3-tasks.md:795` for "whichever later step does
       change a dependency". Step 4 changes one. Delete `Manifest.toml`, re-resolve
       fresh, run all three suites.
-- [x] ⚠ unverified — `[sources]` entry in `ui/Project.toml` so the dev link to
-      core survives a fresh clone — the fix M3 identified and declined as out of
-      scope. **Added 2026-09-02 without re-resolving** (no toolchain). To verify:
-      delete `ui/Manifest.toml`, `julia --project=ui -e 'import Pkg;
-      Pkg.instantiate(); Pkg.test()'` with **no** `Pkg.develop` by hand. Note the
-      section is honoured by the Pkg of Julia ≥ 1.11 (the dev machine runs 1.12);
-      the `julia = "1.10"` compat floor in `ui/Project.toml` is therefore soft for
-      this convenience and should be raised to 1.11 there if it matters.
+- [x] `[sources]` entry in `ui/Project.toml` so the dev link to core survives a
+      fresh clone — the fix M3 identified and declined as out of scope. Added
+      2026-09-02 without re-resolving (no toolchain), and **verified the same day**:
+      `ui/Manifest.toml` deleted, `Pkg.instantiate()` with **no** `Pkg.develop` by
+      hand resolved `GridSim v0.1.0 `..``, and `Pkg.test()` in the `ui/` environment
+      is green (102 / 102). Still open, and NOT closed by that run: the section is
+      honoured from Pkg 1.11 and the dev machine runs 1.12, so this exercised the
+      *honoured* path only. It says nothing about the `julia = "1.10"` compat floor
+      still declared in `ui/Project.toml` — whether older Pkg ignores the section or
+      errors on it is untested here. Raise the floor to 1.11, or test on 1.10.
 - [ ] `reference/Project.toml` carries `[sources]` **from birth**, not added
       later — the gitignored-manifest trap has cost this repo time twice.
 - [ ] Tick the M3 box in `m3-tasks.md` with a pointer here, rather than leaving a
@@ -252,7 +272,7 @@ straight-line between decimated samples" became structural rather than a rule.
 
 - [x] **Resampling error contaminates the measured quantity.** Shared `saveat`
       only — there is no interpolant to use (D10) — and two grids are refused. The
-      cost of the alternative is measured by the step-2 control (⚠ unexecuted).
+      cost of the alternative is measured by the step-2 control (33.7× the band).
 - [x] **Gauge-arbitrary comparison.** `system_frequency` is the default channel;
       anything else is an explicit selector. (Step 2.)
 - [ ] **An overlay that validates nothing.** Same-series-twice ~0 *and* a

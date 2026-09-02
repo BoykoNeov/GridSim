@@ -10,7 +10,7 @@ stands; read the context file before re-litigating a decision.
 | M1 | Aggregate (centre-of-inertia) frequency + RoCoF, real-time, generator trip, closed-form checks, aggregate window | Done | `m1-*.md` |
 | M2 | Canonical `NetworkModel`; multi-machine classical swing engine on NetworkDynamics; bounded recorder; `TripLine`; `coi_model` as the compiled aggregate view; multi-machine window | Done | `m2-*.md` |
 | M3 | Governor droop as a third state; per-machine load-shedding ladders; out-of-step tie relay; scheduled generation ramps; the two-area Iberian case with its sweep; Figure 3-67 | Done | `m3-*.md` |
-| M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | Step 1 done; step 2 written, unexecuted; 3–5 open | `m4-*.md` |
+| M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | Steps 1–2 done (1870 core / 102 UI); 3–5 open | `m4-*.md` |
 | M5 | The detailed machine tier: flux dynamics, a voltage regulator, voltage as a real unknown, power-flow initialisation | Pre-study only | `m5-prestudy.md` |
 
 Cross-cutting:

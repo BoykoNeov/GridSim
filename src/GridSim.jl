@@ -128,10 +128,10 @@ export GenerationRamp, generation_ramp
 
 # --- post-processing ---
 # `divergence`, `system_frequency` and `tolerance_band` are M4 step 2's cross-tier
-# read. Their names were chosen away from anything Makie is likely to export, but
-# the `intersect(names(GridSim), names(GLMakie))` check every earlier export went
-# through could not be run in the session that added them (no Julia toolchain
-# there — docs/plans/m4-tasks.md step 2); run it before the next `ui/` batch.
+# read. They went through the same `intersect(names(GridSim), names(GLMakie))`
+# check as every earlier export — empty, on Julia 1.12.6 / GLMakie 0.13.13
+# (2026-09-02, the session that merged step 2; it could not be run in the session
+# that wrote it).
 export windowed_rocof, divergence, system_frequency, tolerance_band
 
 # --- engine interface ---
