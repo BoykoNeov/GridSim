@@ -6,36 +6,51 @@ dynamics, protection, renewables, and markets — at multiple fidelities behind 
 engine interface.
 
 It is a **personal instrument for learning power systems by experiment**: stand on
-the mature Julia ecosystem (`DifferentialEquations.jl`, the NREL-Sienna stack) and
-build only the bespoke part — the orchestration layer that steps models in
-wall-clock time, injects live perturbations, and routes between fidelity tiers.
+the mature Julia ecosystem (`DifferentialEquations.jl`, `NetworkDynamics.jl`, the
+NREL-Sienna stack where it fits) and build only the bespoke part — the orchestration
+layer that steps models in wall-clock time, injects live perturbations, and routes
+between fidelity tiers.
 
-> **Status: Milestone 1 engine landed.** The repository structure, domain model,
-> perturbation events, and the `SimulationEngine` interface are in place, and the
-> first engine — the real-time aggregate (center-of-inertia) frequency-response
-> model — is implemented and validated (closed-form RoCoF/settling checks). The
-> real-time orchestration loop and UI are next. See [`docs/SPEC.md`](docs/SPEC.md)
-> and [`docs/plans/`](docs/plans/).
+> **Status: Milestones 1–3 landed; Milestone 4 in progress.** Two fidelity tiers
+> exist behind one interface — an aggregate centre-of-inertia frequency model (M1)
+> and a multi-machine network swing model (M2) with governor droop, low-frequency
+> load shedding, out-of-step tie protection and scheduled generation ramps (M3) —
+> both drivable live (`run_realtime!`) and, since M4 step 1, offline
+> (`solve!`). Both have GLMakie windows. The 28 April 2025 Iberian blackout is the
+> standing real test case, on both tiers. The milestone map and what each one
+> found is [`docs/plans/README.md`](docs/plans/README.md); the durable brief is
+> [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Design in one breath
 
 - **Headless core, single process.** The core (`src/`) is a library with *zero* UI
   dependency, drivable from the REPL / a script. The UI (`ui/`) depends on the
-  core, never the reverse. No client/server, no sockets.
+  core, never the reverse — enforced by a dependency-closure test, not convention.
+  No client/server, no sockets.
 - **Fidelity tiers + a mode router.** Every phenomenon gets a fast surrogate (run
   in real time) and an accurate sibling (run offline, then played back). Which mode
   you get slides with system size.
-- **One canonical model.** Reduced models are compiled views of it, not forks.
-- **Validation-first.** Every engine ships a closed-form or cross-fidelity check —
-  which is also the point: *seeing where the cheap model diverges from the accurate
-  one is the lesson.*
+- **One canonical model.** The aggregate model is *compiled down* from the network
+  model (`coi_model`), never hand-maintained beside it.
+- **Validation-first.** Every mechanism carries a label saying what checks it — a
+  closed form, a cross-fidelity comparison, a published case, or an honest
+  "un-oracled". The ledger is [`docs/validation-ledger.md`](docs/validation-ledger.md).
+  *Seeing where the cheap model diverges from the accurate one is the lesson*, and
+  `divergence` in `src/analysis/postprocess.jl` is how that is read.
 
-## Milestone 1
+## What you can do today
 
-Simulate aggregate system frequency, trip a generator *while it runs*, and watch
-frequency, RoCoF (rate of change of frequency), and nadir live — making the
-low-inertia lesson visible (*less online inertia → steeper RoCoF, deeper nadir*).
-Full spec: [`docs/SPEC.md` §7](docs/SPEC.md).
+- Trip a generator on a small system **while it runs** and watch frequency, RoCoF
+  and nadir live; see that less inertia ⇒ steeper RoCoF, deeper nadir.
+- Run a multi-machine ring, trip a line or a machine, watch the rotor angles swing
+  against the centre of inertia, and see a defence plan shed load at root-found
+  instants.
+- Replay the Iberian event on the aggregate tier (`scripts/iberia_2025_04_28.jl`)
+  and see exactly where that tier stops being faithful; then run the two-area
+  version (`scripts/iberia_two_area.jl`) and sweep the tie strength to see what
+  survives the sweep and what was an artefact of one cell.
+- Solve a scenario offline (`solve!`) onto a chosen output grid and compare it,
+  channel by channel, against the real-time run or against the other tier.
 
 ## Getting started
 
@@ -43,11 +58,31 @@ Requires Julia ≥ 1.10 (install via [juliaup](https://github.com/JuliaLang/juli
 
 ```julia
 # from the repo root
-julia --project=. -e 'import Pkg; Pkg.instantiate(); using GridSim; println(GridSim.example_system())'
+julia --project=. -e 'import Pkg; Pkg.instantiate(); using GridSim; println(example_system())'
 
-# run the tests
+# run the core tests (no screen needed)
 julia --project=. -e 'import Pkg; Pkg.test()'
+
+# the aggregate-tier Iberian replay, headless
+julia --project=. scripts/iberia_2025_04_28.jl
 ```
+
+A first experiment, offline, both tiers on one grid:
+
+```julia
+using GridSim
+net = three_machine_ring()
+sw  = SwingEngine(net)                              # network swing tier
+fr  = FrequencyResponseEngine(coi_model(net))       # aggregate tier, compiled from it
+ev  = [1.0 => TripGenerator(:G1)]
+a = solve!(sw, (0.0, 20.0); perturbations = ev, saveat = 0.02)
+b = solve!(fr, (0.0, 20.0); perturbations = ev, saveat = 0.02)
+band = tolerance_band(a.f_coi; reltol = 1e-3)      # stated BEFORE looking at the gap
+divergence(a, b; band = band)                       # (; max, t_max, rms, t_depart, n)
+```
+
+The UI is a separate environment; see [`ui/README.md`](ui/README.md) for setup,
+the two windows, and offscreen rendering.
 
 ## Repository layout
 
@@ -56,14 +91,21 @@ GridSim/
 ├── Project.toml          # core package — does NOT depend on Makie
 ├── src/
 │   ├── GridSim.jl        # module root, exports
-│   ├── model/            # minimal aggregate domain model (M1)
-│   ├── engines/          # SimulationEngine interface + concrete engines
-│   ├── events/           # perturbation event types
-│   └── orchestration/    # real-time loop, pacing, live state (no UI import)
-├── test/                 # validation: closed-form checks, later cross-fidelity
-├── scripts/              # REPL-driven experiments (the headless win)
-├── ui/                   # separate package: `using GridSim`, `using GLMakie`
-└── docs/                 # SPEC.md (full brief) + plans/
+│   ├── model/            # SystemModel (aggregate) and NetworkModel (canonical); coi_model
+│   ├── engines/          # SimulationEngine interface, recorder, playback driver, two engines
+│   ├── events/           # perturbation event types (TripGenerator, StepLoad, TripLine)
+│   ├── protection/       # armed, state-triggered schemes: load shedding, out-of-step
+│   ├── scenarios/        # scheduled inputs: generation ramps
+│   ├── analysis/         # post-processing: windowed RoCoF, cross-run divergence
+│   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
+├── test/                 # one suite: closed-form, cross-fidelity and control checks
+├── scripts/              # headless experiments; the two Iberian replays
+├── ui/                   # separate package: `using GridSim`, `using GLMakie`; two windows
+└── docs/
+    ├── SPEC.md           # the durable brief (architecture invariants, conventions)
+    ├── validation-ledger.md  # every mechanism and what checks it
+    ├── plans/            # per-milestone plan / context / tasks trios, and the index
+    └── scenarios/        # extracted ENTSO-E data with page citations
 ```
 
 ## License

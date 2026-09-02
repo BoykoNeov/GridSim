@@ -804,6 +804,10 @@ anti-vacuity control. Here:
       `[sources]` entry would close this permanently and is the obvious fix; it is
       deliberately NOT made here, because it is a dependency change and this step
       made none.)*
+      *(Claimed by M4 step 5 (`m4-tasks.md`), which is where it will be ticked:
+      the `[sources]` entry is now in `ui/Project.toml`, added without a
+      re-resolve, and the re-resolve of all three environments is that step's
+      first box.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 

@@ -6,7 +6,13 @@ checklist).
 
 ## Environment
 
-Unchanged from M3. Julia is on PATH via juliaup; the machine runs **Julia 1.12.6**
+Unchanged from M3 for every step run on the developer machine. **Step 2 was
+written elsewhere**: a remote Linux session on 2026-09-02 with no Julia installed
+and the Julia download and package hosts refused by the network policy, so nothing
+from that session was executed — not the new tests, not the `[sources]` entry,
+not the export-collision check. Everything it touched is marked in `m4-tasks.md`.
+
+Otherwise unchanged from M3. Julia is on PATH via juliaup; the machine runs **Julia 1.12.6**
 while the package `[compat]` floor stays at 1.10. `Manifest.toml` is gitignored —
 this is a package, not a pinned app — so every resolved version recorded below is
 what *this* machine resolved on 2026-08-26, not a lock.
@@ -343,3 +349,60 @@ discoverable by reading this repo.
   tolerance is not a result until it survives the tolerance changing" rule was not
   expressible against these engines at all. Both constructors now take them,
   defaulted to OrdinaryDiffEq's own `Float64` defaults so nothing moved.
+
+### D10 — The divergence read resamples nothing, because there is nothing to resample with
+
+`m4-plan.md` step 2 offered two routes onto one grid: the solver's interpolant, or
+a shared `saveat` grid fixed before the solve. **Only the second exists in this
+repo, and that is a consequence of a decision both engines already took.** Their
+integrators are built `dense = false`, `save_everystep = false` (a live run must
+not grow without bound) with `calck = true` (step 1) — which keeps the
+interpolation coefficients of the *current* step only. The instant a step closes
+its interpolant is gone, and after `solve!` returns the only samples in existence
+are the ones the caller's grid asked for, taken by `savevalues!` at the one moment
+they are valid (D9).
+
+So `divergence` (analysis/postprocess.jl) takes two series on one grid and
+**refuses two grids** with a named error; there is no code path that draws a line
+between two recorded samples. Three consequences:
+
+- "Never straight-line between decimated samples" stopped being a rule someone
+  must remember and became a property of the function.
+- The plan's second anti-vacuity mutation ("swap the interpolant for straight-line
+  resampling; a check must fail") cannot be performed on the function, because
+  the function has nothing to swap. Its replacement measures what the refusal is
+  worth instead: the same engine on a fine and a 10× coarser grid, the coarse run
+  straight-lined onto the fine grid by hand in the test, must read outside the
+  band — estimated `h²/8·(2πf)²·A ≈ 0.2·f²·A` against a band of `3e-3·A`, i.e.
+  tens of times over on a 1–2 Hz swing (⚠ not yet measured).
+- The band is a **required** argument and `tolerance_band` derives it (step 1's
+  `3·reltol·excursion`), so the "where do they part company" read (`t_depart`)
+  cannot be taken against a band chosen after seeing the gap. The tests make the
+  point the hard way: V4b's 4.4325 µHz physical residual is *invisible* at the
+  default band and *located* once the tolerance is tightened past it. A
+  divergence read is exactly as sharp as the band it is handed, and no sharper.
+
+Recorded here as a decision because a later reader will want to "improve" the
+function with an interpolating fallback for convenience, and this is the record
+of why that convenience would put its own error into the one number the
+milestone exists to produce.
+
+## What step 2 found by reading (nothing was run)
+
+- **`lockstep_coi`'s reason for existing has expired.** Its comment says recorded
+  series cannot be compared because the two recorders decimate independently and
+  the channel sets differ. With `solve!` onto one `saveat` grid neither holds;
+  `overlay_pair` in the tests is the recorded-series comparison it could not
+  make. `lockstep_coi` stays — it also asserts live reads — but the next
+  cross-fidelity test should be written the new way.
+- **The M5 bullets carried in `m4-plan.md` need correcting before they are
+  planned against.** `m5-prestudy.md` works them: the classical limit is frozen
+  flux, not constant `Efd` (constant `Efd` with finite `T′do` is field-flux decay,
+  a physical effect the oracle would then mis-read as a bug); and dynamic RL
+  branches only avoid a DAE by adding bus capacitors whose µs time constants are
+  a worse problem than the DAE. The recommendation is reversed to the algebraic
+  network.
+- **`ui/Project.toml`'s `julia = "1.10"` floor and its new `[sources]` entry do
+  not agree** — the section is honoured from Pkg 1.11. Soft for now (the
+  developer machine runs 1.12); flagged in step 5.
+

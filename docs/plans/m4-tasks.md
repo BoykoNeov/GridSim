@@ -5,8 +5,12 @@ decisions and the measurements behind them). Living document: each step ticks it
 own boxes and records what it found, including what it found that the plan did
 not anticipate.
 
-Status: **step 1 done.** Entered at `ab3a87f` with 1719 core / 102 UI tests
-green; step 1 leaves 1787 / 102 green.
+Status: **step 1 done; step 2 written but NOT executed.** Entered at `ab3a87f`
+with 1719 core / 102 UI tests green; step 1 leaves 1787 / 102 green. Step 2 was
+written on 2026-09-02 in a remote session with **no Julia toolchain and the Julia
+download/package hosts blocked**, so its six new testsets have never run. The
+first thing the next session with Julia does is `Pkg.test()` at the root; the
+boxes below that say "⚠ unexecuted" are ticked for *written*, not for *green*.
 
 ## Step 0 — planning (this batch)
 
@@ -117,18 +121,66 @@ not expressible against these engines until now.
 
 ## Step 2 — resampling and divergence in `postprocess.jl`
 
-- [ ] Resample two series onto one grid via the solver's interpolant, or a shared
-      `saveat` fixed before the solve. **Never** straight-line between recorded
-      samples — the recorder decimates, so that error lands in the answer.
-- [ ] Divergence read compares **inertia-weighted average to inertia-weighted
-      average**, never a per-machine quantity against an aggregate.
-- [ ] Lives in `src/analysis/postprocess.jl`, so it is tested headless rather
-      than existing only inside a window.
-- [ ] Anti-vacuity control, **executed**: same series twice must read ~0.
-- [ ] Positive control: two genuinely different runs must read clearly non-zero —
-      without it, "reads ~0" cannot distinguish "identical" from "always ~0".
-- [ ] Second anti-vacuity control, **executed**: swap the interpolant for
-      straight-line resampling on decimated samples; a check must fail.
+**WRITTEN, NOT EXECUTED** (see the status line). `src/analysis/postprocess.jl`
+gains `divergence`, `tolerance_band` and `system_frequency`; `test/runtests.jl`
+gains six "M4 step 2" testsets and an `overlay_pair` helper. Both were written by
+reading the engines and the step-1 tests, not by running anything.
+
+**The finding that settled the step's shape — by reading, not measuring (D10).**
+The plan offered "the solver's interpolant, or a shared `saveat` grid". Only one
+of those exists: both constructors build their integrator `dense = false`,
+`save_everystep = false`, `calck = true`, so the interpolation coefficients live
+for the *current* step only and are gone the moment it closes. After `solve!`
+returns there is nothing to resample with. The read therefore takes **no
+resampling path at all** and refuses two grids with a named error — "never
+straight-line between decimated samples" became structural rather than a rule.
+
+- [x] ~~Resample two series onto one grid via the solver's interpolant, or~~ a
+      shared `saveat` fixed before the solve. **Only the second is possible**
+      (above); the two-series `divergence` checks the grids agree to 1e-9 s (the
+      step-1 measured roundoff between the two modes' grids is < 1e-12 s) and
+      throws otherwise. Nothing interpolates.
+- [x] Divergence read compares **inertia-weighted average to inertia-weighted
+      average**: `system_frequency` picks `f_coi`, else `f`, never a per-machine
+      channel, and is the default `channel` of `divergence`; anything else is an
+      explicit selector (the tests use `s -> s.δ_G1 .- s.δ_G2`, gauge-free).
+- [x] Lives in `src/analysis/postprocess.jl`; tested headless.
+- [x] **The band is a REQUIRED keyword**, and `tolerance_band(reference; reltol)`
+      derives it the way step 1 did (`3·reltol·excursion`), so `t_depart` — the
+      first instant the gap leaves the band, the "where do they part company"
+      number — cannot be read against a band chosen after seeing the gap.
+- [x] ⚠ unexecuted — Anti-vacuity control: same series twice reads exactly 0,
+      `t_depart = NaN`.
+- [x] ⚠ unexecuted — Positive control for *agreement*: V4a's `ratio_ring`
+      (where the aggregate is the same scalar ODE) solved by **both** engines via
+      `solve!` onto one grid reads inside the band, at two tolerances, with the
+      gap shrinking ≥10× for 1000× tighter. This is the comparison
+      `lockstep_coi` could not make on recorded series (its own comment says why);
+      a shared grid makes it possible.
+- [x] ⚠ unexecuted — Positive control for *divergence*: `three_machine_ring`,
+      trip at `t = 1.0`: `t_depart` finite, after the event, after the early
+      tracking window; end gap equals V4c's derived number; `max > 3·band`.
+- [x] ⚠ unexecuted — The 4.4325 µHz physical residual (V4b) reads as
+      *indistinguishable* at the default band and is located (`0.2 < t_max <
+      0.35`) and sized (5 %) once the tolerance is `1e-9` and the band drops
+      beneath it. The read is only as sharp as the band it is handed, asserted.
+- [x] ⚠ unexecuted — Second anti-vacuity control, in the only form the finding
+      leaves: the same engine at `saveat = 0.02` and `0.2`, the coarse run
+      straight-lined onto the fine grid, must read outside the band by 3× on a
+      ringing angle difference (estimated ~10–50× from `h²/8·(2πf)²·A`); and at
+      the shared instants the two runs agree, so what the read finds *is* the
+      resampling.
+- [ ] `Pkg.test()` green at the root. Expected fragile points if it is not, in
+      order of likelihood: the `d2.max * 10 < d.max` convergence assertion in the
+      exact-pair testset (if the loose gap is dominated by fixpoint residual rather
+      than solver error, relax to a band check only); the 5 % window on the µHz
+      peak under playback's free steps (widen to 10 % if it lands at 6–8 %, and
+      say so); `abs(a.f_coi[end] - b.f[end])` against V4c's number at `1e-4`.
+- [ ] `intersect(names(GridSim), names(GLMakie))` still empty with the three new
+      exports (`divergence`, `system_frequency`, `tolerance_band`). Could not be
+      run where they were added.
+- [ ] Record the measured numbers here (max gaps, the µHz peak under playback, the
+      resampling error factor) and in `m4-context.md` D10, replacing the estimates.
 
 ## Step 3 — the playback window: scrub, overlay, divergence
 
@@ -183,8 +235,14 @@ not expressible against these engines until now.
       the box M3 left open at `m3-tasks.md:795` for "whichever later step does
       change a dependency". Step 4 changes one. Delete `Manifest.toml`, re-resolve
       fresh, run all three suites.
-- [ ] `[sources]` entry in `ui/Project.toml` so the dev link to core survives a
-      fresh clone — the fix M3 identified and declined as out of scope.
+- [x] ⚠ unverified — `[sources]` entry in `ui/Project.toml` so the dev link to
+      core survives a fresh clone — the fix M3 identified and declined as out of
+      scope. **Added 2026-09-02 without re-resolving** (no toolchain). To verify:
+      delete `ui/Manifest.toml`, `julia --project=ui -e 'import Pkg;
+      Pkg.instantiate(); Pkg.test()'` with **no** `Pkg.develop` by hand. Note the
+      section is honoured by the Pkg of Julia ≥ 1.11 (the dev machine runs 1.12);
+      the `julia = "1.10"` compat floor in `ui/Project.toml` is therefore soft for
+      this convenience and should be raised to 1.11 there if it matters.
 - [ ] `reference/Project.toml` carries `[sources]` **from birth**, not added
       later — the gitignored-manifest trap has cost this repo time twice.
 - [ ] Tick the M3 box in `m3-tasks.md` with a pointer here, rather than leaving a
@@ -192,11 +250,13 @@ not expressible against these engines until now.
 
 ## Known hazards to check off explicitly
 
-- [ ] **Resampling error contaminates the measured quantity.** Interpolant or
-      shared `saveat`; never straight-line between decimated samples.
-- [ ] **Gauge-arbitrary comparison.** Inertia-weighted average on both sides.
+- [x] **Resampling error contaminates the measured quantity.** Shared `saveat`
+      only — there is no interpolant to use (D10) — and two grids are refused. The
+      cost of the alternative is measured by the step-2 control (⚠ unexecuted).
+- [x] **Gauge-arbitrary comparison.** `system_frequency` is the default channel;
+      anything else is an explicit selector. (Step 2.)
 - [ ] **An overlay that validates nothing.** Same-series-twice ~0 *and* a
-      different-runs positive control; mutations run, not described.
+      different-runs positive control are written (step 2); **run, not yet.**
 - [ ] **The one-lesson-of-three trap.** The M4 pair shows inter-machine swings
       only; voltage coupling and inverter behaviour need M5's tier.
 - [ ] **Playback and real-time must stay the same system.** If protection is
@@ -210,7 +270,15 @@ not expressible against these engines until now.
 ## Carried into M5 (not this milestone's work)
 
 Recorded so it is not re-derived. Detail in `m4-plan.md` §Why the detailed tier
-is M5.
+is M5 — **and now worked on paper in `m5-prestudy.md`**, which corrects two of
+the bullets below: the degeneration oracle is *frozen flux* (`T′do = T′qo = ∞`,
+`X′d = X′q`), not constant field voltage, and it cannot check the flux equations
+at all (they are switched off in that limit — the two-limit bracket and the
+`K₃T′do` closed form do); and the network formulation recommendation is reversed
+to the algebraic (DAE) network, with what happens to `isoutofdomain` and the
+protection callbacks written out. The pre-study also gives the Iberian exit
+criterion as one relative measurement (swing peak vs `P_max`) and the three
+convention questions step 4 must settle before its band is written.
 
 - The detailed machine tier: two-axis machine with flux dynamics, a voltage
   regulator, and transmission branches carrying voltage as a real unknown.
