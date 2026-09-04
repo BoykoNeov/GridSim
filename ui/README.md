@@ -47,10 +47,18 @@ Two things about the multi-machine panels are worth knowing before reading one:
 ## Setup
 
 ```
-julia --project=ui -e 'import Pkg; Pkg.develop(path="."); Pkg.add("GLMakie")'
+julia --project=ui -e 'import Pkg; Pkg.instantiate()'
 ```
 
-(Run from the repository root. `ui/Manifest.toml` is gitignored.)
+(Run from the repository root. `ui/Manifest.toml` is gitignored, which is why
+this has to resolve from scratch on a fresh clone.)
+
+The link back to the core package lives in `ui/Project.toml`'s `[sources]`
+section, so there is **no `Pkg.develop(path = "..")` to run by hand** — verified
+on Julia 1.12.6 with the manifest deleted. That section is honoured from Pkg 1.11
+onwards; on an older Julia you need the develop call, and `ui/Project.toml` still
+declares a `julia = "1.10"` floor that has not been reconciled with it (M4 step 5
+owns that).
 
 ## Run the window
 
