@@ -21,6 +21,11 @@ using GridSim: three_machine_ring, two_machine_system, SwingEngine, TripLine,
 # M3 step 7's annotated panel. The engine's own logs are what the picture is
 # asserted against, so the accessors come in here as well as into the window.
 using GridSim: LoadShedStage, GenerationRamp, shed_ladder, shed_log
+# M4 step 3's playback overlay. The window only DISPLAYS what these return, so the
+# tests compare against the core's own read rather than against a second copy of
+# the arithmetic living here.
+using GridSim: FrequencyResponseEngine, solve!, coi_model,
+               divergence, system_frequency, tolerance_band
 
 GLMakie.activate!(visible = false)
 
@@ -53,6 +58,37 @@ function shed_window(; kwargs...)
                   queue = win.queue, duration = 12.0)
     win.refresh!(; force = true)
     return win
+end
+
+
+# ---- M4 step 3's fixtures: the playback window over a solved pair ---------
+#
+# Two scenarios, and the CONTRAST between them is the point (see the "biggest gap"
+# testset). The line trip is what `playback` ships: the swing tier rings, the
+# aggregate tier is handed nothing at all, and the gap is the residual swing
+# content. The generator trip is the run both tiers accept, whose far larger gap
+# is a settling-level difference and NOT the lesson.
+const PBUILD = GridSimUI._build_playback_window
+const PWIN = GridSimUI._playback_window
+
+pb_line() = PWIN(three_machine_ring(); horizon = 20.0, perturbations = nothing,
+                 aggregate_perturbations = nothing, saveat = 0.02,
+                 reltol = 1e-3, abstol = 1e-6)
+pb_gen() = PWIN(three_machine_ring(); horizon = 60.0,
+                perturbations = [1.0 => TripGenerator(:G1)],
+                aggregate_perturbations = nothing, saveat = 0.02,
+                reltol = 1e-3, abstol = 1e-6)
+
+# "Is this Label in the figure?" — the read-out column is a nested `GridLayout`, so
+# a Label there is not in `fig.layout.content` directly. Asserting against the
+# layout rather than against an observable is the difference between checking the
+# picture and checking the log (M3 step 7).
+function in_layout(gl, obj)
+    for c in gl.content
+        c.content === obj && return true
+        c.content isa GridLayout && in_layout(c.content, obj) && return true
+    end
+    return false
 end
 
 @testset "GridSimUI" begin
@@ -462,6 +498,236 @@ end
                            ramp = [:G1 => SHED_RAMP])
         @test out == path
         @test filesize(path) > 10_000
+    end
+
+    # ---- M4 step 3: the playback window ------------------------------------
+    #
+    # A different window from the two above, and tested differently for the same
+    # reason it is different: nothing here is running. There is no queue to push
+    # into and no loop to drive, so the "click a button, run the loop, assert what
+    # landed" shape does not apply. What replaces it is exactness — every number the
+    # window shows is a recorded sample verbatim, so the checks are `===` rather
+    # than `atol`, and a tolerance-based check would pass against the off-by-one
+    # index that is the actual bug available here.
+
+    @testset "the playback window is built over solved series and cannot run" begin
+        win = pb_line()
+        # The four pieces of real-time machinery, all absent. Not an omission: each
+        # exists to manage a run in progress, and this window's run finished before
+        # the figure existed. Their absence is what makes "render state is not
+        # simulation state" structural here — the window cannot reach an engine.
+        @test !haskey(win, :control)
+        @test !haskey(win, :queue)
+        @test !haskey(win, :engine)
+        @test !haskey(win, :refresh!)
+        # ...and in particular there is exactly ONE control, the time cursor. A band
+        # slider would let a reader scrub, look at the gap, and then pick the band
+        # that puts the departure where they expected it, which is precisely the
+        # discipline M4 step 2 made `band` a required keyword to protect.
+        @test keys(win.widgets) == (:time,)
+    end
+
+    @testset "two series on different grids are refused, never quietly resampled" begin
+        # The refusal lives in the core (`analysis/postprocess.jl`) and this asserts
+        # the window inherits it at BUILD time rather than drawing two mismatched
+        # traces on one axis. Straight-line resampling was measured at 33.7× the
+        # agreement band (M4 step 2), so a silently interpolated overlay would put
+        # that error straight into the quantity the window exists to display.
+        sa = (; t = [0.0, 0.5, 1.0], f_coi = [50.0, 49.9, 49.8])
+        sb = (; t = [0.0, 0.6, 1.0], f = [50.0, 49.9, 49.8])
+        @test_throws ArgumentError PBUILD(sa, sb; band = 1e-3, reltol = 1e-3)
+        msg = try
+            PBUILD(sa, sb; band = 1e-3, reltol = 1e-3)
+            "NO ERROR THROWN"
+        catch e
+            e isa ArgumentError ? e.msg : "NOT-ArgumentError: $(typeof(e))"
+        end
+        @test occursin("different grids", msg)
+        @test occursin("nothing here resamples", msg)
+    end
+
+    @testset "the cursor is exact, and the drawn line is what says so" begin
+        win = pb_line()
+        i = 314
+        set_close_to!(win.widgets.time, i)
+        @test win.cursor[].i == i
+        # `===` on purpose. Nothing here is interpolated, so exactness is available;
+        # an `atol` check passes against an off-by-one index, which is the bug this
+        # window can actually have.
+        @test win.cursor[].t === win.t[i]
+        @test win.cursor[].f_swing === win.swing.f_coi[i]
+        @test win.cursor[].f_agg === win.agg.f[i]
+        @test win.cursor[].gap === abs(win.swing.f_coi[i] - win.agg.f[i])
+        # ...and the same claim about the PICTURE. `cursor` is what the read-out
+        # formats; these two are the vertical lines a reader actually sees, asserted
+        # against their own plotted argument rather than against the observable that
+        # feeds them.
+        @test win.cursor_lines.frequency[1][] == [win.t[i]]
+        @test win.cursor_lines.gap[1][] == [win.t[i]]
+
+        # ANTI-VACUITY: every assertion above would also hold for a cursor that
+        # never moves. Move it.
+        before = win.readout[]
+        set_close_to!(win.widgets.time, i + 40)
+        @test win.readout[] != before
+        @test win.cursor[].t === win.t[i + 40]
+        @test win.cursor_lines.frequency[1][] == [win.t[i + 40]]
+    end
+
+    @testset "the plotted gap and the written summary are one arithmetic" begin
+        # The picture and the read-out must not be able to disagree about where the
+        # largest disagreement is. Same expression, so this is an equality to the
+        # bit and not a tolerance.
+        win = pb_line()
+        @test length(win.gap) == length(win.t)
+        @test maximum(win.gap) === win.read.max
+        @test win.t[argmax(win.gap)] === win.read.t_max
+        @test win.read.n == length(win.t)
+    end
+
+    @testset "the band is derived from the solve and shown with its derivation" begin
+        win = pb_line()
+        @test win.band === tolerance_band(system_frequency(win.swing); reltol = 1e-3)
+        # A band whose provenance is not on the screen is a magic number, and
+        # `t_depart` is only an answer relative to it.
+        @test occursin("3 · reltol · excursion", win.summary_label.text[])
+        @test occursin("1e-03", win.summary_label.text[])
+        @test in_layout(win.fig.layout, win.summary_label)
+        @test in_layout(win.fig.layout, win.readout_label)
+        # CONTROL FOR THE HELPER: every "is it in the picture" check above is
+        # worthless if `in_layout` cannot say no. A Label built into a different
+        # figure is exactly the state the mutation test produces.
+        @test !in_layout(win.fig.layout, Label(Figure()[1, 1], "elsewhere"))
+    end
+
+    @testset "the shipped scenario is the one whose gap IS the swing content" begin
+        # The line trip opens one side of the ring. The swing tier rings; the
+        # aggregate view has no branches, so it is handed nothing at all and stays
+        # at exactly nominal — which makes the whole gap the residual inter-machine
+        # swing content, the one lesson SPEC §7.6 lets this pair claim.
+        win = pb_line()
+        @test all(==(50.0), win.agg.f)            # not "close to": it saw no event
+        @test win.read.max > 100 * win.band       # measured 333× at this tolerance
+        # Nothing departs before anything happens, and the departure is prompt.
+        @test win.read.t_depart > 1.0
+        @test win.read.t_depart < 1.1
+        # ...and it really is a swing, on two independent signatures: the rotors
+        # pull apart, and the gap decays away instead of settling somewhere new.
+        d = win.swing.δ_G1 .- win.swing.δ_G2
+        @test maximum(abs.(d .- d[1])) > 0.1      # measured ~0.28 rad
+        @test maximum(win.gap[(end - 50):end]) < 0.3 * win.read.max
+    end
+
+    @testset "the two tiers did not get the same events, and the picture says so" begin
+        # The asymmetry IS the fidelity boundary here, so an unlabelled event list
+        # would let a reader take "trip line B3–B1" as something both curves
+        # responded to and read the whole gap as a modelling difference.
+        win = pb_line()
+        @test win.asymmetric
+        @test isempty(win.aggregate_times)
+        @test length(win.events) == 1
+        @test occursin("DID NOT GET THE SAME ONES", win.event_label.text[])
+        @test occursin("[swing tier only]", win.event_label.text[])
+        @test occursin("trip line B3–B1", win.event_label.text[])
+        @test in_layout(win.fig.layout, win.event_label)
+
+        # ANTI-VACUITY: a scenario both tiers DO receive must not be marked. Without
+        # this, "the picture flags an asymmetry" cannot be told from "the picture
+        # always flags one", which is the same shape of vacuity M3 caught five times.
+        g = pb_gen()
+        @test !g.asymmetric
+        @test g.aggregate_times == [1.0]
+        @test !occursin("swing tier only", g.event_label.text[])
+        @test occursin("both tiers", g.event_label.text[])
+    end
+
+    @testset "the biggest gap this pair can draw is the one that is NOT the lesson" begin
+        # THE FINDING OF THIS STEP, asserted rather than written down. The first
+        # render of this window shipped the generator trip, whose gap reaches 0.857 Hz
+        # — by far the largest number the window has ever shown, and V4c derived it as
+        # the aggregate keeping the tripped machine's damping. It is bookkeeping, not
+        # a swing, and a window whose headline number needs a footnote saying "this
+        # is not the thing" is the failure this repo keeps catching.
+        line, gen = pb_line(), pb_gen()
+        @test gen.read.max > 100 * line.read.max          # 0.857 Hz against 1.08e-3
+        # It arrives and STAYS: a settling-level difference, not a decaying swing.
+        @test gen.gap[end] > 0.99 * gen.read.max
+        # Where the shipped scenario's gap decays away, as a swing does.
+        @test maximum(line.gap[(end - 50):end]) < 0.3 * line.read.max
+    end
+
+    @testset "the caption is in the picture and states what the pair cannot show" begin
+        # Read the LABEL, not an observable the figure might not contain — M3 step 7
+        # caught exactly one check reading the log where it should have read the
+        # picture, and a caption is the easiest place to repeat it.
+        win = pb_line()
+        @test in_layout(win.fig.layout, win.caption)
+        txt = win.caption.text[]
+        @test txt == win.caption_text
+        @test occursin("inter-machine swings", txt)
+        @test occursin("NOT voltage coupling", txt)
+        @test occursin("NOT inverter (IBR)", txt)
+        @test occursin("not by itself evidence of a swing", txt)
+        @test occursin("D5", txt)
+    end
+
+    @testset "the cursor snaps to a recorded sample, never between two" begin
+        # The slider indexes samples precisely so no displayed number is a value
+        # nobody computed. `_cursor_to_time!` is the only time-addressed entry, and
+        # it rounds to a sample rather than interpolating to the time asked for.
+        win = pb_line()
+        i = GridSimUI._cursor_to_time!(win, 1.4749)
+        @test win.cursor[].t === win.t[i]
+        @test abs(win.t[i] - 1.4749) <= 0.01 + 1e-9      # nearest on a 0.02 s grid
+        @test GridSimUI._cursor_to_time!(win, -5.0) == firstindex(win.t)
+        @test GridSimUI._cursor_to_time!(win, 1.0e6) == lastindex(win.t)
+        # ...and the placement rule `playback_render` uses, pinned here because the
+        # render discards its window: the saved frame's cursor sits at the largest
+        # disagreement, which is the only instant worth a frame with no reader.
+        set_close_to!(win.widgets.time, argmax(win.gap))
+        @test win.cursor[].t === win.read.t_max
+    end
+
+    @testset "the read says identical when it is handed one run twice" begin
+        # ANTI-VACUITY for the whole overlay: everything above measures a gap, and
+        # none of it distinguishes "measured a real gap" from "always reports one".
+        win = pb_line()
+        same = PBUILD(win.swing, (; t = win.swing.t, f = win.swing.f_coi);
+                      band = win.band, reltol = 1e-3)
+        @test all(==(0.0), same.gap)
+        @test same.read.max == 0.0
+        @test isnan(same.read.t_depart)
+        @test occursin("never", same.summary_label.text[])
+        @test !same.asymmetric || isempty(same.events)
+    end
+
+    @testset "an event the aggregate tier has no method for fails loudly" begin
+        # Documents the design that was REJECTED. Filtering the aggregate's event
+        # list automatically (keep what it has a `hasmethod` for) reads well and is
+        # wrong: a method missing BY MISTAKE would be silently reclassified as a
+        # fidelity boundary, which is the one error this comparison exists to find.
+        # Hand a line trip to both tiers and it is a `MethodError`, not a shrug.
+        @test_throws MethodError PWIN(three_machine_ring(); horizon = 2.0,
+            perturbations = [1.0 => TripLine(:B3, :B1)],
+            aggregate_perturbations = [1.0 => TripLine(:B3, :B1)],
+            saveat = 0.02, reltol = 1e-3, abstol = 1e-6)
+    end
+
+    @testset "one event list without the other is refused" begin
+        # The two lists are stated together or neither is: a caller who names only
+        # the aggregate's list has almost certainly not thought about the swing
+        # tier's, and the default scenario is not a sensible partner for it.
+        @test_throws ArgumentError playback_render(; path = tempname() * ".png",
+            aggregate_perturbations = [1.0 => TripGenerator(:G1)])
+    end
+
+    @testset "playback_render writes a PNG of the same window" begin
+        dir = mktempdir()
+        path = joinpath(dir, "playback.png")
+        out = playback_render(; path = path, horizon = 8.0)
+        @test out == path
+        @test isfile(path)
+        @test filesize(path) > 10_000                   # a real rendered frame
     end
 
 end

@@ -419,3 +419,165 @@ as 0.85706 Hz (the derived closed form, at `1e-4`).
   run does **not** close this: it exercised the honoured path on 1.12 only, so
   whether a 1.10 Pkg ignores the section or errors on it remains untested.
 
+### D11 — The playback window takes solved series, and there is no third `launch`
+
+`ui/src/playback_window.jl` is a **third window**, and it is a sibling of the
+other two for a different reason than they are siblings of each other. `window.jl`
+and `network_window.jl` differ because their *engines* accept different events.
+This one differs because it is the other **execution mode**: `solve!` has already
+finished, the whole trajectory exists as two plain vectors, and the only live
+thing in the figure is where the reader put the cursor. So it carries no
+`EventQueue`, no `RealtimeControl`, no `refresh!` throttle and no task — each of
+those exists to manage a run in progress, and there is none.
+
+Two things follow, and both were deliberate rather than incidental:
+
+**The builder takes series, not a model.** `_build_playback_window` receives two
+already-solved series plus the band. It cannot solve, cannot step and cannot
+choose a grid, which is "render state is not simulation state" (SPEC §3) in the
+strongest form available: the window is *incapable* of influencing the numbers it
+draws. The pair-building is three lines (`_solve_overlay`) on top of `coi_model`,
+the aggregate view the core already compiles down — so nothing here is a parallel
+model, and **no core change was needed for this step at all** (core stayed at
+1870 tests, byte-identical). That also matters for step 5, which owns the fresh
+dependency re-resolve: a core change here would have meant doing that work twice.
+
+**A different verb, not a third `launch` method.** Both execution modes run on the
+same `NetworkModel`, so the model type cannot pick between them — and minting a
+type purely to enable dispatch would be inventing a type to satisfy a pattern. The
+core already draws this exact line by verb (`run_realtime!` against `solve!`), so
+`ui/` mirrors it: `playback` and `playback_render`. `wait_for_close` gained a
+`haskey(win, :control)` guard rather than a dummy control block on a window with
+no loop to stop.
+
+Three smaller shapes, each of which is a rule made structural rather than written
+down:
+
+  - **The cursor is an index, not a time.** A slider over *time* would need a value
+    between two samples, and the only two ways to make one are the ways M4 already
+    rejected: interpolate (there is no interpolant left — `dense = false` means a
+    closed step's coefficients are gone, D10) or straight-line between recorded
+    samples (measured at 33.7× the band, step 2). Indexing means every number the
+    read-out shows is a recorded sample verbatim.
+  - **The band is derived and displayed, never adjustable.** A window is exactly
+    where step 2's discipline would die: a band slider lets a reader scrub, look at
+    the gap, and then pick the band that puts the departure where they expected it.
+    There is no such control — `widgets` has exactly one field. The band comes from
+    `tolerance_band` on the solve's own `reltol` and is shown *with its
+    derivation*, so it is auditable rather than magic. Exploring the tolerance
+    means solving again on fresh engines, which re-derives the band with it.
+  - **The gap panel is logarithmic with a stated floor.** The gap spans nine
+    decades on a real run (1e-7 Hz before the event, ~1 Hz after), so a linear axis
+    puts the band — and with it the departure — indistinguishably on the zero line;
+    and `log10` of the same-series-twice case (an exact `0.0`) is `-Inf`. Floored
+    at `band/10`, and the axis label says so, so nobody reads the flat bottom of
+    the trace as data. **This was only visible in the PNG**, which is what
+    render-before-claiming is for.
+
+### D12 — The two tiers need not get the same events, and which ones they got is stated
+
+The aggregate view has no branches, so `TripLine` has no `inject!` method on it at
+all. `_solve_overlay` therefore takes **two** event lists — `perturbations` and
+`aggregate_perturbations` — written out by the caller.
+
+The rejected alternative was to filter the aggregate's list automatically, keeping
+only events it has a `hasmethod` for. It reads well and it is wrong: a method
+missing **by mistake** would then be silently reclassified as a fidelity boundary,
+which is the one error this whole comparison exists to detect. A missing method is
+better as a loud `MethodError` pointing at the real question, and the test suite
+pins that (`@test_throws MethodError` on a line trip handed to both tiers).
+
+`nothing` for either list means "the caller did not say": both unsaid gives the
+shipped scenario; `perturbations` alone gives **both** tiers the same list (the
+symmetric reading, which is the safe one); naming only `aggregate_perturbations`
+is an `ArgumentError`, since a caller who names one has almost certainly not
+thought about the other.
+
+Because the lists can now differ, the figure has to say so, and it does — in
+firebrick: *"events — THE TIERS DID NOT GET THE SAME ONES (swing tier's log: 1;
+applied to the aggregate: 0)"*, with `[swing tier only]` on each unmatched row.
+The marking is on the **instant**, not on the event: the swing side's list is the
+engine's own log and the aggregate side's is the list of times something was
+applied to it, so *"nothing was applied at this instant"* is a fact, while *"the
+aggregate has no representation of this event"* would be an interpretation — and
+on a tier simply not given an event it could have taken, the wrong one.
+
+### What step 3 measured, and the number it stopped the window from promoting
+
+**The first render shipped the wrong scenario, and the picture is what said so.**
+Step 3 was built over the obvious default — a generator trip on
+`three_machine_ring()`, step 2's own positive control for divergence. It renders
+correctly and every number matches step 2's table to the digit. It is also a
+**monotonic decline on both tiers with no swing anywhere in it**, and its 0.857 Hz
+gap is V4c's derived settling-level difference: the aggregate keeps the tripped
+machine's damping in its denominator and settles somewhere else. That is
+bookkeeping. Meanwhile the window's own caption said the pair shows inter-machine
+swings — a claim its shipped picture could not support, which is the exact failure
+mode this milestone exists to catch, arriving through the front door.
+
+The fix was to ship the scenario where the headline number **is** the lesson:
+
+| scenario | band | max gap | ×band | when | at the end |
+|---|---|---|---|---|---|
+| `TripLine(:B3, :B1)` at 1.0 s (shipped default) | 3.227e-6 Hz | **1.0758e-3 Hz** | 333× | departs 1.02 s, peaks 1.48 s | decays to ~6 % of peak by 20 s |
+| `TripGenerator(:G1)` at 1.0 s (the contrast) | 8.573e-3 Hz | **8.575e-1 Hz** | 100× | departs 1.580 s, peaks 59.08 s | **99 %+ of peak — it arrives and stays** |
+
+The line trip is the clean case in every respect: the swing tier's centre-of-inertia
+frequency rings at ~1 Hz and decays, the rotors pull 0.28 rad apart, and the
+aggregate tier sits at **exactly** 50.0 Hz for all 1001 samples because it was
+handed nothing at all. The whole gap is then residual swing content and nothing on
+the screen competes with it. Both figures are checked in
+(`docs/images/fig-m4-playback-line-trip.png`,
+`docs/images/fig-m4-playback-generator-trip.png`, regenerated by
+`ui/scripts/playback_overlay.jl`) precisely because the contrast is the finding: a
+doc that claims the tiers part company over swings, illustrated by the figure where
+they part company over something else, is the promotion again.
+
+**The swing residual survives the tolerance moving, which is what makes it a
+result.** M3's standing rule — a number below the solver's own tolerance is not a
+result until it survives the tolerance changing — applied to a new scenario before
+the band was trusted. Solving the pair at reltol `1e-3`, `1e-6` and `1e-9`:
+
+| reltol | band | max gap | t_max | t_depart |
+|---|---|---|---|---|
+| 1e-3 | 3.2275e-6 | 1.0758275e-3 | 1.48 s | 1.02 s |
+| 1e-6 | 3.2276e-9 | 1.0758606e-3 | 1.48 s | 1.02 s |
+| 1e-9 | 3.2276e-12 | 1.0758606e-3 | 1.48 s | 1.02 s |
+
+The band falls by six orders while the gap is stable to seven significant figures
+and both instants do not move at all. It is physics, not solver error — the
+opposite of V4b's µHz residual, which was *invisible* until the band dropped
+beneath it (step 2). The two together are the same lesson from both sides: a read
+is exactly as sharp as the band it is handed.
+
+**Three anti-vacuity mutations were run against the source, and each was caught by
+exactly the assertion built for it** (M3's standing rule: run the mutation, do not
+merely ship its in-suite form):
+
+  - cursor reads sample `k+1` instead of `k` → caught, **and by the `===` check
+    alone**. Adjacent samples differ by ~1e-6 Hz, so any `atol`-based version of
+    that assertion would have passed. Nothing here is interpolated, so exactness is
+    available, and it is the only thing that catches the one bug this window can
+    really have.
+  - `asymmetric = false` (the picture never flags a mismatched event list) →
+    caught, on both the flag and the drawn label's text.
+  - the caption `Label` built into a different `Figure` — it exists, it has the
+    right text, it is simply not in the window → caught **only** by the layout
+    check. All six of the caption's text assertions still passed while it was
+    absent from the picture. That is M3 step 7's "a check that reads the log where
+    it should read the picture", demonstrated rather than remembered, and it is why
+    `in_layout` walks nested `GridLayout`s and why the suite carries a control that
+    `in_layout` can return `false`.
+
+**Smaller things the step turned up:**
+
+- The recorder's decimation cannot desynchronise the two tiers' grids. Both engines
+  default to the same 200 000-sample capacity and playback records exactly one
+  sample per `saveat` point in each, so `n_seen` and therefore the retention stride
+  are identical. Checked before the window was written, because if it were not
+  true the window's constructor would throw on any long horizon. `divergence`'s
+  refusal remains the backstop.
+- The read-out and the picture are pinned to one arithmetic: `maximum(win.gap) ===
+  win.read.max` and `win.t[argmax(win.gap)] === win.read.t_max`, to the bit, so the
+  panel and the summary cannot come to disagree about where the largest
+  disagreement is.

@@ -5,9 +5,13 @@ decisions and the measurements behind them). Living document: each step ticks it
 own boxes and records what it found, including what it found that the plan did
 not anticipate.
 
-Status: **steps 1–2 done and executed.** Entered at `ab3a87f` with 1719 core /
-102 UI tests green; step 1 leaves 1787 / 102, step 2 leaves **1870 / 102**. Step 2
-was *written* on 2026-09-02 in a remote session with **no Julia toolchain and the
+Status: **steps 1–3 done and executed.** Entered at `ab3a87f` with 1719 core /
+102 UI tests green; step 1 leaves 1787 / 102, step 2 leaves 1870 / 102, and step 3
+leaves **1870 / 172** — the core number unchanged, and that is the result rather
+than an omission: the playback window takes already-solved series and needed no
+core change at all.
+
+Step 2 was *written* on 2026-09-02 in a remote session with **no Julia toolchain and the
 Julia download/package hosts blocked**, so its six new testsets shipped unrun; they
 were executed on merge the same day (Julia 1.12.6) and every one of them passed
 first time, including the four numeric assertions reconstructed from the V4/V6
@@ -206,15 +210,96 @@ the test names, not slack.
 
 ## Step 3 — the playback window: scrub, overlay, divergence
 
-- [ ] Time slider scrubs a solved series; cursor moves on the plot.
-- [ ] Both curves drawn (centre-of-inertia tier vs network swing tier) with the
-      divergence read-out from step 2.
-- [ ] `smoke_render` offscreen **first**, then the live window. Render before
-      claiming (M2/M3 standing rule).
-- [ ] The window's own text states that this pair shows **one of the three
-      lessons** SPEC §7.6 names (inter-machine swings) and not the other two. A
-      read-out that implies otherwise promotes a number it cannot support.
-- [ ] UI test count moves; both `ui/` and core suites green.
+**DONE.** 1870 core (**unchanged, and byte-identical — this step needed no core
+change at all**) / **172 UI** (from 102). New file `ui/src/playback_window.jl`
+plus `ui/scripts/playback_overlay.jl` and two checked-in figures. Decisions D11
+and D12, and the measurements, are in `m4-context.md` §What step 3 measured.
+
+- [x] Time slider scrubs a solved series; cursor moves on the plot. **The slider
+      indexes SAMPLES, not time** — a slider over time would need a value between
+      two samples, and both ways of making one are the ways this milestone already
+      rejected (there is no interpolant left, D10; straight-lining was measured at
+      33.7× the band). Every number the read-out shows is a recorded sample
+      verbatim, so the tests assert it with `===` rather than a tolerance.
+- [x] Both curves drawn (centre-of-inertia tier vs network swing tier) with the
+      divergence read-out from step 2. The band is **derived and displayed with
+      its derivation, and there is no control that could change it** — `widgets`
+      has exactly one field, asserted, because a band slider is precisely how step
+      2's "state the band before you see the gap" discipline would die in a window.
+- [x] `smoke_render` offscreen **first**, then the live window. Both done, in that
+      order, and the offscreen render is what found the step's real problem (below).
+      The live window opened on a real GLFW screen, the slider was dragged on it,
+      and it closed cleanly.
+- [x] The window's own text states that this pair shows **one of the three
+      lessons** SPEC §7.6 names (inter-machine swings) and not the other two.
+      **The caption carries a third claim the plan did not anticipate**, and it is
+      the one this step had to learn: *a large gap is not by itself evidence of a
+      swing* — the two models also differ in which machines' damping the aggregate
+      keeps, and that difference is usually the larger one. All three claims are
+      deliberately scenario-independent; a caption describing the run it happened
+      to be over would be wrong the first time somebody passed a different one.
+- [x] UI test count moves; both `ui/` and core suites green. **172 / 172 UI**,
+      **1870 / 1870 core** — the core number is unchanged *and that is the result*,
+      not an omission: the window takes already-solved series and adds nothing to
+      the core, which also matters because **step 5 owns the fresh dependency
+      re-resolve** and a core change here would have meant doing that work twice.
+
+**Written beyond the list, and one of them changed what the step ships:**
+
+- [x] **THE FIRST RENDER SHIPPED THE WRONG SCENARIO, AND THE PICTURE IS WHAT SAID
+      SO.** The obvious default was a generator trip on `three_machine_ring()` —
+      step 2's own positive control, every number matching its table to the digit.
+      It is also a monotonic decline on both tiers with **no swing anywhere in
+      it**, and its 0.857 Hz gap is V4c's settling-level difference (the aggregate
+      keeps the tripped machine's damping). Bookkeeping, wearing the largest number
+      the window has ever displayed — under a caption claiming inter-machine
+      swings. The shipped default is now `TripLine(:B3, :B1)`, where the gap **is**
+      the residual swing content: 1.076e-3 Hz at 333× the band, the rotors 0.28 rad
+      apart, and the aggregate tier at *exactly* 50.0 Hz for all 1001 samples.
+- [x] **Both figures are checked in, because the contrast is the finding.**
+      `docs/images/fig-m4-playback-line-trip.png` and
+      `…-generator-trip.png`, regenerated by `ui/scripts/playback_overlay.jl`. A
+      doc that claims the tiers part company over swings, illustrated by the figure
+      where they part company over something else, is the same promotion again.
+      The contrast is also asserted, not merely written: the generator trip's gap
+      is >100× the line trip's and sits at 99 %+ of its peak at the end of the run
+      (it arrives and stays), where the line trip's decays to under 30 % (a swing).
+- [x] **The new scenario's band was checked against the solver before it was
+      trusted** (M3's standing rule, applied to a scenario step 2 never ran). At
+      reltol 1e-3 / 1e-6 / 1e-9 the band falls six orders while the gap is stable
+      to **seven significant figures** and `t_max`/`t_depart` do not move at all.
+      Physics, not solver error — the mirror image of V4b, which was invisible
+      until the band dropped beneath it.
+- [x] **The two tiers do not both get the event, and the picture says so** (D12).
+      The aggregate view has no branches, so `TripLine` has no `inject!` method on
+      it; `aggregate_perturbations` is a second, explicit list. The **rejected**
+      design — filter it automatically with `hasmethod` — is recorded and pinned by
+      a test, because it would silently reclassify a method missing *by mistake* as
+      a fidelity boundary, the one error this comparison exists to detect.
+- [x] **The gap panel is logarithmic with a floor at `band/10`, and the axis label
+      says so.** The gap spans nine decades, so a linear axis puts the band and the
+      departure indistinguishably on the zero line, and `log10` of the
+      same-series-twice case (an exact `0.0`) is `-Inf`. Only visible in the PNG.
+- [x] Anti-vacuity: same series twice reads exactly `0.0`, `t_depart` NaN, and the
+      summary says "never"; two series on different grids are refused at **build**
+      time with the core's own message, never resampled onto one axis.
+- [x] `wait_for_close` guarded with `haskey(win, :control)` rather than given a
+      dummy control block — a playback window has no loop to stop.
+
+**Three anti-vacuity mutations RUN against the source, each caught by exactly the
+assertion built for it:**
+
+- [x] Cursor reads sample `k+1` → caught, **by the `===` assertion alone**.
+      Adjacent samples differ by ~1e-6 Hz, so any `atol` form of that check would
+      have passed. Exactness is available here, and it is the only thing that
+      catches the off-by-one that is this window's real available bug.
+- [x] `asymmetric = false` (the picture never flags a mismatched event list) →
+      caught, on both the flag and the drawn label's text.
+- [x] The caption `Label` built into a *different* `Figure` — right text, simply
+      not in the window → caught **only** by the layout check; all six of its text
+      assertions still passed. M3 step 7's "a check that reads the log where it
+      should read the picture", demonstrated. Hence `in_layout` walks nested
+      `GridLayout`s, and the suite carries a control that it can return `false`.
 
 ## Step 4 — `reference/`: PowerDynamics as an external oracle
 
@@ -279,10 +364,16 @@ the test names, not slack.
       cost of the alternative is measured by the step-2 control (33.7× the band).
 - [x] **Gauge-arbitrary comparison.** `system_frequency` is the default channel;
       anything else is an explicit selector. (Step 2.)
-- [ ] **An overlay that validates nothing.** Same-series-twice ~0 *and* a
-      different-runs positive control are written (step 2); **run, not yet.**
-- [ ] **The one-lesson-of-three trap.** The M4 pair shows inter-machine swings
-      only; voltage coupling and inverter behaviour need M5's tier.
+- [x] **An overlay that validates nothing.** Same-series-twice ~0 *and* a
+      different-runs positive control are written (step 2) and **run** — green on
+      2026-09-02, and again in the window itself (step 3), where the
+      same-series-twice case reads exactly `0.0` with `t_depart` NaN.
+- [x] **The one-lesson-of-three trap.** Discharged in step 3, and it turned out to
+      have a second half nobody had written down: the pair shows inter-machine
+      swings only (voltage coupling and inverter behaviour need M5's tier), **and
+      not every gap it draws IS that lesson**. The first shipped scenario's 0.857 Hz
+      gap was a damping-bookkeeping difference; the caption now says so, and the
+      default scenario was changed to the one where the number is the thing.
 - [ ] **Playback and real-time must stay the same system.** If protection is
       ever pre-baked into `perturbations=`, every comparison in this milestone is
       measuring the wrong thing.

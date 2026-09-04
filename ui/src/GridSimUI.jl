@@ -11,8 +11,15 @@ frequency traces with the centre-of-inertia aggregate overlaid, rotor angles
 relative to that aggregate, event markers, and buttons for both a machine trip
 and a line trip).
 
-They are siblings rather than one window with a runtime switch, because the two
-engines do not accept the same events — the set of controls a window can offer is
+A **third** window is the other execution mode rather than a third tier: the
+playback overlay (`playback_window.jl`, M4 step 3) draws two *already-solved*
+series of one scenario — the network swing tier against the aggregate view
+compiled down from the same model — with a slider that scrubs a cursor through
+the run and the cross-tier divergence read beside it. It has no event queue, no
+control block and no repaint throttle, because nothing in it is running.
+
+The first two are siblings rather than one window with a runtime switch, because
+the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
 the model type is what settles it (see `network_window.jl`).
 
@@ -30,6 +37,10 @@ Two entry points, each with a method per model type:
   - [`smoke_render`](@ref) — build the *same* window offscreen, run a scripted
     trip timeline flat out, and save a PNG. That is how the window is checked in
     a session with no screen to look at.
+
+...and the same pair again for playback, under their own verbs, because the model
+type cannot say which mode was wanted: [`playback`](@ref) and
+[`playback_render`](@ref).
 """
 module GridSimUI
 
@@ -62,10 +73,26 @@ using GridSim: NetworkModel, SwingEngine, TripLine, machine_ids,
 # step 7); none of the thirteen candidates collides, and the explicit `using
 # GridSim: x` above shadows anything that later would.
 using GridSim: GenerationRamp, OutOfStepTrip, shed_ladder, shed_log
+# M4's playback mode. `solve!` and `state_series` are the run-then-play half of
+# the engine interface; `coi_model` compiles the aggregate view down from the
+# network model (never a parallel copy); `divergence`, `system_frequency` and
+# `tolerance_band` are step 2's cross-tier read, and this window only DISPLAYS
+# what they return. `three_machine_ring` rides along as the default fixture — a
+# single synchronous area, which is the precondition the overlay needs (D5).
+# All seven checked against GLMakie's exports by the core's own
+# `intersect(names(GridSim), names(GLMakie))` test before being named here.
+using GridSim: solve!, state_series, coi_model,
+               divergence, system_frequency, tolerance_band, three_machine_ring
 
 include("window.jl")
 include("network_window.jl")
+include("playback_window.jl")
 
 export launch, smoke_render, wait_for_close
+# M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
+# modes run on the same `NetworkModel`, so the model type cannot pick between
+# them. The core draws the same line the same way — `run_realtime!` against
+# `solve!` — so the UI mirrors it instead of inventing a type to dispatch on.
+export playback, playback_render
 
 end # module GridSimUI

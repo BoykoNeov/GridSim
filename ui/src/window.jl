@@ -331,7 +331,11 @@ function wait_for_close(win)
     while events(win.fig.scene).window_open[]
         sleep(0.1)
     end
-    stop!(win.control)
+    # A playback window has no `control`, because it has no loop to stop: the run
+    # finished before the figure existed (M4 step 3). Guarded rather than given a
+    # dummy control block — a `RealtimeControl` that nothing reads would be a
+    # piece of machinery whose only content is that it does nothing.
+    haskey(win, :control) && stop!(win.control)
     return win
 end
 

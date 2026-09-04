@@ -6,8 +6,11 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **two windows, one per fidelity
-tier**, and which one you get is decided by the model you hand `launch`:
+Built on `GLMakie` (native window). There are **three**: two real-time windows,
+one per fidelity tier, chosen by the model you hand `launch` — and a third for the
+other *execution mode*, the playback overlay, which has its own verb (see below).
+
+The two real-time windows:
 
 - **`SystemModel` → the aggregate window.** A live `f(t)` plot with a reference
   line at `f0` and a dotted line at the running nadir, a `RoCoF(t)` trace beneath
@@ -157,6 +160,89 @@ from the plot would just move the meaningless number somewhere more prominent.
 `shed`, `ramp` and `out_of_step` are forwarded to the engine untouched, so the
 window can be opened on a fully armed system rather than only on a bare one.
 
+## The playback overlay — a solved run, scrubbed rather than watched
+
+The third window is not a third fidelity tier; it is the other **execution mode**.
+The two windows above show a run as it happens. This one is handed a run that has
+already finished — two solved trajectories of one scenario, on one output grid —
+and lets you move a cursor through it.
+
+```
+julia --project=ui -e "using GridSimUI, GridSim; wait_for_close(playback())"
+```
+
+It has its own verb rather than a third `launch` method, because both execution
+modes run on the same `NetworkModel`: the model type cannot say which you wanted.
+The core draws the same line the same way — `run_realtime!` against `solve!`.
+
+What you get: the network swing tier's centre-of-inertia frequency against the
+aggregate tier compiled down from the same model (`coi_model`), the gap between
+them on a log panel beneath, a time slider, and the whole-run divergence read from
+`analysis/postprocess.jl` — largest gap and when, RMS, and the instant they part
+company.
+
+Four things about it are deliberate:
+
+- **It cannot run.** The window is handed *series*, not a model: no event queue, no
+  control block, no repaint throttle, no engine. It is incapable of influencing the
+  numbers it draws, which is `docs/SPEC.md` §3's "render state is not simulation
+  state" in its strongest available form.
+- **The slider indexes samples, not time.** Nothing here is interpolated. A slider
+  over time would need a value between two recorded samples, and both ways of
+  producing one are ways this project has already rejected — there is no
+  interpolant left after a solve, and straight-lining between decimated samples was
+  measured at 33.7× the agreement band. Every number the read-out shows is a
+  recorded sample verbatim.
+- **The agreement band is derived and displayed, and there is no control for it.**
+  "When did they part company" is only an answer if the band was stated before the
+  gap was seen. It comes from `tolerance_band` on the solve's own `reltol` and is
+  shown with its derivation. Exploring the tolerance means solving again, which
+  re-derives the band with it — never a slider.
+- **The two tiers need not receive the same events, and the picture says which.**
+  The aggregate view has no branches, so a line trip is not an event it can be
+  given at all. `perturbations` and `aggregate_perturbations` are separate
+  arguments the caller writes out; when they differ, the event list says so in red
+  and marks each row the aggregate never saw.
+
+The default scenario is a line trip, and that choice is the point:
+
+```julia
+using GridSimUI, GridSim
+# The shipped default: the swing tier rings, the aggregate tier is handed nothing.
+playback_render(; path = "swings.png")
+# The contrast: a disturbance both tiers accept, whose much larger gap is NOT swings.
+playback_render(; path = "damping.png", horizon = 60.0,
+                perturbations = [1.0 => TripGenerator(:G1)])
+```
+
+`TripLine(:B3, :B1)` opens one side of the ring: the machines swing against each
+other, the centre-of-inertia frequency rings by about 1 mHz and decays, and the
+aggregate tier sits at exactly 50 Hz. The whole gap is then residual inter-machine
+swing content — the one lesson of the three `docs/SPEC.md` §7.6 names that this
+pair can support.
+
+A generator trip is the instructive counter-example, and it is deliberately *not*
+the default. Both tiers accept it, and the gap reaches 0.857 Hz — roughly 800×
+larger, and not the lesson: the aggregate keeps the tripped machine's damping in
+its denominator, so the two settle at different levels. It arrives and stays,
+where a swing decays. Both figures are checked in for that contrast:
+
+```
+julia --project=ui ui/scripts/playback_overlay.jl
+```
+
+writes `docs/images/fig-m4-playback-line-trip.png` and
+`docs/images/fig-m4-playback-generator-trip.png`.
+
+`playback_render` places the cursor at the instant of largest disagreement by
+default, since a saved frame has no reader to drag the slider. Its axis pins are
+`ylims_f` and `ylims_gap`.
+
+**Point it at a single synchronous area.** Across an area split the
+inertia-weighted mean is not a system frequency, and then *both* curves are
+meaningless rather than just one — there is nothing to suppress, so the caller has
+to not do it. The figure's caption says so.
+
 ## Figure 3-67, checked in
 
 ```
@@ -177,14 +263,25 @@ voltage collapse is out of scope on this tier at any point of the figure.
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-102 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+172 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
-covered — for both windows, including that the two engines really do reject each
-other's events. Physics and wall-clock pacing are asserted in the core suite and
-are deliberately not duplicated here.
+covered — for both real-time windows, including that the two engines really do
+reject each other's events. Physics and wall-clock pacing are asserted in the core
+suite and are deliberately not duplicated here.
 
-One thing to know when adding a test: greying a button out happens on the
+The playback window is tested differently, for the reason it *is* different:
+nothing in it is running, so there is no queue to push into and no loop to drive.
+What replaces the click path is **exactness**. Every number it shows is a recorded
+sample verbatim, so its checks are `===` rather than `atol` — an off-by-one index
+is the bug this window can really have, and a tolerance-based assertion passes
+against it (adjacent samples differ by ~1e-6 Hz). For the same reason, checks that
+a caption or a read-out is *in the picture* go through the figure's layout, not
+through the observable that feeds it: a `Label` with the right text that was never
+added to the window passes every text assertion you can write about it.
+
+One thing to know when adding a test to either real-time window: greying a button
+out happens on the
 **render** path, which is throttled to ~30 fps, and a flat-out run of a few
 simulated seconds can finish inside a single frame interval. Force a frame
 (`win.refresh!(; force = true)`) before asserting on a label, exactly as the live
