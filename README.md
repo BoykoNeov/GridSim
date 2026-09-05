@@ -82,7 +82,23 @@ divergence(a, b; band = band)                       # (; max, t_max, rms, t_depa
 ```
 
 The UI is a separate environment; see [`ui/README.md`](ui/README.md) for setup,
-the two windows, and offscreen rendering.
+the three windows, and offscreen rendering.
+
+## What it looks like
+
+Every figure below is a frame of the same window a user opens, rendered
+offscreen by the scripts in `ui/scripts/` — never a separate "figure" code path.
+
+The 28 April 2025 Iberian separation on the two-area swing tier, defence plan
+armed and annotated at the instants each stage fired (report Figure 3-67):
+
+![Iberia, two-area model, defence plan armed](docs/images/fig-3-67-two-area.png)
+
+The playback overlay — the network swing tier against the aggregate tier compiled
+from the same model, on the line trip where the gap between them *is* the
+inter-machine swing content:
+
+![Playback overlay, line trip](docs/images/fig-m4-playback-line-trip.png)
 
 ## Repository layout
 

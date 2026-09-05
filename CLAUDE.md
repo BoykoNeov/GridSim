@@ -59,6 +59,9 @@ clamping of the state variable (which corrupts the integration).
 - **Add a dependency:** `julia --project=. -e 'import Pkg; Pkg.add("Foo")'`.
   NEVER hand-write package UUIDs into `Project.toml` — let `Pkg` resolve them.
   (`Test`, an stdlib, is the one already wired, via `[extras]`/`[targets]`.)
+  `Pkg.add` REWRITES the target `Project.toml` and drops every comment in it
+  (it did to `ui/Project.toml` on 2026-09-05) — `git diff` it afterwards and
+  put the comments back.
 - `Manifest.toml` is gitignored (this is a package, not a pinned app).
 
 ## Workflow

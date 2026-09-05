@@ -83,7 +83,14 @@ using GridSim: GenerationRamp, OutOfStepTrip, shed_ladder, shed_log
 # `intersect(names(GridSim), names(GLMakie))` test before being named here.
 using GridSim: solve!, state_series, coi_model,
                divergence, system_frequency, tolerance_band, three_machine_ring
+# The precompile workload (`precompile.jl`) drives the armed network window on
+# the two-machine fixture; nothing in the windows themselves needs this name.
+using GridSim: two_machine_system
 
+# The shared look (fonts, colours, widget shapes, the two-label read-out) — one
+# file, applied by every builder through `themed`. Included first because the
+# windows reference its constants at definition time.
+include("theme.jl")
 include("window.jl")
 include("network_window.jl")
 include("playback_window.jl")
@@ -94,5 +101,9 @@ export launch, smoke_render, wait_for_close
 # them. The core draws the same line the same way — `run_realtime!` against
 # `solve!` — so the UI mirrors it instead of inventing a type to dispatch on.
 export playback, playback_render
+
+# Last, after every entry point exists: build each window once at precompile
+# time so a session does not pay ~2 minutes of Makie specialisation at launch.
+include("precompile.jl")
 
 end # module GridSimUI

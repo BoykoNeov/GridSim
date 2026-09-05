@@ -111,8 +111,14 @@ single unlabelled event list reached both.
 
 Nothing here solves, steps, or resamples. A pair on two different grids is a
 build-time error, raised by `divergence` in the core.
+
+The look is `GRIDSIM_THEME` (`theme.jl`), applied through `themed` so it is scoped
+to the build.
 """
-function _build_playback_window(swing::NamedTuple, agg::NamedTuple;
+_build_playback_window(swing::NamedTuple, agg::NamedTuple; kwargs...) =
+    themed(() -> _build_playback_window_impl(swing, agg; kwargs...))
+
+function _build_playback_window_impl(swing::NamedTuple, agg::NamedTuple;
                                 band::Real,
                                 reltol::Real,
                                 events::Vector{Tuple{Float64,String}} =
@@ -147,25 +153,32 @@ function _build_playback_window(swing::NamedTuple, agg::NamedTuple;
     linkxaxes!(ax_f, ax_g)
 
     # ---- the two tiers -----------------------------------------------------
-    lines!(ax_f, t, a; color = :dodgerblue, linewidth = 2,
+    # No legend inside the axis: the shipped generator-trip render had one lying
+    # across both curves and the cursor dot in the bottom-right corner, which is
+    # where a falling frequency ends up. It lives at the top of the read-out
+    # column instead (below), where nothing is plotted.
+    lines!(ax_f, t, a; color = C_SWING, linewidth = 2,
            label = "swing tier — f_COI over the machines")
-    lines!(ax_f, t, b; color = :darkorange, linewidth = 2, linestyle = :dash,
+    lines!(ax_f, t, b; color = C_AGGREGATE, linewidth = 2, linestyle = :dash,
            label = "aggregate tier — single-machine equivalent")
-    axislegend(ax_f; position = :rb, framevisible = false, labelsize = 13)
 
     # ---- the gap, the band, and where they part company --------------------
-    lines!(ax_g, t, max.(gap, floor_v); color = :black, linewidth = 1.5)
-    hlines!(ax_g, [Float64(band)]; color = (:crimson, 0.9), linestyle = :dash)
+    lines!(ax_g, t, max.(gap, floor_v); color = RGBf(0.15, 0.15, 0.17), linewidth = 1.5,
+           label = "|gap|")
+    hlines!(ax_g, [Float64(band)]; color = (C_WARN, 0.9), linestyle = :dash,
+            label = "agreement band")
     if !isnan(read.t_depart)
-        vlines!(ax_f, [read.t_depart]; color = (:crimson, 0.45), linewidth = 1.5)
-        vlines!(ax_g, [read.t_depart]; color = (:crimson, 0.45), linewidth = 1.5)
+        vlines!(ax_f, [read.t_depart]; color = (C_WARN, 0.5), linewidth = 1.5)
+        vlines!(ax_g, [read.t_depart]; color = (C_WARN, 0.5), linewidth = 1.5,
+                label = "departs")
     end
 
     # The engine's own log, on the frequency panel. Same rule as M2's window: the
     # traces carry no record that anything happened, so this is the only place a
     # line trip or a relay firing appears at all.
     if !isempty(events)
-        vlines!(ax_f, [e[1] for e in events]; color = (:gray, 0.75), linestyle = :dot)
+        vlines!(ax_f, [e[1] for e in events]; color = (C_EVENT, 0.6), linestyle = :dot,
+                label = "event (swing tier's log)")
     end
 
     # ---- the cursor --------------------------------------------------------
@@ -181,37 +194,51 @@ function _build_playback_window(swing::NamedTuple, agg::NamedTuple;
     # read-out's source, which is one step short of the picture. These two plots
     # ARE the cursor as drawn, and their own argument is what a check should be
     # against (M3 step 7's lesson, in its UI form).
-    vline_f = vlines!(ax_f, cx; color = (:seagreen, 0.9), linewidth = 1.5)
-    vline_g = vlines!(ax_g, cx; color = (:seagreen, 0.9), linewidth = 1.5)
+    vline_f = vlines!(ax_f, cx; color = (C_CURSOR, 0.9), linewidth = 1.5)
+    vline_g = vlines!(ax_g, cx; color = (C_CURSOR, 0.9), linewidth = 1.5,
+                      label = "cursor")
     # The two dots are where the read-out's numbers come from, made visible. They
     # are `Point2f` — Float32 — so they are a picture and never an assertion
     # target; `cursor` above carries the Float64 the read-out formats.
     scatter!(ax_f, lift(c -> [Point2f(c.t, c.f_swing)], cursor);
-             color = :dodgerblue, markersize = 11)
+             color = C_SWING, markersize = 11)
     scatter!(ax_f, lift(c -> [Point2f(c.t, c.f_agg)], cursor);
-             color = :darkorange, markersize = 11)
+             color = C_AGGREGATE, markersize = 11)
     scatter!(ax_g, lift(c -> [Point2f(c.t, max(c.gap, floor_v))], cursor);
-             color = :seagreen, markersize = 11)
+             color = C_CURSOR, markersize = 11)
 
     # ---- the read-out column ----------------------------------------------
-    gc = fig[1:3, 2] = GridLayout(tellheight = false)
+    gc = fig[1:3, 2] = GridLayout(tellheight = false, valign = :top)
 
-    readout = lift(cursor) do c
-        @sprintf("cursor  (sample %d of %d)\n  t            %9.3f s\n  swing tier   %9.4f Hz\n  aggregate    %9.4f Hz\n  gap          %9.3e Hz",
+    # Both panels' legends, at the top of the column where nothing is plotted.
+    # `tellheight = true` so each legend's row is its own height; left to the
+    # default the rows expand to share the column and the legends float apart.
+    Legend(gc[1, 1], ax_f; tellwidth = false, tellheight = true, halign = :left)
+    Legend(gc[2, 1], ax_g; tellwidth = false, tellheight = true, halign = :left)
+
+    # The cursor read-out: names once, values a `lift` of the cursor (theme.jl).
+    # `readout` is the composite a test reads — the rows the two labels draw, joined.
+    section_label!(gc[3, 1], "cursor")
+    ro_keys = "sample\nt\nswing tier\naggregate\ngap"
+    ro_values = lift(cursor) do c
+        @sprintf("%d of %d\n%9.3f s\n%9.4f Hz\n%9.4f Hz\n%9.3e Hz",
                  c.i, length(t), c.t, c.f_swing, c.f_agg, c.gap)
     end
-    readout_label = Label(gc[1, 1], readout; halign = :left, justification = :left,
-                          tellwidth = false, font = :regular, fontsize = 16)
+    gro = gc[4, 1] = GridLayout()
+    ro = readout_block!(gro, ro_keys; values = ro_values)
+    readout = lift(v -> readout_text(ro_keys, v), ro_values)
+    readout_label = ro.values_label
 
     # The band and its derivation together. A band whose provenance is not on the
     # screen is a magic number, and `t_depart` is only meaningful relative to it.
     depart = isnan(read.t_depart) ?
              "never — indistinguishable at this band" :
              @sprintf("%.3f s", read.t_depart)
-    summary = @sprintf("divergence over the whole run\n  band         %9.3e Hz\n               = 3 · reltol · excursion,  reltol %.0e\n  max          %9.3e Hz  at %.2f s\n  rms          %9.3e Hz\n  departs      %s\n  samples      %d",
+    section_label!(gc[5, 1], "divergence over the whole run")
+    summary = @sprintf("band      %9.3e Hz\n          = 3 · reltol · excursion,\n            reltol %.0e\nmax       %9.3e Hz  at %.2f s\nrms       %9.3e Hz\ndeparts   %s\nsamples   %d",
                        band, reltol, read.max, read.t_max, read.rms, depart, read.n)
-    summary_label = Label(gc[2, 1], summary; halign = :left, justification = :left,
-                          tellwidth = false, fontsize = 16)
+    summary_label = Label(gc[6, 1], summary; halign = :left, justification = :left,
+                          tellwidth = false, font = MONO_FONT, fontsize = 13)
 
     # THE ASYMMETRY IS DRAWN, NOT ASSUMED AWAY. The two tiers are allowed to receive
     # different events, and on the shipped scenario they do: the aggregate view has
@@ -238,9 +265,12 @@ function _build_playback_window(swing::NamedTuple, agg::NamedTuple;
                           length(events), length(aggregate_times)) :
                  "events (both tiers, from the swing tier's log)"
     event_text = isempty(events) ? "(no events)" : join(event_rows, "\n")
-    event_label = Label(gc[3, 1], event_head * "\n" * event_text;
+    # `word_wrap`: the asymmetric heading is long, and the first render of this
+    # window had it running off the right edge of the figure.
+    event_label = Label(gc[7, 1], event_head * "\n" * event_text;
                         halign = :left, justification = :left, tellwidth = false,
-                        fontsize = 14, color = asymmetric ? :firebrick : :gray30)
+                        word_wrap = true, fontsize = 13,
+                        color = asymmetric ? C_WARN : C_MUTED)
 
     # The caption is a `Label` held by reference and returned, so a test can assert
     # it is in the figure's layout rather than assert against an observable the
@@ -248,12 +278,12 @@ function _build_playback_window(swing::NamedTuple, agg::NamedTuple;
     # should read the picture passes against a caption that was never drawn).
     caption = Label(fig[4, 1:2], _PLAYBACK_CAPTION; halign = :left,
                     justification = :left, tellwidth = false, word_wrap = true,
-                    fontsize = 13, color = :gray25)
+                    fontsize = 12, color = C_MUTED)
 
     rowsize!(fig.layout, 2, Relative(0.30))
     rowsize!(fig.layout, 3, Fixed(40))
-    colsize!(fig.layout, 2, Fixed(330))
-    rowgap!(gc, 18)
+    colsize!(fig.layout, 2, Fixed(340))
+    rowgap!(gc, 10)
 
     # Axis boxes. Pinned limits exist for the same reason they do in the other two
     # windows: two renders meant to be compared must share a scale, or a gap three

@@ -22,6 +22,11 @@ Cross-cutting:
   D7 bookkeeping from `m4-context.md`, started ahead of M4 step 4 so the un-oracled
   items are visible now.
 - `../scenarios/iberia-2025-04-28.md` — extracted report figures with page cites.
+- `ui-visuals-performance.md` — the UI's look and cost: what was measured (the
+  engines step in ~1 µs; the UI paid two minutes of cold start and 585 KB per
+  repaint), what the first batch fixed (precompile workload, shared theme,
+  two-label read-outs), and the remaining items written for a less capable
+  model to execute one at a time.
 
 ## The scientific hurdles, in dependency order
 

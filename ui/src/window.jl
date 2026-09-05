@@ -62,8 +62,14 @@ could drift away from it.
 
 Nothing is started here — no window is displayed and no task is spawned. The
 caller decides whether this figure goes on a screen or into a file.
+
+The look is `GRIDSIM_THEME` (`theme.jl`), applied through `themed` so it is scoped
+to the build and never leaks into a caller's own Makie session.
 """
-function _build_window(model::SystemModel;
+_build_window(model::SystemModel; kwargs...) =
+    themed(() -> _build_window_impl(model; kwargs...))
+
+function _build_window_impl(model::SystemModel;
                        dt::Real = 0.02,
                        rtf::Real = 1.0,
                        window_seconds::Real = 60.0,
@@ -92,20 +98,24 @@ function _build_window(model::SystemModel;
     ax_r = Axis(fig[2, 1]; xlabel = "simulation time (s)", ylabel = "RoCoF (Hz/s)")
     linkxaxes!(ax_f, ax_r)
 
-    hlines!(ax_f, [f0]; color = (:gray, 0.8), linestyle = :dash)   # nominal reference
+    hlines!(ax_f, [f0]; color = (C_MUTED, 0.7), linestyle = :dash)   # nominal reference
     nadir_line = Observable([f0])
-    hlines!(ax_f, nadir_line; color = (:crimson, 0.5), linestyle = :dot)
-    lines!(ax_f, ftrace.points; color = :dodgerblue, linewidth = 2)
+    hlines!(ax_f, nadir_line; color = (C_WARN, 0.6), linestyle = :dot)
+    lines!(ax_f, ftrace.points; color = C_SWING, linewidth = 2)
 
-    hlines!(ax_r, [0.0]; color = (:gray, 0.8), linestyle = :dash)
-    lines!(ax_r, rtrace.points; color = :darkorange, linewidth = 1.5)
+    hlines!(ax_r, [0.0]; color = (C_MUTED, 0.7), linestyle = :dash)
+    lines!(ax_r, rtrace.points; color = C_AGGREGATE, linewidth = 1.5)
 
     # ---- controls column ---------------------------------------------------
-    gc = fig[1:2, 2] = GridLayout(tellheight = false)
+    gc = fig[1:2, 2] = GridLayout(tellheight = false, valign = :top)
 
+    # The read-out: names written once, values rewritten at `READOUT_INTERVAL`
+    # (theme.jl explains the cost that split). `readout` is the composite a test
+    # or a caller reads — exactly the two labels' rows joined, never a third text.
+    keys = "t\nf\nRoCoF\nnadir\nH_sys"
+    gro = gc[1, 1] = GridLayout()
+    ro = readout_block!(gro, keys)
     readout = Observable("")
-    Label(gc[1, 1], readout; halign = :left, justification = :left,
-          tellwidth = false, fontsize = 17)
 
     H0 = system_inertia(engine)
     hbar = Observable([H0])
@@ -114,13 +124,13 @@ function _build_window(model::SystemModel;
                 xgridvisible = false)
     # A ghost of the pre-disturbance inertia behind the live bar: without a fixed
     # reference the drop is only visible to someone who watched it happen.
-    barplot!(ax_h, [1], [H0]; color = (:seagreen, 0.18), width = 0.6)
-    barplot!(ax_h, [1], hbar; color = :seagreen, width = 0.6)
+    barplot!(ax_h, [1], [H0]; color = (C_INERTIA, 0.18), width = 0.6)
+    barplot!(ax_h, [1], hbar; color = C_INERTIA, width = 0.6)
     ylims!(ax_h, 0, H0 * 1.2)
     xlims!(ax_h, 0.2, 1.8)
 
     gb = gc[3, 1] = GridLayout()
-    Label(gb[1, 1], "trip a unit"; halign = :left, tellwidth = false)
+    section_label!(gb[1, 1], "trip a unit")
     unit_buttons = Tuple{Symbol,Button}[]
     for (i, u) in enumerate(model.units)
         b = Button(gb[i + 1, 1]; label = @sprintf("%s  —  %.0f MW", u.id, u.P0),
@@ -147,7 +157,7 @@ function _build_window(model::SystemModel;
         status[] = "stopped — close window to exit"
     end
 
-    Label(gc[5, 1], "speed (× real time)"; halign = :left, tellwidth = false)
+    section_label!(gc[5, 1], "speed (× real time)")
     # Finite range on purpose: `rtf = Inf` means "no pacing at all", which starves
     # the renderer — that mode belongs to headless runs, not to a slider.
     sl = Slider(gc[6, 1]; range = 0.1:0.1:10.0,
@@ -157,21 +167,22 @@ function _build_window(model::SystemModel;
     end
     Label(gc[7, 1], lift(v -> @sprintf("%.1f×   (step %.0f ms)", v, 1000 * timestep(engine)),
                          sl.value);
-          halign = :left, tellwidth = false)
+          halign = :left, tellwidth = false, font = MONO_FONT, fontsize = 13)
     # `word_wrap` needs a bounded width to wrap against — hence the fixed control
     # column below; without it a long status line runs off the edge of the figure.
-    Label(gc[8, 1], status; halign = :left, tellwidth = false, color = :firebrick,
-          word_wrap = true)
+    Label(gc[8, 1], status; halign = :left, justification = :left, tellwidth = false,
+          color = C_WARN, word_wrap = true)
 
     # Sized only now: `rowsize!`/`colsize!` address cells that must already exist,
     # and column 2 is created by the controls layout above.
     rowsize!(fig.layout, 2, Relative(0.28))
     colsize!(fig.layout, 2, Fixed(300))
-    rowgap!(gc, 14)
+    rowgap!(gc, 12)
 
     # ---- render state (never simulation state) -----------------------------
     nadir = Ref(s0.f)          # running minimum of what has been *shown*
     last_draw = Ref(0.0)       # wall clock of the last repaint
+    last_readout = Ref(0.0)    # wall clock of the last read-out rewrite
     ylo = Ref(f0 - 2.0)        # frequency axis box, expand-only
     yhi = Ref(f0 + 0.6)
     rspan = Ref(0.5)           # RoCoF axis half-height, expand-only
@@ -220,8 +231,16 @@ function _build_window(model::SystemModel;
 
         nadir_line[] = [nadir[]]
         hbar[] = [system_inertia(engine)]
-        readout[] = @sprintf("t         %7.2f s\nf         %7.3f Hz\nRoCoF     %7.3f Hz/s\nnadir     %7.3f Hz\nH_sys     %7.3f s",
-                             s.t, s.f, s.RoCoF, nadir[], system_inertia(engine))
+        # Text is the expensive part of a repaint (theme.jl), so the numbers are
+        # rewritten on their own, slower clock. Everything the read-out shows is
+        # still exact — the nadir is the running minimum over every state.
+        if force || now - last_readout[] ≥ READOUT_INTERVAL
+            last_readout[] = now
+            vals = @sprintf("%8.2f s\n%8.3f Hz\n%8.3f Hz/s\n%8.3f Hz\n%8.3f s",
+                            s.t, s.f, s.RoCoF, nadir[], system_inertia(engine))
+            ro.values[] = vals
+            readout[] = readout_text(keys, vals)
+        end
 
         for (id, b) in unit_buttons
             if !(id in greyed) && !is_online(engine, id)

@@ -6,6 +6,7 @@ authors = ["Boyko Neov <boikoneov@gmail.com>"]
 [deps]
 GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
 GridSim = "eb5af87e-af5a-4058-ac7e-47b2baa55413"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [extras]
@@ -16,6 +17,7 @@ test = ["Test"]
 
 [compat]
 GLMakie = "0.13.13"
+PrecompileTools = "1"
 Printf = "1.11.0"
 julia = "1.10"
 
@@ -26,5 +28,9 @@ julia = "1.10"
 # Verified 2026-09-02 on Julia 1.12.6: `ui/Manifest.toml` deleted, `Pkg.instantiate()`
 # with NO `Pkg.develop` by hand resolved `GridSim v0.1.0 `..``, and `Pkg.test()` in
 # both environments is green (1870 core / 102 ui).
+#
+# NOTE: `Pkg.add` rewrites this file and DROPS these comments (it did on
+# 2026-09-05, adding PrecompileTools). After any Pkg operation on this
+# environment, `git diff ui/Project.toml` and put them back.
 [sources]
 GridSim = {path = ".."}

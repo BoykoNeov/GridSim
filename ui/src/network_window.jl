@@ -86,8 +86,14 @@ On such a model the heaviest line in the panel would otherwise be the one the do
 say not to read.
 
 Nothing is started here — no window is displayed and no task is spawned.
+
+The look is `GRIDSIM_THEME` (`theme.jl`), applied through `themed` so it is scoped
+to the build.
 """
-function _build_network_window(net::NetworkModel;
+_build_network_window(net::NetworkModel; kwargs...) =
+    themed(() -> _build_network_window_impl(net; kwargs...))
+
+function _build_network_window_impl(net::NetworkModel;
                                dt::Real = 0.02,
                                rtf::Real = 1.0,
                                window_seconds::Real = 30.0,
@@ -132,7 +138,7 @@ function _build_network_window(net::NetworkModel;
     # a network with many more machines or branches would still overflow the
     # column, which a scrolling control panel is the real answer to and this is
     # deliberately not (see the `valign` note below for what overflow then does).
-    fig = Figure(size = (1360, 900))
+    fig = Figure(size = (1400, 900))
 
     ax_f = Axis(fig[1, 1]; title = title, ylabel = "frequency (Hz)",
                 xticklabelsvisible = false)
@@ -144,13 +150,13 @@ function _build_network_window(net::NetworkModel;
     # engine's own event log — not from the click handler — so a scripted run and a
     # clicked one mark the same instants (see engines/swing.jl).
     event_times = Observable(Float64[])
-    vlines!(ax_f, event_times; color = (:black, 0.35), linestyle = :dash)
-    vlines!(ax_δ, event_times; color = (:black, 0.35), linestyle = :dash)
+    vlines!(ax_f, event_times; color = (C_EVENT, 0.45), linestyle = :dash)
+    vlines!(ax_δ, event_times; color = (C_EVENT, 0.45), linestyle = :dash)
 
-    hlines!(ax_f, [f0]; color = (:gray, 0.8), linestyle = :dash)   # nominal reference
-    hlines!(ax_δ, [0.0]; color = (:gray, 0.8), linestyle = :dash)  # the COI itself
+    hlines!(ax_f, [f0]; color = (C_MUTED, 0.7), linestyle = :dash)   # nominal reference
+    hlines!(ax_δ, [0.0]; color = (C_MUTED, 0.7), linestyle = :dash)  # the COI itself
 
-    palette = GLMakie.Makie.wong_colors()
+    palette = Makie.wong_colors()
     machine_color(i) = palette[mod1(i, length(palette))]
     for i in 1:n
         lines!(ax_f, ftraces[i].points; color = machine_color(i), linewidth = 1.2,
@@ -161,8 +167,8 @@ function _build_network_window(net::NetworkModel;
     # Drawn last and heavier: the aggregate is the same quantity as the thin traces
     # (Hz), so it reads as their weighted centre rather than as a separate series.
     # Suppressed on a model where that centre is not a frequency — see `show_coi`.
-    show_coi && lines!(ax_f, coitrace.points; color = :black, linewidth = 2.5,
-                       label = "COI")
+    show_coi && lines!(ax_f, coitrace.points; color = RGBf(0.1, 0.1, 0.12),
+                       linewidth = 2.5, label = "COI")
 
     # ---- the shed annotation (report Fig 3-67) ------------------------------
     # One entry per armed ladder, each carrying its own thresholds and its own
@@ -187,8 +193,11 @@ function _build_network_window(net::NetworkModel;
         push!(shed_panels, (; machine = mid, thresholds, fired))
     end
 
-    axislegend(ax_f; position = :rb, framevisible = false, labelsize = 11,
-               orientation = :horizontal)
+    # Top-left, not bottom-right: the traces start at `f0`, which sits in the upper
+    # third of the expand-only box, and a generator trip takes them DOWN — so the
+    # bottom-right corner is exactly where the data ends up. The top strip above
+    # `f0 + 0.1` is empty unless the system over-speeds.
+    axislegend(ax_f; position = :lt, orientation = :horizontal)
 
     # ---- controls column ---------------------------------------------------
     # `valign = :top`, not the M1 window's default centring: this column carries
@@ -199,9 +208,22 @@ function _build_network_window(net::NetworkModel;
     # the least important widgets already sit.
     gc = fig[1:2, 2] = GridLayout(tellheight = false, valign = :top)
 
+    # The read-out: names written once, values rewritten at `READOUT_INTERVAL`
+    # (theme.jl explains the split). `readout` is the composite a test or a caller
+    # reads — the two labels' rows joined, plus the static note beneath them.
+    # `show_coi` governs the READ-OUT as well as the line, and that is the point of
+    # it rather than a tidy-up: suppressing the overlay while leaving `f_COI` and
+    # its nadir at the top of the column would move the meaningless number from
+    # the plot to the headline, where it reads as the answer.
+    keys = show_coi ? "t\nf_COI\nnadir\nspread\nmax |δ−COI|\nH_sys" :
+                      "t\nspread\nmax |δ−COI|\nH_sys"
+    gro = gc[1, 1] = GridLayout()
+    ro = readout_block!(gro, keys)
+    note = "(spread and |δ−COI| over online machines)" *
+           (show_coi ? "" : "\n(no aggregate: this model's areas separate)")
+    Label(gc[2, 1], note; halign = :left, justification = :left, tellwidth = false,
+          fontsize = 11, color = C_MUTED)
     readout = Observable("")
-    Label(gc[1, 1], readout; halign = :left, justification = :left,
-          tellwidth = false, fontsize = 16, font = :regular)
 
     # The ghost bar behind the live one needs the PRE-disturbance inertia, and the
     # live accessor returns the shrinking sum — so it is captured here, at build
@@ -209,19 +231,19 @@ function _build_network_window(net::NetworkModel;
     # visible to someone who watched it happen.
     H0 = system_inertia(engine)
     hbar = Observable([H0])
-    ax_h = Axis(gc[2, 1]; ylabel = "H_sys (s)", height = 100,
+    ax_h = Axis(gc[3, 1]; ylabel = "H_sys (s)", height = 90,
                 xticksvisible = false, xticklabelsvisible = false,
                 xgridvisible = false)
-    barplot!(ax_h, [1], [H0]; color = (:seagreen, 0.18), width = 0.6)
-    barplot!(ax_h, [1], hbar; color = :seagreen, width = 0.6)
+    barplot!(ax_h, [1], [H0]; color = (C_INERTIA, 0.18), width = 0.6)
+    barplot!(ax_h, [1], hbar; color = C_INERTIA, width = 0.6)
     ylims!(ax_h, 0, H0 * 1.2)
     xlims!(ax_h, 0.2, 1.8)
 
     # Two button groups, because this engine takes two kinds of event. Both queue
     # rather than inject: events are applied at a step boundary by the loop, so a
     # click can never land mid-integration.
-    gm = gc[3, 1] = GridLayout()
-    Label(gm[1, 1], "trip a machine"; halign = :left, tellwidth = false)
+    gm = gc[4, 1] = GridLayout()
+    section_label!(gm[1, 1], "trip a machine")
     machine_buttons = Tuple{Symbol,Button}[]
     for (i, m) in enumerate(net.machines)
         b = Button(gm[i + 1, 1]; label = @sprintf("%s  —  %+.0f MW", m.id, m.P0),
@@ -233,8 +255,8 @@ function _build_network_window(net::NetworkModel;
         push!(machine_buttons, (m.id, b))
     end
 
-    gl = gc[4, 1] = GridLayout()
-    Label(gl[1, 1], "trip a line"; halign = :left, tellwidth = false)
+    gl = gc[5, 1] = GridLayout()
+    section_label!(gl[1, 1], "trip a line")
     line_buttons = Tuple{Symbol,Symbol,Button}[]
     for (i, br) in enumerate(net.branches)
         b = Button(gl[i + 1, 1]; label = @sprintf("%s  —  %s–%s", br.id, br.from, br.to),
@@ -246,7 +268,7 @@ function _build_network_window(net::NetworkModel;
         push!(line_buttons, (br.from, br.to, b))
     end
 
-    gp = gc[5, 1] = GridLayout()
+    gp = gc[6, 1] = GridLayout()
     b_pause = Button(gp[1, 1]; label = "pause", tellwidth = false)
     on(b_pause.clicks) do _
         control.paused[] = !control.paused[]
@@ -259,23 +281,24 @@ function _build_network_window(net::NetworkModel;
         status[] = "stopped — close window to exit"
     end
 
-    Label(gc[6, 1], "speed (× real time)"; halign = :left, tellwidth = false)
-    sl = Slider(gc[7, 1]; range = 0.1:0.1:10.0,
+    section_label!(gc[7, 1], "speed (× real time)")
+    sl = Slider(gc[8, 1]; range = 0.1:0.1:10.0,
                 startvalue = clamp(Float64(rtf), 0.1, 10.0), tellwidth = false)
     on(sl.value) do v
         control.rtf[] = Float64(v)
     end
-    Label(gc[8, 1], lift(v -> @sprintf("%.1f×   (step %.0f ms)", v,
+    Label(gc[9, 1], lift(v -> @sprintf("%.1f×   (step %.0f ms)", v,
                                        1000 * timestep(engine)), sl.value);
-          halign = :left, tellwidth = false)
+          halign = :left, tellwidth = false, font = MONO_FONT, fontsize = 13)
 
     # What actually happened, in words, beside the dashed lines that mark when. The
     # traces cannot say which line opened — this and the markers are the only place
-    # a played-back run learns it (see engines/swing.jl).
-    Label(gc[9, 1], "events"; halign = :left, tellwidth = false)
+    # a played-back run learns it (see engines/swing.jl). Monospace, so the
+    # `%6.2f s` instants line up into a column.
+    section_label!(gc[10, 1], "events")
     event_text = Observable("(none yet)")
-    Label(gc[10, 1], event_text; halign = :left, justification = :left,
-          tellwidth = false, fontsize = 13, word_wrap = true)
+    Label(gc[11, 1], event_text; halign = :left, justification = :left,
+          tellwidth = false, fontsize = 12, font = MONO_FONT, word_wrap = true)
 
     # The ladder's own log, in words, beside its markers — and deliberately a
     # SECOND list rather than more lines in the one above. A shed is not an
@@ -283,21 +306,25 @@ function _build_network_window(net::NetworkModel;
     # the event log could not carry (`protection/load_shedding.jl`).
     shed_text = Observable("(none yet)")
     if !isempty(shed_panels)
-        Label(gc[11, 1], "load shed"; halign = :left, tellwidth = false)
-        Label(gc[12, 1], shed_text; halign = :left, justification = :left,
-              tellwidth = false, fontsize = 13, word_wrap = true)
+        # One point smaller than the event list: a shed row carries an instant, a
+        # label up to 18 characters, a threshold and a block — 47 columns, which
+        # at 12 pt wrapped the Iberian plan's 2,638 MW stage onto a second line.
+        section_label!(gc[12, 1], "load shed")
+        Label(gc[13, 1], shed_text; halign = :left, justification = :left,
+              tellwidth = false, fontsize = 11, font = MONO_FONT, word_wrap = true)
     end
 
-    Label(gc[13, 1], status; halign = :left, tellwidth = false, color = :firebrick,
-          word_wrap = true)
+    Label(gc[14, 1], status; halign = :left, justification = :left, tellwidth = false,
+          color = C_WARN, word_wrap = true)
 
     rowsize!(fig.layout, 2, Relative(0.42))
-    colsize!(fig.layout, 2, Fixed(310))
+    colsize!(fig.layout, 2, Fixed(340))
     rowgap!(gc, 8)
 
     # ---- render state (never simulation state) -----------------------------
     nadir = Ref(s0.f_coi)      # running minimum of the aggregate, over every state
     last_draw = Ref(0.0)
+    last_readout = Ref(0.0)    # wall clock of the last read-out rewrite
     flo = Ref(f0 - 1.0)        # frequency box, expand-only
     fhi = Ref(f0 + 0.6)
     δspan = Ref(0.5)           # angle box half-height, expand-only
@@ -349,28 +376,32 @@ function _build_network_window(net::NetworkModel;
         end
 
         hbar[] = [system_inertia(engine)]
-        # Both machine-to-machine figures are over the ONLINE machines, for the
-        # reason spelled out beside `online` above; with nothing online there is no
-        # spread to report and they are NaN rather than a fabricated zero.
-        live = findall(online)
-        spread = isempty(live) ? NaN :
-                 1000 * f0 * (maximum(s.ω[live]) - minimum(s.ω[live]))
-        δwidest = isempty(live) ? NaN : maximum(abs, s.δ[live] .- s.δ_coi)
-        # `f_coi` prints as NaN in the same case, deliberately: that is what the
-        # engine reports when there is no weighted mean left to take, and a
-        # fabricated 0.0 or a blanked field would both read as a working system.
-        # The nadir beside it stays finite — NaN loses every comparison, so it
-        # never becomes the running minimum.
-        # `show_coi` governs the READ-OUT as well as the line, and that is the point
-        # of it rather than a tidy-up: suppressing the overlay while leaving `f_COI`
-        # and its nadir at the top of the column would move the meaningless number
-        # from the plot to the headline, where it reads as the answer.
-        coi_rows = show_coi ?
-            @sprintf("f_COI        %7.3f Hz\nnadir        %7.3f Hz\n", s.f_coi, nadir[]) : ""
-        coi_note = show_coi ? "" : "\n(no aggregate: this model's areas separate)"
-        readout[] = @sprintf("t            %7.2f s\n", s.t) * coi_rows *
-                    @sprintf("spread       %7.1f mHz\nmax |δ−COI|  %7.3f rad\nH_sys        %7.3f s\n(spread and |δ−COI| over online machines)",
-                             spread, δwidest, system_inertia(engine)) * coi_note
+        # Text is the expensive part of a repaint (theme.jl), so the numbers are
+        # rewritten on their own, slower clock. Nothing shown is approximate for
+        # it: the nadir is the running minimum over every published state.
+        if force || now - last_readout[] ≥ READOUT_INTERVAL
+            last_readout[] = now
+            # Both machine-to-machine figures are over the ONLINE machines, for the
+            # reason spelled out beside `online` above; with nothing online there
+            # is no spread to report and they are NaN rather than a fabricated zero.
+            live = findall(online)
+            spread = isempty(live) ? NaN :
+                     1000 * f0 * (maximum(s.ω[live]) - minimum(s.ω[live]))
+            δwidest = isempty(live) ? NaN : maximum(abs, s.δ[live] .- s.δ_coi)
+            # `f_coi` prints as NaN in the same case, deliberately: that is what the
+            # engine reports when there is no weighted mean left to take, and a
+            # fabricated 0.0 or a blanked field would both read as a working
+            # system. The nadir beside it stays finite — NaN loses every
+            # comparison, so it never becomes the running minimum.
+            H = system_inertia(engine)
+            vals = show_coi ?
+                @sprintf("%8.2f s\n%8.3f Hz\n%8.3f Hz\n%8.1f mHz\n%8.3f rad\n%8.3f s",
+                         s.t, s.f_coi, nadir[], spread, δwidest, H) :
+                @sprintf("%8.2f s\n%8.1f mHz\n%8.3f rad\n%8.3f s",
+                         s.t, spread, δwidest, H)
+            ro.values[] = vals
+            readout[] = readout_text(keys, vals) * "\n" * note
+        end
 
         for (id, b) in machine_buttons
             if !(id in greyed) && !is_online(engine, id)

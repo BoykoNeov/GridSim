@@ -89,6 +89,52 @@ The window takes a few seconds to appear (GLFW window creation and shader
 compilation); the simulation clock is starved for that stretch and then paces
 accurately — measured 4.01× against 4.0× asked, on screen.
 
+## Startup
+
+The package precompiles a workload (`src/precompile.jl`): every window is built
+offscreen once, driven through the real loop, and rendered, at *package
+precompile time* rather than at first use. Measured on 2026-09-05 (Julia 1.12.6,
+GLMakie 0.13.13), a cold session from `using GridSimUI` to the first frame:
+
+| | before | after |
+|---|---|---|
+| `using GridSimUI` | 10.4 s | 13.3 s |
+| first multi-machine window (`smoke_render(three_machine_ring())`) | 76.5 s | 6.2 s |
+| first aggregate window (`smoke_render()`) | 23.9 s | 1.8 s |
+| first playback overlay (`playback_render()`) | 4.9 s | 1.2 s |
+
+The price is paid once: precompiling `GridSimUI` takes about two minutes and
+needs an OpenGL context. On a machine without one (a headless CI runner), set
+`GRIDSIM_UI_PRECOMPILE=0` to skip the workload — the package still loads and
+compiles at first use as before. A failure inside the workload is caught and
+reported as a warning, never fatal.
+
+## The look
+
+`src/theme.jl` is the one place the three windows' appearance is decided —
+fonts, colours, widget shapes, legend placement — applied by wrapping each
+builder in `with_theme`, so it never leaks into a caller's own Makie session.
+Two of its rules are about cost, not taste, and are worth knowing before
+editing a read-out:
+
+- **Every numeric read-out is two labels, not one.** A static column of names
+  written once, and a column of values that is rewritten — and rewritten at
+  10 Hz, on its own clock, while the traces still take every published state
+  and repaint at ~30 fps. Setting a Makie `Label`'s text re-runs the glyph
+  layout for the whole string: measured at ~700 µs and ~480 KB for the old
+  seven-line network read-out, which was 85 % of a repaint's allocation. Now a
+  forced repaint allocates ~325 KB instead of ~585 KB, and the steady-state
+  window path about 220 KB per frame. What remains is mostly the moving time
+  window recomputing its ticks (~100 KB per frame); see
+  `docs/plans/ui-visuals-performance.md` for the options that were measured.
+- **Numbers are drawn in DejaVu Sans Mono, shipped inside Makie's own assets.**
+  `@sprintf("%8.3f")` only aligns into columns in a fixed-width face, and a
+  system font name would make the picture depend on the machine.
+
+The `readout` observable each window returns is the composite of those two
+columns — exactly the rows the labels draw, joined — so a test that searches it
+is reading what the picture says.
+
 ## Render a frame without a screen
 
 ```julia
@@ -291,6 +337,7 @@ added to the window passes every text assertion you can write about it.
 One thing to know when adding a test to either real-time window: greying a button
 out happens on the
 **render** path, which is throttled to ~30 fps, and a flat-out run of a few
-simulated seconds can finish inside a single frame interval. Force a frame
-(`win.refresh!(; force = true)`) before asserting on a label, exactly as the live
-window would on its next tick.
+simulated seconds can finish inside a single frame interval — and the numeric
+read-out is rewritten on a slower clock still (10 Hz). Force a frame
+(`win.refresh!(; force = true)`) before asserting on a label or on `readout`,
+exactly as the live window would on its next tick.
