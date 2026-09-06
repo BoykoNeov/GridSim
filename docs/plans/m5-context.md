@@ -556,6 +556,40 @@ A spike is not a step: it produces a number and a paragraph in this file, not a
 feature. But a spike that is skipped becomes an assumption, so each has a box in
 `m5-tasks.md`.
 
+### All three resolved (S3 in step 1, S1 and S2 in step 3, 2026-09-06)
+
+**S1 — `T′ = Inf` IS expressible, so the fallback is not needed.** `mtkcompile`
+accepts `Inf·Dt(E′q) ~ rhs` and the derivative comes out exactly zero. The
+convergence ladder that was to have been the fallback is kept as the spike's own
+positive control instead: with the flux equation made live (`X_d = 1.8`), the drift
+over a 2 s horizon is 3.547e-9 at `T′ = 1e8`, 3.547e-7 at 1e6 and 3.548e-5 at 1e4 —
+a clean `1/T′` law — while `Inf` gives 0.0. **The first form of the spike was
+vacuous**: run at the degeneration, where `X_d = X′_d` makes the right-hand side
+identically zero, `E′q` holds for every `T′` and nothing is established.
+
+One qualification the step then measured: `T′ = Inf` freezes the *equation*
+exactly, but on a three-machine ring the trajectory still drifts by one ulp
+(2.2e-16), because a differential state with a zero Jacobian row still sits inside
+the implicit solver's Newton system. **Our own side drifts by the identical
+amount**, so it is a property of stiff integration rather than of PowerDynamics —
+and it is the same cause as the two "reaches nothing" controls not being
+bit-identical. `===` is not available for a decoupled state inside an implicit
+solver, adaptive stepping or not.
+
+**S2 — the bounds are metadata, not enforced, so no precondition is added.** A
+machine built with `τ_m_set = −0.5` compiles, solves, and returns `τ_e = −0.316`
+straight through a variable declared `bounds = (0, Inf)`. This mattered more than
+it looks: **every** fixture in the repo balances with a negative-`P0` machine, so
+if the bounds had bitten there would have been no runnable case at all and the
+question would have become a scope decision rather than a guard.
+
+**And the argument that M4 had already answered S2 was reading the wrong
+component.** `ClassicalMachine`'s `τ_m_set` carries no bounds at all;
+`SauerPaiMachine` adds them to `vf_set`, `τ_m_set`, `vf`, `τ_m` and `τ_e`. Same
+authors, same library, different declarations — the same shape as the torque
+finding in `m5-prestudy.md` §2a, and the reason that section says to READ the
+source rather than carry an answer across.
+
 ## D11 — The cut line is stated before anything is built
 
 Nine steps is larger than M3 (seven) or M4 (five), and `m4-plan.md` already

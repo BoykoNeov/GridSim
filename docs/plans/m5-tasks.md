@@ -6,12 +6,15 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **steps 0b, 1 and 2 done, steps 3-8 open.** Entered at `86651ab` with
+Status: **steps 0b, 1, 2 and 3 done, steps 4-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
 unchanged, step 1 brought it to **2083 core**, and step 2 to
-**2253 core / 172 UI / 82 reference**. The detailed tier now carries the two-axis
-machine, reproduces `SwingEngine` at the frozen-flux degeneration, and initialises
-from a power flow whose machine model is the steady state of that machine.
+**2253 core / 172 UI / 82 reference**, and step 3 to
+**2253 core / 172 UI / 288 reference**. The detailed tier now carries the two-axis
+machine, reproduces `SwingEngine` at the frozen-flux degeneration, initialises
+from a power flow whose machine model is the steady state of that machine, and is
+checked against PowerDynamics' `SauerPaiMachine` with the flux frozen on both
+sides.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -450,40 +453,151 @@ that is read.
 
 ## Step 3 — PowerDynamics with flux off on both sides (D5, D6, D10)
 
+**Done 2026-09-06. 2253 core / 172 UI / 288 reference** (82 M4 + 206 new), all
+three green. `reference/src/oracle.jl` gains the `:sauer_pai` tier;
+`reference/test/runtests.jl` gains the step's eight testsets.
+
 **Spikes first — a skipped spike becomes an assumption.**
-- [ ] **S1**: is `T′ = Inf` expressible on PowerDynamics' multiplied form
-      (`Inf·ẋ ~ finite` through `mtkcompile`)? Result recorded in `m5-context.md`
-      D10 either way. If not: large-but-finite `T′` with a `1/T′` **convergence**
-      check (residual falls a decade as `T′` rises one), scoped as a different
-      check from an exactness assertion.
-- [ ] **S2**: what does MTK's initialiser do with `bounds = (0, Inf)` on `vf`,
-      `τ_m`, `τ_e`? If the bounds bite, add a build-time model precondition
-      shaped like `_assert_governor_free`.
+- [x] **S1**: `T′ = Inf` **IS** expressible on PowerDynamics' multiplied form.
+      `mtkcompile` accepts `Inf·ẋ ~ rhs` and the derivative is exactly zero, so
+      the planned large-but-finite fallback is **not needed** and the exactness
+      assertion is available. Recorded in D10. See F1 — the first version of this
+      spike was vacuous.
+- [x] **S2**: the `bounds = (0, Inf)` are **metadata, not enforced**. A machine
+      with `τ_m_set = −0.5` builds, solves, and returns `τ_e = −0.316` straight
+      through the declared bound. No model precondition is needed, and every
+      fixture in the repo — all of which balance with a negative-`P0` machine —
+      is runnable. See F2 for why M4's green suite did **not** already answer this.
 
 **The comparison**
-- [ ] `build_oracle(net; tier = :sauer_pai)` — a second tier alongside `:swing`,
-      **compiled from `NetworkModel`, never typed beside it** (`m4-context.md` D5).
-- [ ] `vf_input = false`, `τ_m_input = false`, `stator_dynamics = false` all
+- [x] `build_oracle(net; tier = :sauer_pai)` — a third tier alongside `:swing`
+      and `:classical`, **compiled from `NetworkModel`, never typed beside it**
+      (`m4-context.md` D5). `X″ = X′` in both axes, so their sixth-order machine
+      is our fourth-order one exactly.
+- [x] `vf_input = false`, `τ_m_input = false`, `stator_dynamics = false` all
       passed **explicitly** — a default is not a guarantee (`oracle.jl`'s own
-      stated reason).
-- [ ] `X_ls < X′d` enforced at build time (their `γ_d1` divides by `X′d − X_ls`).
-- [ ] Their two sub-transient states **seeded from our fixpoint** by the closed
-      forms in `m5-prestudy.md` §2a, so the flat run checks *our* initialisation
-      rather than their power flow. A per-state flat comparison **skips those two**
-      — a state that drives nothing has no counterpart to be equal to.
-- [ ] Flux frozen on both sides; band written **before** the gap is seen, derived
-      as `oracle_band` already derives it.
-- [ ] **The stator-`ω` residual is identified by its signature**, not absorbed:
-      `(ω − 1)·V`, first order in slip, zero at synchronous speed (D6). Assert the
-      sign and the size, as M4 did for D14 — do not widen a tolerance around it.
-- [ ] **The free positive control (D5)**: vary `X_ls` across a run; every
-      comparison channel must be **bit-identical** (`===`, the only thing that
-      caught M4's off-by-one). If anything moves, the degeneration did not take.
-- [ ] The ring runs here — both sides on terminal buses, no reduction, the case
+      stated reason). `Sn`/`Vn` are deliberately **not** passed: their
+      `initf_weak` defaults are the ratio-of-one the builder wants, and passing
+      them makes them live parameters scaling the terminal equations.
+- [x] `X_ls < min(X′d, X′q)` enforced at build time — **both** axes, since
+      `γ_q1` divides by `X′_q − X_ls` too. Without it the failure is a NaN
+      trajectory inside somebody else's component, not an error.
+- [x] Their two sub-transient states **seeded from our fixpoint** by the closed
+      forms in `m5-prestudy.md` §2a, through `GridSim._stator` — the very
+      function the engine's own RHS calls, so the rotor-frame rotation and the
+      stator inversion exist once rather than twice.
+- [x] Flux frozen on both sides; band written **before** the gap is seen, derived
+      by `convergence_band` from each side's own coarse/fine pair.
+- [x] **The stator-`ω` residual is identified by its signature**, not absorbed.
+      `gap(V) / (peak slip × |V|) = 0.995 ± 0.002` across a factor of four in
+      disturbance size, and doubling the disturbance doubles the gap to 0.1 %.
+      The **coefficient** is asserted, not merely proportionality — see F6.
+- [~] **The free positive control (D5)**: `X_ls` varied across a run moves every
+      channel by ~1e-10, which is below the band but **not** bit-identical, and
+      `===` turns out not to be available at all here. F4 is the reason and it
+      cost nothing to find: the assertion is a band, and the *why* is a finding.
+- [x] The ring runs here — both sides on terminal buses, no reduction, the case
       `m5-prestudy.md` §7 had ruled out for the classical tier
-      (`m4-context.md` D13).
-- [ ] Anti-vacuity: perturb one coefficient in our stator algebra; the external
-      check must go red. **Run it.**
+      (`m4-context.md` D13). The flat run passes on it at first attempt.
+- [x] Anti-vacuity: **run, and it does not go red — the engine refuses to build
+      first** (F7). A 1 % error in `_stator`'s `Iq` coefficient is caught at build
+      time by the back-substitution residual (0.010 against a 1e-10 gate). What
+      does go red, and on which channel, is F8.
+- [x] The hole M5 step 2 named: `build_oracle(:swing)` / `(:classical)` now call
+      core's own `_assert_frozen_flux`, so all three consumers of the frozen-flux
+      assumption refuse detailed data and cannot drift apart.
+- [x] `base_250_60` re-run at the new tier with the process-global bases
+      deliberately poisoned first — a new tier is a new place for them to go stale.
+
+### What this step found that the plan did not anticipate
+
+**F1 — a spike can be vacuous in exactly the way a test can, and the first one
+was.** S1's first form set `X_d = X′_d` (the degeneration), which makes the flux
+equation's right-hand side identically zero — so `E′q` held for *every* `T′`, and
+the spike would have "confirmed" `Inf` against a dead equation. Re-run with
+`X_d = 1.8` the ladder is exact: drift 3.547e-9 at `T′ = 1e8`, 3.547e-7 at 1e6,
+3.548e-5 at 1e4 — a clean `1/T′` law — while `Inf` gives 0.0. The fallback the
+pre-study wrote (large-but-finite plus a convergence check) is not needed, and the
+ladder became its own positive control instead.
+
+**F2 — the argument that S2 was already answered was reading a different
+component's source.** M4 ran `ClassicalMachine` with a negative mechanical input,
+green, 82/82 — but `ClassicalMachine`'s `τ_m_set` carries **no bounds at all**.
+`SauerPaiMachine` adds `bounds = (0, Inf)` to `vf_set`, `τ_m_set` and to the
+variables `vf`, `τ_m` and `τ_e`, and `τ_e` is the one that would bite on a
+generating machine's neighbour. Two components by the same authors, two different
+declarations — the same shape as §2a's torque finding, one level down.
+
+**F3 — the read-out had been silently choosing between two samples at an event
+instant.** Writing "the returned times must equal the requested grid" as an
+assertion immediately produced 252 stored rows against a 251-point grid: a
+callback firing **at** a grid point makes the solver store that instant twice,
+before and after the affect. The old read (`sol(t; idxs = …)`) took one of them
+without saying which. `_sample_rows` now takes the **first** — the pre-event one,
+which is the convention the GridSim playback driver already keeps. M4's 82/82 is
+unchanged by the switch, so the two agreed; the point is that it is now a decision
+rather than an accident.
+
+**F4 — "frozen" is frozen to round-off, not to the bit, and ONE cause explains
+three separate results.** `E′q`'s derivative is exactly zero and it still drifts by
+one ulp (2.2e-16) on the ring; `X_ls` varied across a run moves every channel by
+~1e-10; their two decoupled `ψ″` states seeded **×2** move things by ~6e-11. All
+three are the implicit solver's linear algebra: a differential state with a zero
+Jacobian row still sits in the Newton system, and the LU that solves it mixes the
+other rows in at round-off. Taking the adaptive error norm out of it entirely
+(fixed `dt`) tightens all three to ~1e-15 **without reaching zero**, so bit-identity
+is not recoverable and `===` is simply not available for a decoupled state inside
+an implicit solver. Our own side drifts by the identical 2.2e-16 — this is stiff
+integration, not PowerDynamics.
+
+**F5 — three parameters reach nothing at this degeneration, and one of them was
+the planned positive control.** `X_ls` (theirs), `X_d` (both sides) and — found by
+the control failing — `vf_set`. The field voltage enters only the flux derivative,
+which `T′ = Inf` zeroes, so perturbing it by 1 % moves the trajectory by 8.9e-16.
+The flat run's positive control was exactly that perturbation. Replaced by a 1 %
+perturbation of the seeded `E′_q` (6.9e-3, four orders clear), with the inert one
+kept as an assertion so the next reader does not have to take it on trust.
+
+**F6 — the stator-`ω` residual is the first residual in this repo pinned by a
+COEFFICIENT rather than by a ratio.** §2a predicted `(ω − 1)·V`: first order in
+slip, coefficient of order one. Measured: `gap(V) / (peak slip × |V|)` = 0.996,
+0.996, 0.995 at three disturbance sizes spanning a factor of four, and the gap
+doubles when the disturbance doubles to within 0.1 %. D14 could only assert
+proportionality (linear in loading over two decades); here the predicted number
+itself is available, so the assertion is the number.
+
+**F7 — the anti-vacuity mutation the plan asked for cannot go red, because a
+different guard fires first.** A 1 % error in `_stator`'s `Iq` coefficient makes
+the back-substituted state stop being a fixpoint of the network, and
+`DetailedEngine`'s build-time residual throws (0.010 against a 1e-10 gate) before
+any oracle runs. The two guards are in series, and which one fires is worth
+knowing: a reader who credited the external check with catching that class of
+error would be wrong about what the oracle covers.
+
+**F8 — what CAN go red, and the channel it goes red on, is the step's most useful
+measurement.** A 1 % `X′d` error on our side only is **invisible on voltage**
+(1.6e-15, i.e. the honest gap), because the initialisation re-derives
+`E′q = Vq + X′d·Id` from the power flow and buys a compensating internal voltage —
+the terminal behaviour is unchanged. It is caught on the `E′q` channel by twelve
+orders (1.6e-4 against 2.2e-16), and linearly in the error (20× at a 20 % error).
+This is the measured justification for the plan's "assert per state, never on an
+aggregate": here the channel that hides the error is not `f_coi`, it is `V`.
+
+**F9 — the transient comparison's resolution is bounded by the residual it exists
+to measure, and that is now asserted rather than caveated.** On the transient
+voltage channel the stator-`ω` residual is ~2.8e-3, while a **twenty** per cent
+`X′d` error moves our own trajectory by only ~4.8e-4. So with the flux frozen the
+reactances are pinned by the FLAT run and by nothing else. Step 4 is what makes
+`(X_d − X′_d)` live and gives them a transient check; the boundary is written as a
+test so it stays true.
+
+**F10 — the gitignored-manifest trap, third occurrence.** `reference/Manifest.toml`
+predated step 1 adding `LinearAlgebra` to core, so the package would not load at
+all. `Pkg.resolve()` fixed it with a one-line change and **no library version
+moved**, so M4's numbers and step 3's sit on the same tree. One correction while
+here: the earlier note that this manifest "pins PowerDynamics 5.0.0" is loose — the
+pin is the compat bound in `reference/Project.toml`; the manifest is a local
+resolve and is not in the repo.
 
 ## Step 4 — flux on: the equations step 2 could not see
 

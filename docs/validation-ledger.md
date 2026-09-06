@@ -125,9 +125,12 @@ to be written where the rows are, or the rows overclaim.
 | The `E′`-behind-`X′d` radial reduction `X − X′d,ᵢ − X′d,ⱼ` | Exact — proven by the *absence* of any loading-independent residual once the torque term is accounted for. Enforced structurally: branch degree ≠ 1 and a non-positive reduced reactance are both thrown | **external** + structural |
 | The oracle's own accuracy | Its self-convergence error is 3.5× ours at reltol 1e-3 and 18× at 1e-7 — **the floor is below us**, which is what D7 means by "not a ceiling" | convergence (measured) |
 
-## Detailed (DAE) tier — M5 steps 1-2, `src/engines/detailed.jl`
+## Detailed (DAE) tier — M5 steps 1-3, `src/engines/detailed.jl`
 
-Nothing external yet: PowerDynamics' `SauerPaiMachine` arrives at plan step 3.
+External as of step 3: PowerDynamics' `SauerPaiMachine` at its `X″ = X′`
+degeneration, with the flux frozen on **both** sides. The rows below that say
+"un-oracled" for the flux equations still say it — freezing the flux is precisely
+what makes this comparison clean, and step 4 is what switches it on.
 
 | Mechanism | Checked by | Label |
 |:---|:---|:---|
@@ -145,8 +148,33 @@ Nothing external yet: PowerDynamics' `SauerPaiMachine` arrives at plan step 3.
 | **What that oracle cannot see, measured rather than assumed** | Thawing `T′do`/`T′qo` from `Inf` to 5.0 / 0.5 s moves the trajectory by **2.3e-14** — four orders below the loosest band in the file. At the degeneration `Xd − X′d`, `Xq − X′q`, `X′q − X′d` and `Ra` are all exactly zero, so no mutation of the flux equations, the saliency term or the stator resistance can move a number here | **un-oracled (flux, saliency, `Ra`) — and the blindness is a measurement, not a caveat** |
 | The rotor-frame convention (`Vd + jVq = V·e^{−j(δ−π/2)}`) | **One check, and the two that look like they cover it provably do not.** Both mutations run: a *reflected* frame is caught at build time by the fixpoint residual (5.03 against a 1e-10 gate); a *consistently turned* frame (δ → δ + π/2 at both sites) passes the residual, the air-gap-power identity and the flat run, and is caught only by asserting `E′d = 0` and `E′q = Machine.E′` at the degeneration — a turned frame lands `E′d = [1.05, 1.02]`, `E′q ≈ 0` | **structural (mutation-checked, both branches run)** |
 | The air-gap power's two expressions agree | Build-time: the two-axis bracket `E′d·Id + E′q·Iq + (X′q−X′d)·Id·Iq` against the phasor `Re(Ẽ·conj(I))`. Provably one quantity (both reduce to `Vd·Id + Vq·Iq + Ra·\|I\|²`), so a gap is the rotation disagreeing with the stator inversion. **Its reach is stated in the code**: it cannot see a globally consistent frame turn | derived (structural), **reach named** |
-| Detailed data handed to the classical tier | `_assert_frozen_flux` refuses `SwingEngine` and `coi_model` by name (M5 step 2, D17). `Ra` is in the list because it changes the *initialisation* even where it changes no dynamics. **Owed:** `reference/`'s `build_oracle` has the same hole, and step 3 is where that guard belongs | structural (guard); **one entry point still owed** |
+| Detailed data handed to the classical tier | `_assert_frozen_flux` refuses `SwingEngine`, `coi_model` **and** `build_oracle(:swing)`/`(:classical)` by name (M5 steps 2-3, D17). `Ra` is in the list because it changes the *initialisation* even where it changes no dynamics. The third consumer calls core's own guard rather than a copy, so the three cannot drift | structural (guard); **all three entry points closed** |
 | The flux equations, the regulator, ZIP `a_i`/`a_p`, `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built, or built and switched off.** The flux equations exist and are exercised by no oracle at all until plan step 4; the rest is refused by name at build time with the step that owns it | **un-built / un-oracled, and refused rather than faked** |
+
+## External oracle for the detailed tier (M5 step 3) — `SauerPaiMachine` at `X″ = X′`
+
+**The header claim, before the rows.** The case is compiled from `NetworkModel`
+exactly as the M4 tiers are, so the same fork applies: everything downstream of the
+per-unit conversion is externally checked and nothing upstream is. Two things are
+specific to this tier. First, **both sides put the machine behind its reactance on
+an algebraic terminal bus**, so no line reduction is needed and the meshed ring —
+invalid for `:classical` — is a valid case here. Second, **the flux is frozen on
+both sides**, which is what leaves exactly one predicted residual to identify.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| The whole detailed initialisation — power flow, back-substitution, algebraic network, KCL signs, rotor frame | **The flat run on the meshed ring**, per state at two tolerances: every channel constant and equal across the two implementations below 1e-8, including the bus voltages, which are STATES on their side too (`busbar₊u_r`/`u_i`) and not reconstructed observables. Positive control: their seeded `E′_q` bumped 1 % reads 6.9e-3 | **external, per state** |
+| The stator-`ω` convention difference (`m5-prestudy.md` §2a) | **Identified by its coefficient, not bounded by a tolerance.** Predicted `(ω − 1)·V`; measured `gap(V) / (peak slip × \|V\|)` = 0.996, 0.996, 0.995 across a factor of four in disturbance size, with the gap doubling as the disturbance doubles to 0.1 %. Sharper than D14, which could only assert proportionality | **external, signature (coefficient)** |
+| `T′ = Inf` on their MULTIPLIED form | Spike S1: `mtkcompile` accepts `Inf·ẋ ~ rhs`, derivative exactly zero. Positive control is the `1/T′` ladder (3.547e-9 / 3.547e-7 / 3.548e-5 at `T′` = 1e8 / 1e6 / 1e4) on a *live* flux equation — the first form of the spike ran at the degeneration, where the RHS is identically zero and any `T′` would have passed | measurement (with its own anti-vacuity) |
+| Their `bounds = (0, Inf)` on `vf`, `τ_m`, `τ_e` | Spike S2: metadata, not enforced — `τ_m_set = −0.5` builds, solves, `τ_e = −0.316`. No precondition needed. It mattered because **every** fixture here balances with a negative-`P0` machine | measurement |
+| The degeneration actually took | `X_ls` — a parameter of THEIR component that survives nowhere in the reduction — varied across a run moves every channel below the band. Sharper form: their two decoupled `ψ″` states seeded **×2** also move nothing above the band. Both are bands and not `===`, and the reason is a finding: a differential state with a zero Jacobian row still sits in the implicit solver's Newton system, so the LU mixes it in at round-off. Fixed `dt` tightens it to ~1e-15 without reaching zero | **positive control (band, with the reason for the band measured)** |
+| Model bases at the new tier | Re-run on the 250 MVA / 60 Hz fixture with the process-global bases deliberately poisoned to 1.0/1.0 first. A new tier is a new place for construction-time globals to go stale | structural (mutation-checked) |
+| A stator coefficient wrong on our side only | **Caught on `E′q`, invisible on `V`.** A 1 % `X′d` error moves the voltage by 1.6e-15 (the honest gap) because the initialisation re-derives `E′q = Vq + X′d·Id` and buys a compensating internal voltage; it moves `E′q` by 1.6e-4 against a 2.2e-16 honest gap, linearly in the error. This is the measured justification for "assert per state" — the channel that hides it here is `V`, not `f_coi` | **external, anti-vacuity (channel-specific)** |
+| A branch reactance wrong on our side only | Flat-run `V` gap 2.5e-5 at a 1 % error and 2.5e-6 at 0.1 %, against a 8.9e-16 honest gap — nine to ten orders. The mapping class the oracle exists for | **external, anti-vacuity** |
+| A coefficient wrong inside `_stator` itself | **Not this oracle's catch.** A 1 % error in the `Iq` coefficient is refused at BUILD time by the back-substitution residual (0.010 against a 1e-10 gate) and never reaches a comparison. The two guards are in series and it matters which fires | derived (structural) — **explicitly not external** |
+| `X_d`, `X_q`, `vf_set` at this degeneration | **Nothing — and asserted, not caveated.** `X_d` scaled ×4 leaves every channel bit-identical; `vf_set` bumped 1 % moves 8.9e-16, because the excitation reaches only a derivative that `T′ = Inf` zeroes. On the transient voltage channel a **20 %** `X′d` error (4.8e-4) is smaller than the stator-`ω` residual (2.8e-3), so the reactances are pinned by the flat run and by nothing else here | **un-oracled at this step, bounded by assertion; step 4 owns it** |
+| `TripGenerator` at the detailed tier | Refused by `build_oracle(:sauer_pai)` because `inject!(::DetailedEngine, ::TripGenerator)` refuses it too — an oracle case our own engine cannot run would read as a fidelity finding | structural (refused rather than faked) |
+| Which stored sample an output time means | `_sample_rows`: the solver is handed the output grid as its own `saveat` and nothing is reconstructed from an interpolant, but a callback firing AT a grid point stores that instant **twice**. The pre-event row is taken, matching the playback driver's own convention. M4's 82/82 is unchanged by making the choice explicit | structural |
 
 ## Owed rows
 
