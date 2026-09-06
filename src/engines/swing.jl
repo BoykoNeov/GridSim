@@ -537,6 +537,73 @@ function _swing_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int})
 end
 
 """
+    _assert_classical_tier(net::NetworkModel)
+
+The three structural preconditions of the classical (network-swing) tier, refused
+at build time by name — the shape `reference/src/oracle.jl` uses for its own
+(`_assert_radial`, `_assert_governor_free`).
+
+**All three used to live in the `NetworkModel` constructor.** They moved here in
+M5 step 1 (`docs/plans/m5-context.md` D3) because each is a property of *this
+engine*, not of the data: the canonical model now has to be able to express a load
+bus and a machine-free bus, because the detailed tier represents them. The
+boundary the model file called "a loud error rather than a quietly wrong answer"
+is unchanged — it is just enforced by whoever cannot cross it.
+
+  1. **One machine per bus.** A bus with none has no differential state at this
+     tier; a bus with two needs the terminal voltage as an unknown. Shared with
+     `branch_arrays` and `coi_model`, which have the same boundary for the same
+     reason.
+  2. **No `Load`.** This tier's electrical model is a constant-magnitude `E′` at
+     every bus, which holds voltage up by construction — a voltage-dependent load
+     has nothing to depend on. M2a's convention (a load is a machine with negative
+     `P0`) is unchanged and is what these models use.
+  3. **Reachability**, `|P0ᵢ| ≤ Σⱼ K_ij`. The tasks list expected only the first
+     two to move; this one had to as well, and for a stronger reason than tier
+     boundaries: `K_ij = E′ᵢE′ⱼ/X_ij` is **uncomputable** on a model with a
+     machine-free bus, so it cannot stay in a constructor that must accept one.
+
+Necessary, **not** sufficient for (3): since `Pᵢ = Σⱼ K_ij·sin(δᵢ−δⱼ)`, a machine
+asked to push more than its incident couplings can carry has no steady state.
+Passing does not prove an equilibrium exists, it only rules out one that provably
+cannot.
+"""
+function _assert_classical_tier(net::NetworkModel)
+    _assert_one_machine_per_bus(net, "SwingEngine")
+    isempty(net.loads) || throw(ArgumentError(
+        "SwingEngine: the model carries $(length(net.loads)) Load(s) " *
+        "($(join([l.id for l in net.loads], ", "))). The classical tier represents " *
+        "every bus as a constant-magnitude E′, which holds the voltage up by " *
+        "construction, so there is nothing for a voltage-dependent load to depend " *
+        "on. Use the detailed tier, or M2a's convention — a load is a machine with " *
+        "negative P0."))
+    # Only reached once one-machine-per-bus holds, which is what makes the vertex
+    # index and the machine index the same number here.
+    ma = machine_arrays(net)
+    ba = branch_arrays(net)
+    ma.bus == collect(1:length(net.buses)) || throw(ArgumentError(
+        "SwingEngine: machine k does not sit on bus k (machine_arrays(net).bus = " *
+        "$(ma.bus)). This engine indexes machines BY VERTEX throughout; the identity " *
+        "holds whenever every bus carries exactly one machine and the model sorts " *
+        "machines by bus, and it is asserted rather than assumed because a change to " *
+        "either would otherwise read some other machine's inertia in silence."))
+    reach = zeros(Float64, length(net.buses))
+    for e in eachindex(ba.K)
+        reach[ba.src[e]] += ba.K[e]
+        reach[ba.dst[e]] += ba.K[e]
+    end
+    for (v, m) in pairs(net.machines)
+        P_pu = abs(m.P0) / net.S_base
+        P_pu ≤ reach[v] || throw(ArgumentError(
+            "SwingEngine: machine $(m.id) has |P0| = $(abs(m.P0)) MW ($(P_pu) pu), " *
+            "which exceeds the total coupling of its incident branches " *
+            "($(reach[v]) pu). Since P = Σ K·sin(Δδ), no steady state exists. " *
+            "Strengthen the network, lower the injection, or raise E′."))
+    end
+    return nothing
+end
+
+"""
     SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
                 out_of_step=[], ramp=[], capacity=200_000)
 
@@ -594,6 +661,9 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
                      ramp = Pair{Symbol,GenerationRamp}[],
                      capacity::Integer = _TRAJ_CAPACITY)
+    # The tier boundary, first thing — before any array is derived from a model
+    # this engine may turn out not to be able to represent (m5-context.md D3).
+    _assert_classical_tier(net)
     ma = machine_arrays(net)
     ba = branch_arrays(net)
     nb = length(net.buses)

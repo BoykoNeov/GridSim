@@ -102,6 +102,15 @@ export GeneratingUnit, SystemModel, example_system
 # exports before being added — the collision hazard that cost a round in M1.
 export Bus, Branch, Machine, NetworkModel
 export machine_arrays, branch_arrays, machine_at
+# M5 step 1 (docs/plans/m5-context.md D3): the canonical model gained a `Load` at a
+# bus and buses that carry no machine, so it gained the views and accessors that
+# make either readable. `branch_topology` is `branch_arrays` minus `K` — the part
+# that needs no machine at either end — and `machines_at`/`load_at` are the
+# bus-indexed lookups `machine_at` can no longer stand in for.
+#
+# All five checked clear against GLMakie's exports before being added, the standing
+# check since M1: `Load`, `load_arrays`, `branch_topology`, `machines_at`, `load_at`.
+export Load, load_arrays, branch_topology, machines_at, load_at
 export two_machine_system, three_machine_ring
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.

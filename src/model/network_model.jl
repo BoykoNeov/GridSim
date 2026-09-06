@@ -260,6 +260,81 @@ struct Branch
 end
 
 """
+    Load
+
+One aggregate load at a bus — the M5 addition that lets a bus consume power
+without carrying a rotating mass (`docs/plans/m5-context.md` D3).
+
+**This does not replace M2a's "a load is a machine with negative `P0`".** A
+negative-`P0` machine stays a machine and every M2/M3 scenario constructs
+unchanged; `three_machine_ring()`'s −110 MW bus is still a machine. `Load` is for
+buses that carry no rotating mass at all, which the classical tier cannot
+represent (it needs a differential state per bus) and the detailed tier can (the
+bus voltage is an algebraic unknown).
+
+  - `id`   — unique name.
+  - `bus`  — id of the bus it sits on (at most one load per bus; see below).
+  - `P0`   — MW, active power **drawn** at nominal voltage. Positive = consuming,
+             which is the opposite sign convention from `Machine.P0` and is the
+             one every load flow uses. The model's balance guard accounts for it.
+  - `Q0`   — MVAr, reactive power drawn at nominal voltage. May be negative
+             (a capacitive bus).
+
+ZIP coefficients (`m5-prestudy.md` §6), **carried and validated here, consumed by
+plan step 6** — the same footing `Machine.Xd′` had in M2 (real data, on the right
+base, with the milestone that reads it named):
+
+  - `a_z`, `a_i`, `a_p` — constant-impedance / constant-current / constant-power
+    shares, `P = P0·(a_z·V² + a_i·V + a_p)` and `Q` likewise. They must sum to 1,
+    so the load draws exactly `P0` at `V = 1` whatever the split. The default is
+    `a_z = 1` — pure constant impedance, the case with a closed form (it folds
+    into the admittance) and the case PowerDynamics' `ZIPLoad` reduces to.
+
+**The engine, not this type, rejects the shares it has not implemented.** Plan
+step 1 solves only the constant-impedance term, so a load with `a_i` or `a_p`
+non-zero is refused *by the engine* with the step named. Validating the data here
+and refusing to integrate it there is the split this file already uses for `Xd′`:
+data that is only sometimes read is exactly the data that gets set wrong and
+noticed a milestone later.
+"""
+struct Load
+    id::Symbol
+    bus::Symbol
+    P0::Float64       # MW   — drawn at V = 1 (positive = consuming)
+    Q0::Float64       # MVAr — drawn at V = 1 (may be negative)
+    a_z::Float64      # constant-impedance share
+    a_i::Float64      # constant-current share
+    a_p::Float64      # constant-power share
+
+    # The ZIP shares are defaulted positional, the precedent M3 set for the
+    # governor triple: every call site that does not care builds the
+    # constant-impedance load, which is the one plan step 1 integrates.
+    function Load(id::Symbol, bus::Symbol, P0::Real, Q0::Real,
+                  a_z::Real = 1.0, a_i::Real = 0.0, a_p::Real = 0.0)
+        # `P0 = 0` is legal (a purely reactive shunt is a real thing); negative is
+        # not, because a load that generates is a machine and belongs in the other
+        # collection where the balance guard and `coi_model` can see it.
+        P0 ≥ 0 || throw(ArgumentError(
+            "Load $id: P0 ($P0) must be ≥ 0 MW — a load draws power. A bus that " *
+            "injects is a Machine (M2a's negative-P0 convention is unchanged)."))
+        for (nm, a) in ((:a_z, a_z), (:a_i, a_i), (:a_p, a_p))
+            a ≥ 0 || throw(ArgumentError(
+                "Load $id: ZIP share $nm ($a) must be ≥ 0."))
+        end
+        # Summing to one is what makes `P0` mean "drawn at V = 1" regardless of the
+        # split — without it the same `P0` would mean a different power for every
+        # coefficient set, and the balance guard below would be comparing schedules
+        # that are not commensurable.
+        abs(a_z + a_i + a_p - 1.0) ≤ 1e-12 || throw(ArgumentError(
+            "Load $id: ZIP shares must sum to 1 (got a_z + a_i + a_p = " *
+            "$(a_z + a_i + a_p)). They are shares of P0, which is the power drawn " *
+            "at V = 1; a sum ≠ 1 silently redefines what P0 means."))
+        return new(id, bus, Float64(P0), Float64(Q0),
+                   Float64(a_z), Float64(a_i), Float64(a_p))
+    end
+end
+
+"""
     NetworkModel(S_base, f0, buses, branches, machines)
 
 The canonical M2 network: buses, the branches between them, and the machines on
@@ -282,28 +357,43 @@ The constructor rejects models that are wrong on their face:
   - a machine or branch referring to a bus that does not exist;
   - a second branch between a pair of buses already joined (parallel circuits —
     see the guard's own comment for why rejecting beats silently dropping one);
-  - a bus with no machine, or with more than one (the tier boundary — see the
-    file header);
+  - a machine or load referring to a bus that does not exist;
+  - a second load at a bus already carrying one (they are additive — merge them;
+    the rejection keeps `load_at_bus` a plain vertex → index map, and a silently
+    dropped load is the failure mode the parallel-circuit guard above exists for);
   - a disconnected network (each island has its own arbitrary angle reference and
     its own frequency, so a single aggregate read-out would be meaningless);
-  - `Σ P0 ≠ 0` — the network is lossless, so a net injection has **no**
-    equilibrium at all and the steady-state solve would fail or drift;
-  - `|P0ᵢ| > Σⱼ K_ij` for some machine, where `K_ij = E′ᵢE′ⱼ/X_ij` — since
-    `Pᵢ = Σⱼ K_ij·sin(δᵢ−δⱼ)`, a
-    machine asked to push more than its incident couplings can carry has no
-    steady state. Necessary, **not** sufficient: passing this check does not
-    prove an equilibrium exists, it only rules out one that provably cannot.
+  - `Σ machines.P0 ≠ Σ loads.P0` — the network is lossless, so a net injection has
+    **no** equilibrium at all and the steady-state solve would fail or drift.
+
+**Three guards that used to live here have MOVED to `SwingEngine`** (M5 step 1,
+`docs/plans/m5-context.md` D3), because each is a property of the classical tier
+and not of the data: a bus with no machine, a bus with more than one, and the
+`|P0ᵢ| ≤ Σⱼ K_ij` reachability check. The boundary stays loud — the engine refuses
+such a model by name, with the tier named in the message — it just stops being a
+property of the model. The third moved for a reason the tasks list did not
+anticipate: `K_ij = E′ᵢE′ⱼ/X_ij` is not merely *inappropriate* on a model with
+machine-free buses, it is **uncomputable**, since there is no `E′` at one end.
+
+**What did NOT widen: there is no `Σ Q0` twin.** The active-power balance holds
+because a pure series reactance is lossless in P. It absorbs `I²X` of reactive
+power, so a Q-balance guard written by symmetry with the P one would reject every
+valid model. (Derive the limit; do not assume the symmetry cancels.)
 """
 struct NetworkModel
     S_base::Float64
     f0::Float64
     buses::Vector{Bus}
     branches::Vector{Branch}
-    machines::Vector{Machine}      # stored in bus order: machines[v] is on buses[v]
+    machines::Vector{Machine}      # sorted by bus (see `machines_at`)
+    loads::Vector{Load}            # sorted by bus (see `load_at`)
     bus_index::Dict{Symbol,Int}    # bus id -> vertex index
+    machines_at_bus::Vector{Vector{Int}}  # vertex -> indices into `machines` (may be empty)
+    load_at_bus::Vector{Int}          # vertex -> index into `loads`, or 0 for none
 
     function NetworkModel(S_base::Real, f0::Real, buses::Vector{Bus},
-                          branches::Vector{Branch}, machines::Vector{Machine})
+                          branches::Vector{Branch}, machines::Vector{Machine},
+                          loads::Vector{Load} = Load[])
         S_base > 0 || throw(ArgumentError("NetworkModel: S_base ($S_base) must be > 0 MVA."))
         f0 > 0 || throw(ArgumentError("NetworkModel: f0 ($f0) must be > 0 Hz."))
         isempty(buses) && throw(ArgumentError("NetworkModel: needs at least one bus."))
@@ -311,28 +401,61 @@ struct NetworkModel
         _reject_duplicates(b -> b.id, buses, "bus")
         _reject_duplicates(b -> b.id, branches, "branch")
         _reject_duplicates(m -> m.id, machines, "machine")
+        _reject_duplicates(l -> l.id, loads, "load")
 
         bus_index = Dict{Symbol,Int}(b.id => v for (v, b) in enumerate(buses))
 
-        # --- one machine per bus: the tier boundary, enforced ---
-        at_bus = zeros(Int, length(buses))          # vertex -> index into `machines`
+        # --- machines grouped by bus; the COUNT is no longer this type's business --
+        # A bus may now carry zero machines (a load or junction bus) or several. The
+        # classical tier still cannot represent either, and `SwingEngine` still
+        # refuses both, loudly and by name — the check moved, it did not go away
+        # (m5-context.md D3).
+        #
+        # Machines are still stored SORTED BY BUS, and the sort is stable, so on any
+        # model where every bus carries exactly one machine the order is bit-for-bit
+        # what M2/M3 produced and machine index still equals vertex index. That
+        # identity is what `branch_arrays` and `SwingEngine`'s `for i in 1:nb` rely
+        # on, and it is why both now assert it rather than assume it.
+        grouped = [Int[] for _ in 1:length(buses)]
         for (k, m) in pairs(machines)
             v = get(bus_index, m.bus, 0)
             v == 0 && throw(ArgumentError(
                 "Machine $(m.id) sits on bus $(m.bus), which is not in the model."))
-            at_bus[v] == 0 || throw(ArgumentError(
-                "Bus $(buses[v].id) carries two machines ($(machines[at_bus[v]].id) and " *
-                "$(m.id)). The classical tier has one differential state per bus; two " *
-                "machines on a bus needs the terminal voltage as an unknown (the DAE tier)."))
-            at_bus[v] = k
+            push!(grouped[v], k)
         end
-        for (v, k) in pairs(at_bus)
-            k == 0 && throw(ArgumentError(
-                "Bus $(buses[v].id) carries no machine. Every bus in the classical tier " *
-                "needs a differential state; a passive bus is an algebraic node (the DAE " *
-                "tier), and a load is a machine with negative P0."))
+        ordered = Machine[machines[k] for v in 1:length(buses) for k in grouped[v]]
+        # Re-index the groups against the SORTED vector: `grouped` holds positions in
+        # the caller's vector, and every consumer wants positions in `net.machines`.
+        # The sorted position of the j-th machine of bus v is its running count,
+        # because `ordered` is exactly this walk flattened.
+        machines_at = [Int[] for _ in 1:length(buses)]
+        next_k = 0
+        for v in 1:length(buses), _ in grouped[v]
+            next_k += 1
+            push!(machines_at[v], next_k)
         end
-        ordered = Machine[machines[k] for k in at_bus]   # bus order, by construction
+
+        # --- loads: at most one per bus (they are additive; merge them) ------------
+        seen_load = zeros(Int, length(buses))
+        for (k, l) in pairs(loads)
+            v = get(bus_index, l.bus, 0)
+            v == 0 && throw(ArgumentError(
+                "Load $(l.id) sits on bus $(l.bus), which is not in the model."))
+            seen_load[v] == 0 || throw(ArgumentError(
+                "Bus $(buses[v].id) carries two loads ($(loads[seen_load[v]].id) and " *
+                "$(l.id)). Loads at one bus are additive — merge them into one. " *
+                "Rejecting keeps `load_at_bus` a plain vertex → index map; the ZIP shares " *
+                "of a merged pair are the P0-weighted mean, which is a decision for " *
+                "whoever writes the data, not for this constructor."))
+            seen_load[v] = k
+        end
+        # Sorted by bus, like the machines, so `net.loads` order is a property of the
+        # topology and not of the order the caller happened to list them in.
+        ordered_loads = Load[loads[seen_load[v]] for v in 1:length(buses) if seen_load[v] != 0]
+        load_at = zeros(Int, length(buses))
+        for (k, l) in pairs(ordered_loads)
+            load_at[bus_index[l.bus]] = k
+        end
 
         # --- branch endpoints exist, at most one branch per pair, one island ---
         # Parallel circuits are rejected rather than supported, and the reason is
@@ -360,46 +483,46 @@ struct NetworkModel
             "reference and its own frequency, so one aggregate read-out would be " *
             "meaningless. Split it into separate models, or add the missing branch."))
 
-        # --- lossless network ⇒ the injections must sum to zero ---
-        ΣP = sum(m.P0 for m in ordered)
+        # --- lossless network ⇒ scheduled generation must meet scheduled load ---
+        # Widened for `Load`, whose sign convention is the opposite of a machine's:
+        # a machine's `P0` is an INJECTION (negative = absorbing, M2a's load) and a
+        # load's `P0` is a DRAW. On every M2/M3 model `loads` is empty and this is
+        # arithmetically the guard it always was, to the bit.
+        #
+        # This is the SCHEDULE balance, at nominal voltage. It is not, and cannot be,
+        # the balance the solved network actually settles at once loads depend on
+        # voltage: the detailed tier's own power flow finds |V| ≠ 1 and a
+        # constant-impedance load then draws P0·|V|², so the slack machine absorbs the
+        # difference. That is why the detailed engine takes each machine's mechanical
+        # power from the POWER FLOW rather than from `P0` (m5-prestudy.md §4).
+        # Measured on the step-1 spike: a 0.8 pu load at |V| = 0.978 draws 0.765, and
+        # the slack settles at 0.465 against a scheduled 0.5.
+        ΣP = sum(m.P0 for m in ordered; init = 0.0) -
+             sum(l.P0 for l in ordered_loads; init = 0.0)
         abs(ΣP) ≤ 1e-6 * S_base || throw(ArgumentError(
-            "NetworkModel: Σ P0 = $(ΣP) MW ≠ 0. The classical network is lossless, so a " *
-            "net injection has no equilibrium at all — the steady-state solve would fail " *
-            "or drift. (A load is a machine with negative P0.)"))
+            "NetworkModel: Σ machines.P0 − Σ loads.P0 = $(ΣP) MW ≠ 0. The network is " *
+            "lossless in P, so a net injection has no equilibrium at all — the " *
+            "steady-state solve would fail or drift. (A machine's P0 is an injection; " *
+            "a load's P0 is a draw. M2a's negative-P0 machine is still a machine.)"))
 
-        # --- each machine's injection is within reach of its incident couplings ---
-        # Necessary, not sufficient (see the docstring). Computed from the same
-        # coupling formula the engine integrates against, so the two cannot drift.
-        reach = zeros(Float64, length(buses))
-        for br in branches
-            i, j = bus_index[br.from], bus_index[br.to]
-            K = _coupling(ordered[i], ordered[j], br)
-            reach[i] += K
-            reach[j] += K
-        end
-        for (v, m) in pairs(ordered)
-            P_pu = abs(m.P0) / S_base
-            P_pu ≤ reach[v] || throw(ArgumentError(
-                "Machine $(m.id): |P0| = $(abs(m.P0)) MW ($(P_pu) pu) exceeds the total " *
-                "coupling of its incident branches ($(reach[v]) pu). Since " *
-                "P = Σ K·sin(Δδ), no steady state exists. Strengthen the network, lower " *
-                "the injection, or raise E′."))
-        end
+        # There is deliberately NO Σ Q0 guard — see the docstring. A series reactance
+        # absorbs I²X of reactive power, so the P balance does not have a Q twin.
 
-        return new(Float64(S_base), Float64(f0), buses, branches, ordered, bus_index)
+        return new(Float64(S_base), Float64(f0), buses, branches, ordered,
+                   ordered_loads, bus_index, machines_at, load_at)
     end
 end
 
 """
-    NetworkModel(; S_base, f0, buses, branches, machines)
+    NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[])
 
 Keyword form, so a model reads as its own documentation at a call site. Same
 validation — the positional inner constructor is the only path, so no
 `NetworkModel` can exist unvalidated regardless of how it was built (including a
 future `from_powersystems`, D5).
 """
-NetworkModel(; S_base, f0, buses, branches, machines) =
-    NetworkModel(S_base, f0, buses, branches, machines)
+NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[]) =
+    NetworkModel(S_base, f0, buses, branches, machines, loads)
 
 # Duplicate-id rejection, shared by the three collections so the message reads the
 # same in each. `key` extracts the id.
@@ -434,11 +557,27 @@ through here, so none of them can hold a different convention.
 @inline _coupling(mi::Machine, mj::Machine, br::Branch) = mi.E′ * mj.E′ / br.X
 
 """
-    machine_arrays(net::NetworkModel) -> (; H, D, Pm, E, Xd, invR, headroom, Tg)
+    machine_arrays(net::NetworkModel) -> (; bus, H, D, Pm, E, Xd, invR, headroom, Tg)
 
-The machine parameters as contiguous `Vector{Float64}`s **indexed by vertex**
-(entry `v` belongs to `net.buses[v]`), all converted to the **system base** — the
-struct-of-arrays view the engine integrates against (SPEC §4).
+The machine parameters as contiguous `Vector{Float64}`s **indexed by machine**
+(entry `k` belongs to `net.machines[k]`), all converted to the **system base** —
+the struct-of-arrays view the engine integrates against (SPEC §4).
+
+**Indexed by machine, not by vertex — and the difference used to be invisible.**
+Until M5 every bus carried exactly one machine, so machine index and vertex index
+were the same number and this docstring said "indexed by vertex". They are no
+longer the same, because a bus may now carry no machine at all. The arrays stay
+machine-indexed (the loop below always was), and the vertex each machine sits on
+arrives as its own column:
+
+  - `bus` — `Vector{Int}`, the **vertex index** of each machine's bus. On any
+            model where every bus carries one machine this is exactly `1:nb`,
+            which is what lets `SwingEngine` keep indexing by vertex after
+            asserting that identity rather than silently reading the wrong
+            machine's inertia.
+
+The alternative — keeping the arrays vertex-indexed with holes — was rejected:
+a machine-free bus would need a sentinel `H`, and `H` sits in a denominator.
 
   - `H`  — s, inertia on `S_base`  (`Hᵢ · S_ratedᵢ/S_base`)
   - `D`  — pu/pu, damping on `S_base` (same weight)
@@ -470,6 +609,7 @@ Derived on call, never stored: one canonical model, compiled views (SPEC §3.2).
 function machine_arrays(net::NetworkModel)
     S_base = net.S_base
     n = length(net.machines)
+    bus = Vector{Int}(undef, n)
     H  = Vector{Float64}(undef, n)
     D  = Vector{Float64}(undef, n)
     Pm = Vector{Float64}(undef, n)
@@ -479,6 +619,7 @@ function machine_arrays(net::NetworkModel)
     headroom = Vector{Float64}(undef, n)
     Tg       = Vector{Float64}(undef, n)
     for (v, m) in pairs(net.machines)
+        bus[v] = net.bus_index[m.bus]
         w = m.S_rated / S_base          # machine base -> system base, for powers
         H[v]  = m.H * w
         D[v]  = m.D * w
@@ -492,7 +633,7 @@ function machine_arrays(net::NetworkModel)
         headroom[v] = (m.Pmax - m.P0) / S_base
         Tg[v]       = m.Tg
     end
-    return (; H, D, Pm, E, Xd, invR, headroom, Tg)
+    return (; bus, H, D, Pm, E, Xd, invR, headroom, Tg)
 end
 
 """
@@ -513,6 +654,12 @@ exact on every topology, whereas folding them in is exact only on a radial pair.
 See point 2 of the tier note at the top of this file.
 """
 function branch_arrays(net::NetworkModel)
+    # `K` needs an `E′` at BOTH ends, so this view exists only for a model where
+    # every bus carries exactly one machine. Loud, by name — and note this is not a
+    # taste judgement about tiers: on a machine-free bus `K` is uncomputable, and
+    # `net.machines[i]` indexed by a VERTEX would quietly return some other bus's
+    # machine. See `branch_topology` for the machine-free view.
+    _assert_one_machine_per_bus(net, "branch_arrays")
     S_base = net.S_base
     n = length(net.branches)
     src = Vector{Int}(undef, n)
@@ -530,6 +677,96 @@ function branch_arrays(net::NetworkModel)
 end
 
 """
+    _assert_one_machine_per_bus(net::NetworkModel, who::AbstractString)
+
+The classical tier's structural precondition, in the shape `reference/src/oracle.jl`
+uses for its own (`_assert_radial`, `_assert_governor_free`): refused at build time,
+by name, with the caller named in the message.
+
+It lived in the `NetworkModel` constructor until M5 (`docs/plans/m5-context.md` D3).
+It moved because it is a property of the *engine*, not of the data — but it moved
+intact, so the boundary the M2 file header called "a loud error rather than a
+quietly wrong answer" is still exactly that.
+"""
+function _assert_one_machine_per_bus(net::NetworkModel, who::AbstractString)
+    for (v, ks) in pairs(net.machines_at_bus)
+        isempty(ks) && throw(ArgumentError(
+            "$who: bus $(net.buses[v].id) carries no machine. Every bus in the " *
+            "classical tier needs a differential state; a passive bus is an algebraic " *
+            "node, which is the detailed (DAE) tier. In the classical tier a load is a " *
+            "machine with negative P0."))
+        length(ks) == 1 || throw(ArgumentError(
+            "$who: bus $(net.buses[v].id) carries $(length(ks)) machines " *
+            "($(join([net.machines[k].id for k in ks], ", "))). The classical tier has " *
+            "one differential state per bus; two machines on a bus needs the terminal " *
+            "voltage as an unknown, which is the detailed (DAE) tier."))
+    end
+    return nothing
+end
+
+"""
+    branch_topology(net::NetworkModel) -> (; src, dst, X)
+
+The branches as contiguous arrays indexed by branch, in `net.branches` order —
+**the part of `branch_arrays` that does not need a machine at either end**.
+
+  - `src`, `dst` — `Vector{Int}` vertex indices of the endpoints
+  - `X` — pu on `S_base`, the branch's own series reactance (as given)
+
+This is what the detailed (DAE) tier reads, where a branch may join two buses
+neither of which carries a machine. `branch_arrays` is the classical tier's view
+and additionally carries `K`, which is why it has a precondition and this does not.
+"""
+function branch_topology(net::NetworkModel)
+    n = length(net.branches)
+    src = Vector{Int}(undef, n)
+    dst = Vector{Int}(undef, n)
+    X   = Vector{Float64}(undef, n)
+    for (e, br) in pairs(net.branches)
+        src[e] = net.bus_index[br.from]
+        dst[e] = net.bus_index[br.to]
+        X[e]   = br.X
+    end
+    return (; src, dst, X)
+end
+
+"""
+    load_arrays(net::NetworkModel) -> (; bus, P, Q, a_z, a_i, a_p)
+
+The loads as contiguous arrays **indexed by load**, converted to the system base —
+the counterpart of `machine_arrays`, and for the same reason: one place where the
+conversion happens.
+
+  - `bus` — `Vector{Int}`, the vertex index of each load's bus
+  - `P`, `Q` — pu on `S_base`, **drawn** at `V = 1` (positive `P` = consuming)
+  - `a_z`, `a_i`, `a_p` — the ZIP shares, dimensionless and base-free
+
+Loads carry no base of their own — unlike a machine, whose `H`, `D` and `Xd′` are
+on its own `S_rated` — so the only conversion is `MW/S_base`. That asymmetry is
+worth naming because the machine converter's weight is the thing that keeps going
+wrong, and its absence here is correct rather than an omission.
+"""
+function load_arrays(net::NetworkModel)
+    S_base = net.S_base
+    n = length(net.loads)
+    bus = Vector{Int}(undef, n)
+    P   = Vector{Float64}(undef, n)
+    Qd  = Vector{Float64}(undef, n)
+    a_z = Vector{Float64}(undef, n)
+    a_i = Vector{Float64}(undef, n)
+    a_p = Vector{Float64}(undef, n)
+    for (k, l) in pairs(net.loads)
+        bus[k] = net.bus_index[l.bus]
+        P[k]   = l.P0 / S_base
+        Qd[k]  = l.Q0 / S_base
+        a_z[k] = l.a_z
+        a_i[k] = l.a_i
+        a_p[k] = l.a_p
+    end
+    return (; bus, P, Q = Qd, a_z, a_i, a_p)
+end
+
+"""
     machine_at(net::NetworkModel, bus::Symbol) -> Machine
 
 The machine on `bus`. Throws if the bus is not in the model. (Every bus carries
@@ -538,7 +775,41 @@ exactly one machine — see the tier note at the top of this file.)
 function machine_at(net::NetworkModel, bus::Symbol)
     v = get(net.bus_index, bus, 0)
     v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
-    return net.machines[v]
+    ks = net.machines_at_bus[v]
+    # `net.machines[v]` — indexing the machine vector with a VERTEX — is what this
+    # function used to do, and it was right only while the two indices coincided.
+    isempty(ks) && throw(ArgumentError(
+        "NetworkModel: bus :$bus carries no machine. Use `machines_at` for a bus " *
+        "that may carry none."))
+    length(ks) == 1 || throw(ArgumentError(
+        "NetworkModel: bus :$bus carries $(length(ks)) machines. Use `machines_at`, " *
+        "which returns all of them."))
+    return net.machines[ks[1]]
+end
+
+"""
+    machines_at(net::NetworkModel, bus::Symbol) -> Vector{Machine}
+
+Every machine on `bus`, possibly none. The general form of `machine_at`, which is
+the one-machine convenience and throws when that is not what the bus holds.
+"""
+function machines_at(net::NetworkModel, bus::Symbol)
+    v = get(net.bus_index, bus, 0)
+    v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
+    return Machine[net.machines[k] for k in net.machines_at_bus[v]]
+end
+
+"""
+    load_at(net::NetworkModel, bus::Symbol) -> Union{Load,Nothing}
+
+The load on `bus`, or `nothing` if it carries none. Throws if the bus is not in
+the model — a missing bus is a typo, an absent load is ordinary.
+"""
+function load_at(net::NetworkModel, bus::Symbol)
+    v = get(net.bus_index, bus, 0)
+    v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
+    k = net.load_at_bus[v]
+    return k == 0 ? nothing : net.loads[k]
 end
 
 """
@@ -685,6 +956,27 @@ and the difference is exactly zero.
     separate fixtures (a tripped machine with `D = 0`) to isolate the swing content.
 """
 function coi_model(net::NetworkModel)
+    # SPEC §3.2's one working proof that reduced models are DERIVED views, so what
+    # may be handed to it is not a matter of taste (m5-context.md D3). It refuses a
+    # model this aggregation has no validated meaning for rather than quietly
+    # aggregating over the machines and dropping the rest of the system on the floor:
+    #
+    #   - a machine-free bus or a two-machine bus — the same structural precondition
+    #     `SwingEngine` takes, and for the same reason: `coi_model` compiles the
+    #     classical tier's aggregate, so it inherits the classical tier's boundary;
+    #   - a `Load` — folding a voltage-dependent load into an aggregate damping
+    #     constant is a MODELLING CLAIM nobody has validated, and it would land
+    #     inside the one derivation the repo points at to show reduced models are
+    #     derived rather than hand-maintained. An aggregate view of the detailed tier
+    #     is real work and is not this milestone's.
+    _assert_one_machine_per_bus(net, "coi_model")
+    isempty(net.loads) || throw(ArgumentError(
+        "coi_model: the model carries $(length(net.loads)) Load(s) " *
+        "($(join([l.id for l in net.loads], ", "))). Folding a voltage-dependent load " *
+        "into the aggregate damping constant D is an unvalidated modelling claim, and " *
+        "this function is SPEC §3.2's proof that reduced models are derived views. " *
+        "Use the detailed tier, or express the load as a machine with negative P0 " *
+        "(M2a's convention, which is unchanged)."))
     ma = machine_arrays(net)                 # the one per-unit converter (see above)
     units = Vector{GeneratingUnit}(undef, length(net.machines))
     for (v, m) in pairs(net.machines)

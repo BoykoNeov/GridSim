@@ -248,12 +248,32 @@ end
         NetworkModel(100.0, 50.0, buses, [L(:L19, :B1, :B9)], machines)))
 
     # --- the tier boundary: exactly one machine per bus ---
-    @test occursin("two machines", argerr_msg(() ->
-        NetworkModel(100.0, 50.0, buses, branches,
-                     [m(:G1, :B1, 50.0), m(:G2, :B1, -25.0), m(:G3, :B1, -25.0)])))
-    @test occursin("carries no machine", argerr_msg(() ->
-        NetworkModel(100.0, 50.0, [b(:B1), b(:B2), b(:B3)],
-                     [L(:L12, :B1, :B2), L(:L23, :B2, :B3)], machines)))
+    # M5 step 1 MOVED this guard out of the constructor and into `SwingEngine`
+    # (m5-context.md D3). The canonical model has to be able to express a
+    # machine-free bus and a two-machine bus, because the detailed tier represents
+    # both; the classical engine still cannot, and still says so. So each case is
+    # asserted TWICE — the model builds, and the engine refuses it by name — which
+    # is a strictly stronger statement than the single constructor assertion it
+    # replaces. A guard that merely moved would pass the second half alone.
+    two_on_a_bus = NetworkModel(100.0, 50.0, buses, branches,
+                                [m(:G1, :B1, 50.0), m(:G2, :B1, -25.0), m(:G3, :B1, -25.0)])
+    @test two_on_a_bus isa NetworkModel
+    @test length(two_on_a_bus.machines_at_bus[1]) == 3
+    @test isempty(two_on_a_bus.machines_at_bus[2])       # B2 is a bare junction now
+    @test occursin("carries 3 machines", argerr_msg(() -> init!(SwingEngine, two_on_a_bus)))
+    # the tier is NAMED in the message, which was the whole point of the rejection
+    @test occursin("SwingEngine", argerr_msg(() -> init!(SwingEngine, two_on_a_bus)))
+    # …and the derived views that need an E′ at both ends refuse it for the same
+    # reason, so the boundary is not a property of one call site
+    @test occursin("branch_arrays", argerr_msg(() -> branch_arrays(two_on_a_bus)))
+    @test occursin("coi_model", argerr_msg(() -> coi_model(two_on_a_bus)))
+
+    machine_free = NetworkModel(100.0, 50.0, [b(:B1), b(:B2), b(:B3)],
+                                [L(:L12, :B1, :B2), L(:L23, :B2, :B3)], machines)
+    @test machine_free isa NetworkModel
+    @test isempty(machine_free.machines_at_bus[3])
+    @test occursin("carries no machine", argerr_msg(() -> init!(SwingEngine, machine_free)))
+    @test occursin("carries no machine", argerr_msg(() -> coi_model(machine_free)))
 
     # --- at most one branch per bus pair ---
     # A SimpleGraph silently drops the second edge, so without this guard the
@@ -279,12 +299,22 @@ end
     # --- injection within reach of the incident coupling ---
     # K here is 1.0·1.0/0.50 = 2.0 pu = 200 MW, so ±250 MW cannot be delivered
     # at any angle: P = K·sin(Δδ) ≤ K.
-    @test occursin("exceeds the total", argerr_msg(() ->
-        NetworkModel(100.0, 50.0, buses, branches, [m(:G1, :B1, 250.0), m(:G2, :B2, -250.0)])))
+    #
+    # This guard moved to `SwingEngine` with the other two, and for a reason the
+    # M5 tasks list did not anticipate: K = E′ᵢE′ⱼ/X is not merely inappropriate on
+    # a model with a machine-free bus, it is UNCOMPUTABLE, so it could not stay in a
+    # constructor that now has to accept one.
+    unreachable = NetworkModel(100.0, 50.0, buses, branches,
+                               [m(:G1, :B1, 250.0), m(:G2, :B2, -250.0)])
+    @test unreachable isa NetworkModel
+    @test occursin("exceeds the total", argerr_msg(() -> init!(SwingEngine, unreachable)))
+    @test occursin("no steady state", argerr_msg(() -> init!(SwingEngine, unreachable)))
     # …but 199 MW, just under the ceiling, is accepted — the guard rules out
-    # the impossible, it does not quietly narrow the model's range.
-    @test NetworkModel(100.0, 50.0, buses, branches,
-                       [m(:G1, :B1, 199.0), m(:G2, :B2, -199.0)]) isa NetworkModel
+    # the impossible, it does not quietly narrow the model's range. Asserted
+    # through a BUILT ENGINE, because that is where the guard lives now; a model
+    # that constructs would no longer prove the ceiling was not narrowed.
+    @test init!(SwingEngine, NetworkModel(100.0, 50.0, buses, branches,
+                [m(:G1, :B1, 199.0), m(:G2, :B2, -199.0)])) isa SwingEngine
 end
 
 

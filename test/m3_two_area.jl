@@ -113,10 +113,15 @@
         @test abs(ma.Pm[1]) < ba.K[1]                       # |P0| ≤ ΣK, with margin
         @test rad2deg(asin(ma.Pm[1] / ba.K[1])) ≈ -53.13 atol = 0.01
         # …and the guard is real: a tie that cannot carry the pre-event flow is
-        # rejected at construction, by its own wording.
-        @test occursin("no steady state",
-              argerr_msg(() -> IB.two_area_model(; P_max_mw = 1_500.0,
-                                                   P_tie0_mw = -2_000.0)))
+        # rejected at BUILD time, by its own wording. M5 step 1 moved the guard from
+        # the model constructor to `SwingEngine` (m5-context.md D3), so the refusal
+        # is now raised where the tier is — the sweep's good failure mode is
+        # unchanged, but "one step outside the sweep is a construction error" now
+        # means the engine's construction, not the model's.
+        over_tie = IB.two_area_model(; P_max_mw = 1_500.0, P_tie0_mw = -2_000.0)
+        @test over_tie isa NetworkModel
+        @test occursin("no steady state", argerr_msg(() -> init!(SwingEngine, over_tie)))
+        @test occursin("exceeds the total", argerr_msg(() -> init!(SwingEngine, over_tie)))
     end
 
     @testset "V7e — the sweep's SHAPE (not a cell value)" begin
