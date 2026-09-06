@@ -60,6 +60,20 @@ function loaded_pair(P0_MW)
                   Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -P0_MW)])
 end
 
+# The message of an `ArgumentError` a call is expected to throw. Defined here
+# rather than imported: `test/helpers.jl` belongs to the core suite, and neither
+# `reference/test/` nor `ui/test/` reaches into it (checked in M5 step 0b, and
+# the reason a hoisted helper could break a suite nobody ran).
+function argerr_msg(f)
+    try
+        f()
+    catch e
+        e isa ArgumentError && return e.msg
+        rethrow()
+    end
+    error("expected an ArgumentError, but the call returned normally")
+end
+
 # The gauge-free channel: an angle DIFFERENCE. A raw `δ` is arbitrary up to a
 # common shift on both sides, so it is never the thing compared.
 δ12(s) = s.δ_G1 .- s.δ_G2
@@ -441,3 +455,478 @@ end
 end
 
 end # M4 step 4
+
+# ===========================================================================
+# M5 step 3 — the detailed tier against PowerDynamics, flux frozen on BOTH sides
+# ===========================================================================
+#
+# WHY A SEPARATE STEP FROM "FLUX ON". `m5-prestudy.md` §2a establishes that
+# `SauerPaiMachine` at `X″ = X′` IS our two-axis machine, line for line, with ONE
+# exception: their static stator carries the rotor speed on the flux terms and
+# ours does not. With `R_s = 0` their internal voltage is exactly `ω ×` ours, so
+# at equal states the two terminal voltages differ by `(ω − 1)·V` — first order in
+# the slip, identically zero at synchronous speed, and therefore invisible to the
+# flat run, to the fixpoint residual and to every steady-state identity.
+#
+# That residual is IDENTIFIED BY ITS SIGNATURE, not absorbed into a band. A band
+# wide enough to hide it would hide a real error of the same size. Freezing the
+# flux on both sides is what makes the identification clean: it is the only
+# residual left, so its linearity in slip can be measured against nothing else.
+# Step 4 switches the flux on, and the CHANGE is the flux term by construction.
+#
+# THE ORDER MATTERS AND IT IS NOT THE PRE-STUDY'S FIRST GUESS. §7 proposed
+# separating the two candidate effects by running at low loading. That does not
+# separate them — flux decay scales with loading too, so both move together. The
+# separator is fidelity, not loading.
+@testset "M5 step 3 — PowerDynamics with the flux frozen on both sides" begin
+
+# ---------------------------------------------------------------------------
+# Fixtures for this step
+# ---------------------------------------------------------------------------
+
+# A machine carrying REAL detailed data — the thing the classical tier must now
+# refuse, and the thing step 4 will run.
+detailed_pair() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+    [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+    [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.00,  40.0;
+             Xd = 1.8, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
+     Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -40.0)])
+# The loading and `E′` are not decorative: `Machine.E′` means a DIFFERENT physical
+# quantity at this tier (the magnitude behind `Ra + jXq`, not the voltage at the
+# bus), so a salient machine at classical-looking numbers solves to a terminal
+# voltage outside the power flow's own `|V| ∈ [0.9, 1.1]` band. These were scanned
+# rather than assumed; they land at |V| = (0.996, 1.013) with `E′d = 0.18`, so the
+# saliency this fixture exists to carry is actually live in it.
+
+# One GridSim run and one PowerDynamics run of the same scenario on ONE grid, at
+# the detailed tier. Same shape as `both` above and for the same reasons; it is
+# separate because the engine, the tier and the perturbation channel all differ.
+function both_detailed(net, tspan, grid; perturbations = (), reltol = 1.0e-9,
+                       abstol = 1.0e-12, ΔPm = nothing, X_ls_frac = 0.5,
+                       ψ_scale = 1.0, mutate = identity)
+    eng  = init!(DetailedEngine, mutate(net); reltol = reltol, abstol = abstol)
+    case = build_oracle(net; tier = :sauer_pai, perturbations = perturbations,
+                        X_ls_frac = X_ls_frac)
+    if ψ_scale != 1.0
+        # Their two sub-transient states, seeded DELIBERATELY WRONG. See the
+        # "drives nothing" testset: this is the sharp form of that claim.
+        for k in eachindex(case.mach_bus)
+            v = case.mach_bus[k]
+            case.s0.v[v, :mach₊ψ″_d] *= ψ_scale
+            case.s0.v[v, :mach₊ψ″_q] = case.s0.v[v, :mach₊ψ″_q] * ψ_scale - 0.1
+        end
+    end
+    if ΔPm !== nothing
+        # A mechanical-power step: bus-local, valid on any topology, no new event
+        # type, and PARAMETERS are the sanctioned perturbation channel (SPEC §6).
+        # The base value is read off the engine rather than from `Machine.P0`,
+        # because at this tier the dispatch comes from the POWER FLOW.
+        id, ΔP = ΔPm
+        k = findfirst(m -> m.id === id, net.machines)::Int
+        Pm = eng.params[eng.Pm_pidx[k]] + ΔP
+        eng.params[eng.Pm_pidx[k]] = Pm
+        set_mechanical_power!(case, id, Pm)
+    end
+    ours   = solve!(eng, tspan; perturbations = perturbations, saveat = grid)
+    theirs = oracle_solve(case, tspan; saveat = grid, reltol = reltol, abstol = abstol)
+    return ours, theirs
+end
+
+gap(a, b, k) = maximum(abs, getproperty(a, k) .- getproperty(b, k))
+peak_slip(s, ids) = maximum(abs, vcat((getproperty(s, Symbol(:ω_, i)) for i in ids)...))
+chan(k) = s -> getproperty(s, k)
+
+# ===========================================================================
+@testset "the detailed tier's preconditions are structural, not documented" begin
+    ring = three_machine_ring()
+
+    # Loads and machine-free buses are STEP 6, and each says so. A load quietly
+    # absent from one side of a comparison is a physics disagreement that is not
+    # one, which is the failure this whole tier exists to see.
+    lb = load_bus_system()
+    msg = argerr_msg(() -> build_oracle(lb; tier = :sauer_pai))
+    @test occursin("load", msg)
+    @test occursin("step 6", msg)
+
+    # An unusable `X_ls` is refused rather than divided by. `γ_d1` divides by
+    # `X′_d − X_ls` INSIDE PowerDynamics' component, so the failure mode without
+    # this guard is a NaN trajectory, not an error.
+    @test occursin("X_ls", argerr_msg(() -> build_oracle(ring; tier = :sauer_pai,
+                                                         X_ls_frac = 1.0)))
+    @test occursin("X_ls", argerr_msg(() -> build_oracle(ring; tier = :sauer_pai,
+                                                         X_ls_frac = 0.0)))
+    # …and the guard reaches BOTH axes: the limit is min(X′d, X′q), not X′d.
+    @test all(build_oracle(ring; tier = :sauer_pai).X_ls .<
+              min.(machine_arrays(ring).Xd′, machine_arrays(ring).Xq′))
+
+    # `TripGenerator` has no counterpart our own engine can run, so a case
+    # carrying one is refused at build time. An oracle case GridSim cannot run is
+    # worse than no case: the missing side would be read as a fidelity finding.
+    @test occursin("TripGenerator",
+                   argerr_msg(() -> build_oracle(ring; tier = :sauer_pai,
+                                                 perturbations = [1.0 => TripGenerator(:G1)])))
+
+    # THE HOLE M5 STEP 2 NAMED AND LEFT OPEN. `SwingEngine` and `coi_model` refuse
+    # a machine carrying detailed data; this builder — a third consumer of the same
+    # frozen-flux assumption — did not, so it would have silently simulated a
+    # different machine than the data describes. Core's own guard is called rather
+    # than copied, which is why the message is core's.
+    dp = detailed_pair()
+    for tier in (:swing, :classical)
+        m = argerr_msg(() -> build_oracle(dp; tier = tier))
+        @test occursin("carries detailed-tier data", m)
+        @test occursin("build_oracle(tier = :$tier)", m)
+    end
+    # …and the detailed tier accepts exactly that model. The guard is a tier
+    # boundary, not a rejection of the data.
+    @test build_oracle(dp; tier = :sauer_pai).tier === :sauer_pai
+
+    @test occursin("tier must be", argerr_msg(() -> build_oracle(ring; tier = :nope)))
+end
+
+# ===========================================================================
+@testset "the mapping is the X″ = X′ degeneration, and it is passed explicitly" begin
+    net  = detailed_pair()
+    case = build_oracle(net; tier = :sauer_pai)
+    ma   = machine_arrays(net)
+    for k in 1:2
+        v = case.mach_bus[k]
+        # Their sixth-order machine reduced to our fourth: X″ = X′ EXACTLY, in
+        # both axes, which is what makes γ_1 = 1 and γ_2 = 0 exactly.
+        @test case.s0.p.v[v, :mach₊X″_d] === ma.Xd′[k]
+        @test case.s0.p.v[v, :mach₊X″_q] === ma.Xq′[k]
+        @test case.s0.p.v[v, :mach₊X′_d] === ma.Xd′[k]
+        @test case.s0.p.v[v, :mach₊X′_q] === ma.Xq′[k]
+        # …and the data our tier carries reaches theirs unchanged.
+        @test case.s0.p.v[v, :mach₊X_d] === ma.Xd[k]
+        @test case.s0.p.v[v, :mach₊X_q] === ma.Xq[k]
+        @test case.s0.p.v[v, :mach₊R_s] === ma.Ra[k]
+        @test case.s0.p.v[v, :mach₊H]   === ma.H[k]
+        @test case.s0.p.v[v, :mach₊D]   === ma.D[k]
+    end
+    # SPIKE S1, AS AN ASSERTION. They write the MULTIPLIED form
+    # `T′_d0 · Dt(E′q) ~ rhs`, so `T′ = Inf` is `Inf·ẋ ~ finite` — which the
+    # pre-study flagged as possibly inexpressible, with a large-but-finite
+    # fallback and a `1/T′` convergence check planned instead. It IS expressible:
+    # `mtkcompile` accepts it, and the frozen run below freezes `E′q` bit-exactly.
+    # The fallback is not needed and the exactness assertion is available.
+    frozen = build_oracle(three_machine_ring(); tier = :sauer_pai)
+    for v in 1:3
+        @test frozen.s0.p.v[v, :mach₊T′_d0] === Inf
+        @test frozen.s0.p.v[v, :mach₊T′_q0] === Inf
+    end
+end
+
+# ===========================================================================
+@testset "the flat run: PowerDynamics says our detailed fixpoint is one" begin
+    # THE RING, which the `:classical` tier must refuse (`_assert_radial`) and
+    # this one takes: both sides put the machine behind its reactance on an
+    # algebraic terminal bus, so they are handed the SAME line reactance and there
+    # is no reduction to be wrong about (`m5-prestudy.md` §2a).
+    net  = three_machine_ring()
+    grid = collect(0.0:0.02:5.0)
+    ids  = [m.id for m in net.machines]
+    for (rtol, atol) in ((1.0e-9, 1.0e-12), (1.0e-6, 1.0e-9))
+        o, t = both_detailed(net, (0.0, 5.0), grid; reltol = rtol, abstol = atol)
+        # The channel sets must be the SAME NAMES IN THE SAME ORDER: `divergence`
+        # matches two NamedTuples by key, so a channel present on one side only is
+        # a silent omission rather than an error.
+        @test keys(o) == keys(t)
+        # ASSERTED PER STATE, never on `f_coi`. A wrong `E′d` leaves the frequency
+        # flat and the voltage wrong, which is the whole reason this tier exists.
+        for k in keys(o)
+            k === :t && continue
+            a, b = getproperty(o, k), getproperty(t, k)
+            @test maximum(abs, a .- a[1]) < 1.0e-8      # ours is flat
+            @test maximum(abs, b .- b[1]) < 1.0e-8      # so is theirs
+            @test maximum(abs, a .- b)    < 1.0e-8      # …at the same place
+        end
+    end
+
+    # POSITIVE CONTROL: the flat run can read a fixpoint that is not one. One
+    # machine's seeded internal voltage is moved off ours by 1 %, so their run
+    # starts away from equilibrium and leaves it.
+    #
+    # THE FIRST CHOICE OF CONTROL WAS VACUOUS AND THE SUITE SAID SO. Perturbing
+    # `vf_set` by 1 % moves the trajectory by 8.9e-16 — nothing — because the field
+    # voltage enters ONLY the flux derivative, and with `T′ = Inf` that derivative
+    # is zero whatever `vf` is. A control has to act through a path the tier under
+    # test actually has, and at the frozen limit the excitation is not one; `vf_set`
+    # belongs on the list of parameters that reach nothing here, alongside `X_d`
+    # and `X_ls`.
+    case = build_oracle(net; tier = :sauer_pai)
+    case.s0.v[1, :mach₊E′_q] *= 1.01
+    eng  = init!(DetailedEngine, net; reltol = 1.0e-9, abstol = 1.0e-12)
+    o    = solve!(eng, (0.0, 5.0); saveat = grid)
+    t    = oracle_solve(case, (0.0, 5.0); saveat = grid, reltol = 1.0e-9, abstol = 1.0e-12)
+    @test gap(o, t, :V_B1) > 1.0e-3                  # measured 6.9e-3
+    @test maximum(abs, t.V_B1 .- t.V_B1[1]) > 1.0e-4 # measured 2.3e-4
+    # …and the inert one is asserted rather than described, so the next reader does
+    # not have to take "the excitation reaches nothing" on trust.
+    inert = build_oracle(net; tier = :sauer_pai)
+    inert.s0.p.v[1, :mach₊vf_set] *= 1.01
+    ti = oracle_solve(inert, (0.0, 5.0); saveat = grid, reltol = 1.0e-9, abstol = 1.0e-12)
+    @test gap(o, ti, :V_B1) < 1.0e-12
+end
+
+# ===========================================================================
+@testset "the bases come from the model, at the new tier too" begin
+    # PowerDynamics reads `set_Sbase!`/`set_fbase!` at COMPONENT CONSTRUCTION and
+    # bakes the values in; they are process-global. A new tier is a new place for
+    # that to go stale silently, so the check is re-run on a model that is on
+    # NEITHER of the repo's fixture bases — against which it would be vacuous.
+    net  = base_250_60()
+    grid = collect(0.0:0.02:2.0)
+    set_Sbase!(1.0); set_fbase!(1.0)            # deliberately wrong, before building
+    o, t = both_detailed(net, (0.0, 2.0), grid)
+    for k in keys(o)
+        k === :t && continue
+        @test maximum(abs, getproperty(o, k) .- getproperty(t, k)) < 1.0e-8
+    end
+    @test o.f_coi[1] ≈ 60.0
+end
+
+# ===========================================================================
+@testset "the transient: the ring, and the residual that is left" begin
+    net  = three_machine_ring()
+    grid = collect(0.0:0.02:5.0)
+    pert = [1.0 => TripLine(:B3, :B1)]
+    o9, t9 = both_detailed(net, (0.0, 5.0), grid; perturbations = pert,
+                           reltol = 1.0e-9, abstol = 1.0e-12)
+    o5, t5 = both_detailed(net, (0.0, 5.0), grid; perturbations = pert,
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+
+    # The band is derived from each side's OWN convergence and never looks at the
+    # gap it judges — the structural version of "state the band before you see the
+    # gap", unchanged from M4 and now with a third caller.
+    for k in (:δ_G1, :ω_G1, :V_B1, :f_coi)
+        band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+        @test band > 0
+        # The gap EXCEEDS the band, and that is the expected result rather than a
+        # failure: the stator-ω residual is a real modelling difference, predicted
+        # from their source before it was measured. The next testset is what turns
+        # that from an excuse into an identification.
+        @test gap(o9, t9, k) > band
+    end
+
+    # FROZEN MEANS FROZEN — TO ROUND-OFF, NOT TO THE BIT, AND THE DIFFERENCE IS A
+    # FINDING RATHER THAN A TOLERANCE. Spike S1 showed `T′ = Inf` on their
+    # MULTIPLIED form (`Inf·ẋ ~ rhs`) makes the derivative exactly zero, and on a
+    # two-bus case the trajectory came back bit-identical. On the ring it does not:
+    # both sides drift by one ulp (2.2e-16 on a state near 1). The cause is not the
+    # equation, it is the linear algebra — `E′q` is a DIFFERENTIAL state, so it sits
+    # in the implicit solver's Newton system with a zero Jacobian row, and the LU
+    # that solves the coupled system mixes the other rows into it at round-off.
+    #
+    # The same mechanism explains why the two "reaches nothing" controls below are
+    # bands rather than `===`, and why taking the adaptive error norm out of it
+    # (fixed `dt`) tightens them to ~1e-15 without reaching zero. One cause, three
+    # places. Measured on both sides: OURS drifts by the identical 2.2e-16, so this
+    # is a property of stiff integration, not of PowerDynamics.
+    for i in (m.id for m in net.machines)
+        tq = getproperty(t9, Symbol("E′q_", i))
+        oq = getproperty(o9, Symbol("E′q_", i))
+        @test maximum(abs, tq .- tq[1]) < 1.0e-14
+        @test maximum(abs, oq .- oq[1]) < 1.0e-14
+        @test maximum(abs, getproperty(t9, Symbol("E′d_", i))) < 1.0e-14
+        @test maximum(abs, getproperty(o9, Symbol("E′d_", i))) < 1.0e-14
+    end
+end
+
+# ===========================================================================
+@testset "the stator-ω residual, identified by its signature" begin
+    # THE PREDICTION, WRITTEN BEFORE THE MEASUREMENT. Their static stator carries
+    # the rotor speed on the flux terms and ours does not, so with `R_s = 0` their
+    # internal voltage is exactly `ω ×` ours and the terminal-voltage residual is
+    # `(ω − 1)·V` — FIRST ORDER IN SLIP, coefficient of order one, zero at
+    # synchronous speed. So: double the disturbance, double the gap; and the gap
+    # divided by (peak slip × |V|) is ≈ 1 and not ≈ 0.01 or ≈ 100.
+    #
+    # A MAGNITUDE BOUND WOULD BE VACUOUS HERE and that is the point of doing it
+    # this way. The residual vanishes identically at ω = 1, so a gentle enough
+    # scenario makes any "the gap is small" assertion pass against a bug of the
+    # same size. Only the SCALING can tell the predicted residual from an unknown
+    # one — the shape M4's D14 already proved works on this pair.
+    net  = three_machine_ring()
+    grid = collect(0.0:0.02:5.0)
+    ids  = [m.id for m in net.machines]
+    slips = Float64[]
+    gaps  = Float64[]
+    for ΔP in (0.02, 0.04, 0.08)
+        o, t = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, ΔP))
+        push!(slips, peak_slip(o, ids))
+        push!(gaps,  gap(o, t, :V_B1))
+    end
+    # Linear in slip over a factor of four in disturbance size.
+    @test gaps[2] / gaps[1] ≈ slips[2] / slips[1] rtol = 0.02
+    @test gaps[3] / gaps[2] ≈ slips[3] / slips[2] rtol = 0.02
+    @test gaps[2] / gaps[1] ≈ 2.0 rtol = 0.02
+    # …and the COEFFICIENT is the predicted one, not merely proportional. `|V|` is
+    # within a per cent of 1 pu here, so the ratio is the coefficient itself.
+    for (s, g) in zip(slips, gaps)
+        @test g / s ≈ 1.0 rtol = 0.05
+    end
+    # The residual is a VOLTAGE residual, which is why `V` is the channel it is
+    # read on: on the speed channel it is three orders smaller, because a stator
+    # voltage error reaches the rotor only through the power balance.
+    o, t = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.08))
+    @test gap(o, t, :ω_G1) < gap(o, t, :V_B1) / 100
+end
+
+# ===========================================================================
+@testset "the degeneration took: two parameters that must reach nothing" begin
+    # THE FREE POSITIVE CONTROL (`m5-prestudy.md` §2a). `X_ls` is a parameter of
+    # THEIR component that survives nowhere in the degeneration: γ_1 = 1 and
+    # γ_2 = 0 are independent of it, the `E′` brackets reduce to `I_d`/`I_q`, and
+    # the flux linkages lose their `ψ″` terms. So varying it across a run must
+    # change nothing — and if anything moves, γ_d1 ≠ 1 and the degeneration did
+    # not take. It costs one extra solve and it tests the assumption every flux
+    # oracle in this milestone rests on.
+    #
+    # WHY THIS IS A BAND AND NOT `===`. The pre-study asked for bit-identity. It
+    # is not available, and the reason is worth more than the assertion would
+    # have been: their two `ψ″` states are DIFFERENTIAL, so they sit in the
+    # implicit solver's Newton system even though nothing reads them. Changing
+    # `X_ls` changes their trajectory, and the LU that solves the coupled system
+    # mixes those rows into every other component at round-off. Measured both
+    # ways: adaptive stepping gives ~1e-10 on `V`, and taking the adaptive error
+    # norm out of it entirely (fixed `dt`) still gives ~1e-15 rather than zero.
+    # So the coupling is floating-point, not physical, and the honest statement of
+    # that is "below the band", derived as every other band here is.
+    net  = three_machine_ring()
+    grid = collect(0.0:0.02:5.0)
+    o5, t5 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+    o9, t9 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                           reltol = 1.0e-9, abstol = 1.0e-12)
+    for frac in (0.1, 0.9)
+        _, alt = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                               X_ls_frac = frac)
+        for k in (:ω_G1, :V_B1, :f_coi, :E′q_G1)
+            band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+            @test maximum(abs, getproperty(t9, k) .- getproperty(alt, k)) < band
+        end
+    end
+
+    # THE SHARPER FORM OF THE SAME CLAIM. Varying `X_ls` moves the seed and the
+    # equation consistently, so `ψ″` may barely leave equilibrium and the control
+    # above can pass without exercising much. Seeding those two states DELIBERATELY
+    # WRONG — doubled, and one of them shifted off zero — is the maximum-signal
+    # version: if they drove anything at all, this would move it.
+    _, wrong = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04), ψ_scale = 2.0)
+    for k in (:ω_G1, :V_B1, :f_coi, :E′q_G1)
+        band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+        @test maximum(abs, getproperty(t9, k) .- getproperty(wrong, k)) < band
+    end
+
+    # AND WHAT STEP 3 THEREFORE DOES NOT CHECK, asserted rather than implied.
+    # With the flux frozen, `(X_d − X′_d)` is multiplied by a zero derivative on
+    # our side and divided by `Inf` on theirs, so the synchronous reactances reach
+    # nothing. Step 4 is where they become live, and this is the statement of what
+    # step 4 has left to earn.
+    ring = three_machine_ring()
+    big  = NetworkModel(ring.S_base, ring.f0, ring.buses, ring.branches,
+                        [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0,
+                                 m.R, m.Pmax, m.Tg; Xd = 4 * m.Xd′, Xq = m.Xq,
+                                 Xq′ = m.Xq′, Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra)
+                         for m in ring.machines])
+    _, tb = both_detailed(big, (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    for k in (:ω_G1, :V_B1, :f_coi)
+        @test all(getproperty(t9, k) .=== getproperty(tb, k))
+    end
+end
+
+# ===========================================================================
+@testset "anti-vacuity: the external check can go red, and where" begin
+    # THIS TESTSET CHANGED SHAPE TWICE UNDER MEASUREMENT, AND THAT IS THE RESULT.
+    # The plan asked for "perturb one coefficient in our stator algebra; the
+    # external check must go red". Two candidate mutations turned out to be
+    # invisible on the channel they were aimed at, and finding out WHY is worth
+    # more than the assertion would have been:
+    #
+    #   * A 1 % error in `X′q` does almost nothing, because at this degeneration
+    #     `X′q = X′d` and the initialisation re-derives `E′d`/`E′q` consistently —
+    #     so the terminal current at t = 0 is unchanged and only a second-order
+    #     saliency term moves.
+    #   * A 1 % error in `X′d` does nothing to the VOLTAGE at all (1.6e-15, i.e.
+    #     the honest gap), for the same reason: `E′q = Vq + X′d·I_d` is computed
+    #     FROM the power flow, so a different `X′d` buys a compensating `E′q` and
+    #     the same terminal behaviour.
+    #
+    # The mutation is caught — on the state that absorbed it. That is the measured
+    # justification for the plan's rule "assert per state, never on an aggregate":
+    # here it is not `f_coi` that hides the error, it is `V`.
+    net  = three_machine_ring()
+    grid = collect(0.0:0.02:5.0)
+    flat(nm) = begin
+        e = init!(DetailedEngine, nm; reltol = 1.0e-9, abstol = 1.0e-12)
+        c = build_oracle(net; tier = :sauer_pai)   # ALWAYS the unmutated model
+        (solve!(e, (0.0, 5.0); saveat = grid),
+         oracle_solve(c, (0.0, 5.0); saveat = grid, reltol = 1.0e-9, abstol = 1.0e-12))
+    end
+    remach(n, f) = NetworkModel(n.S_base, n.f0, n.buses, n.branches,
+        [f(m) for m in n.machines])
+
+    o0, t0 = flat(net)                              # the honest flat run
+
+    # (1) A STATOR COEFFICIENT: `X′d` 1 % low on our side only. Invisible on `V`
+    # and on `δ`; caught on `E′q` by twelve orders of magnitude.
+    Xd′_low = remach(net, m -> Machine(m.id, m.bus, m.S_rated, m.H, m.D, 0.99 * m.Xd′,
+                                       m.E′, m.P0, m.R, m.Pmax, m.Tg;
+                                       Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
+                                       Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra))
+    o1, t1 = flat(Xd′_low)
+    @test gap(o1, t1, :E′q_G1) > 1.0e-5             # measured 1.6e-4
+    @test gap(o1, t1, :E′q_G1) > 1.0e10 * gap(o0, t0, :E′q_G1)
+    @test gap(o1, t1, :V_B1)   < 1.0e-12            # …and V cannot see it at all
+    # Linear in the error, which is what says the channel is reading the mutation
+    # rather than something that happens to move with it.
+    Xd′_lower = remach(net, m -> Machine(m.id, m.bus, m.S_rated, m.H, m.D, 0.80 * m.Xd′,
+                                         m.E′, m.P0, m.R, m.Pmax, m.Tg;
+                                         Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
+                                         Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra))
+    o2, t2 = flat(Xd′_lower)
+    @test gap(o2, t2, :E′q_G1) / gap(o1, t1, :E′q_G1) ≈ 20.0 rtol = 0.05
+
+    # (2) A MAPPING ERROR: one branch reactance 1 % high on our side only. This is
+    # the class the oracle exists for — the graph, the per-branch mapping, the
+    # sign of an edge — and it lands on `V`, by ten orders.
+    Xline = NetworkModel(net.S_base, net.f0, net.buses,
+                         [Branch(b.id, b.from, b.to, 1.01 * b.X, b.rating)
+                          for b in net.branches], net.machines)
+    o3, t3 = flat(Xline)
+    @test gap(o3, t3, :V_B1) > 1.0e-6               # measured 2.5e-5
+    @test gap(o3, t3, :V_B1) > 1.0e9 * gap(o0, t0, :V_B1)
+    # A tenth of that error is still eight orders clear of the honest gap, so the
+    # sensitivity is not a cliff sitting just under 1 %.
+    Xline10 = NetworkModel(net.S_base, net.f0, net.buses,
+                           [Branch(b.id, b.from, b.to, 1.001 * b.X, b.rating)
+                            for b in net.branches], net.machines)
+    o4, t4 = flat(Xline10)
+    @test gap(o4, t4, :V_B1) > 1.0e8 * gap(o0, t0, :V_B1)
+
+    # (3) THE RESOLUTION LIMIT OF THE TRANSIENT COMPARISON, ASSERTED RATHER THAN
+    # CAVEATED. On the transient voltage channel the predicted stator-ω residual is
+    # ~2.8e-3, and a TWENTY per cent error in `X′d` moves our own trajectory by only
+    # ~4.8e-4 — so the transient `V` gap genuinely cannot see it, and any test that
+    # claimed otherwise would be reading noise. This is the honest boundary of what
+    # step 3 establishes: with the flux frozen, the synchronous and transient
+    # reactances are pinned by the FLAT run's per-state comparison and by nothing
+    # else. Step 4 switches the flux on, which is what makes `(X_d − X′_d)` live and
+    # gives those reactances a transient check.
+    trans(nm) = begin
+        e = init!(DetailedEngine, nm; reltol = 1.0e-9, abstol = 1.0e-12)
+        c = build_oracle(net; tier = :sauer_pai)
+        Pm = e.params[e.Pm_pidx[1]] + 0.08
+        e.params[e.Pm_pidx[1]] = Pm
+        set_mechanical_power!(c, :G1, Pm)
+        (solve!(e, (0.0, 5.0); saveat = grid),
+         oracle_solve(c, (0.0, 5.0); saveat = grid, reltol = 1.0e-9, abstol = 1.0e-12))
+    end
+    oh, th = trans(net)
+    om, tm = trans(Xd′_lower)
+    @test gap(om, tm, :V_B1) ≈ gap(oh, th, :V_B1) rtol = 0.1
+end
+
+end # M5 step 3

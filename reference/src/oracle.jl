@@ -24,6 +24,20 @@ terms. Concrete-typed fields (SPEC §4).
   - `trips`   — scheduled generator trips as `time => vertex`, so the read-out can
                 drop a tripped machine from the aggregate at the same instant our
                 engine does.
+  - `bus_ids` — bus ids in vertex order, so the `:sauer_pai` read-out can name a
+                voltage channel `V_B1` exactly as `state_series(::DetailedEngine)`
+                does. Empty channel names are not interchangeable: `divergence`
+                compares two NamedTuples by key.
+  - `mach_bus`— the vertex each machine sits on. `machine_arrays` became
+                machine-indexed with a `bus` column in M5 step 1, so "machine `k`
+                is at bus `k`" is no longer a fact about the data — it is a fact
+                about the fixtures, and this field is what stops the builder from
+                relying on it.
+  - `X_ls`    — the stator leakage reactance handed to `SauerPaiMachine`, per
+                machine. **Not a parameter of our model** (`m5-prestudy.md` §2a):
+                it survives nowhere in the degeneration, so it is a constant this
+                builder must supply to their component and nothing more. Kept on
+                the case because varying it is the tier's free positive control.
 """
 struct OracleCase
     net::NetworkModel
@@ -34,6 +48,9 @@ struct OracleCase
     angsym::Symbol
     H::Vector{Float64}
     trips::Vector{Pair{Float64,Int}}
+    bus_ids::Vector{Symbol}
+    mach_bus::Vector{Int}
+    X_ls::Vector{Float64}
 end
 
 """
@@ -117,6 +134,47 @@ function _assert_governor_free(net::NetworkModel)
     return nothing
 end
 
+# The detailed tier's own boundary. The restrictions are NOT the classical tier's
+# — a `SauerPaiMachine` needs a terminal bus with a voltage on it, which is what
+# `DetailedEngine` gives it — but three of ours are unbuilt work rather than
+# physics, and each names the step that lifts it.
+#
+# `X_ls` is validated here rather than clamped: `γ_d1 = (X″_d − X_ls)/(X′_d − X_ls)`
+# divides by `X′_d − X_ls`, so `X_ls = X′_d` is a division by zero inside somebody
+# else's component, which surfaces as a NaN trajectory rather than as an error.
+function _assert_sauer_pai_tier(net::NetworkModel, X_ls::Vector{Float64})
+    isempty(net.loads) || throw(ArgumentError(
+        "build_oracle(tier = :sauer_pai): the model carries $(length(net.loads)) load(s) " *
+        "($(join([l.id for l in net.loads], ", "))). A voltage-dependent load has a " *
+        "PowerDynamics counterpart (`ZIPLoad`) and it is plan step 6, not step 3 — " *
+        "refused rather than silently dropped, because a load quietly absent from " *
+        "one side of a comparison is a physics disagreement that is not one."))
+    for (v, ks) in pairs(net.machines_at_bus)
+        isempty(ks) && throw(ArgumentError(
+            "build_oracle(tier = :sauer_pai): bus $(net.buses[v].id) carries no machine. " *
+            "`DetailedEngine` represents that as a passive algebraic node and " *
+            "PowerDynamics would need a bus with no injector — expressible, unbuilt, " *
+            "and it arrives with the loads in plan step 6."))
+        length(ks) == 1 || throw(ArgumentError(
+            "build_oracle(tier = :sauer_pai): bus $(net.buses[v].id) carries " *
+            "$(length(ks)) machines. `DetailedEngine` refuses this too " *
+            "(`_assert_detailed_tier`), for the same reason and with the same status: " *
+            "unbuilt work, not a tier boundary."))
+    end
+    ma = machine_arrays(net)
+    for k in eachindex(X_ls)
+        lim = min(ma.Xd′[k], ma.Xq′[k])
+        0.0 < X_ls[k] < lim || throw(ArgumentError(
+            "build_oracle(tier = :sauer_pai): machine $(net.machines[k].id) would get " *
+            "X_ls = $(X_ls[k]) pu against min(X′d, X′q) = $lim. `SauerPaiMachine` " *
+            "divides by `X′ − X_ls` in both axes, so this is a division by zero inside " *
+            "their component and it would arrive as a NaN trajectory, not as an error. " *
+            "X_ls is a constant this builder supplies and not a parameter of our model " *
+            "(m5-prestudy.md §2a); pick `X_ls_frac` in (0, 1)."))
+    end
+    return nothing
+end
+
 # The scheduled-event schedule, validated in the same shape `solve!` takes it.
 # Only SCHEDULED events exist here: state-triggered protection (M3's shed ladders
 # and out-of-step relays) is an engine construction argument, not a property of
@@ -170,17 +228,43 @@ supported events map to parameter changes on the PowerDynamics side exactly as
 zeroes the machine's mechanical power **and** deactivates every incident line,
 because that is what zeroing `Pm` and every incident `K` amounts to.
 """
-function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = ())
-    tier in (:swing, :classical) || throw(ArgumentError(
-        "build_oracle: tier must be :swing or :classical, got :$tier."))
+function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = (),
+                      X_ls_frac::Real = 0.5)
+    tier in (:swing, :classical, :sauer_pai) || throw(ArgumentError(
+        "build_oracle: tier must be :swing, :classical or :sauer_pai, got :$tier."))
     _assert_governor_free(net)
-    tier === :classical && _assert_radial(net)
-    schedule = _schedule(net, perturbations)
 
     ma = machine_arrays(net)
-    ba = branch_arrays(net)
+    nm = length(net.machines)
+    # `X_ls` is a builder constant, computed before the precondition that checks it.
+    X_ls = tier === :sauer_pai ?
+        Float64[Float64(X_ls_frac) * min(ma.Xd′[k], ma.Xq′[k]) for k in 1:nm] :
+        Float64[]
+
+    if tier === :sauer_pai
+        _assert_sauer_pai_tier(net, X_ls)
+    else
+        # The hole M5 step 2 opened and named: `SwingEngine` and `coi_model` refuse
+        # a machine carrying detailed data, and this builder — a THIRD consumer of
+        # the same frozen-flux assumption — did not. Core's own guard is called
+        # rather than copied, so the three cannot drift apart.
+        GridSim._assert_frozen_flux(net, "build_oracle(tier = :$tier)")
+        # Called explicitly, not left to the `SwingEngine` at the bottom of this
+        # function: everything between here and there indexes `machine_arrays` BY
+        # VERTEX, which is only legal once one-machine-per-bus holds. Since M5
+        # step 1 made `machine_arrays` machine-indexed, that is a fact about the
+        # fixtures rather than about the data, and it is now checked before it is
+        # used instead of several hundred lines later.
+        GridSim._assert_one_machine_per_bus(net, "build_oracle(tier = :$tier)")
+        tier === :classical && _assert_radial(net)
+    end
+    schedule = _schedule(net, perturbations)
+
+    ba = tier === :sauer_pai ? branch_topology(net) : branch_arrays(net)
     nb = length(net.buses)
     ids = Symbol[m.id for m in net.machines]
+    bus_ids = Symbol[b.id for b in net.buses]
+    mach_bus = tier === :sauer_pai ? copy(ma.bus) : collect(1:nb)
 
     # PowerDynamics' bases are process-global and are read at CONSTRUCTION time
     # (see the module header). Set from the model in hand, on every call, right
@@ -199,6 +283,12 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
             e = _branch_between(net, ev.from, ev.to)
             push!(line_off_times[e], t)
         else                                            # TripGenerator
+            tier === :sauer_pai && throw(ArgumentError(
+                "build_oracle(tier = :sauer_pai): TripGenerator has no counterpart to " *
+                "compare against — `inject!(::DetailedEngine, ::TripGenerator)` refuses " *
+                "by name (a tripped machine turns its bus into a passive algebraic node, " *
+                "which is unbuilt at this tier). An oracle case our own engine cannot " *
+                "run is worse than no case: it would be read as a fidelity finding."))
             v = _machine_vertex(net, ev.id)
             push!(gen_trip_times[v], t)
             push!(trips, t => v)
@@ -212,8 +302,44 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # --- vertices ------------------------------------------------------------
     angsym = tier === :swing ? :mach₊θ : :mach₊δ
     buses = NetworkDynamics.VertexModel[]
+    mach_of_bus = zeros(Int, nb)
+    for k in eachindex(mach_bus); mach_of_bus[mach_bus[k]] = k; end
     for v in 1:nb
-        inj = if tier === :swing
+        k = mach_of_bus[v]
+        inj = if tier === :sauer_pai
+            # `SauerPaiMachine` is SIXTH order; ours is fourth. The mapping is its
+            # `X″ = X′` degeneration, where `γ_1 = 1` and `γ_2 = 0` EXACTLY, and
+            # every remaining line collapses onto `m5-prestudy.md` §2 with nothing
+            # approximated. Its two sub-transient states survive the degeneration
+            # as integrators that drive nothing, which is why they are seeded (so
+            # the flat run stays flat) and skipped in a per-state comparison.
+            #
+            # `T′_d0` and `T′_q0` are passed STRAIGHT THROUGH from our model, `Inf`
+            # included. The pre-study flagged that as a risk — they write the
+            # MULTIPLIED form `T′·Dt(E′q) ~ rhs`, so `Inf` is `Inf·ẋ ~ finite` —
+            # and spike S1 measured it: `mtkcompile` accepts it and freezes `E′q`
+            # bit-identically over a horizon on which a finite `T′` moves it by
+            # exactly `1/T′`. So the frozen limit is EXACT on both sides and the
+            # planned large-but-finite fallback is not needed (m5-context.md D10).
+            #
+            # `vf_input`/`τ_m_input` default to TRUE and would leave two unconnected
+            # inputs; `stator_dynamics` already defaults to false. All three are
+            # passed explicitly for this file's standing reason: a default is not a
+            # guarantee.
+            #
+            # `Sn`/`Vn` are deliberately NOT passed. They carry `initf_weak` defaults
+            # of `Sbase`/`Vbase`, which is the ratio-of-one this builder wants, and
+            # passing them makes them live parameters scaling the terminal equations.
+            Library.SauerPaiMachine(; name = :mach,
+                vf_input = false, τ_m_input = false, stator_dynamics = false,
+                R_s = ma.Ra[k], X_d = ma.Xd[k], X_q = ma.Xq[k],
+                X′_d = ma.Xd′[k], X′_q = ma.Xq′[k],
+                X″_d = ma.Xd′[k], X″_q = ma.Xq′[k], X_ls = X_ls[k],
+                T′_d0 = ma.Td0′[k], T′_q0 = ma.Tq0′[k],
+                T″_d0 = _SP_TPP, T″_q0 = _SP_TPP,
+                H = ma.H[k], D = ma.D[k],
+                vf_set = 1.0, τ_m_set = ma.Pm[k])
+        elseif tier === :swing
             # `M = 2H`, `D·(ω − ωset)` with `ωset = 1` and `ω` per-unit, and
             # `dθ/dt = ωbase·(ω − ωframe)` with `ωframe = 1`. Substituting
             # `ω_PD − 1 = ω_ours` gives `swing_vertex!` line for line, INCLUDING
@@ -252,7 +378,11 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # the equilibrium our fixpoint was solved for. A default is not a guarantee.
     lines = NetworkDynamics.EdgeModel[]
     for e in eachindex(ba.src)
-        X = tier === :swing ? ba.X[e] : reduced_line_reactance(net, e)
+        # The detailed tier needs NO reduction: `SauerPaiMachine` sits behind its
+        # reactance on an algebraic terminal bus and so does ours, so both sides
+        # are handed the same line — which is also why the meshed ring, invalid
+        # for `:classical`, is a valid case here (`m5-prestudy.md` §2a).
+        X = tier === :classical ? reduced_line_reactance(net, e) : ba.X[e]
         pl = Library.PiLine(; name = :pibranch, R = 0.0, X = X,
                               G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0)
         l = compile_line(MTKLine(pl); src = ba.src[e], dst = ba.dst[e],
@@ -269,16 +399,90 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     nw = Network(buses, lines; warn_order = false)
 
     # --- the initial state: ours ---------------------------------------------
-    eng = SwingEngine(net)
-    δ0 = collect(current_state(eng).δ)
     s0 = NWState(nw)
-    for v in 1:nb
-        s0.v[v, angsym] = δ0[v]
-        s0.v[v, :mach₊ω] = 1.0                  # PowerDynamics' ω is absolute pu…
-    end                                          # …ours is the deviation from it.
+    if tier === :sauer_pai
+        _seed_sauer_pai!(s0, net, ma, mach_bus, X_ls)
+    else
+        eng = SwingEngine(net)
+        δ0 = collect(current_state(eng).δ)
+        for v in 1:nb
+            s0.v[v, angsym] = δ0[v]
+            s0.v[v, :mach₊ω] = 1.0              # PowerDynamics' ω is absolute pu…
+        end                                     # …ours is the deviation from it.
+    end
 
-    return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips)
+    return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips,
+                      bus_ids, mach_bus, X_ls)
 end
+
+"""
+    _seed_sauer_pai!(s0, net, ma, mach_bus, X_ls)
+
+Seed PowerDynamics' six machine states, its two field/torque parameters and the
+two bus-voltage states from **our** fixpoint, through a `DetailedEngine` built on
+the same model.
+
+This is `build_oracle`'s standing argument applied one tier up: initialisation is
+removed as a source of difference, so the band is solver tolerance alone, and the
+no-disturbance run becomes an independent check of OUR power flow rather than a
+check of theirs.
+
+The two sub-transient states have closed forms at the degeneration
+(`m5-prestudy.md` §2a):
+
+    ψ″_d = E′_q − (X′_d − X_ls)·I_d,    ψ″_q = −E′_d − (X′_q − X_ls)·I_q
+
+`I_d`/`I_q` come from `GridSim._stator` — the very function the engine's own
+right-hand side calls, reached through its module rather than re-derived here.
+That is deliberate, and it is the module header's rule about the model applied to
+an equation: the rotor-frame rotation and the stator inversion exist ONCE. A
+second copy in this file would be a parallel hand-maintained derivation of the
+one piece of algebra a convention error hides in most easily.
+"""
+function _seed_sauer_pai!(s0, net::NetworkModel, ma, mach_bus::Vector{Int},
+                          X_ls::Vector{Float64})
+    eng = init!(DetailedEngine, net)
+    st = current_state(eng)
+    u = eng.integrator.u
+    for k in eachindex(mach_bus)
+        v = mach_bus[k]
+        Vre = u[eng.Vre_idx[v]]
+        Vim = u[eng.Vim_idx[v]]
+        δ, E′q, E′d = st.δ[k], st.E′q[k], st.E′d[k]
+        Id, Iq, _, _, _ = GridSim._stator(Vre, Vim, δ, E′q, E′d,
+                                          ma.Ra[k], ma.Xd′[k], ma.Xq′[k], 1.0)
+        s0.v[v, :mach₊δ]    = δ
+        s0.v[v, :mach₊ω]    = 1.0 + st.ω[k]     # theirs is absolute pu, ours the deviation
+        s0.v[v, :mach₊E′_q] = E′q
+        s0.v[v, :mach₊E′_d] = E′d
+        s0.v[v, :mach₊ψ″_d] =  E′q - (ma.Xd′[k] - X_ls[k]) * Id
+        s0.v[v, :mach₊ψ″_q] = -E′d - (ma.Xq′[k] - X_ls[k]) * Iq
+        # Their field voltage and mechanical input are PARAMETERS at this tier,
+        # exactly as ours are until plan step 5 gives the excitation a regulator.
+        # Both are read off our engine rather than recomputed, so the two sides
+        # cannot come to disagree about what "held at its pre-disturbance value"
+        # means — and `Pm` in particular is the POWER FLOW's dispatch, which is not
+        # `Machine.P0` on any model carrying a load.
+        s0.p.v[v, :mach₊vf_set]  = eng.params[eng.Efd_pidx[k]]
+        s0.p.v[v, :mach₊τ_m_set] = eng.params[eng.Pm_pidx[k]]
+    end
+    # The bus voltages are STATES on their side too (`busbar₊u_r`/`u_i`, with a
+    # zero mass matrix), not observables — measured, not assumed. So they are
+    # seeded here, and in the read-out they come from stored samples rather than
+    # from a reconstructed observable.
+    for v in eachindex(net.buses)
+        s0.v[v, :busbar₊u_r] = u[eng.Vre_idx[v]]
+        s0.v[v, :busbar₊u_i] = u[eng.Vim_idx[v]]
+    end
+    return s0
+end
+
+# Their two sub-transient time constants. They sit on a pair of states the
+# degeneration DECOUPLES — `1 − γ_1 = 0` removes them from the flux linkages and
+# `γ_2 = 0` from the `E′` equations — so this number reaches no comparison channel.
+# The test that says so does not argue it: it seeds those two states deliberately
+# wrong and requires every channel not to move.
+const _SP_TPP = 0.03
 
 # Branch index for an unordered bus pair, with the same message shape
 # `inject!(::SwingEngine, ::TripLine)` uses.
@@ -323,6 +527,52 @@ oracle_band(a_coarse::NamedTuple, a_fine::NamedTuple,
     GridSim.convergence_band(a_coarse, a_fine, b_coarse, b_fine;
                              channel = channel, factor = factor)
 
+# Which stored row of the solution belongs to each requested output time.
+#
+# THIS IS NOT A FORMALITY, AND WRITING IT IS WHAT FOUND THE AMBIGUITY IT RESOLVES.
+# The solver is handed the output grid as its own `saveat`, so every requested
+# time is a stored sample and nothing is ever reconstructed from an interpolant
+# (M4 step 3: a callback retroactively bends the interpolant of the step it
+# ended). But a `PresetTimeComponentCallback` firing AT a grid point makes the
+# solver store that instant TWICE — once before the affect and once after — so
+# `sol.t` came back with 252 rows against a 251-point grid, and a read that just
+# asks for "the value at t" silently gets one of the two without saying which.
+#
+# The FIRST row at a repeated instant is the pre-event one, and that is the one
+# taken here, because it is the convention the GridSim side already keeps: its
+# playback driver records the sample at an event instant as the pre-event state.
+# Comparing a pre-event sample against a post-event one puts the entire size of
+# the disturbance into a single point of the gap.
+#
+# Anything else — a missing grid point, a stored time nobody asked for — is
+# refused rather than resampled: `divergence` refuses two grids for the same
+# reason, and there is no interpolant left to resample with.
+function _sample_rows(ts::AbstractVector, grid::AbstractVector)
+    rows = Vector{Int}(undef, length(grid))
+    j = 1
+    for (i, g) in pairs(grid)
+        j <= length(ts) || throw(ErrorException(
+            "oracle_solve: the solution ends at t = $(ts[end]) but the output grid " *
+            "asks for t = $g. The solver was handed this grid as its own `saveat`, " *
+            "so a missing sample is a solve that stopped early, not a grid to " *
+            "interpolate onto."))
+        ts[j] == g || throw(ErrorException(
+            "oracle_solve: expected the next stored sample to be t = $g but it is " *
+            "t = $(ts[j]). The read-out indexes stored samples deliberately; a " *
+            "stored time nobody asked for means the solve saved somewhere else " *
+            "(a `tstop` that also saves, or `save_everystep`), and resampling onto " *
+            "the requested grid is exactly what `divergence` refuses to do."))
+        rows[i] = j                              # the FIRST row: pre-event, see above
+        while j <= length(ts) && ts[j] == g
+            j += 1
+        end
+    end
+    j > length(ts) || throw(ErrorException(
+        "oracle_solve: $(length(ts) - j + 1) stored samples lie beyond the end of " *
+        "the output grid. Every stored sample should correspond to a requested time."))
+    return rows
+end
+
 """
     oracle_solve(case::OracleCase, tspan; saveat, reltol = 1e-9, abstol = 1e-9)
 
@@ -349,7 +599,8 @@ Unit conventions, converted here and nowhere else:
     driver already asserts from outside itself.
 """
 function oracle_solve(case::OracleCase, tspan; saveat,
-                      reltol::Real = 1e-9, abstol::Real = 1e-9)
+                      reltol::Real = 1e-9, abstol::Real = 1e-9,
+                      adaptive::Bool = true, dt::Real = 0.0)
     grid = collect(saveat)
     isempty(grid) && throw(ArgumentError("oracle_solve: saveat grid is empty."))
     tstops = Float64[t for (t, _) in case.trips]
@@ -359,12 +610,22 @@ function oracle_solve(case::OracleCase, tspan; saveat,
     # per sample and quietly make this a different numerical path from the one
     # the comparison claims to be checking — the same argument `playback.jl`
     # makes for not driving `step!(integ, dt, true)` in playback.
-    sol = solve(prob, Rodas5P(); reltol = reltol, abstol = abstol,
-                saveat = grid, tstops = tstops)
+    sol = adaptive ?
+        solve(prob, Rodas5P(); reltol = reltol, abstol = abstol,
+              saveat = grid, tstops = tstops) :
+        solve(prob, Rodas5P(); adaptive = false, dt = Float64(dt),
+              saveat = grid, tstops = tstops)
 
-    nb = length(case.ids)
-    δ = [[sol(t; idxs = VIndex(v, case.angsym)) for t in grid] for v in 1:nb]
-    ω = [[sol(t; idxs = VIndex(v, :mach₊ω)) - 1.0 for t in grid] for v in 1:nb]
+    # EVERY CHANNEL BELOW IS READ FROM A STORED SAMPLE, never from `sol(t)`. M4
+    # step 3's finding is that a callback retroactively bends the interpolant of
+    # the step it ended, and every case this function builds may carry one.
+    rows = _sample_rows(sol.t, grid)
+    take(v) = [v[r] for r in rows]
+
+    nm = length(case.ids)
+    mb = case.mach_bus
+    δ = [take(sol[VIndex(mb[k], case.angsym)]) for k in 1:nm]
+    ω = [take(sol[VIndex(mb[k], :mach₊ω)]) .- 1.0 for k in 1:nm]
 
     # The live COI weights, sample by sample. `<` and not `≤`: the sample AT an
     # event instant is the pre-event one on our side too.
@@ -372,24 +633,49 @@ function oracle_solve(case::OracleCase, tspan; saveat,
     δ_coi = Vector{Float64}(undef, length(grid))
     f_coi = Vector{Float64}(undef, length(grid))
     w = copy(case.H)
-    for (k, t) in pairs(grid)
+    mach_of_bus = Dict(mb[k] => k for k in 1:nm)
+    for (i, t) in pairs(grid)
         for (t_ev, v) in case.trips
-            t_ev < t && (w[v] = 0.0)
+            t_ev < t && (w[mach_of_bus[v]] = 0.0)
         end
         Σw = sum(w)
         if Σw > 0
-            δ_coi[k] = sum(w[v] * δ[v][k] for v in 1:nb) / Σw
-            f_coi[k] = f0 * (1 + sum(w[v] * ω[v][k] for v in 1:nb) / Σw)
+            δ_coi[i] = sum(w[k] * δ[k][i] for k in 1:nm) / Σw
+            f_coi[i] = f0 * (1 + sum(w[k] * ω[k][i] for k in 1:nm) / Σw)
         else
-            δ_coi[k] = NaN
-            f_coi[k] = NaN
+            δ_coi[i] = NaN
+            f_coi[i] = NaN
         end
     end
 
+    # The channel set is `state_series`' for the tier being compared against — the
+    # SAME NAMES IN THE SAME ORDER, because `divergence` matches two NamedTuples by
+    # key and a channel that exists on one side only is a silent omission, not an
+    # error. `:swing`/`:classical` mirror `state_series(::SwingEngine)`;
+    # `:sauer_pai` mirrors `state_series(::DetailedEngine)`, which additionally
+    # carries the two transient flux states per machine and a voltage magnitude per
+    # bus. The flux states are frozen at step 3 and the voltage is the channel the
+    # stator-ω residual actually lands in.
     names = Symbol[:t]
     vals  = Any[grid]
-    for v in 1:nb; push!(names, Symbol(:δ_, case.ids[v])); push!(vals, δ[v]); end
-    for v in 1:nb; push!(names, Symbol(:ω_, case.ids[v])); push!(vals, ω[v]); end
+    for k in 1:nm; push!(names, Symbol(:δ_, case.ids[k])); push!(vals, δ[k]); end
+    for k in 1:nm; push!(names, Symbol(:ω_, case.ids[k])); push!(vals, ω[k]); end
+    if case.tier === :sauer_pai
+        for k in 1:nm
+            push!(names, Symbol("E′q_", case.ids[k]))
+            push!(vals, take(sol[VIndex(mb[k], :mach₊E′_q)]))
+        end
+        for k in 1:nm
+            push!(names, Symbol("E′d_", case.ids[k]))
+            push!(vals, take(sol[VIndex(mb[k], :mach₊E′_d)]))
+        end
+        for v in eachindex(case.bus_ids)
+            ur = take(sol[VIndex(v, :busbar₊u_r)])
+            ui = take(sol[VIndex(v, :busbar₊u_i)])
+            push!(names, Symbol(:V_, case.bus_ids[v]))
+            push!(vals, [hypot(ur[i], ui[i]) for i in eachindex(grid)])
+        end
+    end
     push!(names, :δ_coi); push!(vals, δ_coi)
     push!(names, :f_coi); push!(vals, f_coi)
     return NamedTuple{Tuple(names)}(Tuple(vals))
@@ -420,8 +706,8 @@ number, so the same value goes to both tiers; they part company only once `ω`
 moves, which is exactly the effect being measured.
 """
 function set_mechanical_power!(case::OracleCase, id::Symbol, Pm_pu::Real)
-    v = _machine_vertex(case.net, id)
+    k = _machine_vertex(case.net, id)
     psym = case.tier === :swing ? :mach₊Pm : :mach₊τ_m_set
-    case.s0.p.v[v, psym] = Float64(Pm_pu)
+    case.s0.p.v[case.mach_bus[k], psym] = Float64(Pm_pu)
     return case
 end
