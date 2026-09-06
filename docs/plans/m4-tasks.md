@@ -563,7 +563,7 @@ the argument for the box existing rather than a reason to close it quietly.
 ## Carried into M5 (not this milestone's work)
 
 Recorded so it is not re-derived. Detail in `m4-plan.md` §Why the detailed tier
-is M5 — **and now worked on paper in `m5-prestudy.md`**, which corrects two of
+is M5 — **and now worked on paper in `m5-prestudy.md`**, which corrects three of
 the bullets below: the degeneration oracle is *frozen flux* (`T′do = T′qo = ∞`,
 `X′d = X′q`), not constant field voltage, and it cannot check the flux equations
 at all (they are switched off in that limit — the two-limit bracket and the
@@ -572,6 +572,18 @@ to the algebraic (DAE) network, with what happens to `isoutofdomain` and the
 protection callbacks written out. The pre-study also gives the Iberian exit
 criterion as one relative measurement (swing peak vs `P_max`) and the three
 convention questions step 4 must settle before its band is written.
+
+The third correction is **`m5-prestudy.md` §2a**, added after this milestone
+landed: PowerDynamics' `SauerPaiMachine` read from source at the pinned 5.0.0,
+because D14 is exactly the kind of finding that must not be assumed to carry to a
+different component. It does not carry — their swing is `2H ω̇ = τ_m − τ_e − D(ω−1)`
+with no `/ω` and a `τ_e` identical to our `Pe`, so the asymmetry D14 found is not
+there. The convention question **relocates into the stator**, at the same order and
+with the same invisibility to every steady-state check, and the pre-study's own
+proposed separator (compare at low loading) turns out not to separate it from flux
+decay. The bullet below about "all three conditions together" is superseded twice
+over: the third condition ("no damper winding") is meaningless for a fourth-order
+machine and is the *oracle's* degeneration condition (`X″ = X′`), not ours.
 
 - The detailed machine tier: two-axis machine with flux dynamics, a voltage
   regulator, and transmission branches carrying voltage as a real unknown.
