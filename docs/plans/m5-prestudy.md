@@ -264,6 +264,22 @@ conventions above. Three questions decide whether PowerDynamics' `ClassicalMachi
 and `SwingEngine` are the same model, and each has a test that answers it before
 any band is written down:
 
+> **What happened when step 4 ran — read this section with it (D13/D14).** The
+> three questions below were all answered from PowerDynamics' source and **all
+> three come out our way**. But the section's premise is wrong: `ClassicalMachine`
+> is not the component that matches us. `Library.Swing` is — `swing_vertex!` line
+> for line, constant voltage magnitude at the bus included — and it needs no
+> radial reduction, so **point 1's "the ring is not a valid oracle case" does not
+> apply to it** and the meshed ring went through the external oracle after all.
+> There is also a **fourth** convention question this section does not have, and it
+> is the one that bites: `ClassicalMachine`'s mechanical input is a **torque**
+> (`τ_m/ω`) where ours is a **power**. It acts like a change in damping, is
+> proportional to loading, and is identically zero at `ω = 1`, so nothing in
+> points 1–3 could have found it. **M5 must re-read `SauerPaiMachine`'s source for
+> the same question rather than assuming the answer carries over**, and run the
+> degeneration bracket at a loading low enough that a torque-form term cannot be
+> mistaken for a flux one. See `m4-context.md` D13/D14.
+
 1. **`E′` behind `X′d` vs `E′` at the bus.** PowerDynamics' machine sits behind
    its transient reactance on an algebraic bus; ours puts `E′` at the bus with
    `K = E′ᵢE′ⱼ/X_ij`. These coincide **only on a radial pair**, by reducing the

@@ -24,17 +24,20 @@ between fidelity tiers.
 ## Design in one breath
 
 - **Headless core, single process.** The core (`src/`) is a library with *zero* UI
-  dependency, drivable from the REPL / a script. The UI (`ui/`) depends on the
-  core, never the reverse — enforced by a dependency-closure test, not convention.
-  No client/server, no sockets.
+  dependency, drivable from the REPL / a script. The UI (`ui/`) and the external
+  oracle (`reference/`) depend on the core, never the reverse — enforced by a
+  dependency-closure test, not convention. No client/server, no sockets.
 - **Fidelity tiers + a mode router.** Every phenomenon gets a fast surrogate (run
   in real time) and an accurate sibling (run offline, then played back). Which mode
   you get slides with system size.
 - **One canonical model.** The aggregate model is *compiled down* from the network
   model (`coi_model`), never hand-maintained beside it.
 - **Validation-first.** Every mechanism carries a label saying what checks it — a
-  closed form, a cross-fidelity comparison, a published case, or an honest
-  "un-oracled". The ledger is [`docs/validation-ledger.md`](docs/validation-ledger.md).
+  closed form, a cross-fidelity comparison, an outside implementation, a published
+  case, or an honest "un-oracled". The ledger is
+  [`docs/validation-ledger.md`](docs/validation-ledger.md). The outside
+  implementation is `PowerDynamics.jl` in `reference/`: the multi-machine engine
+  is checked against somebody else's code, not only against our own arithmetic.
   *Seeing where the cheap model diverges from the accurate one is the lesson*, and
   `divergence` in `src/analysis/postprocess.jl` is how that is read.
 
@@ -116,7 +119,8 @@ GridSim/
 │   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
 ├── test/                 # one suite: closed-form, cross-fidelity and control checks
 ├── scripts/              # headless experiments; the two Iberian replays
-├── ui/                   # separate package: `using GridSim`, `using GLMakie`; two windows
+├── ui/                   # separate package: `using GridSim`, `using GLMakie`; three windows
+├── reference/            # separate package: the external oracle (PowerDynamics); a checker, not a tier
 └── docs/
     ├── SPEC.md           # the durable brief (architecture invariants, conventions)
     ├── validation-ledger.md  # every mechanism and what checks it

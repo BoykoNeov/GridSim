@@ -2,9 +2,9 @@
 
 The bookkeeping decision D7 (`plans/m4-context.md`) asks for: every mechanism in
 the repo carries a label saying **what checks it**. Un-oracled is a legitimate
-label. Unmarked is not. This file is that list, started ahead of M4 step 4 (which
-adds the PowerDynamics column) so the un-oracled rows are visible *now* rather
-than discovered when the oracle arrives.
+label. Unmarked is not. This file is that list. It was started ahead of M4 step 4 so the
+un-oracled rows would be visible *before* the oracle arrived rather than
+discovered by it; step 4 has since added the external section at the bottom.
 
 Labels, in the vocabulary M4 fixed:
 
@@ -21,7 +21,7 @@ Labels, in the vocabulary M4 fixed:
   dependency closure), usually with a mutation that must fail.
 - **published** — numbers someone else printed (the ENTSO-E report), with the
   faithful window stated.
-- **external** — an independent implementation (PowerDynamics; M4 step 4, none yet).
+- **external** — an independent implementation (PowerDynamics 5.0, in `reference/`; M4 step 4, delivered).
 - **un-oracled** — a stated choice nothing measures. Allowed, out loud.
 
 Where a row says "test:", the name is the `@testset` in `test/runtests.jl`.
@@ -95,15 +95,55 @@ Where a row says "test:", the name is the `@testset` in `test/runtests.jl`.
 | Load inertia inside `H_tot` | Documented conflation, not modelled | **stated choice** |
 | Inverter-based resources as `H = 0, R = ∞` units | Aggregates finite | arithmetic only — **no inverter dynamics; un-oracled as behaviour** |
 
+## External oracle (M4 step 4) — `reference/`, PowerDynamics 5.0
+
+The column this file was started for. Where a row says "test:", the name is the
+`@testset` in `reference/test/runtests.jl`.
+
+**The header claim, stated before the rows so no row is read as more than it is.**
+The case is *compiled* from `NetworkModel` (D5), so both sides read the same
+`machine_arrays` / `branch_arrays` / `_coupling`. Everything **downstream** of that
+fork is externally checked; everything **upstream** of it is not, and a green suite
+here is no evidence at all about the per-unit conversions. That is the price of
+refusing to hand-maintain a parallel model, and it is the right price — but it has
+to be written where the rows are, or the rows overclaim.
+
+| Mechanism | Checked by | Label |
+|---|---|---|
+| Coupling `K_ij = E′ᵢE′ⱼ/X_ij` **as used**, and its sign | PowerDynamics reaches the same equilibrium and the same trajectory through complex bus voltages, a `PiLine` admittance and a current balance — a different formulation, not a different arithmetic. Ring + `TripLine(:B3, :B1)`, 10 s: `f_coi` to 6.6e-11 Hz, worst per-machine speed to 1.3e-9 pu, angle differences to 3.3e-8 rad | **external** |
+| `find_fixpoint`'s answer | Handed to PowerDynamics as its initial state; every speed holds at zero to 1e-10 over 5 s. Positive control: bumping one initial angle by 0.01 rad makes the same check read *not* flat | **external** |
+| Branch ↦ edge mapping | The oracle builds its graph from `ba.src`/`ba.dst` through PowerDynamics' own `compile_line`, an independent path from `Graphs.edges` | **external** (adds to the M2 structural row) |
+| Event semantics — `TripLine`, `TripGenerator` | Mapped to `PiLine.active = 0` and to zero mechanical power + every incident line deactivated; agreement inside the band on both. An event with no mapping is **refused**, not dropped | **external** + structural |
+| COI read-out weighting, including a machine leaving it | Recomputed on the oracle side from *our* `H` weights; asserted against a control that keeps the pre-trip weights and lands >100 bands away, and against the sample at the event instant still being the pre-event one | **external** + structural |
+| The integration itself | 1000× tighter tolerance shrinks the cross gap by >10× — a fixed model disagreement would not move | convergence |
+| `X′d`'s **inverse** per-unit weight (`machine_arrays`) | The only conversion the oracle reaches: a wrong weight would leave a `ClassicalMachine` residual that does **not** vanish with loading, and none survives at the 1e-12 floor | **external** (via signature) |
+| `H`, `D`, `Pm` conversions to system base | **Nothing here.** The builder hands PowerDynamics the already-converted numbers; invert a weight and both sides integrate `H = 1.6` for `10.0` and agree to 1e-12 | unchanged: **derived** (M2 row) — explicitly *not* external |
+| `K` as a **formula** | **Nothing here** — both sides are handed the same `K` | unchanged: **closed form** (M2 row) |
+| Model bases (`S_base`, `f0`) reaching the oracle | PowerDynamics reads them from process-global state at construction. Tested on a 250 MVA / 60 Hz fixture with the global deliberately poisoned to 50 Hz first, plus an anti-vacuity half that reproduces the stale-base error on our side and lands >100 bands out | structural (mutation-checked) |
+| Governor state `ΔPm` | **No PowerDynamics counterpart** at either tier — so `build_oracle` **throws** on a governed model rather than silently comparing against an ungoverned one | **un-oracled, and refused rather than faked** |
+| `ClassicalMachine`'s torque form (D14) | Its mechanical input is `τ_m/ω` where ours is `Pm`. Isolated by a closed form (the survivor of a trip settles at `τ/D` for us, at the root of `D·ω·(ω−1) = τ` for it: −0.075000 vs −0.081670, each side landing on its own) and by the residual being **linear in loading** over two decades while the `Swing` residual does not move | closed form + **external** |
+| The `E′`-behind-`X′d` radial reduction `X − X′d,ᵢ − X′d,ⱼ` | Exact — proven by the *absence* of any loading-independent residual once the torque term is accounted for. Enforced structurally: branch degree ≠ 1 and a non-positive reduced reactance are both thrown | **external** + structural |
+| The oracle's own accuracy | Its self-convergence error is 3.5× ours at reltol 1e-3 and 18× at 1e-7 — **the floor is below us**, which is what D7 means by "not a ceiling" | convergence (measured) |
+
 ## Owed rows
 
-Rows M4 step 4 must add, and rows M5 will need before it ships:
+Rows M5 will need before it ships:
 
-- **external** column for: swing equation + coupling on a radial pair (matched
-  `E′`-behind-`X′d` configuration, `plans/m5-prestudy.md` §7); droop settling;
-  line-trip equilibrium. Anything PowerDynamics has no component for stays in the
-  column it is in, and says so.
 - The M5 rows: flux equations (two limits + small-signal `K`-constants), exciter,
   power-flow initialisation (flat run), algebraic network (Kirchhoff residual),
   voltage-dependent load. See `plans/m5-prestudy.md` §3–§5 for the oracle each
   one gets.
+- M5 also inherits one **choice** from step 4: the detailed tier's external check
+  will want `SauerPaiMachine`, which is above `ClassicalMachine` — so the torque
+  convention (D14) has to be re-read from *that* component's source rather than
+  assumed to carry over, and the two-limit degeneration bracket has to be run at a
+  loading low enough that a torque-form term cannot be mistaken for a flux one.
+
+**Closed by M4 step 4**, recorded so the change of plan is visible rather than
+silently dropped: the previous owed row asked for an external column via
+`ClassicalMachine` "matched `E′`-behind-`X′d` configuration, `m5-prestudy.md` §7".
+That is not how it was delivered. `Library.Swing` turned out to be our model
+equation for equation and needs no reduction at all, so it carries the external
+column on **any** topology — including the meshed ring the pre-study had ruled
+out — and `ClassicalMachine` became a second, different check instead. See
+`plans/m4-context.md` D13.

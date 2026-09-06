@@ -1093,7 +1093,7 @@ end
         @test t_wall < 1.0                               # ≫ the ~1.8 s a stale rtf would cost
     end
 
-    @testset "core dependency closure is UI-free (no Makie)" begin
+    @testset "core dependency closure is UI-free and oracle-free" begin
         # The structural invariant (docs/SPEC.md §3.1): the core may reach Observables
         # — that is the seam live state crosses — but never a plotting package. The
         # positive half matters as much as the negative: without it this testset
@@ -1111,6 +1111,22 @@ end
         # as much, and would not contain the string "Makie".
         @test !any(n -> n in ("Plots", "GR", "PyPlot", "PlotlyJS", "UnicodePlots"),
                    names)
+
+        # M4 step 4 (D3): the external oracle gets the same structural treatment
+        # as the UI. `reference/` depends on GridSim and on PowerDynamics, and
+        # never the reverse — so core keeps its six dependencies, `Pkg.test()` at
+        # the root does not resolve the ~49 extra packages PowerDynamics brings,
+        # and PowerDynamics stays the CHECKER rather than becoming a tier the mode
+        # router offers.
+        #
+        # The three names are listed separately rather than matched on a substring
+        # because they are three distinct ways in: the oracle itself, the whole
+        # ModelingToolkit symbolic stack it is built on (which is the expensive
+        # half of that closure), and PSID, which the SPEC used to name and which
+        # `m4-context.md` §The dependency probes established is unusable here.
+        @test !("PowerDynamics" in names)
+        @test !("PowerSimulationsDynamics" in names)
+        @test !any(n -> startswith(n, "ModelingToolkit"), names)
     end
 
 

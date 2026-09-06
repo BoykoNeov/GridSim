@@ -581,3 +581,157 @@ merely ship its in-suite form):
   win.read.max` and `win.t[argmax(win.gap)] === win.read.t_max`, to the bit, so the
   panel and the summary cannot come to disagree about where the largest
   disagreement is.
+
+### D13 — `Library.Swing` is the oracle, not `Library.ClassicalMachine`
+
+**A deviation from `m4-plan.md` step 4 and `m5-prestudy.md` §7, made on a
+measurement.** Both documents name `ClassicalMachine` as "our fidelity, someone
+else's implementation". Reading PowerDynamics' source before writing the builder
+showed that description fits a different component.
+
+`src/Library/Machines/Swing.jl` is:
+
+    Dt(θ)   ~ ωbase*(ω − ωframe)
+    M*Dt(ω) ~ Pm − D*(ω − ωset) − Pel
+    terminal.u_r ~ V*cos(θ);   terminal.u_i ~ V*sin(θ)
+
+With `ωframe = ωset = 1`, `M = 2H` and `ω_PD − 1 = ω_ours`, that is
+`swing_vertex!` line for line — **including the constant voltage magnitude AT THE
+BUS**, which is the one representational choice the tier note at the head of
+`src/model/network_model.jl` says our model makes and "E′ behind X′d" does not.
+`ClassicalMachine` is the E′-behind-X′d model, i.e. the thing that tier note
+spends forty lines explaining we are NOT.
+
+Three consequences, and the second changes the step's shape:
+
+- **The band collapses to solver error.** Nothing about the formulation differs,
+  so a gap is an implementation difference and nothing else. That is the oracle
+  D2 asked for — the one that can say "our engine is correct", rather than one
+  whose disagreements have two possible causes.
+- **The meshed ring becomes a valid oracle case.** `m5-prestudy.md` §7's "the ring
+  is not a valid oracle case and must not be used as one" is a statement about the
+  *radial reduction*, which is what fails on a degree-2 machine. `Swing` needs no
+  reduction, so the ring — and specifically **M4 step 3's shipped default
+  scenario**, `TripLine(:B3, :B1)` — goes through the external oracle. The window's
+  caption claims a physics lesson; this is what says the physics underneath it is
+  not our own arithmetic agreeing with itself.
+- **`ClassicalMachine` is kept, as the SECOND comparison**, and it earns its place
+  by answering a different question (D14). It is not the bug-detector.
+
+The plan's instinct was not wrong about wanting a formulation difference — it was
+wrong about which component carries it, and the correction cost an afternoon of
+reading source instead of a milestone of unattributable gaps.
+
+### D14 — `ClassicalMachine` takes a TORQUE where we take a POWER
+
+`m5-prestudy.md` §7 lists three convention questions to settle before any band is
+written: reactance placement, damping convention, and the `H` base. All three were
+answerable from PowerDynamics' source and **all three come out our way** (`X′d`
+reduces exactly on a radial pair; damping is `D·(ω−1)` with `ω` per unit; `H` is on
+the base the component is given). There is a **fourth**, and nothing on the plan
+had it. `src/Library/Machines/ClassicalMachine.jl`:
+
+    2*H * Dt(ω) ~ τ_m / ω − τ_e − D*(ω−1)
+
+The mechanical input is a **torque, divided by speed**. Ours is a **power**, flat.
+The difference is `τ_m·(1/ω − 1) ≈ −Pm·Δω`: it acts exactly like a change in
+damping, it is proportional to the machine's loading, and it is **identically zero
+at ω = 1** — so no flat run, no fixpoint check and no steady-state identity can
+see it. It is visible only in a transient, which is the one place a band gets
+chosen carelessly.
+
+**It is identified by its signature, not bounded by a tolerance** (M3's rule).
+Two independent forms of the same claim ship as tests:
+
+- **A closed form.** After `TripGenerator(:G1)` on a radial pair the survivor is
+  alone — no coupling, constant mechanical input, first order in `ω` — so both
+  sides have a closed-form settling speed, and they are *different* closed forms:
+  ours `Δω = τ/D`, theirs the root near 1 of `D·ω·(ω−1) = τ`. On
+  `two_machine_system()` that is −0.075000 against −0.081670, and each side lands
+  on its own to three figures. An attribution, not merely a disagreement.
+- **Linearity in loading.** With the pair kept COUPLED by a mechanical-power step
+  (so the run exercises the `X_line = X − X′d,ᵢ − X′d,ⱼ` reduction rather than two
+  isolated rotors), the residual falls by a decade for every decade of loading,
+  over two decades, while the `Swing` residual does not move at all and stays at
+  the solver floor.
+
+**And that linearity is what proves the reduction exact.** If
+`X_line = 0.25 − 0.100 − 0.075 = 0.075` were even slightly wrong there would be a
+residual left over that does *not* vanish with loading, and the ratios would
+flatten toward 1 as the torque term shrank beneath it. None survives at the 1e-12
+floor. The reduction is confirmed by a measurement rather than by the algebra
+alone — and since `X′d` reaches the comparison only through `machine_arrays`'
+**inverse** weight, that one per-unit conversion is externally checked while `H`,
+`D` and `Pm` are not (below).
+
+## What step 4 measured, and the claim it stopped the step from making
+
+**The band could not be `tolerance_band`, and the reason is not a fudge factor.**
+M4 step 2's `3 · reltol · excursion` is the right derivation for two runs of the
+*same* engine: one relative tolerance, one solver, one state set. Here the two
+sides are an explicit Runge–Kutta (`Tsit5`, three states per machine, closed-form
+coupling) against a stiff Rosenbrock (`Rodas5P`, two states per bus, a
+complex-voltage current balance). They control *local* error on different
+quantities and accumulate different *global* error over the horizon. Measured over
+five decades of tolerance on the ring, the ratio of the gap to `tolerance_band`
+runs **5.2 → 12.8 → 15.3 → 6.2 → 4.7** and does not settle. Choosing a factor to
+cover that is fitting a constant to the very gap it is meant to judge.
+
+So the band comes from the triangle inequality instead —
+`|a − b| ≤ |a − truth| + |truth − b|` — with each side's error estimated by **its
+own** convergence, `|run(reltol) − run(reltol/1000)|`. Neither term ever looks at
+the other implementation, so "state the band before you see the gap" stops being a
+discipline and becomes a property of the arithmetic. `oracle_band` is that, and
+the cross gap comes out at **0.30–0.33 of it** at reltol 1e-3, 1e-5 and 1e-7
+alike. Sitting below even `factor = 1` is itself informative: the two errors partly
+cancel, so their sum overestimates their difference.
+
+**The oracle is the less accurate of the two, and now that is a number.** D7 says
+the oracle is a floor rather than a ceiling; the self-convergence terms say by how
+much. `err_theirs / err_ours` is 3.5 at reltol 1e-3 and 18 at 1e-7 — at matched
+tolerance PowerDynamics' run of this problem is between three and twenty times
+further from the truth than ours.
+
+**What the oracle CANNOT check, which is most of the D7 label list.** The case is
+compiled from `NetworkModel` (D5), so both sides read the same `machine_arrays`,
+`branch_arrays` and `_coupling`. Invert the weight in `machine_arrays` — `m.H / w`
+for `m.H * w` — and both sides integrate `H = 1.6` instead of `10.0` and agree to
+1e-12. The oracle is blind to everything upstream of the fork. That is the price
+of not hand-maintaining a parallel model, it is the right price, and it means:
+
+| checked by | what |
+|---|---|
+| **PowerDynamics, externally** | the coupling formula and its SIGN; the graph/edge mapping; `find_fixpoint`'s answer being an equilibrium of an independently formulated network; the event semantics (`TripLine`, `TripGenerator`) reaching both sides identically; the COI read-out's weighting; the integration itself |
+| **PowerDynamics, via D14's signature** | `X′d`'s inverse per-unit weight — the one conversion the transient comparison does reach |
+| **M1/M2 closed forms only** | the `H`, `D` and `Pm` conversions in `machine_arrays`; `K = E′ᵢE′ⱼ/X` as a *formula* (both sides are handed the same `K`) |
+| **un-oracled, and stated** | the aggregate governor lag `Tg` (M3's, unchanged); the `ΔPm` governor state, which neither PowerDynamics tier can express and which `build_oracle` therefore REJECTS rather than silently dropping |
+
+The last row is why `build_oracle` throws on a governed model. A silently
+ungoverned oracle would read as a physics disagreement, which is the one thing
+this package exists not to produce.
+
+**Consequently the anti-vacuity mutation must be made in `swing_vertex!`.** A
+mutation in the shared data path propagates to *both* sides and every check in
+`reference/test/runtests.jl` goes green against a real bug. Scaling `D` is the
+mutation to make: the equilibrium is at `ω = 0` either way, so the flat run still
+passes and only the transient diverges — which is what proves the transient checks
+are the ones doing the work.
+
+**Run, and the pattern is the prediction rather than merely "it went red":** 64
+pass / 18 fail, with the four testsets that integrate nothing (preconditions, the
+flat run, the band derivation, the D7 label list) all fully green and every
+transient comparison failing. The band testset staying green is worth a sentence
+of its own — `oracle_band` is built from the *mutated* engine's own convergence,
+so it does not widen to swallow the error it is supposed to expose, which is the
+property that makes a self-derived band safe. Per-testset breakdown in
+`m4-tasks.md` step 4.
+
+**Two mechanics of PowerDynamics worth carrying forward.** `set_Sbase!` and
+`set_fbase!` are process-global and are read at component *construction* time, so
+`build_oracle` sets both from the model it was handed on every call; both repo
+fixtures are 100 MVA / 50 Hz, so the test that this happens uses a 250 MVA / 60 Hz
+fixture and **poisons the global to 50 Hz first**, or it would pass against a
+builder that never set them at all. And `PiLine`'s `active` parameter is what a
+`TripLine` maps onto — a scheduled parameter change on their side against a
+scheduled parameter change on ours, which is the same mechanism rather than two
+mechanisms that have to be argued equivalent.

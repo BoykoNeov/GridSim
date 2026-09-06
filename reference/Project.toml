@@ -1,0 +1,39 @@
+name = "GridSimReference"
+uuid = "ed7140c0-9e1f-43dd-8c31-67455ac3498f"
+version = "0.1.0"
+authors = ["BoykoNeov <boikoneov@gmail.com>"]
+
+[deps]
+GridSim = "eb5af87e-af5a-4058-ac7e-47b2baa55413"
+NetworkDynamics = "22e9dc34-2a0d-11e9-0de0-8588d035468b"
+OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
+PowerDynamics = "cc46b21f-1b17-51c2-b642-af74c3d3a8be"
+
+[compat]
+GridSim = "0.1"
+NetworkDynamics = "1.3.0"
+OrdinaryDiffEq = "7.8.1"
+PowerDynamics = "5.0.0"
+# 1.11 and not the 1.10 the other two packages declare: the `[sources]` section
+# below is only honoured from the Pkg that ships with Julia 1.11, and a package
+# whose dev link is silently ignored resolves to a REGISTERED GridSim or to
+# nothing at all. `ui/Project.toml` carries the same section under a 1.10 floor
+# and that gap is still open (m4-tasks.md step 5); this package does not inherit it.
+julia = "1.11"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
+
+# The dev link to the core package, carried FROM BIRTH rather than added later —
+# `docs/plans/m4-tasks.md` step 5, and the gitignored-manifest trap that has cost
+# this repo time twice (`ui/` in M3, and the dev machine in M2). Without it the
+# link to core lives only in the gitignored `Manifest.toml` and a fresh clone
+# cannot resolve. Honoured by the Pkg that ships with Julia >= 1.11.
+#
+# NOTE: `Pkg.add` rewrites this file and DROPS these comments. After any Pkg
+# operation on this environment, `git diff reference/Project.toml` and put them back.
+[sources]
+GridSim = {path = ".."}

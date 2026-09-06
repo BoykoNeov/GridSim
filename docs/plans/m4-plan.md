@@ -136,13 +136,25 @@ case typed out beside `two_machine_system()` would be precisely the forked
 parallel data the invariant forbids. The builder is also the piece M5 reuses, and
 the shape roadmap item 5 will want when `PowerSystems.jl` arrives.
 
-Then: the same two-machine case, PowerDynamics configured with
-`Library.ClassicalMachine` — **our fidelity, someone else's implementation** — and
+Then: the same two-machine case, PowerDynamics configured at **our** fidelity, and
 the step-2 divergence read applied across the two. Disagreement here is a bug in
 *our* engine, not a lesson about fidelity. That is the entire point of doing it at
 matched fidelity first: when the detailed tier lands in M5, a disagreement can be
 attributed, instead of leaving "the simple model drops swings" and "our model has
 a bug" indistinguishable.
+
+> **Corrected when the step ran (D13).** This paragraph originally named
+> `Library.ClassicalMachine` as "our fidelity, someone else's implementation".
+> Reading PowerDynamics' source before writing the builder showed that
+> `Library.Swing` is the component that matches — `swing_vertex!` line for line,
+> constant voltage magnitude at the bus included — while `ClassicalMachine` is the
+> `E′`-behind-`X′d` model our own tier note explains at length that we are not.
+> `Swing` therefore carries the matched-fidelity comparison, and because it needs
+> no radial reduction it does so on **any** topology, including the meshed ring
+> `m5-prestudy.md` §7 had ruled out. `ClassicalMachine` is kept as a second,
+> different comparison, and it turned up a fourth convention question nobody had
+> written down: it takes a mechanical **torque** where we take a **power** (D14).
+> See `m4-context.md` D13/D14 and `m4-tasks.md` step 4.
 
 ### Step 5 — the dependency housekeeping M3 left open, now in its right place
 

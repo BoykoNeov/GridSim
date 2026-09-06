@@ -113,7 +113,7 @@ inject!(engine::SimulationEngine, event::PerturbationEvent)  # queued, applied a
 ├────────────────────────────────────────────────┤
 │  Compute regimes — PowerFlows.jl (steady),     │
 │  PowerSimulations.jl (markets/OPF),            │  ← existing Julia packages
-│  DiffEq + PowerDynamics/PSID (dynamics)        │
+│  DiffEq + PowerDynamics (dynamics)             │
 ├────────────────────────────────────────────────┤
 │  Data model — PowerSystems.jl (source of truth)│
 └────────────────────────────────────────────────┘
@@ -136,8 +136,9 @@ entity and a simulation entity the same object.
 | Canonical data | `PowerSystems.jl` | Adopt at network-aware tiers, not M1. |
 | Steady-state | `PowerFlows.jl` | DC / AC power flow. |
 | Markets / OPF | `PowerSimulations.jl`, `JuMP` + HiGHS/Ipopt | Later tiers. |
-| Dynamics (real-time tier) | `NetworkDynamics.jl` + `PowerDynamics.jl` | Modular, equation-based; thin over DiffEq → integrator is steppable for live injection. Swing model is a ready node type. |
-| Dynamics (playback tier) | `PowerSimulationsDynamics.jl` (PSID) | Full electromechanical, batch-shaped API (perturbations defined at `Simulation` construction). |
+| Dynamics (real-time tier) | `NetworkDynamics.jl` | Modular, equation-based; thin over DiffEq → integrator is steppable for live injection. **`PowerDynamics.jl` was paired with it on this line until M4 step 4 and is NOT a core dependency**: our vertex and edge equations are our own (`src/engines/swing.jl`), and PowerDynamics is the outside implementation that checks them — see the row below and the core closure test. |
+| Dynamics (playback tier) | ~~`PowerSimulationsDynamics.jl` (PSID)~~ → our own `solve!` | PSID proved **unusable in this repo, by measurement** — five dependency probes, `docs/plans/m4-context.md` §The dependency probes. Playback is M4's own `src/engines/playback.jl`. |
+| External reference (validation only) | `PowerDynamics.jl` | The outside implementation the engines are checked against, in `reference/` — never a tier the UI can run. Resolves against the pinned stack moving nothing (probe 5). |
 | Integration | `DifferentialEquations.jl` | Use the **integrator interface** (`init`, `step!`, callbacks) for real-time engines. |
 | Live state | `Observables.jl` | Standalone; safe in core. |
 | UI / viz | `GLMakie` (native), `WGLMakie` (web later), `GeoMakie`/`Tyler.jl` (maps, national scale) | Great for plots + simple controls; the node-graph editor is built on a Makie canvas later. |
@@ -309,10 +310,29 @@ end
 - **Closed form:** at the instant of a trip (`Δω=0, ΔPm=0`), initial RoCoF must
   match `RoCoF0 = f0 · ΔP_dist / (2·H_sys) = −f0·(P_k/S_base)/(2·H_sys)`. Assert in tests.
 - **Settling (no AGC):** `Δω_ss = ΔP_dist / (D + 1/R_eq)`. Assert.
-- **Cross-fidelity (later milestone, not blocking M1):** run the *same* trip in
-  PSID full electromechanical playback and overlay. The point where the aggregate
-  model and PSID diverge is the lesson — it shows what the COI approximation drops
-  (inter-machine swings, voltage coupling, IBR behavior).
+- **Cross-fidelity (later milestone, not blocking M1):** run the *same* trip
+  through a higher-fidelity playback and overlay. The point where the aggregate
+  model and the detailed one diverge is the lesson — it shows what the COI
+  approximation drops (inter-machine swings, voltage coupling, IBR behavior).
+
+  **Amended in M4 step 4.** This line originally named PSID. Read it as naming a
+  ROLE, not a package: PSID is not usable here, established by measurement rather
+  than by preference (`m4-context.md` §The dependency probes — the binding
+  constraint is our own `SciMLBase` floor, not a ceiling we chose). The role is
+  filled by **`PowerDynamics.jl`**, in the separate `reference/` package.
+
+  Two things the M4 work changed about what this bullet promises:
+
+  - The overlay the UI draws is **ours against ours** — the centre-of-inertia
+    tier against the network swing tier (M4 step 3), and against the detailed
+    tier when M5 lands. PowerDynamics is a **validation run, not a tier**: it is
+    the checker, and promoting it to something the mode router offers would put a
+    component library in the hot path for no current payoff (`m4-context.md` D3).
+  - The external comparison is made **at matched fidelity first**, so that a
+    disagreement can be attributed. Comparing our simple model against a richer
+    outside one leaves "the simple model drops swings" and "our model has a bug"
+    indistinguishable — which is the exact failure this reference exists to
+    remove (D2).
 
 ### 7.7 UI (separate `ui/` package, `using GLMakie`)
 
@@ -380,8 +400,12 @@ end
    numbers) and adds no dependency, whereas the playback rung almost certainly
    forces the `PowerSystems.jl` adoption of step 5 forward. See `m3-context.md`
    §Why this milestone.
-4. **Run-then-playback** path: same scenarios in PSID full electromechanical;
-   overlay vs the surrogate (cross-fidelity validation as a UI feature).
+4. **Run-then-playback** path: same scenarios at a higher fidelity; overlay vs
+   the surrogate (cross-fidelity validation as a UI feature). **Delivered in M4**,
+   and not by the package this line used to name: playback is our own
+   `solve!`/`state_series` (`src/engines/playback.jl`), the overlay window is
+   `ui/src/playback_window.jl`, and the external reference is `PowerDynamics.jl`
+   in `reference/` rather than PSID — see §7.6 above and `m4-context.md` D1.
 5. **Steady-state** ladder: DC power flow → AC power flow (Newton) → AC-OPF
    (adopt `PowerFlows.jl`; introduce `PowerSystems.jl` as canonical model here).
 6. Wider protection (M3 builds the first two schemes: per-area load shedding and

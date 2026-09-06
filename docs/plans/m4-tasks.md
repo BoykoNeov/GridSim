@@ -303,38 +303,148 @@ assertion built for it:**
 
 ## Step 4 — `reference/`: PowerDynamics as an external oracle
 
-- [ ] New package `reference/`, depending on `GridSim` and `PowerDynamics`,
+**DONE.** New package `reference/` (`GridSimReference`) — `src/GridSimReference.jl`,
+`src/oracle.jl`, `test/runtests.jl`, **82/82 green** — plus the SPEC amendment and
+a new clause in the core closure test. **1873 core / 172 UI / 82 reference.**
+The core number moves by exactly the three closure clauses and by nothing else —
+the oracle reads the engines, it does not alter them. Decisions **D13** and **D14**, and everything the step
+measured, are in `m4-context.md`.
+
+**The plan named the wrong component, and reading the source before writing the
+builder is what caught it.** `m4-plan.md` and `m5-prestudy.md` §7 both say
+`ClassicalMachine` is "our fidelity, someone else's implementation". It is not:
+`Library.Swing` is `swing_vertex!` line for line, constant-voltage-magnitude-at-
+the-bus included, while `ClassicalMachine` is the E′-behind-X′d model our own tier
+note spends forty lines explaining we are not. So `Swing` became the primary
+oracle (D13) and `ClassicalMachine` the second comparison, answering a different
+question (D14). The plan's instinct — that a formulation difference is worth
+having — was right; it was wrong about which component carries it.
+
+- [x] New package `reference/`, depending on `GridSim` and `PowerDynamics`,
       never the reverse — same structural enforcement as `ui/`.
-- [ ] **`NetworkModel → PowerDynamics` builder** (D5). This is the step's real
-      work; a hand-typed PowerDynamics case beside `two_machine_system()` is the
-      forked parallel model SPEC §3.2 forbids, and it would drift silently, which
-      is the worst possible property in an oracle.
-- [ ] Core's dependency-closure test still passes, and gains a clause: core must
-      not reach PowerDynamics either.
-- [ ] Two-machine case run through PowerDynamics with `Library.ClassicalMachine`
-      — **our fidelity, someone else's implementation**.
-- [ ] **The agreement band is derived and stated BEFORE the comparison runs** —
-      from the solver tolerance, the per-unit base conversion and the two sides'
-      initialisation conventions. Two independent implementations of the classical
-      machine will not agree to 1e-10, and a tolerance chosen after seeing the gap
-      tests nothing. This is the step-4 form of M3's "identify a residual by its
-      signature rather than bounding it with a tolerance", and it is the box most
-      likely to be quietly skipped.
-- [ ] Divergence read from step 2 applied across the two. Disagreement here is a
-      bug in *our* engine, not a lesson about fidelity — record which it turned
-      out to be.
-- [ ] **Positive control for the external check**: the comparison must read
-      *agreement* when agreement is real, inside the pre-stated band. Without it,
-      "the oracle agrees" cannot be distinguished from "the comparison always
-      agrees" — and for an external oracle this is the harder half of the pair.
-- [ ] Anti-vacuity control, **executed**: perturb one coefficient in our swing
-      vertex equations; the external agreement check must fail.
-- [ ] Every mechanism now carries a label saying what checks it (D7). Write the
-      list — PowerDynamics-checked, alternatively-oracled, or explicitly
-      un-oracled. Un-oracled is allowed; unmarked is not.
-- [ ] `docs/SPEC.md` §7.6 / §9 item 4 amended: the role is "an external
-      full-fidelity reference", the package is PowerDynamics, and the reason PSID
-      is not it is one sentence with a pointer to `m4-context.md`.
+- [x] **`NetworkModel → PowerDynamics` builder** (D5). `build_oracle(net; tier,
+      perturbations)` compiles buses, branches, bases, the initial state and the
+      scheduled events; nothing is typed beside `two_machine_system()`.
+      `oracle_solve` returns the trajectory **in the shape
+      `state_series(::SwingEngine)` returns**, so M4 step 2's `divergence` applies
+      across the two sides with no adapter and no resampling.
+- [x] Core's dependency-closure test still passes (**1873/1873**, from 1870 —
+      the three new assertions and nothing else), and gains a clause: core must
+      not reach `PowerDynamics`, `PowerSimulationsDynamics`, or anything whose
+      name starts with `ModelingToolkit` — three distinct ways in, listed
+      separately rather than matched on a substring.
+- [x] Two-machine case run through PowerDynamics — **with `Library.Swing`, not
+      `Library.ClassicalMachine`** (D13), and the ring too, because `Swing` needs
+      no radial reduction and is therefore valid on any topology. That is what
+      lets **step 3's shipped default scenario** — `TripLine(:B3, :B1)` on
+      `three_machine_ring()` — be the case the external oracle is put on.
+- [x] **The agreement band is derived and stated BEFORE the comparison runs** —
+      and it could not be `tolerance_band`. Across five decades of tolerance the
+      ratio of the gap to `3·reltol·excursion` runs 5.2 → 12.8 → 15.3 → 6.2 → 4.7
+      and does not settle, because the two sides are different solvers on
+      different state sets. Picking a factor to cover that is fitting a constant
+      to the gap it is meant to judge. `oracle_band` uses the triangle inequality
+      instead — each side's own convergence, `|run(reltol) − run(reltol/1000)|` —
+      so **neither term ever looks at the other implementation** and "state the
+      band before you see the gap" becomes arithmetic rather than discipline.
+      Measured: the cross gap is 0.30–0.33 of that band at reltol 1e-3, 1e-5 and
+      1e-7 alike.
+- [x] Divergence read from step 2 applied across the two. **It turned out to be
+      neither a bug in our engine nor a lesson about fidelity**: on the ring with
+      the line trip the two implementations agree to 6.6e-11 Hz on `f_coi`,
+      1.3e-9 pu on the worst per-machine speed and 3.3e-8 rad on the angle
+      differences, over a 10 s horizon with a scheduled event in the middle. The
+      third possibility the box did not list — that the engine is simply right —
+      is the one that happened.
+- [x] **Positive control for the external check.** Several, because for an
+      external oracle this is the harder half: the flat run reads *not flat* when
+      the initial angle is bumped; `oracle_band` on self-comparisons is exactly
+      `0.0`; `divergence` of a series with itself is exactly `0.0` with
+      `t_depart` NaN; the generator-trip check is repeated with the pre-trip COI
+      weights and reads >100 bands out; and the `ClassicalMachine` comparison
+      reads hundreds of bands OUT through the very same machinery that reads
+      `Swing` in — so "the comparison always agrees" is ruled out by runs that
+      ship, not only by a mutation somebody has to remember to execute.
+- [x] Anti-vacuity control, **executed against the source**: `D` scaled by 1.05
+      in `swing_vertex!`. **64 pass / 18 fail**, and the pattern is the prediction
+      rather than merely "it went red":
+
+      | testset | result |
+      |---|---|
+      | preconditions | 21/21 **green** — integrates nothing |
+      | flat run | 7/7 **green** — the equilibrium is at `ω = 0` either way |
+      | the derived band | 6/6 **green** — the band is built from the mutated engine's *own* convergence, so it stays small |
+      | D7 label list | 10/10 **green** — reads parameters, runs nothing |
+      | ring + line trip | 6 pass / **7 fail** |
+      | convergence | 2 / **1 fail** — the gap stops shrinking with tolerance, which is exactly what a model difference does |
+      | generator trip | 2 / **1 fail** |
+      | model's own bases | 2 / **1 fail** |
+      | `ClassicalMachine` signature | 8 / **8 fail** — including the linearity, which the damping error contaminates |
+
+      **The flat run passing while every transient check fails is the claim**, not
+      a convenience: it is what shows the transient comparisons are the ones doing
+      the work, and it is why `D` is the coefficient to scale rather than
+      something that also moves the equilibrium.
+
+      **The mutation has to go in the RHS and not in the shared data path**, and
+      that is the cost of D5 stated as a rule: `build_oracle` reads the same
+      `machine_arrays`/`branch_arrays`/`_coupling` the engine does, so a mutation
+      in *those* is handed identically to both sides and the whole suite goes
+      green against a real bug.
+
+      One assertion caught it that was not built for it: "the run really is the
+      one step 3 draws" (`f_coi` excursion ≈ 1.076e-3 Hz) reads OUR run alone and
+      went red too. A check written to pin a scenario turned out to pin the
+      dynamics as well.
+- [x] Every mechanism now carries a label saying what checks it (D7). The list is
+      the table in `m4-context.md` §What step 4 measured, and writing it turned up
+      the thing the step most needed to say out loud: **the flat run does not
+      validate the per-unit conversion.** The builder hands PowerDynamics the
+      already-converted numbers, so both sides fork downstream of
+      `machine_arrays`; invert a weight there and both integrate `H = 1.6` instead
+      of `10.0` and agree to 1e-12. `H`, `D` and `Pm` stay checked by M1/M2's
+      closed forms alone. `X′d` is the one exception and it is externally checked,
+      by D14's signature.
+- [x] `docs/SPEC.md` §7.6 / §9 item 4 amended, plus the tech-stack table and the
+      architecture diagram: the role is "an external full-fidelity reference", the
+      package is PowerDynamics, PSID's removal points at `m4-context.md`, and the
+      §7.6 bullet now says explicitly that the overlay the UI draws is ours
+      against ours while PowerDynamics is a validation run, never a tier.
+
+**Written beyond the list:**
+
+- [x] **The initial state is OUR fixpoint, not PowerDynamics' power flow.** That
+      removes initialisation as a source of difference (so the band is solver
+      error alone) and turns the no-disturbance run into an **independent check of
+      `find_fixpoint`**: PowerDynamics reaches equilibrium through complex bus
+      voltages, a pi-line admittance and a current balance where ours is a
+      closed-form `K·sin(δᵢ−δⱼ)`. It holds every ω at zero to 1e-10 over 5 s.
+- [x] **The `:classical` tier's preconditions are thrown, not documented.** Branch
+      degree ≠ 1 and a non-positive `X − X′d,ᵢ − X′d,ⱼ` are both named errors. A
+      comment saying the ring is invalid is exactly what gets stepped over later.
+- [x] **A governed model is REJECTED rather than silently ungoverned.** Neither
+      PowerDynamics tier has a `ΔPm` state, and an ungoverned oracle would read as
+      a physics disagreement — the one thing this package exists not to produce.
+      Droop and headroom are separate clauses so a test cannot pass by reaching
+      the wrong one.
+- [x] **An unmappable event is refused.** A perturbation that reached one side
+      only is this comparison's worst failure mode, because it looks exactly like
+      a finding.
+- [x] **The generator trip's COI bookkeeping is checked, not just its
+      trajectory.** Our engine zeroes the tripped machine's weight; the oracle has
+      to drop it at the same instant, or the two `f_coi` channels are different
+      quantities. Asserted with a control that recomputes `f_coi` from the
+      oracle's own speeds using the *pre-trip* weights — >100 bands away — and
+      with the sample AT the event instant still being the pre-event one.
+- [x] **The bases test poisons the global first.** PowerDynamics reads
+      `Sbase`/`fbase` from process-global state at component construction. Both
+      repo fixtures are 100 MVA / 50 Hz, so the check uses a 250 MVA / 60 Hz
+      fixture and calls `set_fbase!(50.0)` immediately before building it — and
+      the anti-vacuity half reproduces the stale-base error on OUR side (the same
+      machines compiled at 50 Hz) and confirms it lands >100 bands out.
+- [x] **The oracle is measurably the less accurate of the two.** D7 says it is a
+      floor, not a ceiling; the band's own self-convergence terms put a number on
+      it — `err_theirs / err_ours` is 3.5 at reltol 1e-3 and 18 at 1e-7.
 
 ## Step 5 — the dependency housekeeping, in its right place at last
 
@@ -352,8 +462,18 @@ assertion built for it:**
       *honoured* path only. It says nothing about the `julia = "1.10"` compat floor
       still declared in `ui/Project.toml` — whether older Pkg ignores the section or
       errors on it is untested here. Raise the floor to 1.11, or test on 1.10.
-- [ ] `reference/Project.toml` carries `[sources]` **from birth**, not added
-      later — the gitignored-manifest trap has cost this repo time twice.
+- [x] `reference/Project.toml` carries `[sources]` **from birth**, not added
+      later — the gitignored-manifest trap has cost this repo time twice — and it
+      is **verified rather than inspected**, the way `ui/`'s was: `Manifest.toml`
+      deleted, `Pkg.instantiate()` with **no** `Pkg.develop` by hand, and the
+      resolve came back `GridSim v0.1.0 `..`` with the suite green on the fresh
+      manifest. A `[sources]` entry that is present but not honoured resolves to a
+      registered package or to nothing, and only a resolve can tell you which.
+      It also declares `julia = "1.11"` rather than inheriting the 1.10 floor the
+      other two packages carry: `[sources]` is only honoured from the Pkg that ships
+      with 1.11, and a package whose dev link is silently ignored resolves to a
+      registered `GridSim` or to nothing at all. The open half of the `ui/` box
+      above is exactly that gap; this package does not inherit it.
 - [ ] Tick the M3 box in `m3-tasks.md` with a pointer here, rather than leaving a
       third milestone's reader to wonder whether it was forgotten.
 
@@ -379,8 +499,16 @@ assertion built for it:**
       measuring the wrong thing.
 - [ ] **Every long-running test self-terminates** on a fixed step count, never on
       a condition. Re-check per step.
-- [ ] **The oracle must not become a ceiling** (D7). Exceeding PowerDynamics'
+- [x] **The oracle must not become a ceiling** (D7). Exceeding PowerDynamics'
       scope is allowed; exceeding it while still speaking as if checked is not.
+      Discharged in step 4 as a table (`m4-context.md` §What step 4 measured) that
+      says of every mechanism whether PowerDynamics checks it, an alternative
+      oracle does, or nothing does — and the table's most useful row is the one
+      nobody expected to write: `H`, `D` and `Pm`'s per-unit conversions are NOT
+      externally checked, because the builder hands PowerDynamics the
+      already-converted numbers. **And the ceiling is now a measurement**: at
+      matched tolerance PowerDynamics' own convergence error on this problem is
+      3.5x ours at reltol 1e-3 and 18x at 1e-7.
 
 ## Carried into M5 (not this milestone's work)
 
