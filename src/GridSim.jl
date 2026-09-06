@@ -185,6 +185,11 @@ export SwingEngine, machine_ids
 # existing generic it adds a method to, which is the whole point of the interface.
 export DetailedEngine
 export load_bus_system
+# M5 step 4's two fixtures. They live in `src` rather than in a test file
+# because BOTH the core suite and `reference/` need them, and a fixture
+# maintained in two places is the forked-data hazard SPEC §3.2 forbids —
+# `detailed_pair` in particular was a `reference/test` local until step 4.
+export detailed_pair, infinite_bus_system
 # The applied-event record the trajectory deliberately does not carry (a line trip
 # leaves no channel behind, and a one-sample marker is what decimation deletes —
 # see the head of `engines/swing.jl`). `describe_event` gives a window and a

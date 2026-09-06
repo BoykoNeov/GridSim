@@ -1077,6 +1077,86 @@ function load_bus_system()
 end
 
 """
+    detailed_pair() -> NetworkModel
+
+Two machines and one tie — and the first fixture in the repo whose **flux
+equations have anything to do**. `G1` carries real synchronous reactances
+(`Xd = 1.8`, `Xq = 1.7` on its own base) and finite open-circuit time constants
+(`T′do = 8 s`, `T′qo = 0.4 s`); `G2` is left at the frozen-flux defaults, so the
+pair also exercises one machine of each kind in one model.
+
+**The numbers were scanned, not chosen, and the reason is a per-unit hazard.**
+`Machine.E′` denominates a *different physical quantity* at the two tiers: at the
+classical tier it is the constant internal voltage at the bus, and at the detailed
+tier it is the magnitude of the q-axis source **behind `(Ra + jXq)`** (see
+`Machine`'s docstring and `_machine_injection`). With a realistic `Xq` the
+terminal voltage therefore sits well *below* `E′`, and a fixture written by
+analogy with `two_machine_system()` lands outside the power flow's own
+`|V| ∈ [0.9, 1.1]` band and throws at build time. These land at
+`|V| = (0.996, 1.013)` with `E′d = 0.184` — so the saliency and the q-axis flux
+this fixture exists to carry are actually live in it, which a fixture at
+`E′d ≈ 0` would not be.
+
+Used by the detailed tier's flat run (where the flux fixpoint `E′d = (Xq−X′q)·Iq`
+is a real condition rather than `0 = 0`), by the `T′ → 0` limit of M5 step 4, and
+by the external oracle. It lives here rather than in a test file because two
+suites need it and a fixture maintained twice is the forked-data hazard SPEC §3.2
+exists to forbid.
+"""
+detailed_pair() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+    [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+    [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.00,  40.0;
+             Xd = 1.8, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
+     Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -40.0)])
+
+"""
+    infinite_bus_system(; P0 = 0.0, Xd = 1.8, H = 200.0, H_inf = 100.0) -> NetworkModel
+
+One salient machine on an **infinite bus** through a tie — the fixture for M5 step
+4's closed form, the Heffron–Phillips field-flux time constant
+
+    T′d = T′do · (X′d + Xe) / (Xd + Xe),   Xe = X_tie + X′d(G_inf)
+
+`G_inf` is an ordinary machine left at the frozen-flux defaults, so its internal
+voltage is constant and its internal node **is** the infinite bus, exactly, with
+`Xe` a number this model already carries rather than an idealisation bolted on.
+Its `X′d` is deliberately ordinary (0.05 pu) rather than tiny: `Xe` has to be
+*counted*, not neglected, and a near-zero reactance would put a near-zero into the
+stator inversion's determinant for nothing.
+
+**Why the default loading is ZERO, which is the fixture's whole design.** The
+closed form holds with the rotor angle fixed. At `P0 = 0` the entire solution sits
+on the real axis: `δ ≡ 0`, `Iq ≡ 0`, `E′d ≡ 0`, and therefore `Pe ≡ 0`, so the
+swing equation cannot move the rotor **at all** and the decay law is exact rather
+than approximate — measured at 0.000 % against the prediction, with `|δ| = 0` to
+the bit. Under load it is not exact, and *no amount of inertia recovers it*: the
+rotor's new equilibrium angle after a field step is `ΔP/K_syn`, which is
+independent of `H`; a heavier rotor only reaches it more slowly. M5 step 4
+measured the resulting error at 21-25 % across a 64× range of `H`. That is why
+this fixture defaults to the unloaded case and why the loaded one is a *boundary*
+test rather than a second closed form.
+
+The keywords exist because the prediction is a **formula in `Xd`**: the
+anti-vacuity mutation for this check is "perturb `(Xd − X′d)` and the measured
+time constant must move by the predicted amount", which a fixture that cannot vary
+`Xd` cannot host. `H`/`H_inf` exist for the boundary test above.
+
+`G1` is rated 250 MVA on a 100 MVA base, so every reactance in the prediction must
+come from `machine_arrays` and not from the `Machine` fields — mixing the two bases
+would give a plausible-looking time constant that is wrong by 2.5×.
+"""
+function infinite_bus_system(; P0::Real = 0.0, Xd::Real = 1.8, H::Real = 200.0,
+                             H_inf::Real = 100.0)
+    NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.20, 500.0)],
+        [Machine(:G1, :B1, 250.0, H, 0.0, 0.25, 1.05,  Float64(P0);
+                 Xd = Xd, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
+         Machine(:G_inf, :B2, 100.0, H_inf, 0.0, 0.05, 1.00, -Float64(P0))])
+end
+
+"""
     coi_model(net::NetworkModel) -> SystemModel
 
 Compile the **center-of-inertia aggregate view** of `net` — the M1 `SystemModel`

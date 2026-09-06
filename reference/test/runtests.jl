@@ -456,48 +456,24 @@ end
 
 end # M4 step 4
 
-# ===========================================================================
-# M5 step 3 — the detailed tier against PowerDynamics, flux frozen on BOTH sides
-# ===========================================================================
-#
-# WHY A SEPARATE STEP FROM "FLUX ON". `m5-prestudy.md` §2a establishes that
-# `SauerPaiMachine` at `X″ = X′` IS our two-axis machine, line for line, with ONE
-# exception: their static stator carries the rotor speed on the flux terms and
-# ours does not. With `R_s = 0` their internal voltage is exactly `ω ×` ours, so
-# at equal states the two terminal voltages differ by `(ω − 1)·V` — first order in
-# the slip, identically zero at synchronous speed, and therefore invisible to the
-# flat run, to the fixpoint residual and to every steady-state identity.
-#
-# That residual is IDENTIFIED BY ITS SIGNATURE, not absorbed into a band. A band
-# wide enough to hide it would hide a real error of the same size. Freezing the
-# flux on both sides is what makes the identification clean: it is the only
-# residual left, so its linearity in slip can be measured against nothing else.
-# Step 4 switches the flux on, and the CHANGE is the flux term by construction.
-#
-# THE ORDER MATTERS AND IT IS NOT THE PRE-STUDY'S FIRST GUESS. §7 proposed
-# separating the two candidate effects by running at low loading. That does not
-# separate them — flux decay scales with loading too, so both move together. The
-# separator is fidelity, not loading.
-@testset "M5 step 3 — PowerDynamics with the flux frozen on both sides" begin
-
 # ---------------------------------------------------------------------------
-# Fixtures for this step
+# Fixtures and helpers for the detailed tier (M5 steps 3 and 4)
 # ---------------------------------------------------------------------------
+#
+# These four sat INSIDE the step-3 testset until step 4 needed them too, and a
+# `@testset` block is a scope: a function defined in one is invisible to its
+# sibling. Hoisting rather than copying is M5 step 0b's rule applied to this file —
+# the alternative is two copies of the one helper that decides what "the same
+# scenario on both sides" means. Nothing in them changed in the move; step 3's
+# testsets below still call them and its counts are unchanged.
 
-# A machine carrying REAL detailed data — the thing the classical tier must now
-# refuse, and the thing step 4 will run.
-detailed_pair() = NetworkModel(100.0, 50.0,
-    [Bus(:B1, 400.0), Bus(:B2, 400.0)],
-    [Branch(:L12, :B1, :B2, 0.25, 500.0)],
-    [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.00,  40.0;
-             Xd = 1.8, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
-     Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -40.0)])
-# The loading and `E′` are not decorative: `Machine.E′` means a DIFFERENT physical
-# quantity at this tier (the magnitude behind `Ra + jXq`, not the voltage at the
-# bus), so a salient machine at classical-looking numbers solves to a terminal
-# voltage outside the power flow's own `|V| ∈ [0.9, 1.1]` band. These were scanned
-# rather than assumed; they land at |V| = (0.996, 1.013) with `E′d = 0.18`, so the
-# saliency this fixture exists to carry is actually live in it.
+# `detailed_pair()` — the machine carrying REAL detailed data — was a local here
+# until M5 step 4, and it MOVED INTO `GridSim` itself (`src/model/network_model.jl`,
+# beside `two_machine_system` and friends). Step 4's core suite needs the same
+# fixture for the `T′ → 0` limit and for the first flat run whose flux fixpoint is
+# a real condition, and a fixture maintained in two files is the forked-data hazard
+# SPEC §3.2 forbids. Its numbers, its scanned `|V|` and the reason they were scanned
+# are in its docstring; nothing about the fixture changed in the move.
 
 # One GridSim run and one PowerDynamics run of the same scenario on ONE grid, at
 # the detailed tier. Same shape as `both` above and for the same reasons; it is
@@ -536,6 +512,32 @@ end
 gap(a, b, k) = maximum(abs, getproperty(a, k) .- getproperty(b, k))
 peak_slip(s, ids) = maximum(abs, vcat((getproperty(s, Symbol(:ω_, i)) for i in ids)...))
 chan(k) = s -> getproperty(s, k)
+
+# ===========================================================================
+# M5 step 3 — the detailed tier against PowerDynamics, flux frozen on BOTH sides
+# ===========================================================================
+#
+# WHY A SEPARATE STEP FROM "FLUX ON". `m5-prestudy.md` §2a establishes that
+# `SauerPaiMachine` at `X″ = X′` IS our two-axis machine, line for line, with ONE
+# exception: their static stator carries the rotor speed on the flux terms and
+# ours does not. With `R_s = 0` their internal voltage is exactly `ω ×` ours, so
+# at equal states the two terminal voltages differ by `(ω − 1)·V` — first order in
+# the slip, identically zero at synchronous speed, and therefore invisible to the
+# flat run, to the fixpoint residual and to every steady-state identity.
+#
+# That residual is IDENTIFIED BY ITS SIGNATURE, not absorbed into a band. A band
+# wide enough to hide it would hide a real error of the same size. Freezing the
+# flux on both sides is what makes the identification clean: it is the only
+# residual left, so its linearity in slip can be measured against nothing else.
+# Step 4 switches the flux on, and the CHANGE is the flux term by construction.
+#
+# THE ORDER MATTERS AND IT IS NOT THE PRE-STUDY'S FIRST GUESS. §7 proposed
+# separating the two candidate effects by running at low loading. That does not
+# separate them — flux decay scales with loading too, so both move together. The
+# separator is fidelity, not loading.
+
+@testset "M5 step 3 — PowerDynamics with the flux frozen on both sides" begin
+
 
 # ===========================================================================
 @testset "the detailed tier's preconditions are structural, not documented" begin
