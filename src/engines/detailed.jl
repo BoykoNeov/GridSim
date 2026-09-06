@@ -39,7 +39,15 @@
 # saliency term vanishes and this engine is `SwingEngine` on a terminal-bus
 # network. That is what makes plan step 2's oracle run on the scenarios that
 # already exist. What it CANNOT check is the flux equations, because they are
-# switched off — see the ledger row, and plan step 4.
+# switched off — and plan step 4 is what checks them, three ways at three very
+# different resolutions: a CLOSED FORM for the field-flux decay
+# (`T′d = T′do·(X′d + Xe)/(Xd + Xe)`, exact to 3e-9 on `infinite_bus_system()`),
+# the `T′ → 0` LIMIT from the other side (this tier with `X′ := X` and the flux
+# frozen IS the quasi-steady machine, and the gap falls linearly in `T′`), and
+# PowerDynamics with the mechanism live. The external one is the COARSEST of the
+# three — ~10 %, because the stator-`ω` residual above arrives on the flux channel
+# through `Id` and is larger than a small parameter error. See the ledger rows and
+# `m5-context.md` D19.
 #
 # WHY ALGEBRAIC RATHER THAN DYNAMIC BRANCHES (m5-prestudy.md §5, D1). Dynamic RL
 # branches keep the letter of "an ODE" and lose its point: the bus voltages stay

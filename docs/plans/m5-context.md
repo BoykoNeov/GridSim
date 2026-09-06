@@ -620,3 +620,62 @@ restated in the follow-on batch rather than quietly dropped. The discipline is
 M4's: `smoke_render` offscreen first, then the live window; render before
 claiming; and a `Label` with the right text that was never added to the figure
 passes every text assertion anyone can write about it.
+
+## D18 — The flux closed form's precondition is the LOADING, not the inertia (measured, step 4)
+
+The Heffron-Phillips constant `T′d = T′do·(X′d + Xe)/(Xd + Xe)` is derived with the
+rotor angle **held fixed**. The plan did not say how to hold it, and the obvious
+answer — a very large `H` — is wrong, which cost a measurement to find out and is
+worth writing down because the same reflex will come back for the regulator's
+closed form in step 5.
+
+**Why large `H` does not work.** After a field-voltage step the rotor's *new
+equilibrium* angle is `ΔP/K_syn`. There is no `H` in that expression. A heavier
+rotor takes longer to travel there — the swing period goes as `√H` — but over a fit
+window of a few `τ` the angle has still moved by the same order. Measured across a
+**64× range**: the fitted constant's error is +21.8 % at `H = 200` and +25.8 % at
+`H = 12800`. A contamination that scaled as `1/H` would have fallen by 64×.
+
+**What does work: zero loading.** At `P0 = 0` the whole solution sits on the real
+axis. `δ ≡ 0`, so `Iq ≡ 0`, so `E′d ≡ 0`, so `Pe ≡ 0` — the swing equation has
+nothing to integrate and the rotor is *immobile* rather than merely heavy. The law
+is then exact rather than approximate: fitted against predicted to **3e-9** at
+`reltol` 1e-9 and 3e-6 at 1e-6, with `|δ|` at zero to the bit. `infinite_bus_system()`
+therefore defaults to the unloaded case, and the loaded one is a **boundary test**
+(the error must survive 64× the inertia) rather than a second closed form.
+
+**And a sub-finding that is really a naming trap.** The first pass read
+`|δ_G1 − δ_G1(0)|`, saw 2.8e-3, and concluded the rotor was pinned. It was not: the
+*infinite-bus machine's own* rotor had moved 1.4e-2. An infinite bus built out of a
+machine has a rotor, and the angle in the law is the **relative** one. The 21 %
+error is quantitatively what that excursion predicts, which is what turned a
+puzzling number into an identified one.
+
+**What the unloaded fixture therefore does NOT check**, asserted rather than
+implied: at `δ ≡ 0` the q axis carries no current, so `T′qo` and `(Xq − X′q)` are
+multiplied by zero here exactly as `(Xd − X′d)` was in step 2's frozen limit. Ten
+times `T′qo` moves nothing. The q-axis flux is checked by the `T′ → 0` limit and by
+PowerDynamics, and by nothing in the closed form.
+
+## D19 — Three oracles for one equation, and they resolve it four orders apart
+
+Step 4 gives the flux equations three checks, and the plan implicitly treated them
+as interchangeable evidence. They are not, and the ledger now records the
+difference:
+
+| oracle | resolves a wrong `T′do` / `(Xd − X′d)` at | what limits it |
+|:---|:---|:---|
+| closed form (`test/`) | **1e-4** | the fit, agreeing at two tolerances |
+| `T′ → 0` limit (`test/`) | ~1 % on `Xd` | the linear-in-`T′` residual it measures |
+| PowerDynamics (`reference/`) | ~10 % | **the stator-`ω` residual, not solver noise** |
+
+The external check's honest `E′q` gap is 1.56e-5 — 304 bands, so not noise: it is
+step 3's `(ω − 1)·V` residual arriving on the flux channel through `Id`. A 1 % `Xd`
+error only doubles it. So the newest and most impressive-looking oracle is the
+**least** sharp of the three on these equations, and a closed form — the oldest and
+cheapest technique in the repo — is four orders better. That is not an argument for
+dropping the external one: it is the only check that a *different implementation*
+agrees, and it is the only one of the three that would catch an error the closed
+form and the limit share. It is an argument against reading "checked externally" as
+"checked tightly", which is exactly what `m4-context.md` D7 means by the oracle
+being a floor and not a ceiling.

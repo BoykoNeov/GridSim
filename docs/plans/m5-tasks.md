@@ -6,15 +6,18 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **steps 0b, 1, 2 and 3 done, steps 4-8 open.** Entered at `86651ab` with
+Status: **steps 0b, 1, 2, 3 and 4 done, steps 5-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
-unchanged, step 1 brought it to **2083 core**, and step 2 to
-**2253 core / 172 UI / 82 reference**, and step 3 to
-**2253 core / 172 UI / 298 reference**. The detailed tier now carries the two-axis
-machine, reproduces `SwingEngine` at the frozen-flux degeneration, initialises
-from a power flow whose machine model is the steady state of that machine, and is
-checked against PowerDynamics' `SauerPaiMachine` with the flux frozen on both
-sides.
+unchanged, step 1 brought it to **2083 core**, step 2 to
+**2253 core / 172 UI / 82 reference**, step 3 to
+**2253 core / 172 UI / 298 reference**, and step 4 to
+**2342 core / 172 UI / 421 reference**. The detailed tier now carries the
+two-axis machine, reproduces `SwingEngine` at the frozen-flux degeneration,
+initialises from a power flow whose machine model is the steady state of that
+machine, is checked against PowerDynamics' `SauerPaiMachine` at both fidelities,
+and — with the flux live — against a closed form and against its own `T′ → 0`
+limit. **The three oracles resolve the same equations four orders apart, and the
+external one is the coarsest** (step 4, F3).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -601,21 +604,146 @@ resolve and is not in the repo.
 
 ## Step 4 — flux on: the equations step 2 could not see
 
-- [ ] **The other limit.** `T′do, T′qo → 0` reproduces the steady-state
-      constant-`Efd` `(Xd, Xq)` machine. With step 2 this brackets the flux
-      equation from both sides.
-- [ ] **The closed form.** Single machine, infinite bus through `Xe`, regulator
-      off: field flux decays with `T′d = T′do·(X′d + Xe)/(Xd + Xe)`
-      (Heffron–Phillips `K₃T′do`).
-- [ ] **The anti-vacuity mutation lives here**: perturb `(Xd − X′d)` and the
-      *measured* time constant must move by the **predicted** amount — not merely
-      move. Predicted first, measured second.
-- [ ] **External**: PowerDynamics with flux on, against the same band. The
-      *change* from step 3 is the flux term by construction — that is why step 3
-      is a separate step (D6).
-- [ ] Two tolerances on every numeric claim here.
-- [ ] Ledger rows: the flux equations move from `un-oracled` to `closed form` +
-      `external`.
+**Done 2026-09-07. 2342 core / 172 UI / 421 reference** (82 M4 + 216 step 3 +
+**123** step 4), all three green. Three oracles, and they turned out to have
+three *different resolutions* on the same equations (F3).
+
+- [x] **The other limit.** `T′do, T′qo → 0` reproduces the steady-state
+      constant-`Efd` `(Xd, Xq)` machine. Written as a MODEL rather than as a limit
+      (`flux_limit_model`: `X′d := Xd`, `X′q := Xq`, `T′ := Inf`), which shares the
+      fast machine's power flow to the bit and needs nothing matched by hand. The
+      gap falls **linearly in `T′`** — 1.35e-4, 4.15e-5, 1.39e-5 on the bus voltage
+      at `λ` = 1e-3, 3e-4, 1e-4 — and the smallest is still 70× the two sides' own
+      convergence spread, so it is a model residual and not solver noise. With
+      step 2 this brackets the flux equation from both sides.
+- [x] **The closed form.** Single machine, infinite bus through `Xe`, regulator
+      off: `T′d = T′do·(X′d + Xe)/(Xd + Xe)`. **Exact**, not approximate — fitted
+      against predicted to 3e-9 at `reltol` 1e-9 and 3e-6 at 1e-6 — and the reason
+      it is exact is the fixture's design rather than a tolerance (F1). The GAIN
+      is asserted too — `ΔE′q(t) = K₃·ΔEfd·(1 − e^{−t/τ})`, since a constant fitted
+      from the *shape* and a gain read off the *endpoint* are different functions
+      of the same two reactances — and the finite horizon went into the
+      **prediction** rather than into the tolerance (F9).
+- [x] **The anti-vacuity mutation lives here**, and it is a predicted move rather
+      than merely a move: `Xd` 1.8 → 1.0 pu moves the predicted constant from
+      2.8866 s to 4.3077 s, a ratio of 1.4923, and the measured ratio lands on it
+      to 1e-3. Stated as the ratio, which cancels anything common to the two runs.
+- [x] **External**: PowerDynamics with the flux on, same band machinery. The
+      *change* from step 3 is the flux term by construction — and the sharpest
+      form of that is the step-3 mirror (F6): on ONE fixture with `T′` as the only
+      difference, a 1 % `Xd` error is **bit-identical** frozen and **12.7 bands**
+      live.
+- [x] Two tolerances on every numeric claim here.
+- [x] Ledger rows: the flux equations move from `un-oracled` to `closed form` +
+      `external` + `internal limit`, with each one's **resolution** recorded,
+      because they differ by four orders (F3).
+
+### What this step found that the plan did not anticipate
+
+**F1 — the closed form's precondition is the LOADING, not the inertia, and the
+obvious lever does not work at all.** The Heffron-Phillips law holds with the rotor
+angle fixed, and the obvious way to hold it is a very large `H`. Measured across a
+**64× range of inertia**, the fitted time constant's error does not fall: +21.8 %
+at `H = 200` and +25.8 % at `H = 12800`. The reason is that the rotor's *new
+equilibrium angle* after a field step is `ΔP/K_syn`, which contains no `H` at all —
+a heavier rotor only reaches the same place more slowly, and over a fit window of a
+few `τ` the contamination does not shrink. What DOES make the law exact is **zero
+loading**: at `P0 = 0` the whole solution sits on the real axis, so `δ ≡ 0`,
+`Iq ≡ 0`, `E′d ≡ 0`, therefore `Pe ≡ 0`, and the swing equation has nothing to
+integrate. The rotor is not merely heavy, it is immobile, and the fit lands on the
+prediction to 3e-9. Both halves are now tests: the exact one, and the boundary.
+
+*And the first pass measured the wrong angle.* It read `|δ_G1 − δ_G1(0)|`, which
+stayed at 2.8e-3 and looked like successful pinning, while the **infinite-bus
+machine's own rotor** had moved 1.4e-2. An infinite bus made out of a machine has a
+rotor; the quantity in the law is the relative angle. The 21 % error is
+quantitatively what that excursion predicts.
+
+**F2 — the `T′ → 0` limit identifies `Xd` and is BLIND to `X′d`, and both halves
+are measurements.** `Xd` enters the fast model only through the flux numerator
+`(Xd − X′d)·Id`, which the limit model's `T′ = Inf` divides away — so a wrong `Xd`
+on the fast side alone is an error the reference is *structurally* immune to, and
+its signature is the right one: the ladder **stops converging** (gap ratio 0.84 per
+rung instead of 0.34) and lands 5.7× above the true one. `X′d` is the opposite: it
+cancels out of the limit entirely and only sets the *rate* of approach, so a **10 %**
+`X′d` error — ten times the size of the `Xd` mutation — moves the comparison by
+1.4 % where `Xd` moves it by a third. `X′d` is pinned by step 2's frozen limit and
+by the flat run; it is not pinned here, and the test says so with a number.
+
+**F3 — three oracles, three resolutions, and the external one is the coarsest.**
+This was not anticipated and it changes how the ledger reads:
+
+| oracle | resolves a wrong `T′do` / `(Xd − X′d)` at | limited by |
+|:---|:---|:---|
+| closed form (`test/`) | **1e-4** asserted; the fit itself agrees to 3e-9 | the fit, at two tolerances |
+| `T′ → 0` limit (`test/`) | ~1 % on `Xd` | the linear-in-`T′` residual it measures |
+| PowerDynamics (`reference/`) | ~10 % | **the stator-`ω` residual, not solver noise** |
+
+The external check's honest `E′q` gap is 1.56e-5, which is 304 bands — it is not
+noise, it is the step-3 residual arriving on the flux channel through `Id`. A 1 %
+`Xd` error only doubles it. So the newest and most impressive-looking oracle is the
+least sharp of the three on these equations, and the closed form — the oldest and
+cheapest technique in the repo — is four orders better.
+
+**F4 — the d-axis and q-axis flux errors are separated BY CHANNEL, and neither is
+visible on voltage or on frequency.** Measured, three mutations on our side only,
+against the honest gap:
+
+| mutation | `V_B1` | `E′q_G1` | `E′d_G1` | `f_coi` |
+|:---|---:|---:|---:|---:|
+| `T′do × 1.10` | ×0.9 | **×14.8** | ×2.8 | ×1.0 |
+| `Xd × 0.90` | ×0.9 | **×27.0** | ×4.6 | ×1.0 |
+| `T′qo × 1.10` | ×1.0 | ×1.9 | **×13.6** | ×1.0 |
+
+So a per-state comparison does not merely catch more here — it says *which
+equation* is wrong. And the terminal voltage sees none of them, because the
+stator-`ω` residual on that channel (2.0e-3) is a hundred times anything a flux
+error does to it. This is the third distinct shape of "assert per state, never on
+an aggregate": M4's hidden channel was `f_coi`, step 3's was `V`, and step 4 has
+both at once.
+
+**F5 — the flat run's new content is a DIFFERENT vacuity from step 1's, and the
+two must not be merged.** Step 1 recorded that `Pm := Pe` versus `Pm := P0` is
+unobservable without a load. This one is the flux half of the fixpoint: on every
+frozen-flux fixture `E′d = (Xq − X′q)·Iq` reads `0 = 0`, so the initialisation
+could write anything into `E′d` and a flat run would still be flat.
+`detailed_pair()` is the first fixture in the repo where it is a real condition
+(`E′d = 0.184`), and the d-axis condition is asserted beside it even though it holds
+by construction — a definition living in exactly one place is what makes a later
+second definition invisible.
+
+**F6 — the mirror of step 3's disclaimer, closed on one fixture.** Step 3 asserted
+`all(t9 .=== tb)` for a ×4 `Xd` and closed the testset with "step 4 is what makes
+`(X_d − X′_d)` live". Step 4 re-makes that assertion at ×0.99 on `detailed_pair()`
+and then re-runs it with `T′` finite: bit-identical becomes 12.7 bands, with the
+flux time constants as the only difference between the two runs. **And the channel
+that hides it is `f_coi`** — 0.01 bands, a hundredth of the band — which is asserted
+rather than discovered later.
+
+**F7 — `X_ls` and the `ψ″` seeding survive the flux being switched on, and that had
+to be measured rather than argued.** `γ_d2` multiplies `ψ″_d` *inside* the `E′q`
+equation, and step 3 ran that equation with a zero derivative in front of it — so
+"the sub-transient states drive nothing" was established in the one configuration
+where the equation that would couple them was dead. Re-run with the flux live:
+`X_ls` at 0.1 and 0.9 of its range moves every channel by 1.2e-10 against a 2.2e-6
+band, and their two `ψ″` states seeded ×2 and shifted still move nothing above it.
+
+**F9 — the endpoint check failed, and the fix was to sharpen it rather than to
+loosen it.** Comparing `ΔE′q` at the end of a 25 s run against the `t = ∞`
+asymptote is short by `e^{−25/τ} = 1.73e-4` — and that is exactly what the suite
+reported, twice, at an `rtol` of 1e-4. Widening the tolerance past it would have
+worked and would have thrown away the one place the exponential's SHAPE reaches
+the endpoint assertion. Carrying the `(1 − e^{−t/τ})` factor in the prediction
+instead tightens the agreement to **3e-7** and makes the check a statement about
+the whole first-order response rather than about its limit.
+
+**F8 — a helper defined inside a `@testset` is invisible to its sibling**, which is
+M5 step 0b's scope lesson in a second file. `both_detailed`, `gap`, `peak_slip` and
+`chan` lived inside the step-3 testset; step 4 needs the same four, and a `@testset`
+block is a scope. They were **hoisted, not copied** — the alternative is two copies
+of the one helper that decides what "the same scenario on both sides" means.
+`detailed_pair()` went further and moved into `GridSim` itself, beside
+`two_machine_system`, because the core suite needs the same fixture now.
 
 ## Step 5 — the voltage regulator
 
