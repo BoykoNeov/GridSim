@@ -133,11 +133,17 @@ Rows M5 will need before it ships:
   power-flow initialisation (flat run), algebraic network (Kirchhoff residual),
   voltage-dependent load. See `plans/m5-prestudy.md` §3–§5 for the oracle each
   one gets.
-- M5 also inherits one **choice** from step 4: the detailed tier's external check
-  will want `SauerPaiMachine`, which is above `ClassicalMachine` — so the torque
-  convention (D14) has to be re-read from *that* component's source rather than
-  assumed to carry over, and the two-limit degeneration bracket has to be run at a
-  loading low enough that a torque-form term cannot be mistaken for a flux one.
+- M5 also inherited one **choice** from step 4: the detailed tier's external check
+  wants `SauerPaiMachine`, which is above `ClassicalMachine`, so the torque
+  convention (D14) had to be re-read from *that* component's source rather than
+  assumed to carry over. **Read, 2026-09-06 — `plans/m5-prestudy.md` §2a.** It does
+  not carry: their swing equation is ours term for term and D14's asymmetry is
+  absent, but the convention question relocates into the stator, where their `ω`
+  multiplies the flux terms and ours does not — the same order, and the same
+  invisibility to every steady-state check. The second half of this row is now
+  **wrong** and is replaced: running the bracket at low loading does *not*
+  discriminate a torque-form term from a flux one, because flux decay scales with
+  loading too. The separator is fidelity — flux off on both sides first, then on.
 
 **Closed by M4 step 4**, recorded so the change of plan is visible rather than
 silently dropped: the previous owed row asked for an external column via

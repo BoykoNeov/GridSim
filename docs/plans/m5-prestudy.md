@@ -265,14 +265,31 @@ Each is a default that would otherwise be discovered by a failure:
   scheduled `ComponentAffect` needs in order to write to them. Pass
   `stator_dynamics = false` explicitly too, for `oracle.jl`'s own stated reason:
   a default is not a guarantee.
-- **`vf`, `τ_m` and `τ_e` all carry `bounds = (0, Inf)`.** A model with negative
-  mechanical power, or a machine absorbing at equilibrium, will not initialise.
-  That is a precondition on the **model**, in the shape of `_assert_governor_free`
-  — thrown at build time, not met as a solver failure.
-- **`X_ls` has no default**, and `γ_d1` divides by `X′_d − X_ls`. `X_ls < X′_d`
-  strictly is a hard precondition, and `X_ls` is a data-sheet quantity §2's
-  parameter list does not yet carry: `machine_arrays` gains a column for it, and
-  being a reactance it scales inversely with `S_rated/S_base` like the rest.
+- **`vf`, `τ_m` and `τ_e` all carry `bounds = (0, Inf)`.** What MTK's initialiser
+  *does* with that metadata — enforce it, or take it as a hint — is **a named
+  measurement, not a claim**, exactly like `T′ = Inf` above: both are statements
+  about someone else's tooling and neither has been run here. What is certain is
+  that the declaration exists, so a model with negative mechanical power or a
+  machine absorbing at equilibrium is at risk of failing to initialise for a reason
+  that will not name itself. If the measurement says the bounds bite, the guard is
+  a precondition on the **model**, in the shape of `_assert_governor_free` — thrown
+  at build time rather than met as a solver failure.
+- **`X_ls` has no default**, and `γ_d1` divides by `X′_d − X_ls`, so `X_ls < X′_d`
+  strictly is a hard precondition of the builder. It is **not** a column in
+  `machine_arrays`, and the reason is worth the sentence: trace it through the
+  degeneration and it survives nowhere. `γ_1 = 1` and `γ_2 = 0` are independent of
+  it, the `E′` brackets reduce to `I_d` and `I_q`, and the flux linkages lose their
+  `ψ″` terms — only the two decoupled `ψ″` equations still mention it, and those
+  drive nothing. So it is a constant the *builder* must supply to their component,
+  not a parameter of our canonical model, and giving it a column would import a
+  foreign model's parameter into the one thing SPEC §3 keeps canonical.
+
+  **Its irrelevance is a free positive control, and the cheapest one in the
+  milestone.** Vary `X_ls` across a run and every comparison channel must come back
+  bit-identical. If anything moves, `γ_d1 ≠ 1` and the degeneration did not take —
+  which is precisely the "check that the switch actually switched" that M3 and M4
+  each had to build by hand. It costs one extra solve and it tests the assumption
+  all three of §3's flux oracles rest on.
 - **Their two extra states must be seeded, or their initialiser runs.** §4 hands
   PowerDynamics *our* fixpoint precisely so a flat run checks `find_fixpoint`
   rather than their power flow (`oracle.jl`'s argument, unchanged). The two states
@@ -317,8 +334,6 @@ branches buy a stiffness ratio of `1e5–1e6` for nothing; it is also the only
 formulation under which M5's external oracle costs no reduction and loses no
 topology. The most expensive recommendation in this file now has two reasons that
 do not depend on each other.
-
----
 
 ## 3. The degeneration oracle, stated correctly
 

@@ -197,7 +197,12 @@ lands, informed by what the oracle harness turns out to cost.
   **together**: constant field voltage (regulator off), equal transient
   reactances on both axes, and no damper winding. Two of those are parameter
   choices rather than limits, so a check that only shrinks a time constant would
-  pass against a wrong flux equation. So configured, the detailed tier must
+  pass against a wrong flux equation. **Superseded — see `m5-prestudy.md` §3 and
+  §2a, and `m4-tasks.md` "Carried into M5".** Two of the three conditions are wrong
+  for a two-axis machine: constant field voltage does not freeze `E′q` (that is
+  flux decay, a physical effect), and "no damper winding" is a condition on the
+  *oracle's* sixth-order machine (`X″ = X′`), not on ours. The exact limit is
+  frozen flux, and it cannot check the flux equations at all. So configured, the detailed tier must
   reproduce `SwingEngine` to solver tolerance, at two tolerances, on the same
   network — and its anti-vacuity mutation is to perturb one flux coefficient and
   watch the equality fail.
