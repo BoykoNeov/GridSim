@@ -744,3 +744,277 @@ end
 end
 
 end
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M5 step 4 — the flux equations switched on.
+#
+# Step 2 validated the tier at `T′ = Inf`, and said out loud that the limit
+# validates the flux equations NOT AT ALL: at `X = X′` with a zero derivative,
+# `(Xd − X′d)`, `(Xq − X′q)`, `T′do` and `T′qo` are all multiplied by zero and no
+# mutation of them can move a number. Step 3 asserted that blindness rather than
+# caveating it — a ×4 `Xd` left every channel bit-identical. This step is what
+# that left to earn, and it earns it three ways: the OTHER limit (`T′ → 0`), a
+# CLOSED FORM for the decay itself, and — in `reference/` — the external oracle
+# with the mechanism switched on.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@testset "M5 step 4 — the flux equations, switched on" begin
+
+# ---------------------------------------------------------------------------
+@testset "the flux fixpoint is a real condition here, and the flat run covers it" begin
+    # Step 1 recorded a vacuity: `Pm := Pe` versus `Pm := P0` is unobservable on a
+    # model with no load. THIS IS A DIFFERENT ONE and the two must not be merged.
+    # On every frozen-flux fixture the flux part of the fixpoint reads `0 = 0`:
+    # `Xd − X′d` and `Xq − X′q` are both zero, so `E′d = (Xq − X′q)·Iq` holds
+    # whatever the initialisation writes. `detailed_pair()` is the first fixture in
+    # the repo where it does not.
+    net = detailed_pair()
+    eng = init!(DetailedEngine, net)
+    st  = current_state(eng)
+    ma  = machine_arrays(net)
+    u   = eng.integrator.u
+
+    # The q-axis condition, checked against the machine's OWN stator rather than
+    # against a remembered number: `E′d` must equal `(Xq − X′q)·Iq` at the solved
+    # point. It follows from the power flow's q-axis property (`Ẽd = 0`) and from
+    # nothing the back-substitution asserts directly, which is what makes it a
+    # check rather than a restatement.
+    v = eng.machine_bus[1]
+    Id, Iq, _, _, _ = GridSim._stator(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]], st.δ[1],
+                                      st.E′q[1], st.E′d[1], ma.Ra[1], ma.Xd′[1],
+                                      ma.Xq′[1], 1.0)
+    @test st.E′d[1] ≈ (ma.Xq[1] - ma.Xq′[1]) * Iq atol = 1.0e-12
+    # …and the d-axis one, which holds BY CONSTRUCTION (`Efd` is defined from it)
+    # and is asserted anyway, because a definition living in one place is exactly
+    # what makes a later second definition invisible.
+    @test eng.params[eng.Efd_pidx[1]] ≈ st.E′q[1] + (ma.Xd[1] - ma.Xd′[1]) * Id atol = 1.0e-12
+    # The fixture is not vacuous: the saliency and the q-axis flux are live in it.
+    @test abs(st.E′d[1]) > 0.15                      # measured 0.184
+    @test !isapprox(st.E′q[1], net.machines[1].E′; atol = 1.0e-3)   # 0.9639 vs 1.00
+    @test isfinite(ma.Td0′[1]) && isfinite(ma.Tq0′[1])
+    # …and `Machine.E′` really has stopped being the terminal voltage at this tier
+    # (D4's silent reinterpretation), which is why this fixture's numbers were
+    # scanned rather than chosen: `|V|` lands inside the power flow's own band and
+    # `E′` does not predict it.
+    @test 0.9 < hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]]) < 1.1
+
+    # THE FLAT RUN, per state, at two tolerances and then forced to step. The same
+    # three-pass shape step 1 established and for the same reason: left to itself
+    # `Rodas5P` crosses the horizon in a handful of enormous steps, and a run that
+    # takes four steps is only establishing that an implicit method parks on an
+    # equilibrium.
+    for (rt, at) in ((1.0e-3, 1.0e-6), (1.0e-8, 1.0e-11))
+        e = init!(DetailedEngine, detailed_pair(); reltol = rt, abstol = at)
+        sr = solve!(e, (0.0, 10.0); saveat = 0.05)
+        for k in keys(sr)
+            k === :t && continue
+            @test maximum(abs, getproperty(sr, k) .- getproperty(sr, k)[1]) < 1.0e-11
+        end
+        @test e.integrator.stats.naccept < 20        # measured 4 and 6
+    end
+    ef = init!(DetailedEngine, detailed_pair(); reltol = 1.0e-8, abstol = 1.0e-11,
+               dtmax = 0.05)
+    sf = solve!(ef, (0.0, 10.0); saveat = 0.05)
+    @test ef.integrator.stats.naccept >= 150         # measured 201
+    for k in keys(sf)
+        k === :t && continue
+        @test maximum(abs, getproperty(sf, k) .- getproperty(sf, k)[1]) < 1.0e-11
+    end
+end
+
+# ---------------------------------------------------------------------------
+@testset "the closed form: the field flux decays with T′do·(X′d+Xe)/(Xd+Xe)" begin
+    # THE HEFFRON-PHILLIPS `K₃T′do` CONSTANT — the only check in this milestone
+    # that pins `(Xd − X′d)` and `T′do` INSIDE the equation with an interpretable
+    # number. Both of the other oracles report a diffuse disagreement instead.
+    #
+    # The prediction is written before anything is solved, and it comes from
+    # `machine_arrays` — the SYSTEM base — because `G1` is rated 250 MVA against a
+    # 100 MVA system while the `Machine` fields are on the machine base.
+    net = infinite_bus_system()
+    τp  = flux_tau_pred(net)
+    @test 2.8 < τp < 3.0                             # 8·(0.1+0.25)/(0.72+0.25)
+
+    # The rotor here is not merely heavy, it is IMMOBILE, and that is the fixture's
+    # design rather than a tolerance: at zero loading the whole solution sits on
+    # the real axis, so `Iq ≡ 0`, `E′d ≡ 0`, `Pe ≡ 0`, and the swing equation has
+    # nothing to integrate. That is what makes the closed form exact instead of
+    # approximate — the next testset is what happens when it is not.
+    for (rt, at) in ((1.0e-6, 1.0e-9), (1.0e-9, 1.0e-12))
+        s  = efd_step_run(net; ΔEfd = 0.05, reltol = rt, abstol = at)
+        i1 = findlast(t -> t <= 3τp, s.t) - 20
+        τm, n = flux_tau_fit(s.t, s.E′q_G1; h = 20, i1 = i1)
+        @test n > 100
+        @test τm ≈ τp rtol = 1.0e-4                  # measured 3e-6 and 3e-9
+        # The rotor stayed put — asserted, not assumed.
+        @test maximum(abs, s.δ_G1 .- s.δ_G1[1]) < 1.0e-9
+        @test maximum(abs, s.ω_G1) < 1.0e-11
+        @test maximum(abs, s.E′d_G1) < 1.0e-12       # the q axis is inert at δ = 0
+        # …and the GAIN is the same two constants read a second, independent way:
+        # `ΔE′q(t) = K₃·ΔEfd·(1 − e^{−t/τ})` with `K₃ = τ/T′do`. A time constant
+        # fitted from the shape and a gain read off the endpoint are different
+        # functions of the same two reactances.
+        #
+        # THE FINITE HORIZON IS IN THE PREDICTION RATHER THAN IN THE TOLERANCE, and
+        # that was a failure before it was a comment: comparing the endpoint against
+        # the `t = ∞` asymptote is off by `e^{−25/τ} = 1.73e-4`, which is exactly
+        # what the run came up short by. Loosening `rtol` past it would have hidden
+        # the one place the exponential's SHAPE reaches the endpoint check; carrying
+        # the factor instead tightens the agreement to 3e-7.
+        @test s.E′q_G1[end] - s.E′q_G1[1] ≈
+              0.05 * (τp / machine_arrays(net).Td0′[1]) *
+              (1 - exp(-s.t[end] / τp)) rtol = 1.0e-5
+    end
+    # Linear in the step size: doubling `ΔEfd` doubles the asymptote and leaves the
+    # time constant alone. A nonlinearity here would mean the fit is reading the
+    # operating point rather than the equation.
+    s1 = efd_step_run(net; ΔEfd = 0.05)
+    s2 = efd_step_run(net; ΔEfd = 0.10)
+    @test (s2.E′q_G1[end] - s2.E′q_G1[1]) /
+          (s1.E′q_G1[end] - s1.E′q_G1[1]) ≈ 2.0 rtol = 1.0e-4
+    i2 = findlast(t -> t <= 3τp, s2.t) - 20
+    @test flux_tau_fit(s2.t, s2.E′q_G1; h = 20, i1 = i2)[1] ≈ τp rtol = 1.0e-4
+
+    # ── THE ANTI-VACUITY MUTATION, and it is a PREDICTED move rather than merely a
+    # move. `Xd` on the machine under test drops from 1.8 to 1.0 pu (machine base)
+    # and the constant must land on the NEW prediction, which is a different number
+    # and not a rescaling of the old one. Predicted first: 4.3077 s against
+    # 2.8866 s, a ratio of 1.4923.
+    slow = infinite_bus_system(; Xd = 1.0)
+    τp2  = flux_tau_pred(slow)
+    @test τp2 / τp ≈ 1.4923 rtol = 1.0e-3
+    s2m  = efd_step_run(slow)
+    i2m  = findlast(t -> t <= 3τp2, s2m.t) - 20
+    τm2, _ = flux_tau_fit(s2m.t, s2m.E′q_G1; h = 20, i1 = i2m)
+    @test τm2 ≈ τp2 rtol = 1.0e-4
+    # …and stated as the RATIO the plan asked for, which cancels anything common to
+    # the two runs.
+    τm1, _ = flux_tau_fit(s1.t, s1.E′q_G1; h = 20,
+                          i1 = findlast(t -> t <= 3τp, s1.t) - 20)
+    @test τm2 / τm1 ≈ τp2 / τp rtol = 1.0e-3
+    # The mutation is not a null one: 49 % is four orders above the fit's own error.
+    @test τm2 / τm1 > 1.4
+
+    # WHAT THIS CHECK DOES NOT REACH, asserted rather than left to be assumed. At
+    # `δ ≡ 0` the q axis carries no current at all, so `Tq0′` and `(Xq − X′q)` are
+    # multiplied by zero here exactly as `(Xd − X′d)` was in step 2's limit. Ten
+    # times `Tq0′` moves nothing. The q-axis flux gets its check from the `T′ → 0`
+    # limit below and from the external oracle, and from nothing in this testset.
+    qmut = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+        [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
+                 m.Tg; Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = m.Td0′,
+                 Tq0′ = 10.0 * m.Tq0′, Ra = m.Ra) for m in net.machines])
+    sq = efd_step_run(qmut)
+    @test maximum(abs, sq.E′q_G1 .- s1.E′q_G1) < 1.0e-12
+end
+
+# ---------------------------------------------------------------------------
+@testset "why that closed form is exact only at zero loading — inertia does not help" begin
+    # THE MEASUREMENT THAT DECIDED THE FIXTURE'S DEFAULT. The obvious way to hold
+    # the rotor still is a very large `H`, and IT DOES NOT WORK: the rotor's new
+    # equilibrium angle after a field step is `ΔP/K_syn`, which does not contain
+    # `H` at all. A heavier rotor only takes longer to get there, and over a fit
+    # window of a few `τ` the contamination does not shrink. Measured across a 64×
+    # range of inertia — with the RELATIVE angle read, because the first pass read
+    # only `δ_G1` and missed that the infinite-bus machine's own rotor was the one
+    # moving.
+    τp = flux_tau_pred(infinite_bus_system())
+    errs = Float64[]
+    for (H, H_inf) in ((200.0, 100.0), (12800.0, 6400.0))
+        net = infinite_bus_system(; P0 = 40.0, H = H, H_inf = H_inf)
+        s   = efd_step_run(net)
+        i1  = findlast(t -> t <= 3τp, s.t) - 20
+        τm, _ = flux_tau_fit(s.t, s.E′q_G1; h = 20, i1 = i1)
+        rel = s.δ_G1 .- s.δ_G_inf
+        # The precondition is visibly violated: the machine turns against the bus.
+        @test maximum(abs, rel .- rel[1]) > 1.0e-2
+        push!(errs, τm / τp - 1)
+    end
+    @test all(e -> e > 0.15, errs)                   # measured +21.8 % and +25.8 %
+    # 64× the inertia does not reduce it, which is the finding. (It does not
+    # increase it much either; what is asserted is that the error SURVIVES, where a
+    # `1/H` contamination would have fallen by 64×.)
+    @test errs[2] > 0.5 * errs[1]
+end
+
+# ---------------------------------------------------------------------------
+@testset "the other limit: T′ → 0 reproduces the steady-state (Xd, Xq) machine" begin
+    # WITH STEP 2 THIS BRACKETS THE FLUX EQUATION FROM BOTH SIDES. Step 2 froze the
+    # flux and reproduced `SwingEngine`; here the flux is made arbitrarily FAST and
+    # must reproduce a constant-`Efd` machine behind `(Ra + jXq)` — which is
+    # `flux_limit_model`: a model rather than a limit, sharing this one's power flow
+    # to the bit.
+    #
+    # A FLAT RUN WOULD BE VACUOUS, because both models sit at the same fixpoint. So
+    # the comparison runs across a mechanical-power step.
+    base = detailed_pair()
+    lim  = pm_step_run(flux_limit_model(base))
+    # The two are genuinely different machines — the limit's `E′q` carries the whole
+    # `(Xd − X′d)·Id` drop, which is why the flux channels are NOT compared (see
+    # `flux_limit_model`).
+    @test abs(lim.E′q_G1[1] - pm_step_run(base).E′q_G1[1]) > 0.03
+
+    gaps = Dict{Float64,Dict{Symbol,Float64}}()
+    for λ in (0.001, 0.0003, 0.0001)
+        s = pm_step_run(scale_flux_time(base, λ))
+        gaps[λ] = Dict(k => maximum(abs, getproperty(s, k) .- getproperty(lim, k))
+                       for k in FLUX_LIMIT_CHANNELS)
+    end
+    # It converges, and it converges LINEARLY in `T′` — the statement that this is
+    # the singular-perturbation limit and not two models that merely happen to be
+    # close. Predicted before it was measured: the quasi-steady flux error is first
+    # order in the time constant.
+    for k in FLUX_LIMIT_CHANNELS
+        @test gaps[0.001][k] > gaps[0.0003][k] > gaps[0.0001][k]
+    end
+    # The RATE is asserted on the two channels it was measured on, rather than on
+    # every channel by analogy — an aggregate can be linear for reasons of its own.
+    for k in (:V_B1, :δ_G1)
+        @test gaps[0.001][k] / gaps[0.0003][k] ≈ 10/3 rtol = 0.15
+        @test gaps[0.0003][k] / gaps[0.0001][k] ≈ 3.0 rtol = 0.15
+    end
+    # …and the smallest gap is still a MODEL residual rather than solver noise: the
+    # reference side's own convergence spread is orders below it.
+    slow = pm_step_run(flux_limit_model(base); reltol = 1.0e-5, abstol = 1.0e-8)
+    for k in (:V_B1, :δ_G1)
+        band = maximum(abs, getproperty(slow, k) .- getproperty(lim, k))
+        @test gaps[0.0001][k] > 20 * band
+    end
+    # Tolerance-independent, which says the same thing a second way.
+    s6 = pm_step_run(scale_flux_time(base, 0.001); reltol = 1.0e-6, abstol = 1.0e-9)
+    l6 = pm_step_run(flux_limit_model(base); reltol = 1.0e-6, abstol = 1.0e-9)
+    @test maximum(abs, s6.V_B1 .- l6.V_B1) ≈ gaps[0.001][:V_B1] rtol = 1.0e-3
+
+    # ── ANTI-VACUITY, and it is a mutation the LIMIT SIDE CANNOT SEE. `Xd` enters
+    # the fast model only through the flux numerator `(Xd − X′d)·Id`, and the limit
+    # model's `T′ = Inf` divides that numerator away entirely — so mutating `Xd` on
+    # the FAST side alone is an error the reference is structurally immune to. Its
+    # signature is the right one: the ladder stops converging, because the fast
+    # model is now approaching a DIFFERENT machine.
+    mut = scale_Xd(base, :G1, 0.99)
+    m3 = pm_step_run(scale_flux_time(mut, 0.0003))
+    m4 = pm_step_run(scale_flux_time(mut, 0.0001))
+    g3 = maximum(abs, m3.V_B1 .- lim.V_B1)
+    g4 = maximum(abs, m4.V_B1 .- lim.V_B1)
+    @test g4 > 4 * gaps[0.0001][:V_B1]               # measured 5.7×
+    @test g4 / g3 > 0.5                              # measured 0.84 — it has PLATEAUED
+    @test gaps[0.0001][:V_B1] / gaps[0.0003][:V_B1] < 0.4   # …the true one has not
+
+    # ── AND WHAT THE SAME CHECK IS BLIND TO, measured rather than caveated. `X′d`
+    # does not survive the limit either: as `T′ → 0` it cancels out of the terminal
+    # relations entirely and only sets the RATE of approach. So a 10 % `X′d` error —
+    # ten times the size of the `Xd` mutation above — moves this comparison by under
+    # 2 %, where the `Xd` one moves it by a third. `X′d` is pinned by step 2's
+    # frozen limit and by the flat run, not here.
+    xd′_bad = NetworkModel(base.S_base, base.f0, base.buses, base.branches,
+        [Machine(m.id, m.bus, m.S_rated, m.H, m.D,
+                 m.id === :G1 ? 0.9 * m.Xd′ : m.Xd′, m.E′, m.P0, m.R, m.Pmax, m.Tg;
+                 Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = m.Td0′, Tq0′ = m.Tq0′,
+                 Ra = m.Ra) for m in base.machines])
+    gx = maximum(abs, pm_step_run(scale_flux_time(xd′_bad, 0.001)).V_B1 .- lim.V_B1)
+    @test abs(gx / gaps[0.001][:V_B1] - 1) < 0.02
+    gm = maximum(abs, pm_step_run(scale_flux_time(mut, 0.001)).V_B1 .- lim.V_B1)
+    @test gm / gaps[0.001][:V_B1] > 1.25
+end
+
+end # M5 step 4

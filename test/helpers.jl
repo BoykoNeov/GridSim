@@ -339,3 +339,141 @@ const TIER_CHANNELS = (("f_coi", system_frequency),
                        ("ω_G1", s -> s.ω_G1),
                        ("ω_G2", s -> s.ω_G2),
                        ("δ_G2−δ_G1", s -> s.δ_G2 .- s.δ_G1))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M5 step 4 — the flux equations
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    flux_tau_pred(net) -> Float64
+
+The Heffron-Phillips field-flux time constant `T′do·(X′d + Xe)/(Xd + Xe)` for an
+`infinite_bus_system()`-shaped model: machine 1 on the infinite bus that machine
+2's frozen internal node IS, through `Xe = X_tie + X′d₂`.
+
+**Every reactance comes from `machine_arrays`**, i.e. on the SYSTEM base. The
+`Machine` fields are on the MACHINE base and `G1` is rated 250 MVA against a 100
+MVA system, so reading `net.machines[1].Xd` here would predict a time constant
+wrong by 2.5x — and it would look entirely plausible, which is the trap this repo
+keeps paying for.
+"""
+function flux_tau_pred(net::NetworkModel)
+    ma = machine_arrays(net)
+    Xe = net.branches[1].X + ma.Xd′[2]
+    return ma.Td0′[1] * (ma.Xd′[1] + Xe) / (ma.Xd[1] + Xe)
+end
+
+"""
+    flux_tau_fit(t, y; h, i1) -> (τ, n)
+
+The decay constant of `y(t) = A + B·e^{−t/τ}`, fitted **without ever estimating
+the asymptote `A`**: differencing the series against itself `h` samples later
+kills the constant outright, since
+`y(t) − y(t+h) = B·(1 − e^{−h/τ})·e^{−t/τ}`, so a straight line through the log of
+`|y(t) − y(t+h)|` has slope `−1/τ`. An `A` read off the tail would be exactly the
+quantity a wrong time constant also gets wrong, and the fit would absorb the error
+it exists to measure.
+
+Samples `i0 = 1` through `i1`; `h` is in samples, not seconds.
+"""
+function flux_tau_fit(t, y; h::Integer, i1::Integer)
+    xs = Float64[]; ls = Float64[]
+    for i in 1:i1
+        d = y[i] - y[i + h]
+        abs(d) < 1.0e-13 && continue          # below round-off: no information left
+        push!(xs, t[i]); push!(ls, log(abs(d)))
+    end
+    length(xs) >= 10 || error("flux_tau_fit: only $(length(xs)) usable samples")
+    n = length(xs); mx = sum(xs) / n; ml = sum(ls) / n
+    slope = sum((xs .- mx) .* (ls .- ml)) / sum((xs .- mx) .^ 2)
+    return -1 / slope, n
+end
+
+"""
+    flux_limit_model(net) -> NetworkModel
+
+`net` with every machine's transient reactances raised to its synchronous ones
+(`X′d := Xd`, `X′q := Xq`) and its flux frozen — the `T′do, T′qo → 0` LIMIT
+machine written as a model rather than as a limit.
+
+**Why those two edits ARE the limit.** As `T′ → 0` the flux states reach their
+quasi-steady values instantly, `E′q → Efd − (Xd − X′d)·Id` and
+`E′d → (Xq − X′q)·Iq`; substitute those into the stator algebra and it collapses to
+`Vq = Efd − Xd·Id − Ra·Iq`, `Vd = Xq·Iq − Ra·Id` — a constant q-axis source `Efd`
+behind `(Ra + jXq)`, which is precisely a frozen machine whose transient
+reactances are its synchronous ones. Nothing has to be matched by hand: the power
+flow is bit-identical (`_machine_injection` reads only `E`, `Ra` and `Xq`, none of
+which this touches), and the limit machine's back-substituted `E′q` is identically
+the fast machine's `Efd`.
+
+**`E′q` and `E′d` are NOT comparable channels between the two models**, and that
+is by construction rather than by accident: they differ by `(Xd − X′d)·Id` and
+`(Xq − X′q)·Iq`, an O(0.1) offset on `detailed_pair()`. Only `δ`, `ω`, the bus
+voltages and `f_coi` mean the same quantity on both sides — which is why the
+caller lists channels instead of looping over `keys`.
+"""
+flux_limit_model(net::NetworkModel) = NetworkModel(net.S_base, net.f0, net.buses,
+    net.branches,
+    [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd, m.E′, m.P0, m.R, m.Pmax, m.Tg;
+             Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq, Td0′ = Inf, Tq0′ = Inf, Ra = m.Ra)
+     for m in net.machines])
+
+# `net` with every finite flux time constant scaled by `λ`. `Inf·λ` is `Inf`, so a
+# machine that was already frozen stays frozen and needs no special case.
+scale_flux_time(net::NetworkModel, λ::Real) = NetworkModel(net.S_base, net.f0,
+    net.buses, net.branches,
+    [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax, m.Tg;
+             Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = λ * m.Td0′,
+             Tq0′ = λ * m.Tq0′, Ra = m.Ra) for m in net.machines])
+
+# `net` with one machine's `Xd` scaled — the anti-vacuity mutation for both the
+# closed form (the predicted τ moves) and the `T′ → 0` limit (the fast side
+# converges to a DIFFERENT machine).
+scale_Xd(net::NetworkModel, id::Symbol, f::Real) = NetworkModel(net.S_base, net.f0,
+    net.buses, net.branches,
+    [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax, m.Tg;
+             Xd = m.id === id ? f * m.Xd : m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
+             Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra) for m in net.machines])
+
+"""
+    efd_step_run(net; ΔEfd, reltol, abstol, T, saveat, slack) -> NamedTuple
+
+A step on machine 1's field voltage, and the trajectory it produces.
+
+`Efd` is a PARAMETER at this tier until the plan's step 5 gives it a regulator, so
+this is the sanctioned perturbation channel (SPEC §6 — `inject!` writes exactly
+this vector) and needs no new event type. `auto_dt_reset!` follows the write for
+the reason `tier_pair` does it: the integrator's cached step size was chosen for
+the pre-step problem.
+"""
+function efd_step_run(net::NetworkModel; ΔEfd::Real = 0.05, reltol::Real = 1.0e-9,
+                      abstol::Real = 1.0e-12, T::Real = 25.0, saveat::Real = 0.05,
+                      slack::Symbol = :G_inf)
+    eng = init!(DetailedEngine, net; slack = slack, reltol = reltol, abstol = abstol)
+    eng.params[eng.Efd_pidx[1]] += ΔEfd
+    SciMLBase.auto_dt_reset!(eng.integrator)
+    return solve!(eng, (0.0, Float64(T)); saveat = saveat)
+end
+
+"""
+    pm_step_run(net; ΔPm, reltol, abstol, T, saveat) -> NamedTuple
+
+A step on machine 1's mechanical power — the disturbance the `T′ → 0` limit
+comparison runs on, because a FLAT run makes the two models agree trivially.
+
+The base value is read off the engine rather than from `Machine.P0`: at this tier
+the dispatch comes from the power flow, and on a model carrying a load those are
+not the same number.
+"""
+function pm_step_run(net::NetworkModel; ΔPm::Real = 0.05, reltol::Real = 1.0e-9,
+                     abstol::Real = 1.0e-12, T::Real = 5.0, saveat::Real = 0.02)
+    eng = init!(DetailedEngine, net; reltol = reltol, abstol = abstol)
+    eng.params[eng.Pm_pidx[1]] += ΔPm
+    SciMLBase.auto_dt_reset!(eng.integrator)
+    return solve!(eng, (0.0, Float64(T)); saveat = saveat)
+end
+
+# The channels the fast machine and its `T′ → 0` limit may be compared on. The two
+# flux channels are absent DELIBERATELY — see `flux_limit_model`.
+const FLUX_LIMIT_CHANNELS = (:δ_G1, :δ_G2, :ω_G1, :ω_G2, :V_B1, :V_B2, :f_coi)
