@@ -152,6 +152,13 @@ export GenerationRamp, generation_ramp
 # (2026-09-02, the session that merged step 2; it could not be run in the session
 # that wrote it).
 export windowed_rocof, divergence, system_frequency, tolerance_band
+# `convergence_band` moved here from `reference/src/oracle.jl` in M5 step 2, where it
+# was `oracle_band`: the derivation (each side's error estimated by its OWN
+# convergence, summed through the triangle inequality) has nothing to do with
+# PowerDynamics, and the internal classical-vs-detailed comparison is the same
+# explicit-against-stiff shape. `oracle_band` is now a one-line call to it.
+# Checked clear against GLMakie's exports before being added — the standing check.
+export convergence_band
 
 # --- engine interface ---
 # `step!`/`solve!` are CommonSolve's generics (imported in engines/interface.jl

@@ -557,7 +557,7 @@ through here, so none of them can hold a different convention.
 @inline _coupling(mi::Machine, mj::Machine, br::Branch) = mi.E′ * mj.E′ / br.X
 
 """
-    machine_arrays(net::NetworkModel) -> (; bus, H, D, Pm, E, Xd, invR, headroom, Tg)
+    machine_arrays(net::NetworkModel) -> (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg)
 
 The machine parameters as contiguous `Vector{Float64}`s **indexed by machine**
 (entry `k` belongs to `net.machines[k]`), all converted to the **system base** —
@@ -579,15 +579,21 @@ arrives as its own column:
 The alternative — keeping the arrays vertex-indexed with holes — was rejected:
 a machine-free bus would need a sentinel `H`, and `H` sits in a denominator.
 
-  - `H`  — s, inertia on `S_base`  (`Hᵢ · S_ratedᵢ/S_base`)
-  - `D`  — pu/pu, damping on `S_base` (same weight)
-  - `Pm` — pu, mechanical power (`P0ᵢ/S_base`); negative = load
-  - `E`  — pu, internal voltage magnitude (base-independent, passed through)
-  - `Xd` — pu, transient reactance on `S_base` (`X′dᵢ · S_base/S_ratedᵢ`; note
-           the **inverse** weight — impedance scales the other way from power,
-           which is the sign of this conversion going wrong). **M2a's dynamics do
-           not read this** — it is here, on the right base, for M2b. Folding it
-           into the coupling is the mistake point 2 of the tier note describes.
+  - `H`   — s, inertia on `S_base`  (`Hᵢ · S_ratedᵢ/S_base`)
+  - `D`   — pu/pu, damping on `S_base` (same weight)
+  - `Pm`  — pu, mechanical power (`P0ᵢ/S_base`); negative = load
+  - `E`   — pu, internal voltage magnitude (base-independent, passed through)
+  - `Xd′` — pu, **transient** reactance on `S_base` (`X′dᵢ · S_base/S_ratedᵢ`; note
+            the **inverse** weight — impedance scales the other way from power,
+            which is the sign of this conversion going wrong). **M2a's dynamics do
+            not read this** — it is here, on the right base, for M2b. Folding it
+            into the coupling is the mistake point 2 of the tier note describes.
+
+            **The name carries a prime because M5 needs the un-primed one.** Until
+            the detailed tier arrived, `X′d` was the only reactance a machine had
+            and this column was called `Xd`; the two-axis machine adds a
+            *synchronous* `Xd`, and a column named `Xd` holding a transient
+            reactance is the kind of quiet mismatch this repo pays a round for.
 
 Governor data (M3 step 1), on the same system base:
 
@@ -614,7 +620,7 @@ function machine_arrays(net::NetworkModel)
     D  = Vector{Float64}(undef, n)
     Pm = Vector{Float64}(undef, n)
     E  = Vector{Float64}(undef, n)
-    Xd = Vector{Float64}(undef, n)
+    Xd′ = Vector{Float64}(undef, n)
     invR     = Vector{Float64}(undef, n)
     headroom = Vector{Float64}(undef, n)
     Tg       = Vector{Float64}(undef, n)
@@ -625,7 +631,7 @@ function machine_arrays(net::NetworkModel)
         D[v]  = m.D * w
         Pm[v] = m.P0 / S_base
         E[v]  = m.E′
-        Xd[v] = m.Xd′ / w               # impedance scales inversely
+        Xd′[v] = m.Xd′ / w              # impedance scales inversely
         # The GAIN converts with the power weight (same as H and D), not the droop
         # itself — writing `m.R * w` here would be the mirror-image of the `Xd′`
         # mistake above and would still look plausible.
@@ -633,7 +639,7 @@ function machine_arrays(net::NetworkModel)
         headroom[v] = (m.Pmax - m.P0) / S_base
         Tg[v]       = m.Tg
     end
-    return (; bus, H, D, Pm, E, Xd, invR, headroom, Tg)
+    return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg)
 end
 
 """

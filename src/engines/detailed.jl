@@ -565,7 +565,7 @@ function _read_static(net::NetworkModel, bt, u::Vector{Float64}, p::Vector{Float
         v = ma.bus[k]
         δ[k] = u[sδ[k]]
         _, _, pe = _machine_injection(real(V[v]), imag(V[v]), δ[k],
-                                      ma.E[k], ma.Xd[k], 1.0)
+                                      ma.E[k], ma.Xd′[k], 1.0)
         Pe[k] = pe
     end
     status = Float64[p[sstatus[e]] for e in eachindex(net.branches)]
@@ -666,7 +666,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         su[sδ_idx[k]]        = 0.0
         sp[sPset_pidx[k]]    = ma.Pm[k]
         sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :E))]  = ma.E[k]
-        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :Xd))] = ma.Xd[k]
+        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :Xd))] = ma.Xd′[k]
         sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :mstat))] = 1.0
         sp[smode_pidx[k]]    = k == k_slack ? _PF_PIN : _PF_SOLVE
         sp[sδtarget_pidx[k]] = 0.0
@@ -699,7 +699,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         u0[ω_idx[k]]   = 0.0
         u0[ΔPm_idx[k]] = 0.0
         p0[Pm_pidx[k]] = Pe[k]
-        for (sym, val) in ((:E, ma.E[k]), (:Xd, ma.Xd[k]), (:H, ma.H[k]),
+        for (sym, val) in ((:E, ma.E[k]), (:Xd, ma.Xd′[k]), (:H, ma.H[k]),
                            (:D, ma.D[k]), (:ω₀, ω₀), (:invR, ma.invR[k]),
                            (:headroom, ma.headroom[k]), (:Tg, ma.Tg[k]), (:mstat, 1.0))
             p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, sym))] = val

@@ -62,7 +62,7 @@ positivity rather than documenting them — see `_assert_radial`.
 function reduced_line_reactance(net::NetworkModel, e::Integer)
     ma = machine_arrays(net)
     ba = branch_arrays(net)
-    return ba.X[e] - ma.Xd[ba.src[e]] - ma.Xd[ba.dst[e]]
+    return ba.X[e] - ma.Xd′[ba.src[e]] - ma.Xd′[ba.dst[e]]
 end
 
 # The tier boundary of the `:classical` mapping, enforced instead of documented.
@@ -88,8 +88,8 @@ function _assert_radial(net::NetworkModel)
         Xr = reduced_line_reactance(net, e)
         Xr > 0 || throw(ArgumentError(
             "build_oracle(tier = :classical): branch $(net.branches[e].id) reduces to " *
-            "X_line = $Xr pu ≤ 0 (X = $(ba.X[e]), X′d = $(ma.Xd[ba.src[e]]) and " *
-            "$(ma.Xd[ba.dst[e]]) on the system base). The machines' internal reactances " *
+            "X_line = $Xr pu ≤ 0 (X = $(ba.X[e]), X′d = $(ma.Xd′[ba.src[e]]) and " *
+            "$(ma.Xd′[ba.dst[e]]) on the system base). The machines' internal reactances " *
             "exceed the tie, so there is no line left to put between them and the " *
             "reduction does not exist for this model."))
     end
@@ -230,7 +230,7 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
             # would put losses into a network whose `Σ P0 = 0` balance forbids
             # them.
             Library.ClassicalMachine(; name = :mach, τ_m_input = false, R_s = 0.0,
-                                       X′_d = ma.Xd[v], H = ma.H[v], D = ma.D[v],
+                                       X′_d = ma.Xd′[v], H = ma.H[v], D = ma.D[v],
                                        vf_set = ma.E[v], τ_m_set = ma.Pm[v])
         end
         b = compile_bus(MTKBus(inj); vidx = v, name = net.buses[v].id)
@@ -300,50 +300,28 @@ end
     oracle_band(a_coarse, a_fine, b_coarse, b_fine;
                 channel = system_frequency, factor = 3) -> Float64
 
-The agreement band for a **cross-implementation** comparison, derived rather than
-chosen — and derived from data that never looks at the gap it is going to judge.
+The agreement band for a **cross-implementation** comparison. One line, because
+**the derivation moved into core as `convergence_band` in M5 step 2** — read it
+there. Nothing about it was specific to PowerDynamics, and the detailed tier's
+internal comparison against `SwingEngine` is the same explicit-against-stiff
+shape, so a second copy here would have been the drift hazard this package's own
+header warns about.
 
-`tolerance_band` (M4 step 2) is `3 · reltol · excursion`, and that derivation is
-right for two runs of the *same* engine: one relative tolerance, one solver, one
-state set. It is **not** the band here, and the reason is not a fudge factor.
-The two sides are an explicit Runge–Kutta (`Tsit5`, 3 states per machine, a
-closed-form `K·sin(δᵢ−δⱼ)` coupling) against a stiff Rosenbrock (`Rodas5P`, 2
-states per bus for `:swing`, a complex-voltage current balance). They control
-*local* error on different quantities and accumulate different *global* error over
-the horizon; there is no reason for those sums to be within a factor of two of
-each other, and measured over five decades of tolerance they are not — the ratio
-of the gap to `tolerance_band` runs from 4.7 to 15.3 and does not settle.
-
-Picking a factor to cover that would be fitting a constant to the gap it is meant
-to judge. So the band comes from the triangle inequality instead:
-
-    |a − b|  ≤  |a − truth| + |truth − b|
-
-Each side's own error is estimated by its own convergence — `|run(reltol) −
-run(reltol/1000)|`, where the fine run is three decades more accurate and so
-stands in for the truth. **Neither estimate involves the other implementation**,
-so the band is fully determined before the comparison is made: "state the band
-before you see the gap" becomes a property of the arithmetic rather than a rule
-somebody has to keep. `factor = 3` is headroom for the estimates being estimates,
-carried over from step 1's argument.
-
-Measured on `three_machine_ring()` with `TripLine(:B3, :B1)`, the cross gap comes
+What stays here is what the derivation cannot carry: **the measurements this pair
+produced.** On `three_machine_ring()` with `TripLine(:B3, :B1)` the cross gap comes
 out at **0.30–0.33 of this band** at `reltol` = 1e-3, 1e-5 and 1e-7 alike. That it
 sits below even `factor = 1` is itself informative: the two errors partly cancel,
-so the sum overestimates their difference.
-
-One asymmetry the same numbers expose, and it belongs in the record rather than
-in a footnote: at matched tolerance **PowerDynamics is the less accurate of the
-two** — `err_theirs / err_ours` is 3.5 at 1e-3 and 18 at 1e-7. The oracle is a
-floor, not a ceiling (D7), and here that is a measurement rather than a slogan.
+so the sum overestimates their difference. And one asymmetry the same numbers
+expose, which belongs in the record rather than in a footnote: at matched tolerance
+**PowerDynamics is the less accurate of the two** — `err_theirs / err_ours` is 3.5
+at 1e-3 and 18 at 1e-7. The oracle is a floor, not a ceiling (D7), and here that is
+a measurement rather than a slogan.
 """
-function oracle_band(a_coarse::NamedTuple, a_fine::NamedTuple,
-                     b_coarse::NamedTuple, b_fine::NamedTuple;
-                     channel = system_frequency, factor::Real = 3)
-    factor > 0 || throw(ArgumentError("oracle_band: factor must be > 0, got $factor"))
-    err(x, y) = maximum(abs, channel(x) .- channel(y))
-    return Float64(factor) * (err(a_coarse, a_fine) + err(b_coarse, b_fine))
-end
+oracle_band(a_coarse::NamedTuple, a_fine::NamedTuple,
+            b_coarse::NamedTuple, b_fine::NamedTuple;
+            channel = system_frequency, factor::Real = 3) =
+    GridSim.convergence_band(a_coarse, a_fine, b_coarse, b_fine;
+                             channel = channel, factor = factor)
 
 """
     oracle_solve(case::OracleCase, tspan; saveat, reltol = 1e-9, abstol = 1e-9)

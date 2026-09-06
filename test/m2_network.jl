@@ -53,12 +53,12 @@ end
     @test ma.D  ≈ [5.0, 8.0]
     @test ma.Pm ≈ [0.6, -0.6]
     @test ma.E  ≈ [1.05, 1.02]
-    @test ma.Xd ≈ [0.10, 0.075]
+    @test ma.Xd′ ≈ [0.10, 0.075]
     # The inverted conversion, named explicitly so the test fails loudly
     # rather than by a mysterious number: X′d·w instead of X′d/w.
-    @test ma.Xd ≉ [0.25 * 2.5, 0.30 * 4.0]
+    @test ma.Xd′ ≉ [0.25 * 2.5, 0.30 * 4.0]
     # …and the missing conversion (raw machine-base values passed through).
-    @test ma.Xd ≉ [0.25, 0.30]
+    @test ma.Xd′ ≉ [0.25, 0.30]
     @test ma.H  ≉ [4.0, 5.0]
 
     # Derived on call, never stored: two calls give equal arrays that are not
@@ -68,7 +68,7 @@ end
     @test machine_arrays(net).H !== ma.H
 
     # Everything is a plain contiguous Float64 vector (SPEC §4, struct-of-arrays).
-    @test all(a -> a isa Vector{Float64}, (ma.H, ma.D, ma.Pm, ma.E, ma.Xd,
+    @test all(a -> a isa Vector{Float64}, (ma.H, ma.D, ma.Pm, ma.E, ma.Xd′,
                                            ma.invR, ma.headroom, ma.Tg))
 
     # Governor conversions (M3 step 1). `two_machine_system` is governor-free,
@@ -133,7 +133,7 @@ end
                            [Machine(m.id, m.bus, m.S_rated, m.H, m.D,
                                     10 * m.Xd′, m.E′, m.P0) for m in net.machines])
     @test branch_arrays(stiffer).K == ba.K
-    @test machine_arrays(stiffer).Xd ≈ 10 .* machine_arrays(net).Xd   # …and it did change
+    @test machine_arrays(stiffer).Xd′ ≈ 10 .* machine_arrays(net).Xd′  # …and it did change
 
     ring = three_machine_ring()
     br = branch_arrays(ring)
@@ -150,7 +150,7 @@ end
     @test deg == [2, 2, 2]
     # X′d is still carried, on the system base, ready for M2b: three different
     # machine bases (0.30/300, 0.20/200, 0.50/500) all land on 0.10 pu.
-    @test machine_arrays(ring).Xd ≈ [0.10, 0.10, 0.10]
+    @test machine_arrays(ring).Xd′ ≈ [0.10, 0.10, 0.10]
 end
 
 @testset "two-machine closed form: the target step 4 must hit" begin

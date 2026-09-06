@@ -150,6 +150,53 @@ function tolerance_band(reference::AbstractVector{<:Real}; reltol::Real,
     return Float64(factor) * Float64(reltol) * exc
 end
 
+"""
+    convergence_band(a_coarse, a_fine, b_coarse, b_fine;
+                     channel = system_frequency, factor = 3) -> Float64
+
+The agreement band for a comparison between **two different integrations** —
+different solvers, different state sets, or different formulations of the same
+physics — derived rather than chosen, and derived from data that never looks at
+the gap it is going to judge.
+
+`tolerance_band` is `factor · reltol · excursion`, and that derivation is right
+for two runs of the *same* engine: one relative tolerance, one solver, one state
+set. It is **not** the band here. An explicit Runge–Kutta and a stiff Rosenbrock
+control *local* error on different quantities and accumulate different *global*
+error over the horizon; there is no reason for those sums to be within a factor of
+two of each other, and M4 step 4 measured that they are not — the ratio of the gap
+to `tolerance_band` ran from 4.7 to 15.3 over five decades of tolerance and did
+not settle. Picking a factor to cover that would be fitting a constant to the gap
+it is meant to judge.
+
+So the band comes from the triangle inequality instead:
+
+    |a − b|  ≤  |a − truth| + |truth − b|
+
+Each side's own error is estimated by its own convergence — `|run(reltol) −
+run(reltol/1000)|`, where the fine run is three decades more accurate and so
+stands in for the truth. **Neither estimate involves the other side**, so the band
+is fully determined before the comparison is made: "state the band before you see
+the gap" becomes a property of the arithmetic rather than a rule somebody has to
+keep. `factor = 3` is headroom for the estimates being estimates.
+
+`channel` is any function of a series returning one vector, so a gauge-free angle
+difference is as comparable as a frequency.
+
+**This lived in `reference/src/oracle.jl` as `oracle_band` until M5 step 2.** It
+moved here when a second caller appeared — the internal comparison between the
+classical and detailed tiers, which is `Tsit5`-against-`Rodas5P` in exactly the
+same way and has no PowerDynamics in it at all. `oracle_band` is now a one-line
+call to this function, so the derivation exists once.
+"""
+function convergence_band(a_coarse::NamedTuple, a_fine::NamedTuple,
+                          b_coarse::NamedTuple, b_fine::NamedTuple;
+                          channel = system_frequency, factor::Real = 3)
+    factor > 0 || throw(ArgumentError("convergence_band: factor must be > 0, got $factor"))
+    err(x, y) = maximum(abs, channel(x) .- channel(y))
+    return Float64(factor) * (err(a_coarse, a_fine) + err(b_coarse, b_fine))
+end
+
 # Two grids count as "the same" when every sample lands within this of its partner.
 # Not `==`: M4 step 1 measured that the real-time loop accumulates `t` by repeated
 # addition of `dt` while the playback grid is `t0 + k*dt`, so two runs of one

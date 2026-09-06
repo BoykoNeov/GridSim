@@ -153,9 +153,9 @@ end
     ma, ba = machine_arrays(net), branch_arrays(net)
     Xr = reduced_line_reactance(net, 1)
     @test Xr ≈ 0.075
-    @test Xr + ma.Xd[1] + ma.Xd[2] ≈ ba.X[1]      # internal node to internal node
-    @test ma.Xd[1] ≈ 0.25 * 100 / 250             # …and the weight is the INVERSE one
-    @test ma.Xd[2] ≈ 0.30 * 100 / 400            # (0.1 and 0.075, not 0.625 and 1.2)
+    @test Xr + ma.Xd′[1] + ma.Xd′[2] ≈ ba.X[1]    # internal node to internal node
+    @test ma.Xd′[1] ≈ 0.25 * 100 / 250            # …and the weight is the INVERSE one
+    @test ma.Xd′[2] ≈ 0.30 * 100 / 400           # (0.1 and 0.075, not 0.625 and 1.2)
 end
 
 # ===========================================================================
@@ -434,7 +434,7 @@ end
     # `X′d` is the exception, and it is externally checked, by the `:classical`
     # residual's signature above: a wrong inverse weight there would leave a
     # loading-independent floor, and none survives.
-    @test ma.Xd[1] ≈ 0.25 * 100 / 250
+    @test ma.Xd′[1] ≈ 0.25 * 100 / 250
 
     # The COI weights the oracle reports with are OURS, not PowerDynamics'.
     @test case.H == ma.H
