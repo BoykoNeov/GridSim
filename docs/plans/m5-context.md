@@ -189,10 +189,34 @@ to PowerDynamics, which writes the multiplied form — see S1 in D10.
 says so, because it is the only path and therefore the only place validation can
 live — and it is already 11 arguments (8 required, plus M3's 3 defaulted). Eleven
 more would make it ~22 positionals, which is a different thing from M3's precedent
-of three. So the detailed parameters arrive as **keywords on an outer constructor**
-that fills them and calls the positional inner one, which keeps the single
+of three. So the detailed parameters arrive as keywords, which keeps the single
 validated path intact. M2/M3 call sites are untouched either way; this is about the
 new arguments only.
+
+> **Corrected when step 2 built it: the keywords are on the INNER constructor, and
+> the outer one this paragraph asked for cannot exist.** Keyword arguments do not
+> participate in Julia's dispatch, so an outer `Machine(id, bus, S_rated, H, D,
+> Xd′, E′, P0; Xd = …, …)` has the *same* positional signature as the inner
+> constructor's eight-argument form — it is a redefinition, not a second method,
+> and the two collide. Keywords **on** the inner constructor achieve both of the
+> things the paragraph above actually wanted: one method, one place validation
+> lives, and six names that are never positional (asserted with a `MethodError`
+> test, so a later positional twelfth argument cannot land in one by accident).
+> The step also cut the list to the six the two-axis machine needs; the regulator's
+> five (`K_A, T_E, Efd_min, Efd_max, Vref`) belong to plan step 5.
+
+**And one thing the defaults silently reinterpret, which is worth stating because
+nothing errors when it stops being true.** At the classical tier `Machine.E′` is
+the constant internal voltage *at the bus*. At the detailed tier it is the
+magnitude of the q-axis voltage **behind `(Ra + jXq)`** — the quantity a steady
+state actually pins, because `Ẽ = V + (Ra + jXq)·I` lies on the q-axis for the
+two-axis machine and `|Ẽ|` together with the scheduled `P` is what closes the power
+flow. With `Xq = X′d` and `Ra = 0` those are the same number, which is why every
+pre-M5 fixture solves to the same answer bit for bit. They stop being the same
+number the moment `Xq` is a realistic synchronous reactance, and a fixture with a
+real `Xq` will sit at a terminal voltage well below its `E′` — close enough to
+`_check_power_flow`'s `[0.9, 1.1]` band to be worth checking before step 4 builds
+one. Named here rather than found as a "bug" later.
 
 New columns in `machine_arrays`: `Xd, Xq, X′q, T′do, T′qo, Ra`, and for the
 regulator `K_A, T_E, Efd_min, Efd_max, Vref`. Reactances scale **inversely** with
@@ -373,6 +397,53 @@ never on `f_coi`" — and at step 1 `f_coi` *would* have caught this. The per-st
 form is required for step 2's flux states, where a wrong `E′d` rings a voltage and
 leaves frequency flat. The test asserts both halves so the claim is dated instead
 of assumed to have always held.
+
+## D16 — The re-initialisation needed a THIRD static mode, because step 1's is a statement about a machine at rest
+
+Step 1 built `_static_network` with two modes and called it "one static network,
+two jobs": `_PF_SOLVE` (the machine holds its scheduled power, `δ` is the unknown)
+and `_PF_PIN` (the rotor angle is held, the power is whatever the network gives).
+`_reinitialise_algebraic!` used `_PF_PIN` for every machine after an event.
+
+Both modes represent the machine as a **steady-state source** — a q-axis voltage
+`Ẽ = E∠δ` of *fixed magnitude* behind `(Ra + jXq)`. That is a statement about a
+machine at rest, and it is exactly what makes the power flow closable. It is also
+**false mid-transient** as soon as the flux is allowed to move: after a swing the
+machine's internal voltage is `(E′q, E′d)`, and `|Ẽ|` is no longer `Machine.E′`.
+
+So step 2 added `_PF_HOLD`: the machine's **actual stator algebra** at the held
+`(δ, E′q, E′d)`, with the same `δ − δ_target` residual. At the frozen-flux
+degeneration the two modes agree exactly, which is why step 1's version was not
+wrong — only narrower than it looked. Worth recording as its own decision because
+the alternative (a second static network for the re-initialisation) would have put
+the network equations in a third place, and the header of `detailed.jl` argues
+against exactly that.
+
+## D17 — The classical tier had to grow a DATA precondition, which the plan did not name
+
+D3 moved three *structural* preconditions out of the `NetworkModel` constructor and
+into `SwingEngine`. Step 2 needed a fourth guard of a different kind, and nothing in
+the plan asked for it: once `Machine` can carry `(Xd, Xq, X′q, T′do, T′qo, Ra)`,
+**nothing at the classical tier reads any of them.** That tier *is* the frozen-flux
+limit — a constant-magnitude `E′` at the bus — so a machine with real synchronous
+reactances handed to `SwingEngine` or `coi_model` would run as a different machine
+than its data describes, silently, and produce a plausible answer.
+
+`_assert_frozen_flux(net, who)` refuses it by name, next to
+`_assert_one_machine_per_bus` and in the same shape. The condition is exactly
+`Machine`'s default, so no pre-M5 model notices it exists.
+
+**`Ra` is in the list even though it does not change the degeneration's dynamics**,
+and the reason generalises: it changes the *initialisation*, because the air-gap
+power exceeds the terminal power by `Ra·|I|²`. A model carrying it is therefore
+dispatched differently at the two tiers. Dropping data quietly is the failure;
+whether the drop is numerically large is a different question the guard does not
+ask.
+
+**Owed, and named rather than left silent:** `reference/src/oracle.jl`'s
+`build_oracle` has no such guard. It compiles `Library.Swing` from `ma.E` and
+`ma.Xd′` and would ignore detailed data the same way. Step 3 adds the
+`:sauer_pai` tier there and is where that guard belongs.
 
 ## D8 — `inject!` gains a consistent re-initialisation, and the flat run is re-run across an event
 

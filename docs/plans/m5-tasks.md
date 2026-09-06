@@ -6,11 +6,12 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **steps 0b and 1 done, steps 2-8 open.** Entered at `86651ab` with
+Status: **steps 0b, 1 and 2 done, steps 3-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
-unchanged, and step 1 brings it to **2083 core / 172 UI / 82 reference**. The
-detailed tier now builds, initialises from a power flow and runs flat;
-`src/engines/detailed.jl` is the first M5 engine code.
+unchanged, step 1 brought it to **2083 core**, and step 2 to
+**2251 core / 172 UI / 82 reference**. The detailed tier now carries the two-axis
+machine, reproduces `SwingEngine` at the frozen-flux degeneration, and initialises
+from a power flow whose machine model is the steady state of that machine.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -145,9 +146,12 @@ The three land together because none is testable without the others.
 - [x] Existing M2/M3 scenarios construct unchanged and every existing test still
       passes — the count from step 0b, not a new one. A negative-`P0` machine
       stays a machine (the M2a load convention is added to, not replaced).
-- [x] The detailed parameters arrive as **keywords on an outer constructor** that
-      calls the positional inner one (D4) — the single validated path stays
-      single, and the inner signature does not grow to ~22 positionals.
+- [~] The detailed parameters arrive as keywords (D4) — the single validated path
+      stays single, and the inner signature does not grow to ~22 positionals.
+      **Ticked in error at step 1: nothing implemented it.** There were no detailed
+      parameters to carry until step 2 added them, so the box belonged there and is
+      done there. The *outer* constructor D4 asked for also turned out to be
+      impossible — see step 2's findings.
 - [x] Anti-vacuity: hand `SwingEngine` a two-machine bus and confirm the new
       precondition throws. The rejection must be *loud*, which was its whole
       purpose in `network_model.jl`'s header.
@@ -310,36 +314,122 @@ is a measurement about the solver, not a shipped capability.
 
 ## Step 2 — the two-axis machine and the frozen-flux degeneration (D4, D6)
 
-- [ ] `src/engines/detailed.jl`: the machine of `m5-prestudy.md` §2, **power
-      form** (D6), on terminal buses.
-- [ ] Playback half of the interface (D2): `init!` / `solve!` / `state_series`
-      **and `inject!`**, via the shared driver in `src/engines/playback.jl` plus
-      `_record_at!` and `_aggregate_weight`. `inject!` is *not* the deferred
-      piece — scheduled events reach a playback run through it
-      (`m4-context.md` D8), and step 7 needs it. **`step!`/`timestep` are the
-      deferred methods**, gated on S3.
-- [ ] New `machine_arrays` columns (`Xd, Xq, X′q, T′do, T′qo, Ra`), reactances
+- [x] `src/engines/detailed.jl`: the machine of `m5-prestudy.md` §2, **power
+      form** (D6), on terminal buses. `_stator` is the stator algebra; the vertex
+      carries `(V_re, V_im, δ, ω, ΔPm, E′q, E′d)`.
+- [x] Playback half of the interface (D2) — **already satisfied by step 1**, and
+      ticked with that note rather than rebuilt: `init!` / `solve!` /
+      `state_series` / `inject!(::TripLine)` / `_record_at!` /
+      `_aggregate_weight` all exist and step 2 only widened them.
+      `inject!(::TripGenerator)` still refuses by name; the machine-status path it
+      needs is **owed to the step that arms protection here** (step 7), and is
+      recorded as owed rather than carried silently. `step!`/`timestep` remain the
+      deferred methods.
+- [x] New `machine_arrays` columns (`Xd, Xq, Xq′, Td0′, Tq0′, Ra`), reactances
       scaling **inversely** with `S_rated/S_base`, time constants base-free.
-      `machine_arrays` stays the single place any conversion happens.
-- [ ] Defaults degenerate to classical (D4), so existing scenarios are the
-      degeneration case without a parallel set of constructors.
-- [ ] Anti-vacuity on the conversion: assert the **wrong** conversions by name
-      (`Xd·w` where `Xd/w` belongs), as M2 did for `Xd′` and `R`.
+      The old `Xd` column — which held the *transient* reactance — was renamed
+      `Xd′` in a separate commit first, because a column named `Xd` holding a
+      transient reactance beside a new synchronous `Xd` is the kind of quiet
+      mismatch this repo pays a round for.
+- [x] Defaults degenerate to classical (D4), so existing scenarios are the
+      degeneration case without a parallel set of constructors. Verified the
+      strong way: `two_machine_system()`, `three_machine_ring()` and
+      `load_bus_system()` all initialise to `E′d = 0` (< 1e-13) and
+      `E′q = Machine.E′`.
+- [x] Anti-vacuity on the conversion: the **wrong** conversions asserted by name
+      (`X·w` where `X/w` belongs — wrong by `w² = 6.25` on the fixture), plus
+      "no conversion at all", plus that the time constants take *neither* weight.
 
 **The internal oracle**
-- [ ] At `X′d = X′q`, `T′do = T′qo = Inf`: reproduces `SwingEngine` to solver
-      tolerance, **at two tolerances**, on `two_machine_system()`.
-- [ ] The `E′`-at-the-bus vs `E′`-behind-`X′d` reconciliation uses
-      `reduced_line_reactance` — **radial pair only**. Record in the test *why*
-      the ring is excluded here and simultaneously valid in step 3: the two
-      comparisons have opposite topology restrictions
-      (`m5-prestudy.md` §7 point 1, §2a).
-- [ ] Anti-vacuity: perturb a **stator algebra** coefficient (not a flux one) and
-      watch it go red. A flux mutation is *invisible* in this limit
-      (`m5-prestudy.md` §3) — write that down in the test so nobody later reads
-      this check as covering the flux equations.
-- [ ] `docs/validation-ledger.md` rows added, with the exactness condition stated
+- [x] At `X′d = X′q`, `T′do = T′qo = Inf`: reproduces `SwingEngine` **at two
+      tolerances** on `two_machine_system()`. Gap / band = **0.31-0.33** at
+      `reltol` 1e-4 and 1e-7 alike, on all four channels — the same ratio M4 step 4
+      measured against PowerDynamics, which is what a band derived from each side's
+      own convergence is supposed to produce.
+- [x] The `E′`-at-the-bus vs `E′`-behind-`X′d` reconciliation, **radial pair
+      only**, and the test records why the ring is excluded here and simultaneously
+      valid in step 3. `reduced_line_reactance` itself lives in `reference/` and
+      could not be called from a core test, so `terminal_bus_reduced` in
+      `test/helpers.jl` is the same reduction applied to our own tier — and it
+      indexes through `machine_arrays(net).bus` rather than assuming machine `k`
+      sits on vertex `k`, which is an assumption `reduced_line_reactance` does make.
+- [x] Anti-vacuity: perturbing `X′q` by 1 % goes red by **64-173x the band** on
+      the four channels. **And the invisibility of a flux mutation is MEASURED
+      rather than asserted**: thawing both time constants from `Inf` to 5.0 / 0.5 s
+      moves the trajectory by 2.3e-14 at worst, four orders below the loosest band
+      in the file.
+- [x] `docs/validation-ledger.md` rows added, with the exactness condition stated
       and what this check **cannot** see named explicitly.
+
+### What this step found that the plan did not anticipate
+
+**1. D4's "keywords on an OUTER constructor" cannot be built, and the inner one is
+the better answer anyway.** Keyword arguments do not participate in Julia's
+dispatch, so an outer `Machine(id, bus, S_rated, H, D, Xd′, E′, P0; Xd = …)` has the
+*same* positional signature as the inner constructor's eight-argument form — a
+redefinition, not a second method. Keywords **on the inner constructor** give both
+things D4 actually wanted (one method, one place validation lives, six names that
+are never positional) with nothing extra. Pinned by a `MethodError` test, so a later
+positional twelfth argument cannot silently land in one.
+
+**2. The power flow's machine model had to be generalised, and it silently
+reinterprets `Machine.E′`.** The static network's machine is now a q-axis source
+behind `(Ra + jXq)` rather than behind `jX′d`, because that is what a two-axis
+machine's steady state actually pins: `Ẽ = V + (Ra + jXq)·I` lies on the q-axis, so
+`|Ẽ|` plus the scheduled `P` closes the solve. At the defaults `Xq = X′d`, `Ra = 0`
+and this is bit-identical to step 1 — which is *why* it was the choice. But it means
+`Machine.E′` denominates a different physical quantity at the two tiers with nothing
+erroring in between, and with a realistic `Xq ≈ 1.8` the terminal voltage sits well
+below `E′`, close enough to `_check_power_flow`'s `[0.9, 1.1]` band to matter when
+step 4 builds a fixture with real synchronous reactances. Written into `Machine`'s
+docstring and into D4 rather than left to be found.
+
+**3. The re-initialisation needed a THIRD static mode (D16).** Step 1's `_PF_PIN`
+re-solves the algebraic states with the machine's *steady-state* source — fixed
+`|Ẽ|` — which is a statement about a machine at rest and is false mid-transient once
+the flux can move. `_PF_HOLD` evaluates the machine's actual stator algebra at the
+held `(δ, E′q, E′d)`. At the degeneration the two agree exactly, so step 1's version
+was not wrong, only narrower than it looked.
+
+**4. The classical tier needed a DATA precondition nobody listed (D17).** Once
+`Machine` can carry `(Xd, Xq, X′q, T′do, T′qo, Ra)`, `SwingEngine` and `coi_model`
+read none of them — that tier *is* the limit in which they do not matter — so a
+machine with real detailed data would run there as a different machine than its data
+describes, silently and plausibly. `_assert_frozen_flux` refuses it by name.
+`build_oracle` in `reference/` has the same hole and it is **owed to step 3**, which
+is where the `:sauer_pai` tier lands.
+
+**5. The rotor-frame convention is pinned by exactly ONE check, and the other two
+that look like they pin it provably do not.** Both mutations were run:
+
+| mutation | build-time residual | flat run | `E′d = 0 / E′q = E′` |
+|:---|:---|:---|:---|
+| reflected frame (`Vd = Vre·sin δ + **+** Vim·cos δ`) | **caught, 5.03** | — | caught |
+| consistent turn (`δ → δ + π/2` at both sites) | passes | passes | **caught** |
+
+A reflection is not a rotation and stops preserving the inner product, so the
+back-substituted-fixpoint check sees it. A consistent turn cancels out of every
+expression that rotates *both* sides — including the free air-gap-power identity
+this step added — and lands `E′d = [1.05, 1.02]`, `E′q ≈ 0`. Only asserting *which
+state holds the magnitude* sees that.
+
+**6. The "no dense admittance matrix" structural check was a bad proxy, and step 2
+is what exposed it.** It read `length(u) < nb² + 2nb`; with five states per machine
+on the 3-bus fixture that became `16 < 15` and failed. The state count is
+`2·nb + 5·nm` — **linear in both** — and bounding a linear count by a quadratic one
+says nothing on a small system and would pass against a genuinely dense engine on a
+large one. Replaced by a **growth** assertion: `load_bus_system()` is
+`two_machine_system()` plus one machine-free bus and costs exactly two more states,
+where an admittance formulation would cost `O(nb)` more.
+
+**7. Two tooling traps, both of which hid a real failure for a while.**
+`reference/test/runtests.jl` had four `ma.Xd` sites the rename missed, because the
+first sweep grepped `reference/src` and not `reference/test` — found only by running
+the third suite, which is the standing rule and not bookkeeping. And a background
+command written as `cmd > log 2>&1; echo "EXIT=$?"` reports the **echo's** status,
+so a suite with four errors was reported to the session as exit 0. That is M4's
+`| tail` trap in a new shape: anything appended after the command becomes the status
+that is read.
 
 ## Step 3 — PowerDynamics with flux off on both sides (D5, D6, D10)
 

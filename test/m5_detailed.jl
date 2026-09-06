@@ -312,8 +312,22 @@ end
     # the positive half: the engine's own dimension is states, not buses squared
     eng = init!(DetailedEngine, load_bus_system())
     nb = length(eng.model.buses)
-    @test length(eng.integrator.u) == 2 * nb + 3 * length(eng.ids)
-    @test length(eng.integrator.u) < nb^2 + 2 * nb          # never a dense block
+    @test length(eng.integrator.u) == 2 * nb + 5 * length(eng.ids)
+    # THE `nb²` FORM OF THIS CHECK FAILED IN STEP 2, AND IT DESERVED TO. It read
+    # `length(u) < nb^2 + 2nb`, which on this 3-bus fixture became `16 < 15` the
+    # moment a machine carried five states instead of three. The state count was
+    # never the quantity in question: it is `2·nb + 5·nm`, LINEAR in both, and
+    # bounding a linear count by a quadratic one only holds while the linear
+    # constant is small — on a small system it says nothing, and on a large one it
+    # would pass against a genuinely dense engine.
+    #
+    # What SPEC §6 forbids is a dense `nb × nb` object, so what is asserted is the
+    # GROWTH: `load_bus_system()` is `two_machine_system()` with one extra
+    # (machine-free) bus, and it costs exactly two more states. A formulation that
+    # built an admittance block would cost O(nb) more.
+    @test length(eng.integrator.u) -
+          length(init!(DetailedEngine, two_machine_system()).integrator.u) == 2
+    @test length(two_machine_system().buses) + 1 == nb      # …one extra bus, and only one
 end
 
 @testset "state_series carries one voltage channel per BUS" begin
@@ -374,6 +388,347 @@ end
     # the message must say WHY the obvious shortcut is wrong, because that is the
     # thing a later reader would otherwise reinvent
     @test occursin("shunt to ground", msg)
+end
+
+end
+
+# =============================================================================
+# M5 step 2 — the two-axis machine, and the frozen-flux degeneration
+#
+# The machine of `docs/plans/m5-prestudy.md` §2 in the POWER form (D6), with the
+# flux equations present and the DEFAULT parameters degenerating them away (D4).
+#
+# WHAT THIS STEP'S ORACLE VALIDATES, AND WHAT IT PROVABLY CANNOT. At `X′d = X′q`,
+# `T′do = T′qo = ∞`, `Ra = 0` the tier must reproduce `SwingEngine` exactly. That
+# checks the swing equation, the stator algebra, the rotor-frame rotation, the
+# network and the initialisation. It checks the flux equations NOT AT ALL, because
+# they are switched off — and the plan's proposed mutation for it ("perturb one
+# flux coefficient") is *invisible* here. That invisibility is not asserted by
+# assumption below; it is MEASURED, by running with the flux coefficients changed
+# and showing the trajectory does not move. Plan step 4 owns the flux equations.
+# =============================================================================
+
+@testset "M5 step 2 — the two-axis machine and the frozen-flux degeneration" begin
+
+# --- the canonical model ----------------------------------------------------
+@testset "Machine: the detailed data is keyword-only, and its defaults ARE the degeneration" begin
+    m = Machine(:G, :B, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0)
+    # D4: a machine built the M2/M3 way is exactly the frozen-flux machine of
+    # m5-prestudy.md §3 — which is what makes the degeneration oracle below run on
+    # the scenarios that already exist rather than on a parallel set of fixtures.
+    @test m.Xd == 0.25 && m.Xq == 0.25 && m.Xq′ == 0.25
+    @test m.Td0′ == Inf && m.Tq0′ == Inf
+    @test m.Ra == 0.0
+
+    # KEYWORD-ONLY, and that is D4 with one change (see the constructor's comment):
+    # an outer keyword constructor cannot exist beside the inner one, because
+    # keywords do not dispatch and the eight-positional forms would collide. The
+    # practical consequence is the one that matters — no M2/M3 call site can land
+    # data in these six by adding a positional argument.
+    @test_throws MethodError Machine(:G, :B, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0,
+                                     Inf, 60.0, 1.0, 1.8)
+    d = Machine(:G, :B, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0;
+                Xd = 1.8, Xq = 1.7, Xq′ = 0.55, Td0′ = 6.0, Tq0′ = 0.5, Ra = 0.003)
+    @test (d.Xd, d.Xq, d.Xq′, d.Td0′, d.Tq0′, d.Ra) == (1.8, 1.7, 0.55, 6.0, 0.5, 0.003)
+    # the M3 governor triple still arrives positionally, untouched
+    @test Machine(:G, :B, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0, 0.05, 80.0, 5.0).R == 0.05
+
+    # every one of the six is validated, by name
+    mk(; kw...) = Machine(:G, :B, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0; kw...)
+    @test occursin("must be ≥ Xd′", argerr_msg(() -> mk(Xd = 0.2)))
+    @test occursin("must be ≥ Xq′", argerr_msg(() -> mk(Xq = 0.5, Xq′ = 0.6)))
+    @test occursin("determinant", argerr_msg(() -> mk(Xq′ = 0.0)))
+    @test occursin("Use Td0′ = Inf", argerr_msg(() -> mk(Td0′ = 0.0)))
+    @test occursin("Tq0′", argerr_msg(() -> mk(Tq0′ = -1.0)))
+    @test occursin("negative stator resistance", argerr_msg(() -> mk(Ra = -0.1)))
+    # equality is legal in both orderings — equality IS the degeneration
+    @test mk(Xd = 0.25, Xq = 0.25, Xq′ = 0.25) isa Machine
+end
+
+@testset "machine_arrays: the new columns, with the WRONG conversions asserted by name" begin
+    net = NetworkModel(100.0, 50.0, [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+                       [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+                       [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0;
+                                Xd = 1.8, Xq = 1.7, Xq′ = 0.55,
+                                Td0′ = 6.0, Tq0′ = 0.5, Ra = 0.003),
+                        Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -60.0)])
+    ma = machine_arrays(net)
+    w = 250.0 / 100.0                      # machine base -> system base, for POWERS
+    # Reactances take the INVERSE weight, exactly as `Xd′` has since M2.
+    @test ma.Xd[1]  ≈ 1.8   / w
+    @test ma.Xq[1]  ≈ 1.7   / w
+    @test ma.Xq′[1] ≈ 0.55  / w
+    @test ma.Ra[1]  ≈ 0.003 / w
+    # THE WRONG CONVERSIONS, BY NAME (the discipline M2 established for `Xd′` and
+    # `R`): `X · w` is the mirror image and is wrong by `w²` = 6.25 here, which is
+    # exactly the kind of error that looks like a plausible reactance.
+    @test ma.Xd[1]  ≉ 1.8   * w
+    @test ma.Xq[1]  ≉ 1.7   * w
+    @test ma.Xq′[1] ≉ 0.55  * w
+    @test ma.Ra[1]  ≉ 0.003 * w
+    # …and "no conversion at all" is a third wrong answer, which a machine rated at
+    # the system base would hide. This fixture is rated away from it for that reason.
+    @test ma.Xd[1] ≉ 1.8
+    # Time constants are SECONDS: base-free, so NEITHER weight is applied. Passed
+    # through to the bit, not merely to a tolerance.
+    @test ma.Td0′[1] === 6.0
+    @test ma.Tq0′[1] === 0.5
+    @test ma.Td0′[1] ≉ 6.0 / w && ma.Td0′[1] ≉ 6.0 * w
+    # `Inf` survives the conversion as `Inf` — the frozen-flux limit the defaults
+    # sit at, and the value a `/w` or `*w` would also survive, which is why the
+    # configured machine above carries the finite ones.
+    @test ma.Td0′[2] === Inf && ma.Tq0′[2] === Inf
+    @test ma.Ra[2] === 0.0
+    @test ma.Xd[2] == ma.Xq[2] == ma.Xq′[2] == ma.Xd′[2]
+    @test all(a -> a isa Vector{Float64},
+              (ma.Xd, ma.Xq, ma.Xq′, ma.Td0′, ma.Tq0′, ma.Ra))
+end
+
+@testset "the classical tier refuses detailed data rather than dropping it" begin
+    net = two_machine_system()
+    detailed = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+                            [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0;
+                                     Xd = 1.8, Td0′ = 6.0),
+                             net.machines[2]])
+    @test detailed isa NetworkModel                    # the canonical model holds it…
+    for f in (() -> init!(SwingEngine, detailed), () -> coi_model(detailed))
+        msg = argerr_msg(f)
+        @test occursin("FROZEN-FLUX limit", msg)
+        @test occursin("DetailedEngine", msg)          # …and it names the way out
+    end
+    # `Ra` alone is refused too, and the guard's docstring says why: it changes the
+    # INITIALISATION (air-gap power exceeds terminal power by Ra·|I|²), so a model
+    # carrying it is dispatched differently at the two tiers.
+    ra_only = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+                           [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 60.0; Ra = 0.01),
+                            net.machines[2]])
+    @test occursin("FROZEN-FLUX limit", argerr_msg(() -> init!(SwingEngine, ra_only)))
+    # ANTI-VACUITY: every fixture the repo ships is at the defaults, so the guard
+    # must let all of them through. A guard that refused everything would pass the
+    # three assertions above.
+    for f in (two_machine_system, three_machine_ring)
+        @test init!(SwingEngine, f()) isa SwingEngine
+        @test coi_model(f()) isa SystemModel
+    end
+end
+
+# --- the degeneration, in the STATE ------------------------------------------
+@testset "the degeneration is exact in the STATE, which is what pins the rotor frame" begin
+    # E′ lies entirely on the q-axis: at `Xq = X′d` and `Ra = 0` the phasor
+    # `Ẽ = V + (Ra + jXq)·I` IS the classical internal voltage, so the d-component
+    # is zero and the q-component is the datum `Machine.E′`.
+    #
+    # THIS IS THE CHECK THAT PINS THE ROTOR-FRAME CONVENTION, and it is the only
+    # one here that does. MEASURED, by running both mutations against the source:
+    #
+    #   REFLECTED frame (`Vd = Vre·sin δ + Vim·cos δ`): caught at BUILD time, by the
+    #   back-substituted-fixpoint check, with |residual| = 5.03 against a 1e-10
+    #   gate. A reflection is not a rotation and does not preserve the inner
+    #   product, so the two expressions stop agreeing.
+    #
+    #   CONSISTENTLY TURNED frame (δ → δ + π/2 at BOTH rotation sites): `init!`
+    #   SUCCEEDS. The residual check passes, the air-gap-power identity passes, and
+    #   the flat run is flat — because both expressions turn together and the
+    #   difference cancels. What comes out is `E′d = [1.05, 1.02]`, `E′q ≈ 0`: the
+    #   magnitude in the wrong state. Only the two assertions below see it.
+    for net in (two_machine_system(), three_machine_ring(), load_bus_system())
+        eng = init!(DetailedEngine, net)
+        st = current_state(eng)
+        for (k, m) in pairs(net.machines)
+            @test abs(st.E′d[k]) < 1.0e-13
+            @test st.E′q[k] ≈ m.E′ atol = 1.0e-12
+        end
+    end
+end
+
+@testset "the flat run now covers the flux states — and that coverage is VACUOUS here" begin
+    # The flux channels are flat, and they are flat BY CONSTRUCTION: at `T′ = Inf`
+    # the derivative is `finite/Inf`, which is `0.0` exactly. So this is not
+    # evidence that the flux equations are right — it is evidence that they are
+    # switched off, which is a different statement and the one plan step 4 exists
+    # to replace. Said here rather than left for a later reader to infer from a
+    # green test.
+    eng = init!(DetailedEngine, load_bus_system(); dtmax = 0.05)
+    ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+    for ch in (:E′q_G1, :E′q_G2, :E′d_G1, :E′d_G2)
+        v = getproperty(ser, ch)
+        @test maximum(abs, v .- v[1]) < 1.0e-12
+    end
+    @test eng.integrator.stats.naccept >= 150          # the run really did step
+end
+
+# --- THE INTERNAL ORACLE -----------------------------------------------------
+@testset "the internal oracle: the detailed tier reproduces SwingEngine at the degeneration" begin
+    net = two_machine_system()
+    ma = machine_arrays(net)
+    # The helper indexes through `ma.bus`; on this fixture that is the identity, and
+    # it is asserted rather than assumed because `reduced_line_reactance` in
+    # `reference/` makes exactly the assumption and is correct only while it holds.
+    @test ma.bus == [1, 2]
+    red = terminal_bus_reduced(net)
+    @test red.branches[1].X ≈ 0.25 - 0.10 - 0.075      # = 0.075, and positive
+    @test red.branches[1].X > 0
+    # RADIAL ONLY. Both machines have branch degree 1 here. On `three_machine_ring()`
+    # every machine has degree 2 and the reduction would subtract one internal
+    # reactance from two lines — so the ring is NOT a case for THIS comparison. It
+    # IS a valid case for the external oracle of plan step 3, where both sides sit
+    # on terminal buses and nothing is reduced. The two comparisons have opposite
+    # topology restrictions, and neither is a general statement about the ring.
+    @test terminal_bus_reduced(three_machine_ring()).branches[1].X ≈ 0.25 - 0.10 - 0.10
+
+    # THE SAME DISPATCH ON BOTH SIDES, asserted before anything is compared. The
+    # detailed tier takes `Pm` from its power flow and the classical tier from
+    # `Machine.P0`; on a lossless model with no load these are the same number, and
+    # a comparison that did not check it could be reading a slack absorption as a
+    # physics difference.
+    let sw = init!(SwingEngine, net), de = init!(DetailedEngine, red)
+        for k in 1:2
+            @test de.params[de.Pm_pidx[k]] ≈ sw.params[sw.Pm_pidx[k]] atol = 1.0e-12
+            @test de.params[de.Pm_pidx[k]] ≈ ma.Pm[k] atol = 1.0e-12
+        end
+    end
+
+    # TWO TOLERANCES, and the band at each is derived from each side's OWN
+    # convergence — never from the gap it is about to judge (`convergence_band`).
+    # `tolerance_band` is the wrong derivation here for the reason M4 step 4
+    # measured: an explicit Runge–Kutta against a stiff Rosenbrock is two different
+    # global-error accumulations, and their ratio does not settle.
+    for (rtol, atol) in ((1.0e-4, 1.0e-7), (1.0e-7, 1.0e-10))
+        sw, de   = tier_pair(net, red; reltol = rtol,        abstol = atol)
+        swf, def = tier_pair(net, red; reltol = rtol / 1000,  abstol = atol / 1000)
+        # ONE GRID, never resampled: both sides are handed the same `saveat` and the
+        # comparison refuses two grids rather than straight-lining between samples
+        # (M4 step 2 — there is no interpolant left after a solve to resample with).
+        @test sw.t == de.t
+        for (name, ch) in TIER_CHANNELS
+            band = convergence_band(sw, swf, de, def; channel = ch)
+            @test band > 0                     # a zero band would pass vacuously
+            d = divergence(sw, de; band = band, channel = ch)
+            @test d.max < band
+            @test isnan(d.t_depart)             # never leaves the band at all
+        end
+        # The disturbance is real: a check that agreed because nothing happened
+        # would pass every assertion above.
+        @test maximum(abs, sw.f_coi .- sw.f_coi[1]) > 0.05
+        @test maximum(abs, de.δ_G2 .- de.δ_G1 .- (de.δ_G2[1] - de.δ_G1[1])) > 0.01
+    end
+end
+
+# --- anti-vacuity, and the list of what is provably invisible ----------------
+@testset "anti-vacuity: what a stator mutation does, and what a flux mutation does not" begin
+    net = two_machine_system()
+    red = terminal_bus_reduced(net)
+    sw, de = tier_pair(net, red)
+    base = convergence_band(sw, sw, de, de)          # zero by construction
+
+    # (a) THE VISIBLE ONE. `X′q` sits inside the stator inversion's determinant and
+    # in the current it produces. Perturbing it by 1 % must take the comparison red.
+    # A PARAMETER mutation rather than a source edit, so it runs in the suite every
+    # time — the standing rule is that the mutation is EXECUTED, not described.
+    let de2 = init!(DetailedEngine, red)
+        SII = NetworkDynamics.SII
+        for k in 1:2
+            i = SII.parameter_index(de2.nw,
+                    NetworkDynamics.VPIndex(de2.machine_bus[k], :Xq′))
+            de2.params[i] *= 1.01
+        end
+        de2.params[de2.Pm_pidx[1]] += 0.05
+        SciMLBase.auto_dt_reset!(de2.integrator)
+        bad = solve!(de2, (0.0, 10.0); saveat = 0.02)
+        swf, def = tier_pair(net, red; reltol = 1.0e-9, abstol = 1.0e-12)
+        # Measured: 64× the band on `f_coi`, 77× and 76× on the two speeds, 173× on
+        # the relative angle. Red by two orders, not marginally.
+        for (name, ch) in TIER_CHANNELS
+            band = convergence_band(sw, swf, de, def; channel = ch)
+            @test divergence(sw, bad; band = band, channel = ch).max > 10 * band
+        end
+    end
+
+    # (b) THE INVISIBLE ONES, MEASURED RATHER THAN ASSUMED. At this degeneration
+    # `Xd − X′d = 0` and `Xq − X′q = 0`, so the flux right-hand sides are
+    # identically zero whatever the time constants are — and `Efd` was initialised
+    # to `E′q`, so the field equation's own restoring term cancels too. Changing
+    # `T′do`/`T′qo` from `Inf` to 5 s therefore changes NOTHING, and that is the
+    # honest statement of what this oracle cannot see.
+    #
+    # EXACTNESS IS NOT AVAILABLE HERE, unlike M4 step 3's `===` comparison. `0/Inf`
+    # and `0/5.0` are both exactly `0.0`, but the implicit solver's Newton step does
+    # not reproduce the zero increment bit for bit once the Jacobian differs, so the
+    # claim is "below every band in this file by orders of magnitude" rather than
+    # "identical". MEASURED worst deviation across the four channels: 2.3e-14 on the
+    # relative angle, 1.4e-14 on `f_coi`, 4.5e-16 on the speeds — against a band of
+    # 4.8e-4 at the loosest tolerance this file uses. Four orders of margin, wholly
+    # invisible.
+    let flux_net = NetworkModel(red.S_base, red.f0, red.buses, red.branches,
+            [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0,
+                     m.R, m.Pmax, m.Tg; Td0′ = 5.0, Tq0′ = 0.5) for m in red.machines])
+        _, thawed = tier_pair(net, flux_net)
+        for (name, ch) in TIER_CHANNELS
+            @test maximum(abs, ch(de) .- ch(thawed)) < 1.0e-10
+        end
+    end
+
+    # (c) THE REST OF THE INVISIBLE LIST, so nobody later reads this testset as
+    # covering more than it does. Each of these is zero or absent at the
+    # degeneration, so no mutation of it can move a number here:
+    #   - `Ra` — it is 0.0, so any factor on it is 0.0;
+    #   - the saliency term `(X′q − X′d)·Id·Iq` in the air-gap power — the bracket
+    #     is exactly 0.0;
+    #   - the flux coefficients `(Xd − X′d)` and `(Xq − X′q)` — both exactly 0.0;
+    #   - `Td0′`/`Tq0′` themselves — measured in (b) above.
+    # The mutations that ARE visible: a sign in the rotor-frame rotation, `X′d` or
+    # `X′q` inside the inversion, the determinant, and the `E′d·Id + E′q·Iq` terms.
+    let ma_red = machine_arrays(red)
+        @test all(ma_red.Ra .== 0.0)
+        @test all(ma_red.Xq′ .- ma_red.Xd′ .== 0.0)
+        @test all(ma_red.Xd .- ma_red.Xd′ .== 0.0)
+        @test all(ma_red.Xq .- ma_red.Xq′ .== 0.0)
+    end
+    @test base == 0.0
+end
+
+# --- read-out and structure --------------------------------------------------
+@testset "the tier's state and channels grew by exactly two per machine" begin
+    eng = init!(DetailedEngine, load_bus_system())
+    nb = length(eng.model.buses)
+    nm = length(eng.ids)
+    @test length(eng.integrator.u) == 2 * nb + 5 * nm
+    ser = solve!(eng, (0.0, 1.0); saveat = 0.05)
+    ks = keys(ser)
+    for ch in (:E′q_G1, :E′q_G2, :E′d_G1, :E′d_G2)
+        @test ch in ks
+    end
+    st = current_state(eng)
+    @test length(st.E′q) == nm && length(st.E′d) == nm
+    # `Efd` is a PARAMETER at this step — the regulator is plan step 5 — and it is
+    # the machine's initial `E′q` exactly, because `Xd − X′d = 0` here.
+    @test all(eng.params[eng.Efd_pidx[k]] ≈ st.E′q[k] for k in 1:nm)
+end
+
+@testset "the re-initialisation holds the FLUX too, in a third static mode" begin
+    # Step 1 re-solved the algebraic states with the machine's STEADY-STATE source
+    # (`Ẽ` on the q-axis, magnitude `Machine.E′`). That is a statement about a
+    # machine at rest and stops being true the moment the flux moves, so step 2
+    # added `_PF_HOLD`: the machine's actual stator algebra at the held
+    # `(δ, E′q, E′d)`. At this degeneration the two modes agree exactly, which is
+    # why step 1's version was not wrong — only narrower than it looked.
+    net = load_bus_system()
+    eng = init!(DetailedEngine, net)
+    solve!(eng, (0.0, 1.0); saveat = 0.05)
+    before = copy(current_state(eng).E′q)
+    inject!(eng, TripLine(:B2, :B3))
+    after = current_state(eng)
+    # the flux is a DIFFERENTIAL state and must survive the discontinuity untouched
+    @test after.E′q ≈ before atol = 1.0e-14
+    # and the re-solved point satisfies the dynamic network's algebraic rows
+    du = similar(eng.integrator.u)
+    eng.nw(du, eng.integrator.u, eng.params, eng.integrator.t)
+    for v in 1:length(net.buses)
+        @test abs(du[eng.Vre_idx[v]]) < 1.0e-9
+        @test abs(du[eng.Vim_idx[v]]) < 1.0e-9
+    end
+    @test GridSim._PF_HOLD == 2.0
+    @test all(eng.p_static[i] == GridSim._PF_HOLD for i in eng.smode_pidx)
 end
 
 end

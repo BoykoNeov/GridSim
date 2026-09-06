@@ -163,6 +163,44 @@ every M2 model still describes a real system:
 
 See the GOVERNORS note at the top of this file for what droop does and — more
 importantly — what it does not do.
+
+Detailed-tier data (M5 step 2), **keyword-only** and defaulting to the classical
+degeneration (`docs/plans/m5-context.md` D4). A machine constructed the M2/M3 way
+is exactly the frozen-flux two-axis machine of `m5-prestudy.md` §3, so the
+degeneration oracle runs on the scenarios that already exist rather than on a
+parallel set of "detailed" constructors:
+
+  - `Xd`, `Xq`   — pu **on the machine's own base**, *synchronous* d- and q-axis
+                   reactances. Default `Xd′`, which is the frozen-flux limit
+                   (`Xd − X′d = 0` kills the field-flux term outright).
+  - `Xq′`        — pu on the machine's own base, *transient* q-axis reactance.
+                   Default `Xd′`, which makes the saliency term `(X′q − X′d)·Id·Iq`
+                   in the air-gap power vanish and collapses the stator algebra to
+                   a single internal phasor behind `jX′` — the classical machine.
+  - `Td0′`,
+    `Tq0′`       — s, open-circuit transient time constants. **Base-free** (they
+                   are seconds), and `Inf` — the default — is the sanctioned way to
+                   freeze the flux. `Inf` is safe because the time constant is a
+                   *divisor* in our formulation: `finite/Inf` is `0.0` exactly, so
+                   the flux derivative is zero rather than `0/0`. That argument is
+                   about our form only; PowerDynamics writes the multiplied form
+                   `T·ẋ ~ rhs` and does not inherit it (`m5-prestudy.md` §2a).
+  - `Ra`         — pu on the machine's own base, stator resistance. Default `0`.
+
+**What `E′` means depends on the tier reading it, and the two meanings coincide
+exactly at the defaults.** At the classical tier `E′` is the constant internal
+voltage *at the bus*. At the detailed tier it is the magnitude of the q-axis
+voltage **behind `(Ra + jXq)`** — the quantity a steady state actually pins, since
+`Ẽ = V + (Ra + jXq)·I` lies on the q-axis for the two-axis machine and `|Ẽ|` and
+the scheduled `P` are what close the power flow. With `Xq = Xd′` and `Ra = 0`
+those are the same number, which is why every pre-M5 fixture solves to the same
+answer bit for bit. They stop being the same number the moment `Xq` is a realistic
+synchronous reactance, and nothing errors when that happens — so a fixture with
+real `Xq` will sit at a lower terminal voltage than its `E′` suggests.
+
+Validation lives here; the *engine* refuses what it has not implemented. `Xd ≥ Xd′`
+and `Xq ≥ Xq′` are the physical ordering (a transient reactance is the synchronous
+one with the flux held), with equality legal because equality is the degeneration.
 """
 struct Machine
     id::Symbol
@@ -176,6 +214,13 @@ struct Machine
     R::Float64         # pu    — governor droop, on the machine's own base (Inf = none)
     Pmax::Float64      # MW    — net-injection ceiling; headroom = Pmax - P0
     Tg::Float64        # s     — governor/turbine first-order lag
+    # M5 step 2 — the two-axis machine. Defaults ARE the classical degeneration.
+    Xd::Float64        # pu    — synchronous d-axis reactance, machine base
+    Xq::Float64        # pu    — synchronous q-axis reactance, machine base
+    Xq′::Float64       # pu    — transient q-axis reactance, machine base
+    Td0′::Float64      # s     — d-axis open-circuit transient time constant (Inf = frozen)
+    Tq0′::Float64      # s     — q-axis open-circuit transient time constant (Inf = frozen)
+    Ra::Float64        # pu    — stator resistance, machine base
 
     # Reject a machine that is wrong on its face rather than letting it poison a
     # solve — the spirit of `GeneratingUnit`'s headroom guard. `H > 0` is strict
@@ -190,9 +235,21 @@ struct Machine
     # keyword: every M2 call site keeps working untouched, and what it builds is
     # exactly the governor-free machine it always was (`1/R = 0`, zero headroom),
     # so the existing suite stays a valid oracle for the state-layout change.
+    #
+    # THE DETAILED PARAMETERS ARE KEYWORD-ONLY, AND THAT IS D4 WITH ONE CHANGE.
+    # D4 asked for "keywords on an OUTER constructor that calls the positional
+    # inner one", to keep the single validated path single without growing the
+    # signature to ~22 positionals. An outer constructor cannot be added here:
+    # keyword arguments do not participate in dispatch, so `Machine(id, bus, …, P0)`
+    # with eight positionals would be the *same* method as the inner one and the
+    # two would collide. Keywords on the inner constructor achieve both of D4's
+    # stated goals directly — one method, one place validation lives, and six new
+    # names that are never positional. Recorded in `m5-context.md` D4.
     function Machine(id::Symbol, bus::Symbol, S_rated::Real, H::Real, D::Real,
                      Xd′::Real, E′::Real, P0::Real,
-                     R::Real = Inf, Pmax::Real = P0, Tg::Real = 1.0)
+                     R::Real = Inf, Pmax::Real = P0, Tg::Real = 1.0;
+                     Xd::Real = Xd′, Xq::Real = Xd′, Xq′::Real = Xd′,
+                     Td0′::Real = Inf, Tq0′::Real = Inf, Ra::Real = 0.0)
         S_rated > 0 || throw(ArgumentError(
             "Machine $id: S_rated ($S_rated) must be > 0 MVA."))
         H > 0 || throw(ArgumentError(
@@ -222,9 +279,38 @@ struct Machine
         Pmax ≥ P0 || throw(ArgumentError(
             "Machine $id: Pmax ($Pmax) must be ≥ P0 ($P0) — headroom < 0. On an aggregated " *
             "area machine Pmax means P0 + the area's up-reserve, not a fleet nameplate."))
+        # M5 step 2. `Xq′` is guarded strictly because it sits inside the stator
+        # inversion's determinant `Ra² + X′d·X′q`, which with the default `Ra = 0`
+        # is `X′d·X′q` — a zero there is a division by zero, not a degenerate
+        # machine. The two orderings are the physical ones (a transient reactance
+        # is the synchronous one measured with the flux held), and equality is
+        # legal precisely because equality IS the frozen-flux degeneration.
+        Xq′ > 0 || throw(ArgumentError(
+            "Machine $id: Xq′ ($Xq′) must be > 0 pu — it sits in the stator " *
+            "inversion's determinant (Ra² + X′d·X′q), which at the default Ra = 0 " *
+            "is X′d·X′q."))
+        Xd ≥ Xd′ || throw(ArgumentError(
+            "Machine $id: Xd ($Xd) must be ≥ Xd′ ($Xd′) pu — the transient reactance " *
+            "is the synchronous one measured with the field flux held, so it cannot " *
+            "be the larger. Equality is legal and is the frozen-flux degeneration."))
+        Xq ≥ Xq′ || throw(ArgumentError(
+            "Machine $id: Xq ($Xq) must be ≥ Xq′ ($Xq′) pu — see Xd/Xd′."))
+        # `Inf` is the sanctioned frozen-flux value and satisfies `> 0`; a zero is a
+        # division by zero in the flux derivative, and a negative time constant is
+        # an unstable winding.
+        Td0′ > 0 || throw(ArgumentError(
+            "Machine $id: Td0′ ($Td0′) must be > 0 s — it is the flux derivative's " *
+            "denominator. Use Td0′ = Inf to freeze the field flux (the default)."))
+        Tq0′ > 0 || throw(ArgumentError(
+            "Machine $id: Tq0′ ($Tq0′) must be > 0 s — see Td0′."))
+        Ra ≥ 0 || throw(ArgumentError(
+            "Machine $id: Ra ($Ra) must be ≥ 0 pu — a negative stator resistance " *
+            "generates power out of the winding."))
         return new(id, bus, Float64(S_rated), Float64(H), Float64(D),
                    Float64(Xd′), Float64(E′), Float64(P0),
-                   Float64(R), Float64(Pmax), Float64(Tg))
+                   Float64(R), Float64(Pmax), Float64(Tg),
+                   Float64(Xd), Float64(Xq), Float64(Xq′),
+                   Float64(Td0′), Float64(Tq0′), Float64(Ra))
     end
 end
 
@@ -557,7 +643,8 @@ through here, so none of them can hold a different convention.
 @inline _coupling(mi::Machine, mj::Machine, br::Branch) = mi.E′ * mj.E′ / br.X
 
 """
-    machine_arrays(net::NetworkModel) -> (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg)
+    machine_arrays(net::NetworkModel)
+        -> (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra)
 
 The machine parameters as contiguous `Vector{Float64}`s **indexed by machine**
 (entry `k` belongs to `net.machines[k]`), all converted to the **system base** —
@@ -610,6 +697,20 @@ Governor data (M3 step 1), on the same system base:
   - `Tg`       — s, the governor lag, passed straight through (seconds are
                  base-independent, like `E`).
 
+Detailed-tier data (M5 step 2), converted here and nowhere else:
+
+  - `Xd`, `Xq`,
+    `Xq′`, `Ra` — pu on `S_base`, scaled with the **inverse** weight `S_base/S_rated`,
+                  exactly as `Xd′` is. Impedance scales the other way from power,
+                  and writing `· w` here would be the same mistake the `Xd′` row
+                  has warned about since M2 — plausible-looking and wrong by the
+                  square of the rating ratio.
+  - `Td0′`,
+    `Tq0′`      — s, passed straight through. Seconds are base-free, like `Tg` and
+                  unlike everything above them. `Inf` passes through as `Inf`,
+                  which is the frozen-flux limit the detailed tier's defaults sit
+                  at (D4).
+
 Derived on call, never stored: one canonical model, compiled views (SPEC §3.2).
 """
 function machine_arrays(net::NetworkModel)
@@ -624,6 +725,12 @@ function machine_arrays(net::NetworkModel)
     invR     = Vector{Float64}(undef, n)
     headroom = Vector{Float64}(undef, n)
     Tg       = Vector{Float64}(undef, n)
+    Xd   = Vector{Float64}(undef, n)
+    Xq   = Vector{Float64}(undef, n)
+    Xq′  = Vector{Float64}(undef, n)
+    Td0′ = Vector{Float64}(undef, n)
+    Tq0′ = Vector{Float64}(undef, n)
+    Ra   = Vector{Float64}(undef, n)
     for (v, m) in pairs(net.machines)
         bus[v] = net.bus_index[m.bus]
         w = m.S_rated / S_base          # machine base -> system base, for powers
@@ -638,8 +745,16 @@ function machine_arrays(net::NetworkModel)
         invR[v]     = (1.0 / m.R) * w
         headroom[v] = (m.Pmax - m.P0) / S_base
         Tg[v]       = m.Tg
+        # M5 step 2. Reactances take the SAME inverse weight as `Xd′` above; the
+        # time constants take none at all.
+        Xd[v]   = m.Xd  / w
+        Xq[v]   = m.Xq  / w
+        Xq′[v]  = m.Xq′ / w
+        Ra[v]   = m.Ra  / w
+        Td0′[v] = m.Td0′
+        Tq0′[v] = m.Tq0′
     end
-    return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg)
+    return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra)
 end
 
 """
@@ -680,6 +795,47 @@ function branch_arrays(net::NetworkModel)
         K[e]   = _coupling(net.machines[i], net.machines[j], br)
     end
     return (; src, dst, X, K)
+end
+
+"""
+    _assert_frozen_flux(net::NetworkModel, who::AbstractString)
+
+The **classical tier's data precondition**, M5 step 2's counterpart to
+`_assert_one_machine_per_bus`'s structural one.
+
+A `Machine` can now carry synchronous reactances, transient time constants and a
+stator resistance (`Machine`'s docstring). Nothing at the classical tier reads any
+of them: it represents a machine as a constant-magnitude `E′` at the bus, which is
+the two-axis machine's frozen-flux limit and nothing more. So a machine with real
+detailed data handed to `SwingEngine` or `coi_model` would run as a *different
+machine* than its data describes — silently, and with a plausible answer.
+
+Refused by name instead. The condition is exactly the degeneration of
+`m5-prestudy.md` §3, which is also `Machine`'s default, so every model written
+before M5 and every model that never asks for the detailed tier passes it without
+knowing it exists.
+
+**`Ra` is in the list even though it does not affect the degeneration's dynamics.**
+It affects the *initialisation* — the air-gap power exceeds the terminal power by
+`Ra·|I|²` — so a model carrying it and run at a tier that ignores it is dispatched
+differently from the same model run at the detailed tier. Dropping data quietly is
+the failure; whether the drop is large is a separate question this guard does not
+ask.
+"""
+function _assert_frozen_flux(net::NetworkModel, who::AbstractString)
+    for m in net.machines
+        ok = m.Xd == m.Xd′ && m.Xq == m.Xd′ && m.Xq′ == m.Xd′ &&
+             m.Td0′ == Inf && m.Tq0′ == Inf && m.Ra == 0.0
+        ok || throw(ArgumentError(
+            "$who: machine $(m.id) carries detailed-tier data — (Xd, Xq, X′q, T′do, " *
+            "T′qo, Ra) = ($(m.Xd), $(m.Xq), $(m.Xq′), $(m.Td0′), $(m.Tq0′), $(m.Ra)) " *
+            "against a transient reactance X′d = $(m.Xd′). The classical tier is the " *
+            "FROZEN-FLUX limit of that machine (Xd = Xq = X′q = X′d, T′ = Inf, " *
+            "Ra = 0) and reads none of those numbers, so running it here would " *
+            "silently simulate a different machine than the data describes. Use " *
+            "DetailedEngine, or leave the detailed keywords at their defaults."))
+    end
+    return nothing
 end
 
 """
@@ -1015,12 +1171,16 @@ function coi_model(net::NetworkModel)
     #   - a machine-free bus or a two-machine bus — the same structural precondition
     #     `SwingEngine` takes, and for the same reason: `coi_model` compiles the
     #     classical tier's aggregate, so it inherits the classical tier's boundary;
+    #   - a machine carrying detailed-tier data — the aggregate inherits the
+    #     classical tier's data boundary for the same reason it inherits its
+    #     structural one (`_assert_frozen_flux`);
     #   - a `Load` — folding a voltage-dependent load into an aggregate damping
     #     constant is a MODELLING CLAIM nobody has validated, and it would land
     #     inside the one derivation the repo points at to show reduced models are
     #     derived rather than hand-maintained. An aggregate view of the detailed tier
     #     is real work and is not this milestone's.
     _assert_one_machine_per_bus(net, "coi_model")
+    _assert_frozen_flux(net, "coi_model")
     isempty(net.loads) || throw(ArgumentError(
         "coi_model: the model carries $(length(net.loads)) Load(s) " *
         "($(join([l.id for l in net.loads], ", "))). Folding a voltage-dependent load " *

@@ -231,3 +231,83 @@ function overlay_pair(net, ev, t_ev, horizon; dt = 0.02, reltol = 1e-3, abstol =
     solve!(fr, (0.0, horizon); perturbations = [t_ev => ev], saveat = dt)
     return state_series(sw), state_series(fr)
 end
+
+# --- M5 step 2: the internal degeneration oracle (test/m5_detailed.jl) ---
+#
+# The same model with every branch reactance reduced by the transient reactance
+# of the machine at each end — the number that makes the DETAILED tier the same
+# electrical network as the CLASSICAL tier on the model it was handed.
+#
+# Ours-classical puts `E′` AT the bus, so its coupling denominator is `X_ij`
+# outright. Ours-detailed puts `E′` BEHIND `X′d` on a terminal bus, so its
+# internal-node-to-internal-node reactance is `X′d,i + X_line + X′d,j`. Handing the
+# detailed side `X_ij` unreduced would make that sum `X_ij + X′d,i + X′d,j` and the
+# resulting gap would be pure modelling error wearing a fidelity finding's clothes.
+# This is `reference/src/oracle.jl`'s `reduced_line_reactance` applied to our own
+# tier instead of to PowerDynamics', for the identical reason.
+#
+# **It exists only on a radial pair.** A machine of branch degree 2 has one
+# internal reactance to spend across two lines and subtracting it from each
+# double-counts it, so the caller checks the degree; this helper only checks that
+# what comes out is a positive reactance.
+#
+# Indexed through `machine_arrays(net).bus` rather than by assuming machine `k`
+# sits on vertex `k`. That identity holds on every fixture here and `SwingEngine`
+# asserts it — but this helper is handed models the classical tier never sees.
+function terminal_bus_reduced(net::NetworkModel)
+    ma = machine_arrays(net)
+    Xd′_at = zeros(Float64, length(net.buses))
+    for k in eachindex(ma.bus)
+        Xd′_at[ma.bus[k]] += ma.Xd′[k]
+    end
+    branches = [Branch(br.id, br.from, br.to,
+                       br.X - Xd′_at[net.bus_index[br.from]] -
+                              Xd′_at[net.bus_index[br.to]],
+                       br.rating) for br in net.branches]
+    return NetworkModel(net.S_base, net.f0, net.buses, branches,
+                        net.machines, net.loads)
+end
+
+# One disturbance, applied identically to a classical and a detailed engine, and
+# both played back onto the SAME `saveat` grid.
+#
+# The disturbance is a STEP IN SCHEDULED MECHANICAL POWER, not a seeded rotor
+# angle, and the reason is the detailed tier's algebraic constraint: `Pm` appears
+# in no algebraic equation, so stepping it leaves the DAE's initial point
+# consistent, where an angle written straight into `u` would not be. It is also
+# the one perturbation both tiers express identically — `TripLine` islands a
+# radial pair, and `inject!(::TripGenerator)` is refused at the detailed tier.
+#
+# `auto_dt_reset!` on both, symmetrically: the initial step size was chosen at
+# `init` against the un-stepped RHS, and letting one side carry a stale one while
+# the other does not would put an asymmetry into a comparison whose whole content
+# is a symmetry.
+function tier_pair(net, red; tspan = (0.0, 10.0), saveat = 0.02, ΔPm = 0.05,
+                   reltol = 1.0e-6, abstol = 1.0e-9)
+    sw = init!(SwingEngine, net; reltol = reltol, abstol = abstol)
+    de = init!(DetailedEngine, red; reltol = reltol, abstol = abstol)
+    for eng in (sw, de)
+        eng.params[eng.Pm_pidx[1]] += ΔPm
+        SciMLBase.auto_dt_reset!(eng.integrator)
+    end
+    return solve!(sw, tspan; saveat = saveat), solve!(de, tspan; saveat = saveat)
+end
+
+# The four channels the classical and detailed tiers may be compared on, and the
+# one they may not.
+#
+# Rotor angles appear ONLY as a difference: the two engines fix the rotational
+# gauge differently (the detailed tier pins its slack machine at zero, the
+# classical tier's fixpoint lands wherever it lands), so an absolute angle is not
+# a shared quantity. `f_coi` and the per-machine speeds are gauge-free as they
+# stand.
+#
+# **There is deliberately no voltage channel.** `SwingEngine`'s bus voltage IS
+# `E′` — constant by construction — while the detailed tier's is the TERMINAL
+# voltage behind `X′d`, which genuinely moves during a swing. They are different
+# physical quantities that happen to share a name, and a comparison between them
+# would report the tier's entire reason for existing as a disagreement.
+const TIER_CHANNELS = (("f_coi", system_frequency),
+                       ("ω_G1", s -> s.ω_G1),
+                       ("ω_G2", s -> s.ω_G2),
+                       ("δ_G2−δ_G1", s -> s.δ_G2 .- s.δ_G1))

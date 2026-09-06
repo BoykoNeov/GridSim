@@ -558,6 +558,11 @@ is unchanged — it is just enforced by whoever cannot cross it.
      every bus, which holds voltage up by construction — a voltage-dependent load
      has nothing to depend on. M2a's convention (a load is a machine with negative
      `P0`) is unchanged and is what these models use.
+  2b. **Frozen flux** (M5 step 2). A machine may now carry `(Xd, Xq, X′q, T′do,
+     T′qo, Ra)`, and this tier reads none of them — it *is* the limit in which they
+     do not matter. A machine with real detailed data would run here as a different
+     machine than its data describes, so it is refused (`_assert_frozen_flux`). The
+     defaults are the degeneration, so no pre-M5 model notices.
   3. **Reachability**, `|P0ᵢ| ≤ Σⱼ K_ij`. The tasks list expected only the first
      two to move; this one had to as well, and for a stronger reason than tier
      boundaries: `K_ij = E′ᵢE′ⱼ/X_ij` is **uncomputable** on a model with a
@@ -570,6 +575,7 @@ cannot.
 """
 function _assert_classical_tier(net::NetworkModel)
     _assert_one_machine_per_bus(net, "SwingEngine")
+    _assert_frozen_flux(net, "SwingEngine")
     isempty(net.loads) || throw(ArgumentError(
         "SwingEngine: the model carries $(length(net.loads)) Load(s) " *
         "($(join([l.id for l in net.loads], ", "))). The classical tier represents " *
