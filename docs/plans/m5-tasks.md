@@ -60,8 +60,16 @@ The three land together because none is testable without the others.
       constructor** and into `SwingEngine` as a build-time precondition, shaped
       like `reference/src/oracle.jl`'s `_assert_governor_free` / `_assert_radial`:
       refused by name, with the tier named in the message.
+- [ ] `coi_model` gains the **same precondition** (D3): it refuses a model with
+      loads or machine-free buses rather than quietly aggregating over the
+      machines. It is SPEC §3.2's one working proof that reduced models are
+      derived views; an unvalidated ZIP-into-`D` fold does not go inside it.
 - [ ] Existing M2/M3 scenarios construct unchanged and every existing test still
-      passes — the count from step 0b, not a new one.
+      passes — the count from step 0b, not a new one. A negative-`P0` machine
+      stays a machine (the M2a load convention is added to, not replaced).
+- [ ] The detailed parameters arrive as **keywords on an outer constructor** that
+      calls the positional inner one (D4) — the single validated path stays
+      single, and the inner signature does not grow to ~22 positionals.
 - [ ] Anti-vacuity: hand `SwingEngine` a two-machine bus and confirm the new
       precondition throws. The rejection must be *loud*, which was its whole
       purpose in `network_model.jl`'s header.
@@ -102,9 +110,12 @@ The three land together because none is testable without the others.
 
 - [ ] `src/engines/detailed.jl`: the machine of `m5-prestudy.md` §2, **power
       form** (D6), on terminal buses.
-- [ ] Playback half of the interface only (D2): `init!` / `solve!` /
-      `state_series`, via the shared driver in `src/engines/playback.jl` plus
-      `_record_at!` and `_aggregate_weight`.
+- [ ] Playback half of the interface (D2): `init!` / `solve!` / `state_series`
+      **and `inject!`**, via the shared driver in `src/engines/playback.jl` plus
+      `_record_at!` and `_aggregate_weight`. `inject!` is *not* the deferred
+      piece — scheduled events reach a playback run through it
+      (`m4-context.md` D8), and step 7 needs it. **`step!`/`timestep` are the
+      deferred methods**, gated on S3.
 - [ ] New `machine_arrays` columns (`Xd, Xq, X′q, T′do, T′qo, Ra`), reactances
       scaling **inversely** with `S_rated/S_base`, time constants base-free.
       `machine_arrays` stays the single place any conversion happens.

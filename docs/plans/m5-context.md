@@ -51,9 +51,19 @@ milestone now has two reasons that do not depend on each other.
 
 ## D2 — Playback first. Real-time stepping is a measurement, not an assumption
 
-The detailed engine implements the **playback** half of the interface —
-`init!` / `solve!` / `state_series` — in its first landing. `step!` / `inject!`
-for real time are added only if the measurement says the tier is steppable.
+The detailed engine implements the **playback** half of the interface in its first
+landing: `init!` / `solve!` / `state_series` — **and `inject!`**. The single
+deferred method is `step!` (with `timestep`), i.e. wall-clock stepping, added only
+if the measurement says the tier is steppable.
+
+**`inject!` is not the real-time half, and the boundary is narrower than "playback
+vs real-time" suggests.** `src/engines/interface.jl` states the playback contract
+itself: scheduled perturbations are applied "at exactly that instant through the
+same `inject!` the real-time loop uses" (`m4-context.md` D8 — not a
+`PresetTimeCallback`, deliberately, so a scheduled trip has exactly one path into
+an engine). So a playback-only engine still needs `inject!`; plan step 7's
+scheduled line trip needs it, and D8 below is written on the assumption that it
+exists. Deferring it would collide with both.
 
 **Why.** Whether a stiff DAE steps in wall-clock real time on a two-area case is
 genuinely unknown. Writing a plan that assumes it would force one of two bad
@@ -99,6 +109,23 @@ is exactly the "parallel hand-maintained copy" SPEC §3.2 forbids and
 `coi_model` derivations, two per-unit converters, and two places for the M2
 conversion bug to reappear.
 
+**`coi_model` gets the same treatment, and it needs saying because it is SPEC
+§3.2's one working proof.** The aggregate tier is *compiled* from `NetworkModel`
+via `machine_arrays`, so widening that model widens what `coi_model` may be handed.
+It **refuses** a model carrying loads or machine-free buses, by a precondition of
+the same shape as the `SwingEngine` one above — not silently aggregates over the
+machines and folds ZIP loads into `D`. Folding a voltage-dependent load into an
+aggregate damping constant is a *modelling claim* nobody has validated, and it
+would land inside the one derivation the repo points at to show reduced models are
+derived views rather than parallel copies. An aggregate view of the detailed tier
+is real work, and it is not this milestone's.
+
+**The M2a load convention survives.** "A load is a machine with negative `P0`" —
+how `three_machine_ring()`'s −110 MW bus works — is unchanged: a negative-`P0`
+machine stays a machine. The new load type is an *addition* for buses that carry no
+rotating mass, not a replacement, which is why every existing scenario constructs
+unchanged and still compiles a COI view.
+
 **Cost, stated:** this is a change to the one type every existing test constructs,
 so it is a refactor under a green suite — which is why the test split (D9) goes
 first and why step 1 is a single step rather than three.
@@ -122,6 +149,16 @@ down. `T = Inf` is safe in our formulation because the time constant is a
 divisor: `finite/Inf = 0.0` exactly, and the fixpoint solve sees a zero derivative
 rather than `0/0`. **That argument is about our form only** and does not transfer
 to PowerDynamics, which writes the multiplied form — see S1 in D10.
+
+**The signature shape is named here rather than discovered at build time.**
+`Machine`'s inner constructor is positional-only *on purpose* — `network_model.jl`
+says so, because it is the only path and therefore the only place validation can
+live — and it is already 11 arguments (8 required, plus M3's 3 defaulted). Eleven
+more would make it ~22 positionals, which is a different thing from M3's precedent
+of three. So the detailed parameters arrive as **keywords on an outer constructor**
+that fills them and calls the positional inner one, which keeps the single
+validated path intact. M2/M3 call sites are untouched either way; this is about the
+new arguments only.
 
 New columns in `machine_arrays`: `Xd, Xq, X′q, T′do, T′qo, Ra`, and for the
 regulator `K_A, T_E, Efd_min, Efd_max, Vref`. Reactances scale **inversely** with
@@ -230,7 +267,8 @@ not assumed to carry because the code compiles.
 ## D9 — The test file is split first, and the count is the check
 
 `test/runtests.jl` is 4,922 lines in one outer `@testset`, and M5 adds roughly a
-milestone to it. It is split in **step 0**, before any M5 code exists.
+milestone to it. It is split in **step 0b**, before any M5 code exists. (Step 0 is
+planning, following `m4-tasks.md`; `0b` is the number in all four files.)
 
 **Why first rather than last.** M2's lesson, in its own words: refactor before
 feature, because the old suite is the only oracle. D3 changes the one type every
@@ -271,7 +309,7 @@ Nine steps is larger than M3 (seven) or M4 (five), and `m4-plan.md` already
 predicted this tier is "plausibly larger than M2 and M3 combined". The cut order
 is in `m5-plan.md` §The size decision: the window goes first, the regulator second
 (provided voltage-dependent load lands, because that alone makes voltage fall),
-and steps 0–4, 6 and 7 cannot be cut without the milestone buying nothing on the
+and steps 0b–4, 6 and 7 cannot be cut without the milestone buying nothing on the
 case it exists for.
 
 **What must not happen** is a step landing with its gate weakened because the

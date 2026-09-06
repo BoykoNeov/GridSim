@@ -64,7 +64,11 @@ Each step commits, leaves the suite green, and carries its own gate. **No step i
 control and an executed anti-vacuity mutation** — M3's standing rule, which caught
 a real bug in M3 step 7 and another in M4 step 4.
 
-### Step 0 — Split `test/runtests.jl` before adding a milestone to it
+### Step 0b — Split `test/runtests.jl` before adding a milestone to it
+
+(Step 0 is planning — writing this trio — following `m4-tasks.md`'s convention.
+The number is `0b` in all four files; an item carried under two names is the
+failure this milestone's own step-0 box warns about.)
 
 4,922 lines, one outer `@testset`. M5 adds roughly a milestone's worth of tests to
 it. `docs/plans/README.md` §Structure notes already contains the plan and the trap:
@@ -252,7 +256,7 @@ built, rather than discovered at step 6:
 
 | | |
 |---|---|
-| **Cannot be cut** | Steps 0–4, 6, 7. The tier is not validated without 1–4, and without 6 the criterion in §Goal has no mechanism to satisfy it — M5 would have bought nothing on the case it exists for. |
+| **Cannot be cut** | Steps 0b–4, 6, 7. The tier is not validated without 1–4, and without 6 the criterion in §Goal has no mechanism to satisfy it — M5 would have bought nothing on the case it exists for. |
 | **Cut first, if the milestone runs long** | Step 8 (the window). It slips loudly, into its own small batch, and the promise it inherits is restated there rather than dropped. |
 | **Cut second** | Step 5 (the regulator), *provided* step 6 lands — voltage-dependent load alone is enough to make voltage fall. The exciter then becomes M6's opening step. |
 | **Already out** | Real-time stepping of this tier (D2), the meshed ring as an *internal* comparison case (impossible, step 2), IEEE 9-bus (needs `PowerSystemCaseBuilder`, roadmap item 5), the sixth-order machine. |
