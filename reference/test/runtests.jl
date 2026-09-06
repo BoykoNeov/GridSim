@@ -710,6 +710,28 @@ end
         @test gap(o9, t9, k) > band
     end
 
+    # THE DOCUMENTED INTERFACE CLAIM, EXERCISED RATHER THAN ASSERTED IN PROSE.
+    # `oracle_solve`'s docstring says the output is shaped so `divergence` applies
+    # across the two sides with no adapter and no resampling — and this tier adds
+    # three new channel families to that shape. Matching key sets is necessary and
+    # is not the same claim: `divergence` refuses two grids and reads a channel by
+    # name, and neither path was touched anywhere until here.
+    band = convergence_band(o5, o9, t5, t9; channel = chan(:V_B1))
+    d = divergence(o9, t9; band = band, channel = chan(:V_B1))
+    @test isfinite(d.max)
+    @test d.max ≈ gap(o9, t9, :V_B1)
+    # …and it departs, which is the expected reading here: the stator-ω residual
+    # is a real difference, so a `divergence` that reported no departure would mean
+    # the band had been derived from the gap it judges.
+    @test isfinite(d.t_depart)
+    # The grid refusal is the other half of the claim. Two runs on different grids
+    # have no interpolant left to resample with, so it must throw rather than
+    # quietly compare index by index.
+    coarse = collect(0.0:0.04:5.0)
+    o_c, _ = both_detailed(net, (0.0, 5.0), coarse; perturbations = pert,
+                           reltol = 1.0e-9, abstol = 1.0e-12)
+    @test_throws ArgumentError divergence(o_c, t9; band = band, channel = chan(:V_B1))
+
     # FROZEN MEANS FROZEN — TO ROUND-OFF, NOT TO THE BIT, AND THE DIFFERENCE IS A
     # FINDING RATHER THAN A TOLERANCE. Spike S1 showed `T′ = Inf` on their
     # MULTIPLIED form (`Inf·ẋ ~ rhs`) makes the derivative exactly zero, and on a
@@ -838,6 +860,28 @@ end
 end
 
 # ===========================================================================
+@testset "the sample-row mapping refuses what it says it refuses" begin
+    # THREE THROWS THAT NOTHING ELSE REACHES. `_sample_rows` is the guard against a
+    # future solver option silently reintroducing interpolation — the M4 step 3
+    # failure it was written for — and a guard nobody has seen fire is a guard
+    # nobody knows fires. Called directly with hand-built sample times, because
+    # provoking these through a solve would mean deliberately misconfiguring one.
+    f = GridSimReference._sample_rows
+    grid = [0.0, 0.1, 0.2]
+    # The ordinary case, and the duplicate an event instant produces: the FIRST row
+    # at a repeated time is taken, which is the pre-event sample.
+    @test f([0.0, 0.1, 0.2], grid) == [1, 2, 3]
+    @test f([0.0, 0.1, 0.1, 0.2], grid) == [1, 2, 4]
+    # A stored time nobody asked for — what a `tstop` that also saves, or
+    # `save_everystep`, would produce.
+    @test_throws ErrorException f([0.0, 0.05, 0.1, 0.2], grid)
+    # A solve that stopped early.
+    @test_throws ErrorException f([0.0, 0.1], grid)
+    # Samples beyond the end of the grid.
+    @test_throws ErrorException f([0.0, 0.1, 0.2, 0.3], grid)
+end
+
+# ===========================================================================
 @testset "anti-vacuity: the external check can go red, and where" begin
     # THIS TESTSET CHANGED SHAPE TWICE UNDER MEASUREMENT, AND THAT IS THE RESULT.
     # The plan asked for "perturb one coefficient in our stator algebra; the
@@ -926,6 +970,12 @@ end
     end
     oh, th = trans(net)
     om, tm = trans(Xd′_lower)
+    # The mutation IS applied — our own trajectory moves by ~4.8e-4. Without this
+    # line the assertion below would also pass if the mutation had silently stopped
+    # being applied, which would make "the comparison cannot see it" a coincidence
+    # rather than a measurement.
+    @test maximum(abs, om.V_B1 .- oh.V_B1) > 1.0e-4
+    # …and the transient comparison still cannot see it.
     @test gap(om, tm, :V_B1) ≈ gap(oh, th, :V_B1) rtol = 0.1
 end
 

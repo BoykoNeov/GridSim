@@ -10,7 +10,7 @@ Status: **steps 0b, 1, 2 and 3 done, steps 4-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
 unchanged, step 1 brought it to **2083 core**, and step 2 to
 **2253 core / 172 UI / 82 reference**, and step 3 to
-**2253 core / 172 UI / 288 reference**. The detailed tier now carries the two-axis
+**2253 core / 172 UI / 298 reference**. The detailed tier now carries the two-axis
 machine, reproduces `SwingEngine` at the frozen-flux degeneration, initialises
 from a power flow whose machine model is the steady state of that machine, and is
 checked against PowerDynamics' `SauerPaiMachine` with the flux frozen on both
@@ -453,7 +453,7 @@ that is read.
 
 ## Step 3 — PowerDynamics with flux off on both sides (D5, D6, D10)
 
-**Done 2026-09-06. 2253 core / 172 UI / 288 reference** (82 M4 + 206 new), all
+**Done 2026-09-06. 2253 core / 172 UI / 298 reference** (82 M4 + 216 new), all
 three green. `reference/src/oracle.jl` gains the `:sauer_pai` tier;
 `reference/test/runtests.jl` gains the step's eight testsets.
 

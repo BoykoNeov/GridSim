@@ -610,6 +610,14 @@ function oracle_solve(case::OracleCase, tspan; saveat,
     # per sample and quietly make this a different numerical path from the one
     # the comparison claims to be checking — the same argument `playback.jl`
     # makes for not driving `step!(integ, dt, true)` in playback.
+    # `adaptive = false` with an explicit `dt` exists for ONE reason and the suite
+    # does not use it: it is how M5 step 3's F4 was measured. The two "reaches
+    # nothing" controls are bands rather than `===`, and the question was whether
+    # bit-identity comes back once the adaptive error norm is taken out of it.
+    # It does not — the deltas tighten from ~1e-10 to ~1e-15 and stop there,
+    # because a decoupled differential state still sits in the implicit solver's
+    # Newton system. Kept so the measurement can be re-run, documented so nobody
+    # reaches for it without knowing what it answered.
     sol = adaptive ?
         solve(prob, Rodas5P(); reltol = reltol, abstol = abstol,
               saveat = grid, tstops = tstops) :
