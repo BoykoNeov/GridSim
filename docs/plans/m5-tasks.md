@@ -9,7 +9,7 @@ valuable line.
 Status: **steps 0b, 1 and 2 done, steps 3-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
 unchanged, step 1 brought it to **2083 core**, and step 2 to
-**2251 core / 172 UI / 82 reference**. The detailed tier now carries the two-axis
+**2253 core / 172 UI / 82 reference**. The detailed tier now carries the two-axis
 machine, reproduces `SwingEngine` at the frozen-flux degeneration, and initialises
 from a power flow whose machine model is the steady state of that machine.
 
@@ -422,7 +422,24 @@ large one. Replaced by a **growth** assertion: `load_bus_system()` is
 `two_machine_system()` plus one machine-free bus and costs exactly two more states,
 where an admittance formulation would cost `O(nb)` more.
 
-**7. Two tooling traps, both of which hid a real failure for a while.**
+**7. `terminal_bus_reduced` was written with the ring's exclusion as a COMMENT, and
+that is the failure `oracle.jl` names in its own words.** The arithmetic works on the
+ring — every `X′d` converts to 0.10, so it returns `X = 0.05 > 0`, a positive
+reactance and a model that builds, on a reduction that does not exist for a machine
+of branch degree 2. The helper now **throws**, and the ring is the test of the
+refusal rather than a caveat in a comment: *"a comment saying the ring is not a valid
+oracle case is exactly the thing that gets stepped over later; a thrown error is
+not"* (`reference/src/oracle.jl`, `_assert_radial`). Caught in review, not by a run —
+which is the point of the review.
+
+**8. `_PF_HOLD` is exercised only where it is provably identical to the mode it
+replaced.** It exists because the steady-state source is false mid-transient once
+the flux moves; at the degeneration the flux does not move, so every run that
+exercises it is a run in which `_PF_PIN` would have given the same answer. The
+ledger says so out loud rather than letting the row read as coverage — the
+distinguishing case has no oracle until step 4 gives the flux something to do.
+
+**9. Two tooling traps, both of which hid a real failure for a while.**
 `reference/test/runtests.jl` had four `ma.Xd` sites the rename missed, because the
 first sweep grepped `reference/src` and not `reference/test` — found only by running
 the third suite, which is the standing rule and not bookkeeping. And a background

@@ -574,7 +574,19 @@ end
     # IS a valid case for the external oracle of plan step 3, where both sides sit
     # on terminal buses and nothing is reduced. The two comparisons have opposite
     # topology restrictions, and neither is a general statement about the ring.
-    @test terminal_bus_reduced(three_machine_ring()).branches[1].X ≈ 0.25 - 0.10 - 0.10
+    # …and the helper REFUSES it rather than documenting it. The arithmetic would
+    # have worked: every X′d on the ring converts to 0.10, so it returns
+    # X = 0.05 > 0 — a positive reactance and a model that builds, on a reduction
+    # that does not exist for it. `oracle.jl` states the rule this follows: a
+    # comment saying the ring is not a valid case is what gets stepped over later.
+    @test occursin("branch degree 2", argerr_msg(() -> terminal_bus_reduced(three_machine_ring())))
+    @test occursin("would still be a positive reactance",
+                   argerr_msg(() -> terminal_bus_reduced(three_machine_ring())))
+    # the other half of the refusal: a tie the internal reactances swallow entirely
+    let tight = NetworkModel(100.0, 50.0, net.buses,
+                             [Branch(:L12, :B1, :B2, 0.05, 500.0)], net.machines)
+        @test occursin("no line left", argerr_msg(() -> terminal_bus_reduced(tight)))
+    end
 
     # THE SAME DISPATCH ON BOTH SIDES, asserted before anything is compared. The
     # detailed tier takes `Pm` from its power flow and the classical tier from

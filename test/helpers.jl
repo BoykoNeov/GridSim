@@ -246,24 +246,52 @@ end
 # This is `reference/src/oracle.jl`'s `reduced_line_reactance` applied to our own
 # tier instead of to PowerDynamics', for the identical reason.
 #
-# **It exists only on a radial pair.** A machine of branch degree 2 has one
-# internal reactance to spend across two lines and subtracting it from each
-# double-counts it, so the caller checks the degree; this helper only checks that
-# what comes out is a positive reactance.
+# **It exists only on a radial pair, and this helper THROWS rather than saying so.**
+# A machine of branch degree 2 has one internal reactance to spend across two lines
+# and subtracting it from each double-counts it. On `three_machine_ring()` every
+# `X′d` converts to 0.10, so the arithmetic happily returns `X = 0.05 > 0` — a
+# valid-LOOKING model built on a reduction that does not exist for it. That is
+# exactly the failure `reference/src/oracle.jl` names in its own words: "a comment
+# saying the ring is not a valid oracle case is exactly the thing that gets stepped
+# over later; a thrown error is not". `_assert_radial` throws there; this throws
+# here, and the ring is the test of the refusal rather than a caveat in a comment.
 #
 # Indexed through `machine_arrays(net).bus` rather than by assuming machine `k`
 # sits on vertex `k`. That identity holds on every fixture here and `SwingEngine`
 # asserts it — but this helper is handed models the classical tier never sees.
 function terminal_bus_reduced(net::NetworkModel)
     ma = machine_arrays(net)
+    degree = zeros(Int, length(net.buses))
+    for br in net.branches
+        degree[net.bus_index[br.from]] += 1
+        degree[net.bus_index[br.to]] += 1
+    end
     Xd′_at = zeros(Float64, length(net.buses))
     for k in eachindex(ma.bus)
-        Xd′_at[ma.bus[k]] += ma.Xd′[k]
+        v = ma.bus[k]
+        degree[v] == 1 || throw(ArgumentError(
+            "terminal_bus_reduced: machine $(net.machines[k].id) has branch degree " *
+            "$(degree[v]). `E′ at the bus` and `E′ behind X′d` coincide only on a " *
+            "RADIAL pair — a machine on two lines has one internal reactance to " *
+            "spend across both, and this reduction would count it twice. The result " *
+            "would still be a positive reactance and a model that builds."))
+        Xd′_at[v] += ma.Xd′[k]
     end
-    branches = [Branch(br.id, br.from, br.to,
-                       br.X - Xd′_at[net.bus_index[br.from]] -
-                              Xd′_at[net.bus_index[br.to]],
-                       br.rating) for br in net.branches]
+    # The positivity guard runs BEFORE `Branch` is constructed, not after. `Branch`
+    # refuses `X ≤ 0` itself — but it refuses it as "the coupling denominator",
+    # which sends the reader to the wrong question. Here the answer is that the
+    # machines' internal reactances swallow the tie and the REDUCTION does not
+    # exist, which is a statement about this comparison rather than about the data.
+    Xr = [br.X - Xd′_at[net.bus_index[br.from]] - Xd′_at[net.bus_index[br.to]]
+          for br in net.branches]
+    for (e, br) in pairs(net.branches)
+        Xr[e] > 0 || throw(ArgumentError(
+            "terminal_bus_reduced: branch $(br.id) reduces to X = $(Xr[e]) ≤ 0 — the " *
+            "machines' internal reactances exceed the tie, so there is no line left " *
+            "to put between them and the reduction does not exist for this model."))
+    end
+    branches = [Branch(br.id, br.from, br.to, Xr[e], br.rating)
+                for (e, br) in pairs(net.branches)]
     return NetworkModel(net.S_base, net.f0, net.buses, branches,
                         net.machines, net.loads)
 end
