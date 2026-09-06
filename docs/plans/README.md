@@ -11,7 +11,7 @@ stands; read the context file before re-litigating a decision.
 | M2 | Canonical `NetworkModel`; multi-machine classical swing engine on NetworkDynamics; bounded recorder; `TripLine`; `coi_model` as the compiled aggregate view; multi-machine window | Done | `m2-*.md` |
 | M3 | Governor droop as a third state; per-machine load-shedding ladders; out-of-step tie relay; scheduled generation ramps; the two-area Iberian case with its sweep; Figure 3-67 | Done | `m3-*.md` |
 | M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | **Done** — 1873 core / 172 UI / 82 reference, all three re-resolved from scratch | `m4-*.md` |
-| M5 | The detailed machine tier: flux dynamics, a voltage regulator, voltage as a real unknown, power-flow initialisation | Pre-study only | `m5-prestudy.md` |
+| M5 | The detailed machine tier: algebraic bus voltages (a DAE), flux dynamics, a voltage regulator, power-flow initialisation, and the Iberian criterion the tier exists for | **Planned, not started** — trio written, nine steps, cut line stated up front | `m5-*.md` (physics worked ahead in `m5-prestudy.md`) |
 
 Cross-cutting:
 
@@ -36,12 +36,17 @@ the roadmap's numbering (M3 was already taken out of order, for a stated reason)
 1. **Reading a divergence without putting error into it.** Two runs land on two
    grids; the recorder decimates; the engines keep no interpolant after a step
    closes. *Resolved by construction in M4 step 2*: one shared `saveat` grid, and a
-   read that refuses anything else. What remains is executing the tests
+   read that refuses anything else. **Closed** — the tests were executed on merge
+   and all four numbers reconstructed in a Julia-less session held first time
    (`m4-tasks.md` step 2).
 2. **An external check on the swing tier that is not a tautology.** PowerDynamics'
    classical machine puts `E′` behind `X′d`; ours puts it at the bus, which is only
    the same thing on a radial pair. The band and the convention questions to answer
-   *before* the comparison runs are worked in `m5-prestudy.md` §7.
+   *before* the comparison runs are worked in `m5-prestudy.md` §7. **Resolved in M4
+   step 4** — and not by that section's premise: `Library.Swing` is the component
+   that matches, it needs no reduction, so the meshed ring went through after all,
+   and a fourth convention question nobody had listed turned up instead
+   (`m4-context.md` D13/D14).
 3. **The Iberian ceiling.** A constant-voltage two-area model reproduces the
    separation or the 5 GW export swing, never both (`entsoe-iberia-reproduction.md`
    §7.3 d). Closing it needs voltage as a state — the whole reason M5 exists — and
@@ -59,6 +64,12 @@ the roadmap's numbering (M3 was already taken out of order, for a stated reason)
    works both and reverses the M4 plan's default, with the measurement that
    decides.
 
+Hurdles 1 and 2 are closed. **M5 owns 3, 4, 5 and 6**, and its trio says which step
+each lands in: 6 is decided up front (`m5-context.md` D1, the algebraic network)
+with its cost measured in step 1; 4 is step 1's flat run; 5 is split across steps 2
+and 4, because the frozen-flux limit provably cannot check the flux equations it
+switches off; and 3 is the milestone's purpose, step 7.
+
 ## Structure notes
 
 - **`test/runtests.jl` is one 5,000-line file** with one outer `@testset`. It
@@ -69,10 +80,12 @@ the roadmap's numbering (M3 was already taken out of order, for a stated reason)
   see them. The split therefore means moving every helper to `test/helpers.jl`,
   `include`d at top level before the outer testset, then one file per milestone in
   the same order. Do it on a machine that can run the suite; do not do it blind.
+  **Scheduled as M5 step 0b** (`m5-context.md` D9), before M5 adds a milestone's
+  worth of tests to it, with the unchanged test count (1873 core) as the gate.
 - **Exports are checked against GLMakie's** (`intersect(names(GridSim),
   names(GLMakie))` must stay empty) every time a name is added — the collision cost
-  a round in M1. M4 step 2's three names were added in a session without Julia;
-  the check is owed (`m4-tasks.md` step 2).
+  a round in M1. M4 step 2's three names were added in a session without Julia,
+  and the check was **executed on merge** — it passes (`m4-tasks.md` step 2).
 - **`Manifest.toml` is gitignored on purpose** (a package, not an app), which is
   why `[sources]` entries matter: without one the `ui/` → core link lives only in
   a file that is not in the repo. Added and **verified by re-resolve** in M4
