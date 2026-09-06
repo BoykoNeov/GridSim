@@ -6,10 +6,11 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **step 0b done, steps 1-8 open.** Entered at `86651ab` with **1873 core /
-172 UI / 82 reference** tests green; the suite split leaves the core count
-unchanged at **1873**. The physics is worked on paper in `m5-prestudy.md`; no M5
-*engine* code exists yet.
+Status: **steps 0b and 1 done, steps 2-8 open.** Entered at `86651ab` with
+**1873 core / 172 UI / 82 reference**; the suite split left the core count
+unchanged, and step 1 brings it to **2039 core / 172 UI / 82 reference**. The
+detailed tier now builds, initialises from a power flow and runs flat;
+`src/engines/detailed.jl` is the first M5 engine code.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -131,57 +132,164 @@ machine, with the contending processes checked first, or it will decide D2 on no
 The three land together because none is testable without the others.
 
 **Model (D3)**
-- [ ] A load type at a bus, and buses without machines, expressible in
+- [x] A load type at a bus, and buses without machines, expressible in
       `NetworkModel`.
-- [ ] The one-machine-per-bus and machine-free-bus **rejections moved out of the
+- [x] The one-machine-per-bus and machine-free-bus **rejections moved out of the
       constructor** and into `SwingEngine` as a build-time precondition, shaped
       like `reference/src/oracle.jl`'s `_assert_governor_free` / `_assert_radial`:
       refused by name, with the tier named in the message.
-- [ ] `coi_model` gains the **same precondition** (D3): it refuses a model with
+- [x] `coi_model` gains the **same precondition** (D3): it refuses a model with
       loads or machine-free buses rather than quietly aggregating over the
       machines. It is SPEC §3.2's one working proof that reduced models are
       derived views; an unvalidated ZIP-into-`D` fold does not go inside it.
-- [ ] Existing M2/M3 scenarios construct unchanged and every existing test still
+- [x] Existing M2/M3 scenarios construct unchanged and every existing test still
       passes — the count from step 0b, not a new one. A negative-`P0` machine
       stays a machine (the M2a load convention is added to, not replaced).
-- [ ] The detailed parameters arrive as **keywords on an outer constructor** that
+- [x] The detailed parameters arrive as **keywords on an outer constructor** that
       calls the positional inner one (D4) — the single validated path stays
       single, and the inner signature does not grow to ~22 positionals.
-- [ ] Anti-vacuity: hand `SwingEngine` a two-machine bus and confirm the new
+- [x] Anti-vacuity: hand `SwingEngine` a two-machine bus and confirm the new
       precondition throws. The rejection must be *loud*, which was its whole
       purpose in `network_model.jl`'s header.
 
 **Network**
-- [ ] Bus vertex carrying `(V_re, V_im)` with `mass_matrix = 0`, residual =
+- [x] Bus vertex carrying `(V_re, V_im)` with `mass_matrix = 0`, residual =
       Kirchhoff's current law over incident edges.
-- [ ] Stiff solver (`Rodas5P` or `FBDF`) with NetworkDynamics' Jacobian sparsity.
+- [x] Stiff solver (`Rodas5P` or `FBDF`) with NetworkDynamics' Jacobian sparsity.
       **No admittance matrix is formed anywhere** (SPEC §6) — assert structurally,
       as M2 did.
 
 **Initialisation (D7)**
-- [ ] `find_fixpoint` on the **static** network from a flat guess.
-- [ ] The solution is **checked, not trusted**: `|V| ∈ [0.9, 1.1]`, branch flows
+- [x] `find_fixpoint` on the **static** network from a flat guess.
+- [x] The solution is **checked, not trusted**: `|V| ∈ [0.9, 1.1]`, branch flows
       below rating, residual `< 1e-10`.
-- [ ] Machine states back-substituted in closed form (`m5-prestudy.md` §4), with
+- [x] Machine states back-substituted in closed form (`m5-prestudy.md` §4), with
       `Pm` the **air-gap** power, not the terminal power.
-- [ ] Never solved jointly with the dynamic states from a flat guess — the joint
+- [x] Never solved jointly with the dynamic states from a flat guess — the joint
       problem has spurious equilibria (a machine at `δ + π`) that look converged.
       Assert the guard, not just the comment.
 
 **The flat run — the check no overlay can perform**
-- [ ] No disturbance, full horizon, **every state constant** to solver tolerance.
-- [ ] Asserted **per state**, never on `f_coi`: a wrong `E′d` leaves frequency
+- [x] No disturbance, full horizon, **every state constant** to solver tolerance.
+- [x] Asserted **per state**, never on `f_coi`: a wrong `E′d` leaves frequency
       flat while the voltage rings.
-- [ ] At **two tolerances**.
-- [ ] Positive control: a deliberately mis-initialised state (perturb one `E′q` by
+- [x] At **two tolerances**.
+- [x] Positive control: a deliberately mis-initialised state (perturb one `E′q` by
       1 %) must make the flat run visibly non-flat, and the per-state assertion
       must be the thing that catches it.
 
 **Measurement S3 (D10) — the number that decides D2**
-- [ ] Steps per simulated second and wall-clock per simulated second, two-area,
+- [x] Steps per simulated second and wall-clock per simulated second, two-area,
       DAE against the classical tier at the same tolerance. Recorded in
       `m5-context.md` under D2 with the machine and Julia version, as M4 recorded
       its dependency probes.
+
+
+### What this step found that the plan did not anticipate
+
+Six things, and four of them changed the design rather than merely being noted.
+
+**1. The rotational gauge is NOT the reason the joint solve is unusable — and the
+plan's reason was the right one for the wrong stated cause.** `find_fixpoint` on
+the dynamic network fails from a flat guess (MaxIters, residual `2.6e-10` against
+its `1e-10` tolerance — a factor of 2.6, close enough that loosening the tolerance
+would "fix" it). The obvious explanation is the rotational null direction, and the
+Jacobian does have exactly one (singular values `2.72, 0.472, 2.6e-11`). **But
+`SwingEngine`'s fixpoint problem is rank-deficient in the same way** (`1.46e-14`
+against `314`) **and converges anyway**, and pinning the slack angle *inside* the
+dynamic network converges to `1.3e-15`. So the gauge alone does not force the
+separate static network; seeding at the true solution does not help either, which
+rules out the guess.
+
+**2. What DOES force it: the joint solve finds wrong equilibria, and its residual
+actively misleads.** Measured on the ring, slack pinned, seeding one rotor angle
+away from its true value:
+
+| seed for δ₂ | converged δ₂ | \|V\| | residual |
+|:---|---:|:---|---:|
+| true (−0.0287) | −0.028673 | (1.010, 1.004, 0.978) | 1.8e-13 |
+| true + π | 2.943790 | (0.389, 0.203, 0.131) | **5.0e-16** |
+| true + 2.5 rad | 2.943790 | (0.389, 0.203, 0.131) | 4.4e-16 |
+
+The spurious point is self-consistent and converges **400× tighter than the true
+one**, so no residual test separates them — only the `|V| ∈ [0.9, 1.1]` band does,
+which is why that band is in the code as the discriminator and not as a comfort
+check. The basin is narrower than π: 2.5 rad already falls in. Back-substitution
+sidesteps the question entirely, because `δ` is never *seeded*, only computed.
+
+**3. THREE guards had to move, not two — and the third for a stronger reason.**
+The plan named the machine-free-bus and two-machine-bus rejections. The
+`|P0| ≤ Σ K` reachability guard had to move too, because `K = E′ᵢE′ⱼ/X` is
+**uncomputable** when a bus has no machine — not merely inappropriate. A guard
+that cannot be evaluated cannot stay in a constructor that must accept the case.
+
+**4. The slack is not a gauge choice, and the "free positive control" has a
+precondition.** The plan's shape (D5's, one level down) says a parameter surviving
+nowhere is a control, so changing it must change nothing. Measured:
+
+| model | max\|ΔV\| | max\|Δ(δ−δ₁)\| | max\|ΔPm\| |
+|:---|---:|---:|---:|
+| `two_machine_system`, `three_machine_ring` (no load) | 2.2e-16 | 2.8e-17 | 1.1e-16 |
+| `load_bus_system` (constant-impedance load) | 3.6e-4 | 1.5e-2 | 4.6e-2 |
+
+**It survives, into the dispatch.** The slack absorbs the mismatch between a
+schedule that balances at `|V| = 1` and a network that does not sit there. Both
+answers are correct: with G1 as slack `Σ Pm = 1.054270` and the load draws
+`1.054270`; with G2, `1.053793` and `1.053793`. So it stays an engine keyword —
+a decision about a case — but the invariance check now carries its boundary, and
+would have failed the first time anyone put a load in a model.
+
+**5. The flat run is VACUOUS on every fixture the repo shipped before M5.** With
+`Ra = 0` and no `Load`, the air-gap power equals `P0` exactly for every non-slack
+machine, so `Pm := Pe` versus `Pm := P0` is unobservable and the check would pass
+against the bug it exists to catch. `load_bus_system()` was built for this: the
+slack settles at `0.65427` against a scheduled `0.7`, because the load at
+`|V| = 0.979` draws `1.054` rather than `1.100`. The positive control is therefore
+**the real bug** (take `Pm` from the schedule), and it makes the run run away by
+6.6 rad with `f_coi` moving 0.157 Hz.
+
+*Honest limit on the per-state form:* at step 1, `f_coi` would also have caught it.
+"Assert per state, never on `f_coi`" is required for step 2's flux states, where a
+wrong `E′d` rings a voltage and leaves frequency flat. The test says so rather than
+implying the necessity has been demonstrated here.
+
+**6. A state written into the integrator is silently discarded** (M3's finding,
+re-confirmed and now load-bearing). A bare write to `integrator.u` left the run
+flat at 3.9e-15; the same write followed by `u_modified!` + `auto_dt_reset!`
+produced the seeded 0.05 offset. `_reinitialise_algebraic!` writes bus voltages
+this way, so this is pinned by a test rather than trusted.
+
+**And one scope note the plan implies but does not state:** the two-area case has
+a **single tie**, so a line trip islands it and the DAE has no second angle
+reference. S3 was therefore measured with an identical off-equilibrium start on
+both tiers rather than with an event. That constraint belongs to step 7 as well.
+
+### S3 — the measurement that decides D2
+
+Both tiers, same tolerances (`reltol 1e-3`, `abstol 1e-6`), 20 s horizon,
+`saveat = 0.02`, identical +0.05 rad offset on machine 1. Steps per simulated
+second is the primary number (deterministic); wall clock is best-of-3 and noisy.
+
+| case | tier | accepted steps | steps / s-sim | wall / s-sim |
+|:---|:---|---:|---:|---:|
+| two-area (2 bus, 1 branch) | classical, `Tsit5` | 41 | 2.05 | 1e-5 s |
+| two-area | detailed, `Rodas5P` | 45 | 2.25 | 9e-5 s |
+| ring (3 bus, 3 branch) | classical, `Tsit5` | 228 | 11.40 | 3e-5 s |
+| ring | detailed, `Rodas5P` | **126** | 6.30 | 3.2e-4 s |
+
+**The answer is comfortable, and one number is the opposite of the expected
+sign.** On the ring the DAE takes *fewer* steps than the ODE (126 against 228),
+because the implicit method is not paying for the stiffness the explicit one is.
+The cost is per step, not per second: ~8.5× on the two-area case. In absolute
+terms the detailed tier runs 3,000–11,000× faster than real time on both cases, so
+**it is real-time steppable** and D2's playback-only default is a caution that the
+measurement lifts rather than confirms. Julia 1.12.6, NetworkDynamics 1.3.0,
+OrdinaryDiffEq 7.8.1, Windows 11.
+
+Two caveats, stated rather than buried: these are 2- and 3-bus cases, and the
+per-step cost of a sparse linear solve grows with size in a way two points cannot
+extrapolate; and `step!` is still not implemented for this tier, so "steppable"
+is a measurement about the solver, not a shipped capability.
 
 ## Step 2 — the two-axis machine and the frozen-flux degeneration (D4, D6)
 

@@ -84,6 +84,40 @@ of the three.
 on M4's scrubbable window. If S3 comes back well, real-time is a later addition
 that costs a `step!` method, not a redesign.
 
+### What S3 measured (2026-09-06, step 1) — the caution is lifted, not confirmed
+
+Both tiers, `reltol 1e-3` / `abstol 1e-6`, 20 s horizon, `saveat = 0.02`, an
+identical +0.05 rad offset on machine 1. Steps per simulated second is the primary
+number because it is deterministic; wall clock is best-of-3 and noisy (step 0b
+measured 1m25–5m15 for identical work on this machine).
+
+| case | tier | accepted steps | steps / s-sim | wall / s-sim |
+|:---|:---|---:|---:|---:|
+| two-area (2 bus, 1 branch) | classical, `Tsit5` | 41 | 2.05 | 1e-5 s |
+| two-area | detailed, `Rodas5P` | 45 | 2.25 | 9e-5 s |
+| ring (3 bus, 3 branch) | classical, `Tsit5` | 228 | 11.40 | 3e-5 s |
+| ring | detailed, `Rodas5P` | **126** | 6.30 | 3.2e-4 s |
+
+**The detailed tier runs 3,000–11,000× faster than real time on both cases**, so
+the honest reading is that it *is* steppable and D2's playback-first default was a
+caution rather than a finding. One number came back with the opposite sign to the
+expectation: on the ring the DAE takes **fewer** steps than the ODE (126 against
+228), because the implicit method is not paying for stiffness the explicit one is.
+The DAE's cost is per step (~8.5× on the two-area case), not per second.
+
+**What does not change.** `step!` stays unimplemented for this tier in step 1: the
+measurement says the solver could sustain it, which is a different claim from a
+shipped, tested real-time path, and building one is not step 1's scope. Two
+caveats belong with the number — these are 2- and 3-bus cases, and the per-step
+cost of a sparse linear solve grows with size in a way two points cannot
+extrapolate.
+
+**A scope constraint discovered here, which step 7 inherits:** the two-area case
+has a **single tie**, so a line trip islands it and each island needs its own
+angle reference — which the DAE's single pinned slack cannot supply. S3 therefore
+used an off-equilibrium start rather than an event, and step 7's criterion will
+have to face the same thing when it trips that tie.
+
 ## D3 — One canonical `NetworkModel`, extended — and the tier check moves to the engine
 
 SPEC §3.2 allows exactly one canonical model. M5 therefore **extends**
@@ -241,6 +275,104 @@ equilibria (a machine at `δ + π`) that look converged.
 The back-substitution yields the **air-gap** power for `Pm`, not the terminal
 power; §2a settles that from PowerDynamics' own static stator, where terminal power
 is smaller by the stator loss.
+
+### What step 1 measured (2026-09-06) — the right design, the wrong stated reason
+
+**The rotational gauge does not force the separate static network.**
+`find_fixpoint` on the dynamic network does fail from a flat guess (MaxIters,
+residual `2.6e-10` against `1e-10` — only a factor of 2.6, so loosening the
+tolerance would have "fixed" it and returned a gauge-arbitrary answer). The
+Jacobian has exactly one null direction (`2.72, 0.472, 2.6e-11`). But
+**`SwingEngine`'s fixpoint problem is rank-deficient in the same way** (`1.46e-14`
+against `314`) and converges anyway, seeding at the true solution does not help,
+and pinning the slack angle *inside* the dynamic network converges to `1.3e-15`.
+
+**What forces it is the spurious equilibrium — and its residual misleads.**
+Slack pinned, seeding one rotor angle away from its true value:
+
+| seed for δ₂ | converged δ₂ | \|V\| | residual |
+|:---|---:|:---|---:|
+| true (−0.0287) | −0.028673 | (1.010, 1.004, 0.978) | 1.8e-13 |
+| true + π | 2.943790 | (0.389, 0.203, 0.131) | **5.0e-16** |
+| true + 2.5 rad | 2.943790 | (0.389, 0.203, 0.131) | 4.4e-16 |
+
+The collapsed point is self-consistent and converges **400× tighter than the true
+one**. No residual test separates them; only the `|V| ∈ [0.9, 1.1]` band does —
+so that band is a discriminator in the code, not a comfort check, and its docstring
+says which of the two jobs it is doing. Back-substitution avoids the question
+entirely: `δ` is computed, never seeded, so there is no basin to fall out of.
+
+**One static network, two jobs.** The same network serves the power flow and the
+post-event re-initialisation, switched by a per-machine `mode` on the third
+residual: `Pe − Pset` (solve the angle) or `δ − δ_target` (pin it). The power flow
+pins one machine; the re-initialisation pins every machine and re-solves the
+voltages, which is exactly "hold the differential states, restore the algebraic
+ones" and needs no second solver.
+
+## D13 — The slack is a DISPATCH choice, not a gauge choice (measured, and it changed the control)
+
+The expected shape was D5's, one level down: the angle reference is physically
+arbitrary, every observable is a difference, so by the standing rule that a
+parameter surviving nowhere is a control and not a column it becomes an engine
+keyword whose *irrelevance is a free positive control*. Half of that survived
+measurement.
+
+| model | max\|ΔV\| | max\|Δ(δ−δ₁)\| | max\|ΔPm\| |
+|:---|---:|---:|---:|
+| `two_machine_system`, `three_machine_ring` (no load) | 2.2e-16 | 2.8e-17 | 1.1e-16 |
+| `load_bus_system` (constant-impedance load) | 3.6e-4 | 1.5e-2 | 4.6e-2 |
+
+**It survives, into the dispatch.** The slack machine's power is free while every
+other machine holds its schedule, so the slack is whoever absorbs the mismatch —
+and once a load's draw depends on voltage there *is* a mismatch, because the
+schedule balances at `|V| = 1` and the solved network does not sit there. Both
+answers are correct operating points of the same schedule, each self-consistent:
+with G1 as slack `Σ Pm = 1.054270` and the load draws `1.054270`; with G2,
+`1.053793` and `1.053793`.
+
+**So it stays an engine keyword** — it is a decision about a *case*, not a property
+of the network — but for a different reason than the one above, and the positive
+control now carries its precondition: *on a model with no voltage-dependent load*,
+changing the slack must change nothing to machine precision. Written without that
+boundary the invariance test would have failed the first time anyone put a load in
+a model, and it would have looked like a bug in the power flow.
+
+## D14 — Three guards moved, not two, and the third could not have stayed
+
+D3 named the machine-free-bus and two-machine-bus rejections. The
+`|P0ᵢ| ≤ Σⱼ K_ij` reachability guard had to move to `SwingEngine` as well, and
+the reason is stronger than a tier boundary: `K_ij = E′ᵢE′ⱼ/X_ij` is
+**uncomputable** on a model with a machine-free bus, because there is no `E′` at
+one end. A guard that cannot be *evaluated* on the cases the constructor must now
+accept is not a guard that merely belongs elsewhere.
+
+Two consequences worth keeping. `branch_arrays` — which carries `K` — took the same
+precondition, so it is no longer callable on every valid model, and
+`branch_topology` was added as the machine-free view (`src`, `dst`, `X`). And
+`machine_arrays` is now documented **machine-indexed** with a `bus` column rather
+than vertex-indexed: the two were the same number until a bus could lack a machine,
+and the alternative (vertex-indexed with holes) would need a sentinel `H`, which
+sits in a denominator.
+
+## D15 — The flat run needed a fixture built for it, or it would have been vacuous
+
+`load_bus_system()` is a positive control, not a convenience. On every fixture the
+repo shipped before M5 the detailed tier's headline check has **no content**: with
+`Ra = 0` and no `Load`, the air-gap power equals `P0` exactly for every non-slack
+machine, so `Pm := Pe` (correct) and `Pm := P0` (the bug) are indistinguishable and
+the flat run would come out flat either way — passing against the very bug it
+exists to catch, which is the failure mode this repo has hit repeatedly.
+
+With a load it has content: the slack settles at `0.65427` against a scheduled
+`0.7`, because the load at `|V| = 0.979` draws `1.054` rather than `1.100`. The
+positive control is therefore **the real bug** rather than a stand-in, and it makes
+the run diverge by 6.6 rad with `f_coi` moving 0.157 Hz.
+
+**An honest limit, recorded rather than glossed.** The plan says "assert per state,
+never on `f_coi`" — and at step 1 `f_coi` *would* have caught this. The per-state
+form is required for step 2's flux states, where a wrong `E′d` rings a voltage and
+leaves frequency flat. The test asserts both halves so the claim is dated instead
+of assumed to have always held.
 
 ## D8 — `inject!` gains a consistent re-initialisation, and the flat run is re-run across an event
 

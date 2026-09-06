@@ -35,6 +35,11 @@ import Graphs
 # symbolic-indexing interface the engine uses to resolve flat state/parameter
 # positions instead of assuming a memory layout.
 import NetworkDynamics
+# LinearAlgebra supplies the `Diagonal` mass matrices the detailed (DAE) tier's
+# vertex models carry: a zero row is an algebraic constraint, a one is a
+# differential equation. An stdlib, so it adds nothing to the dependency closure
+# the no-Makie invariant test walks.
+import LinearAlgebra
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
@@ -82,6 +87,11 @@ include("engines/frequency_response.jl")
 # Multi-machine classical (network swing) model on NetworkDynamics: per-machine
 # (δ, ω) coupled through the branches, plus the inertia-weighted aggregate.
 include("engines/swing.jl")
+
+# The detailed (DAE) tier: algebraic bus voltages, machines on terminal buses, a
+# stiff solver (M5 step 1). AFTER swing.jl, which owns `EngineEvent`, `_bus_pair`
+# and the event-log cap this engine reuses rather than copies.
+include("engines/detailed.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -161,6 +171,13 @@ export system_inertia, is_online
 # the read `ui/` needs to label traces without touching engine fields. Both names
 # checked clear against GLMakie's exports before being added.
 export SwingEngine, machine_ids
+# The detailed (DAE) tier (M5 step 1). `DetailedEngine` and `load_bus_system` both
+# checked clear against GLMakie's exports before being added — the standing check
+# since M1. Everything else it answers to (`init!`, `solve!`, `state_series`,
+# `inject!`, `current_state`, `is_online`, `event_log`, `system_inertia`) is an
+# existing generic it adds a method to, which is the whole point of the interface.
+export DetailedEngine
+export load_bus_system
 # The applied-event record the trajectory deliberately does not carry (a line trip
 # leaves no channel behind, and a one-sample marker is what decimation deletes —
 # see the head of `engines/swing.jl`). `describe_event` gives a window and a

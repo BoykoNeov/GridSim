@@ -870,6 +870,51 @@ function three_machine_ring()
 end
 
 """
+    load_bus_system() -> NetworkModel
+
+Two machines and a **machine-free load bus** — the first fixture in the repo that
+the classical tier cannot run at all, and the one the detailed tier's flat run
+needs in order to mean anything.
+
+Three buses in a ring, so the topology is meshed (power reaches the load two ways)
+and the case is not a chain of `asin`s. `B3` carries a 110 MW / 30 MVAr
+constant-impedance load and no rotating mass whatsoever: at the classical tier it
+would be an algebraic node with no differential state, which is why
+`three_machine_ring()` had to make its load a machine with negative `P0` instead.
+
+**Why this fixture exists, stated precisely, because it is a positive control and
+not a convenience.** The detailed tier takes each machine's mechanical power from
+the solved power flow rather than from `Machine.P0`. On every fixture the repo
+shipped before M5 that distinction is INVISIBLE: with no load and no stator
+resistance the air-gap power equals `P0` exactly for every non-slack machine, so
+a flat run would come out flat whether the back-substitution were right or wrong —
+the check would pass against the very bug it exists to catch. Here it cannot. The
+constant-impedance load draws `P0·|V|²`, the solved voltage is not 1.0, so the
+scheduled balance does not hold at the solved point and the slack machine absorbs
+a difference that is straightforwardly measurable.
+
+The machines are rated away from `S_base` and from each other (250 and 400 MVA on
+a 100 MVA base), so a missing or inverted per-unit conversion changes the answer
+instead of hiding behind a weight of one.
+"""
+function load_bus_system()
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    machines = [
+        #       id    bus   S_rated    H    D    Xd′    E′     P0
+        Machine(:G1, :B1,    250.0,  4.0, 2.0,  0.25,  1.05,  70.0),
+        Machine(:G2, :B2,    400.0,  5.0, 2.0,  0.30,  1.04,  40.0),
+    ]
+    # Positive P0 = drawn, the opposite convention from a machine's — see `Load`.
+    loads = [Load(:L3, :B3, 110.0, 30.0)]
+    branches = [
+        Branch(:L12, :B1, :B2, 0.25, 500.0),
+        Branch(:L23, :B2, :B3, 0.25, 500.0),
+        Branch(:L31, :B3, :B1, 0.25, 500.0),
+    ]
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads)
+end
+
+"""
     coi_model(net::NetworkModel) -> SystemModel
 
 Compile the **center-of-inertia aggregate view** of `net` — the M1 `SystemModel`

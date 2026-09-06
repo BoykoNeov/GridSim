@@ -125,6 +125,25 @@ to be written where the rows are, or the rows overclaim.
 | The `E′`-behind-`X′d` radial reduction `X − X′d,ᵢ − X′d,ⱼ` | Exact — proven by the *absence* of any loading-independent residual once the torque term is accounted for. Enforced structurally: branch degree ≠ 1 and a non-positive reduced reactance are both thrown | **external** + structural |
 | The oracle's own accuracy | Its self-convergence error is 3.5× ours at reltol 1e-3 and 18× at 1e-7 — **the floor is below us**, which is what D7 means by "not a ceiling" | convergence (measured) |
 
+## Detailed (DAE) tier — M5 step 1, `src/engines/detailed.jl`
+
+The tier's first rows. Nothing external yet: PowerDynamics' `SauerPaiMachine`
+arrives at plan step 3, and the flux equations it would oracle do not exist until
+step 2.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| The whole initialisation path — power flow, back-substitution, network assembly | **The flat run**: no disturbance, 10 s, every channel constant, asserted PER CHANNEL at two tolerances (`1e-3/1e-6` and `1e-8/1e-11`) on three fixtures. Worst drift measured 1.6e-14 against a 1e-10 gate | **self-consistency, per state** |
+| The back-substituted state is a fixpoint of the network actually integrated | Asserted at BUILD time against the dynamic RHS, separately from the power-flow residual — they are residuals of different equation sets | derived (structural) |
+| `Pm` from the power flow rather than from `Machine.P0` | Positive control is **the real bug**: substituting the schedule makes the run diverge 6.6 rad with `f_coi` moving 0.157 Hz. Has content only on `load_bus_system` — on every pre-M5 fixture the two are equal to the bit, and that vacuity is asserted too | **positive control (the real bug)** |
+| The power flow's answer is the true one and not the collapsed one | The `\|V\| ∈ [0.9, 1.1]` band, and **not** the residual: the spurious solution converges 400× tighter (5.0e-16 against 1.8e-13). Unit-tested against a fabricated collapsed solution with a perfect residual | **discriminator (measured), not a comfort check** |
+| The slack's effect | Invariance to machine precision (2.2e-16) where no load depends on voltage; a **measured, asserted difference** (ΔPm 4.6e-2) where one does, with each answer checked self-consistent against what the load actually draws | derived + **bounded discrepancy, sign and size** |
+| A state written into the integrator survives | Measured both ways: bare write discarded (3.9e-15), `u_modified!` + `auto_dt_reset!` takes (5.06e-2). `_reinitialise_algebraic!` depends on this | structural (mutation-checked) |
+| Consistent re-initialisation after a line trip | The algebraic rows of the dynamic residual hold below 1e-9 at the post-event point, and the run continues. **NOT the D8 check** — the flat run *across* an event is owed by the step that arms protection here | **partial; the real check is owed** |
+| No admittance matrix (SPEC §6) | Structural, as M2's: the coupling is assembled edge by edge inside NetworkDynamics, and the state dimension is `2·n_bus + 3·n_machine` | structural |
+| Cost against the classical tier (S3) | 41/45 accepted steps on the two-area case, 228/126 on the ring; 3,000–11,000× faster than real time. Two sizes only — not an extrapolation | **measurement (2 points), stated as such** |
+| The two-axis machine, flux, the regulator, ZIP `a_i`/`a_p`, `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built.** Each refused by name at build time with the step that owns it, rather than approximated | **un-built, and refused rather than faked** |
+
 ## Owed rows
 
 Rows M5 will need before it ships:
