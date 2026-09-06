@@ -57,7 +57,13 @@ between fidelity tiers.
 
 ## Getting started
 
-Requires Julia ≥ 1.10 (install via [juliaup](https://github.com/JuliaLang/juliaup)).
+Requires Julia **≥ 1.10 for the core**, and **≥ 1.11 for `ui/` and `reference/`**
+(install via [juliaup](https://github.com/JuliaLang/juliaup)). The split is not a
+preference: those two packages find the core through a `[sources]` entry, and Pkg
+1.10 ignores that section *silently* — the resolve then fails saying `GridSim` is
+not registered, which points at the wrong cause. Measured, both ways round, in
+M4 step 5 (`docs/plans/m4-context.md` D15); the core itself resolves on 1.10 fine,
+which is why its own floor stays where it is.
 
 ```julia
 # from the repo root
@@ -85,7 +91,12 @@ divergence(a, b; band = band)                       # (; max, t_max, rms, t_depa
 ```
 
 The UI is a separate environment; see [`ui/README.md`](ui/README.md) for setup,
-the three windows, and offscreen rendering.
+the three windows, and offscreen rendering. The external oracle is a third:
+[`reference/README.md`](reference/README.md) — `julia --project=reference -e
+'import Pkg; Pkg.test()'` checks the multi-machine engine against PowerDynamics.
+Neither needs a `Pkg.develop` by hand; both carry a `[sources]` link to the core,
+and all three environments are re-resolved from a deleted manifest whenever a
+dependency moves.
 
 ## What it looks like
 

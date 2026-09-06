@@ -5,11 +5,14 @@ decisions and the measurements behind them). Living document: each step ticks it
 own boxes and records what it found, including what it found that the plan did
 not anticipate.
 
-Status: **steps 1–3 done and executed.** Entered at `ab3a87f` with 1719 core /
-102 UI tests green; step 1 leaves 1787 / 102, step 2 leaves 1870 / 102, and step 3
-leaves **1870 / 172** — the core number unchanged, and that is the result rather
-than an omission: the playback window takes already-solved series and needed no
-core change at all.
+Status: **M4 COMPLETE — all five steps done and executed.** Entered at `ab3a87f`
+with 1719 core / 102 UI tests green; step 1 leaves 1787 / 102, step 2 leaves
+1870 / 102, step 3 leaves **1870 / 172** (the core number unchanged, and that is
+the result rather than an omission: the playback window takes already-solved
+series and needed no core change at all), step 4 leaves **1873 / 172 / 82** in a
+new third package, and step 5 re-resolves all three environments from a deleted
+manifest and gets the same three numbers on a stack that had drifted two minor
+versions underneath them.
 
 Step 2 was *written* on 2026-09-02 in a remote session with **no Julia toolchain and the
 Julia download/package hosts blocked**, so its six new testsets shipped unrun; they
@@ -448,34 +451,74 @@ having — was right; it was wrong about which component carries it.
 
 ## Step 5 — the dependency housekeeping, in its right place at last
 
-- [ ] **Both dependency resolutions tested**, not just the developer machine's —
-      the box M3 left open at `m3-tasks.md:795` for "whichever later step does
-      change a dependency". Step 4 changes one. Delete `Manifest.toml`, re-resolve
-      fresh, run all three suites.
+**DONE.** All three environments re-resolved from a deleted manifest and re-run,
+`ui/`'s Julia floor raised on a measurement rather than a preference (D15), and
+the M3 box ticked where it was left.
+
+**The box was not bookkeeping. The dev machine really was stale, and by more than
+a patch release.** The root `Manifest.toml` in use dated from 2026-08-18 — M2 —
+so *every green number this repo has recorded since* was measured against it:
+
+| package | on the dev machine | fresh resolve |
+|---|---|---|
+| `NetworkDynamics` | 1.1.0 | **1.3.0** |
+| `OrdinaryDiffEq` | 7.6.0 | **7.8.1** |
+| `SciMLBase` | 3.49.1 | **3.50.2** |
+| `CommonSolve` | 0.2.13 | 0.2.14 |
+| `Graphs`, `Observables` | 1.14.0, 0.5.5 | unchanged |
+| `GLMakie` (in `ui/`) | 0.13.13 | 0.13.14 |
+
+`NetworkDynamics` is the package the whole network tier is built on and it moved
+two minor versions. M3's note — "the gitignored manifest makes the dev machine
+systematically the stale one" — was exactly right, and the size of the drift is
+the argument for the box existing rather than a reason to close it quietly.
+
+- [x] **Both dependency resolutions tested**, not just the developer machine's —
+      the box M3 left open at `m3-tasks.md:795`. `Manifest.toml` deleted in each
+      of the three environments, `Pkg.instantiate()`, all three suites run:
+      **1873 core** on the moved stack above, **172 UI**, **82 reference** — every
+      count identical to the pinned-manifest run, so two minor versions of
+      `NetworkDynamics` changed no answer anywhere in any suite. That is a result
+      rather than a formality: until this run nobody knew, and the whole point of
+      the box is that "it passes here" and "it passes" are different claims.
+      `ui/`'s resolve came back `GridSim v0.1.0 `..`` with **no** `Pkg.develop` by
+      hand, which is the `[sources]` entry doing its job on a genuinely empty
+      manifest rather than on a re-resolve of one that already had the link.
 - [x] `[sources]` entry in `ui/Project.toml` so the dev link to core survives a
-      fresh clone — the fix M3 identified and declined as out of scope. Added
-      2026-09-02 without re-resolving (no toolchain), and **verified the same day**:
-      `ui/Manifest.toml` deleted, `Pkg.instantiate()` with **no** `Pkg.develop` by
-      hand resolved `GridSim v0.1.0 `..``, and `Pkg.test()` in the `ui/` environment
-      is green (102 / 102). Still open, and NOT closed by that run: the section is
-      honoured from Pkg 1.11 and the dev machine runs 1.12, so this exercised the
-      *honoured* path only. It says nothing about the `julia = "1.10"` compat floor
-      still declared in `ui/Project.toml` — whether older Pkg ignores the section or
-      errors on it is untested here. Raise the floor to 1.11, or test on 1.10.
-- [x] `reference/Project.toml` carries `[sources]` **from birth**, not added
-      later — the gitignored-manifest trap has cost this repo time twice — and it
-      is **verified rather than inspected**, the way `ui/`'s was: `Manifest.toml`
-      deleted, `Pkg.instantiate()` with **no** `Pkg.develop` by hand, and the
-      resolve came back `GridSim v0.1.0 `..`` with the suite green on the fresh
-      manifest. A `[sources]` entry that is present but not honoured resolves to a
-      registered package or to nothing, and only a resolve can tell you which.
-      It also declares `julia = "1.11"` rather than inheriting the 1.10 floor the
-      other two packages carry: `[sources]` is only honoured from the Pkg that ships
-      with 1.11, and a package whose dev link is silently ignored resolves to a
-      registered `GridSim` or to nothing at all. The open half of the `ui/` box
-      above is exactly that gap; this package does not inherit it.
-- [ ] Tick the M3 box in `m3-tasks.md` with a pointer here, rather than leaving a
-      third milestone's reader to wonder whether it was forgotten.
+      fresh clone. **The open half is now closed by measurement (D15).** M4 step 4
+      left it saying "raise the floor to 1.11, or test on 1.10"; both were done, in
+      that order, because raising a floor without knowing what the old one does is
+      a preference. Julia 1.10.12 was installed alongside 1.12.6 and the
+      *unchanged* file resolved in an isolated copy of the repo:
+
+          Julia 1.10.12 / Pkg 1.10.0, no manifest, no `Pkg.develop`:
+            Pkg.resolve()  ->  expected package `GridSim [eb5af87e]` to be registered
+
+      Pkg 1.10 **ignores `[sources]` silently** — no warning, no parse error — so
+      the dev link vanishes, `GridSim` is looked for in the registry, and it is not
+      there. The message names the registry, i.e. **the wrong cause**, which is
+      what makes a silently-ignored section worse than a rejected one.
+      **Positive control in the same session**: the ROOT project resolves on that
+      same 1.10 without complaint, so "1.10 is broken here" is ruled out and its
+      own `julia = "1.10"` floor is honest and stays.
+- [x] `reference/Project.toml` carries `[sources]` **from birth** and is verified
+      by resolve rather than by inspection (step 4, and again in this sweep).
+- [x] Tick the M3 box in `m3-tasks.md` with a pointer here.
+
+**Found while doing it, and it is the kind of thing this box exists to surface:**
+
+- [x] **The second argument for raising the floor was wrong, and was nearly
+      written into the file.** `ui/Project.toml` carried `[compat] Printf =
+      "1.11.0"` next to `julia = "1.10"`, which reads as a self-contradiction —
+      Printf is a stdlib, so surely `^1.11.0` is unsatisfiable on 1.10. It is not:
+      Julia 1.10's `stdlib/Printf/Project.toml` carries **no `version` line at
+      all** (checked against the `v1.10.9` tag; `version = "1.11.0"` first appears
+      at `v1.11.6`), and compat on an unversioned stdlib is inert. The bound was
+      never the reason 1.10 fails. It was written by `Pkg.add`, not chosen, and
+      with the floor at 1.11 it constrains nothing — so it is **dropped**, matching
+      the root project, which carries `Printf` with no bound.
+- [x] `ui/Project.toml`'s comments checked after every Pkg operation on it — the
+      third time that has mattered, and the reason the note is in the file itself.
 
 ## Known hazards to check off explicitly
 
@@ -494,11 +537,18 @@ having — was right; it was wrong about which component carries it.
       not every gap it draws IS that lesson**. The first shipped scenario's 0.857 Hz
       gap was a damping-bookkeeping difference; the caption now says so, and the
       default scenario was changed to the one where the number is the thing.
-- [ ] **Playback and real-time must stay the same system.** If protection is
+- [x] **Playback and real-time must stay the same system.** If protection is
       ever pre-baked into `perturbations=`, every comparison in this milestone is
-      measuring the wrong thing.
-- [ ] **Every long-running test self-terminates** on a fixed step count, never on
-      a condition. Re-check per step.
+      measuring the wrong thing. Held: `solve!` takes SCHEDULED events only and
+      routes them through the same `inject!` the real-time loop uses (D8), while
+      every state-triggered scheme stays a root-finding callback the constructor
+      builds. Asserted in step 1 on both a shed ladder and an out-of-step relay —
+      same firings, root instants agreeing to 1.6e-6 s and to better than `dt/100`.
+- [x] **Every long-running test self-terminates** on a fixed step count, never on
+      a condition. Re-checked per step, including step 4's: the longest run in
+      `reference/test/runtests.jl` is a 60 s horizon on a fixed `saveat` grid, and
+      the driver's own `maxiters` cap (asserted by setting it to 3 in step 1) is
+      what makes a `dt` collapse a named error rather than a hung session.
 - [x] **The oracle must not become a ceiling** (D7). Exceeding PowerDynamics'
       scope is allowed; exceeding it while still speaking as if checked is not.
       Discharged in step 4 as a table (`m4-context.md` §What step 4 measured) that

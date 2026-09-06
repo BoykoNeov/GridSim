@@ -10,7 +10,7 @@ stands; read the context file before re-litigating a decision.
 | M1 | Aggregate (centre-of-inertia) frequency + RoCoF, real-time, generator trip, closed-form checks, aggregate window | Done | `m1-*.md` |
 | M2 | Canonical `NetworkModel`; multi-machine classical swing engine on NetworkDynamics; bounded recorder; `TripLine`; `coi_model` as the compiled aggregate view; multi-machine window | Done | `m2-*.md` |
 | M3 | Governor droop as a third state; per-machine load-shedding ladders; out-of-step tie relay; scheduled generation ramps; the two-area Iberian case with its sweep; Figure 3-67 | Done | `m3-*.md` |
-| M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | Steps 1–4 done (1873 core / 172 UI / 82 reference); step 5 open | `m4-*.md` |
+| M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | **Done** — 1873 core / 172 UI / 82 reference, all three re-resolved from scratch | `m4-*.md` |
 | M5 | The detailed machine tier: flux dynamics, a voltage regulator, voltage as a real unknown, power-flow initialisation | Pre-study only | `m5-prestudy.md` |
 
 Cross-cutting:
@@ -75,4 +75,6 @@ the roadmap's numbering (M3 was already taken out of order, for a stated reason)
   the check is owed (`m4-tasks.md` step 2).
 - **`Manifest.toml` is gitignored on purpose** (a package, not an app), which is
   why `[sources]` entries matter: without one the `ui/` → core link lives only in
-  a file that is not in the repo. Added in M4 step 5, pending a re-resolve.
+  a file that is not in the repo. Added and **verified by re-resolve** in M4
+  step 5; `ui/`'s Julia floor moved 1.10 → 1.11 because Pkg 1.10 was measured to
+  ignore `[sources]` silently (`m4-context.md` D15).

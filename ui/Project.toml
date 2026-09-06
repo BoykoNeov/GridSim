@@ -18,16 +18,38 @@ test = ["Test"]
 [compat]
 GLMakie = "0.13.13"
 PrecompileTools = "1"
-Printf = "1.11.0"
-julia = "1.10"
+# 1.11 and not 1.10, and this is a CORRECTNESS fix rather than a support-policy
+# choice — measured on 2026-09-06 (M4 step 5), not argued:
+#
+#   Julia 1.10.12 / Pkg 1.10.0, this exact file, no manifest, no `Pkg.develop`:
+#     Pkg.resolve()  ->  expected package `GridSim [eb5af87e]` to be registered
+#
+# The `[sources]` section below is **silently ignored** by Pkg 1.10 — no warning,
+# no parse error — so the dev link to core disappears, `GridSim` is looked for in
+# the registry, and it is not there (this package is not registered). The error
+# names the registry, i.e. it points at the wrong cause, which is what makes the
+# ignored section worse than a rejected one.
+#
+# POSITIVE CONTROL, run in the same session so "1.10 is broken here" is ruled out:
+# the ROOT project resolves on the same 1.10 without complaint, so its own
+# `julia = "1.10"` floor is honest and stays. The failure is this file's alone.
+#
+# `Printf` had a `"1.11.0"` bound here, written by `Pkg.add` rather than chosen.
+# Dropped: with the floor at 1.11 every Julia that can load this package already
+# ships Printf 1.11.0, so the bound constrains nothing, and the root project
+# carries Printf with no bound at all. (On 1.10 it constrained nothing either —
+# Printf is an *unversioned* stdlib there, so compat on it is inert. It was never
+# the reason 1.10 fails, and the notes should not claim it was.)
+julia = "1.11"
 
 # The dev link to the core package, so a fresh clone resolves without a
 # `Pkg.develop(path = "..")` by hand (M4 step 5; the gap M3 step 6 recorded when
-# deleting `ui/Manifest.toml` left the link living nowhere else). Requires the
-# Pkg that ships with Julia ≥ 1.11 to be honoured; older Pkg ignores the section.
+# deleting `ui/Manifest.toml` left the link living nowhere else). It is honoured
+# only from the Pkg that ships with Julia 1.11 — see the compat note above, where
+# the 1.10 behaviour is a measurement rather than a caveat.
 # Verified 2026-09-02 on Julia 1.12.6: `ui/Manifest.toml` deleted, `Pkg.instantiate()`
-# with NO `Pkg.develop` by hand resolved `GridSim v0.1.0 `..``, and `Pkg.test()` in
-# both environments is green (1870 core / 102 ui).
+# with NO `Pkg.develop` by hand resolved `GridSim v0.1.0 `..``, and the suite was
+# green; re-verified in the M4 step 5 sweep.
 #
 # NOTE: `Pkg.add` rewrites this file and DROPS these comments (it did on
 # 2026-09-05, adding PrecompileTools). After any Pkg operation on this

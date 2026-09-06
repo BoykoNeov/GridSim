@@ -664,6 +664,48 @@ alone — and since `X′d` reaches the comparison only through `machine_arrays`
 **inverse** weight, that one per-unit conversion is externally checked while `H`,
 `D` and `Pm` are not (below).
 
+### D15 — `ui/`'s Julia floor is 1.11, and that is a measurement rather than a policy
+
+`ui/Project.toml` declared `julia = "1.10"` while depending on a `[sources]`
+section that only the Pkg shipping with Julia 1.11 understands. M4 step 4 flagged
+the gap and did not close it; `m4-tasks.md` step 5 offered two ways out — "raise
+the floor to 1.11, or test on 1.10". **Both were done, in that order**, because
+raising a floor without knowing what the old one does is a preference, and this
+repo's standard is that a boundary is measured.
+
+Julia 1.10.12 was installed alongside 1.12.6 and the *unchanged* file was resolved
+in an isolated copy of the repo (so the experiment could not write into it):
+
+    Julia 1.10.12 / Pkg 1.10.0, no manifest, no `Pkg.develop`:
+      Pkg.resolve()  ->  expected package `GridSim [eb5af87e]` to be registered
+
+**Pkg 1.10 ignores `[sources]` silently** — no warning, no parse error, nothing in
+the output referring to the section at all. The dev link simply is not there, so
+`GridSim` is looked for in the registry, where it is not (this package has never
+been registered). **The error therefore names the wrong cause**, which is what
+makes a silently-ignored section worse than a rejected one: the message sends a
+reader to the registry rather than to the four lines that were skipped.
+
+**Positive control, run in the same session, because "1.10 fails" and "1.10 is
+broken on this machine" look identical otherwise:** the ROOT project resolves on
+that same 1.10 without complaint. Its own `julia = "1.10"` floor is honest and
+stays. The failure belongs to `ui/Project.toml` alone.
+
+So the floor goes to 1.11. It is not a decision about which Julias to support —
+the package could not be installed on 1.10 from a clean checkout at all, and the
+declaration was claiming otherwise.
+
+**One thing the same experiment took OFF the table.** The obvious second argument
+was that `ui/`'s `[compat] Printf = "1.11.0"` is itself unsatisfiable on 1.10,
+since Printf is a stdlib. It is not: Julia 1.10's `stdlib/Printf/Project.toml`
+carries **no `version` line at all** (checked against the `v1.10.9` tag; the
+`version = "1.11.0"` first appears at `v1.11.6`), and compat on an unversioned
+stdlib is inert. The bound was never the reason 1.10 fails. It was written by
+`Pkg.add` rather than chosen, and with the floor at 1.11 it constrains nothing —
+so it is dropped, matching the root project, which carries `Printf` with no bound.
+Recorded because the argument was *nearly* written into the file as a second
+reason, and it would have been wrong.
+
 ## What step 4 measured, and the claim it stopped the step from making
 
 **The band could not be `tolerance_band`, and the reason is not a fudge factor.**

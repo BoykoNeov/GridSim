@@ -792,7 +792,7 @@ anti-vacuity control. Here:
 - [x] **Every long-running test self-terminates** on a fixed step count, never on a
       condition. *(Holds for step 1's four new testsets, step 2's four, and step 3's
       six, whose longest is a 6,000-step (60 s) run; re-check per step.)*
-- [ ] **Both dependency resolutions tested**, not just the developer machine's —
+- [x] **Both dependency resolutions tested**, not just the developer machine's —
       the gitignored manifest makes the dev machine systematically the stale one.
       *(Re-resolved and green at step 2, step 3 and step 4, none of which changed a
       dependency. Left open because it has to be re-run by whichever later step does
@@ -804,10 +804,18 @@ anti-vacuity control. Here:
       `[sources]` entry would close this permanently and is the obvious fix; it is
       deliberately NOT made here, because it is a dependency change and this step
       made none.)*
-      *(Claimed by M4 step 5 (`m4-tasks.md`), which is where it will be ticked:
-      the `[sources]` entry is now in `ui/Project.toml`, added without a
-      re-resolve, and the re-resolve of all three environments is that step's
-      first box.)*
+      *(**CLOSED by M4 step 5** (`m4-tasks.md`), 2026-09-06. All three environments
+      re-resolved from a deleted manifest and re-run: 1873 core / 172 UI / 82
+      reference. The suspicion in this box was correct and understated — the root
+      manifest in use dated from 2026-08-18, so every number recorded during M3 and
+      M4 was measured against `NetworkDynamics` 1.1.0 while a fresh resolve gives
+      **1.3.0** (with `OrdinaryDiffEq` 7.6.0 → 7.8.1 and `SciMLBase` 3.49.1 →
+      3.50.2). Two minor versions of the package the whole network tier is built on,
+      and the suite gives the same 1873 either way — which nobody knew until the box
+      was actually discharged. The `[sources]` entry this box asked for is in both
+      `ui/` and `reference/`, and `ui/`'s Julia floor moved 1.10 → 1.11 because
+      Pkg 1.10 was **measured** to ignore that section silently: see `m4-context.md`
+      D15.)*
 
 ## Housekeeping folded into the first docs commit of this batch
 
