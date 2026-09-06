@@ -982,3 +982,241 @@ end
 end
 
 end # M5 step 3
+
+# ===========================================================================
+# M5 step 4 — the same two implementations, with the flux equations LIVE
+# ===========================================================================
+#
+# WHAT THIS ADDS TO STEP 3, IN ONE SENTENCE: step 3 ran with `T′ = Inf` on both
+# sides, where `(Xd − X′d)` and `(Xq − X′q)` are multiplied by a zero derivative
+# and reach nothing — and it ASSERTED that blindness (a ×4 `Xd` left every channel
+# bit-identical). Here the same comparison runs on a machine whose flux moves, so
+# the flux equations get an external check with the mechanism switched on, and the
+# CHANGE from step 3 is the flux term by construction (`m5-context.md` D6).
+#
+# The fixture is `detailed_pair()`, which step 3 built and never ran dynamically:
+# `Xd = 1.8`, `Xq = 1.7` and `T′do = 8 s`, `T′qo = 0.4 s` on `G1`, against a
+# frozen-flux `G2`. Its `E′d = 0.184` at the solved point, so the saliency and the
+# q-axis flux are live rather than decorative.
+#
+# THE PREDICTION FOR THE RESIDUAL, WRITTEN BEFORE IT WAS MEASURED. Switching the
+# flux on adds a SECOND route by which their stator `ω` reaches the comparison:
+# their `I_d` differs from ours by O(slip), and `I_d` drives the flux equation. So
+# the coefficient need not be step 3's 0.995 — but the residual must still be
+# FIRST ORDER IN SLIP with a coefficient of order one, because both routes are.
+# ===========================================================================
+
+@testset "M5 step 4 — PowerDynamics with the flux LIVE" begin
+
+# ===========================================================================
+@testset "the flat run, on a fixture whose flux fixpoint is a real condition" begin
+    # Step 3's flat run was on the ring, where every flux derivative is
+    # identically zero and the fixpoint's flux part reads `0 = 0`. Here it does
+    # not: `E′d = (Xq − X′q)·Iq` is a condition the initialisation has to satisfy,
+    # and it is satisfied on OUR side by construction and on theirs by their own
+    # equations agreeing with it.
+    net  = detailed_pair()
+    grid = collect(0.0:0.02:5.0)
+    for (rt, at) in ((1.0e-9, 1.0e-12), (1.0e-6, 1.0e-9))
+        o, t = both_detailed(net, (0.0, 5.0), grid; reltol = rt, abstol = at)
+        @test keys(o) == keys(t)
+        for k in keys(o)
+            k === :t && continue
+            a, b = getproperty(o, k), getproperty(t, k)
+            @test maximum(abs, a .- a[1]) < 1.0e-8      # ours is flat
+            @test maximum(abs, b .- b[1]) < 1.0e-8      # so is theirs
+            @test maximum(abs, a .- b)    < 1.0e-8      # …at the same place
+        end
+        # …and the fixture is not a frozen machine wearing detailed data.
+        @test abs(o.E′d_G1[1]) > 0.15                   # measured 0.184
+    end
+end
+
+# ===========================================================================
+@testset "the transient: the flux channel is now READABLE, and the residual keeps its signature" begin
+    net  = detailed_pair()
+    grid = collect(0.0:0.02:5.0)
+    ids  = [m.id for m in net.machines]
+    slips = Float64[]; gapsV = Float64[]; gapsE = Float64[]; flux = Float64[]
+    for ΔP in (0.02, 0.04, 0.08)
+        o9, t9 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, ΔP))
+        o5, t5 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, ΔP),
+                               reltol = 1.0e-5, abstol = 1.0e-8)
+        push!(slips, peak_slip(o9, ids))
+        push!(gapsV, gap(o9, t9, :V_B1))
+        push!(gapsE, gap(o9, t9, :E′q_G1))
+        push!(flux,  maximum(abs, o9.E′q_G1 .- o9.E′q_G1[1]))
+        # THE FLUX CHANNEL CARRIES A RESOLVED COMPARISON, which is the whole point
+        # of the step. In step 3 this same channel's gap was 2.2e-16 — round-off,
+        # a number with no information in it. Here it is 191-424 bands.
+        @test gapsE[end] > 100 * convergence_band(o5, o9, t5, t9; channel = chan(:E′q_G1))
+        @test gapsV[end] > 100 * convergence_band(o5, o9, t5, t9; channel = chan(:V_B1))
+    end
+    # OUR OWN SIDE'S LINEARITY CONTROL, RUN FIRST. If the gap ratios below failed,
+    # this is what says whether the residual went nonlinear or the physics did.
+    @test slips[2] / slips[1] ≈ 2.0 rtol = 0.01
+    @test slips[3] / slips[2] ≈ 2.0 rtol = 0.01
+    # …and the flux is genuinely moving, so "the flux equations are checked here"
+    # is a measurement rather than a hope.
+    @test all(f -> f > 2.0e-3, flux)                    # measured 2.3e-3 … 9.7e-3
+
+    # THE RESIDUAL, still first order in slip and still order one.
+    @test gapsV[2] / gapsV[1] ≈ 2.0 rtol = 0.02
+    @test gapsV[3] / gapsV[2] ≈ 2.0 rtol = 0.02
+    for (s, g) in zip(slips, gapsV)
+        @test g / s ≈ 1.0 rtol = 0.05                   # measured 1.0067, 1.0065, 1.0060
+    end
+    # The flux-channel gap scales the same way, which is what says it comes from
+    # the same `ω` and not from a second, unidentified difference.
+    @test gapsE[2] / gapsE[1] ≈ 2.0 rtol = 0.02
+    @test gapsE[3] / gapsE[2] ≈ 2.0 rtol = 0.02
+    # WHAT IS NOT CLAIMED. The coefficient here (1.006) is not step 3's (0.995),
+    # and the difference is NOT attributed to the flux: this is a different fixture
+    # as well as a different fidelity, and one number cannot be told from the other
+    # by a run that changes both. What IS asserted is that both are order one and
+    # that this one is stable to 7e-4 across a factor of four in disturbance size.
+    @test maximum(gapsV ./ slips) - minimum(gapsV ./ slips) < 2.0e-3  # measured 7e-4
+end
+
+# ===========================================================================
+@testset "the step-3 mirror: Xd reached NOTHING frozen, and reaches something now" begin
+    # STEP 3 ASSERTED `all(t9 .=== tb)` FOR A ×4 `Xd`, and closed that testset with
+    # "step 4 is what makes `(X_d − X′_d)` live". This is the same assertion with
+    # the flux switched on, on ONE fixture with `T′` as the only difference — so
+    # the `===` turning into a measured move is attributable to the flux equation
+    # and to nothing else.
+    net  = detailed_pair()
+    grid = collect(0.0:0.02:5.0)
+    frozen = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+        [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
+                 m.Tg; Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = Inf, Tq0′ = Inf,
+                 Ra = m.Ra) for m in net.machines])
+    mutXd(nm, f) = NetworkModel(nm.S_base, nm.f0, nm.buses, nm.branches,
+        [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
+                 m.Tg; Xd = m.id === :G1 ? f * m.Xd : m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
+                 Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra) for m in nm.machines])
+
+    # FROZEN: bit-identical, on THEIR side, at 1 % — the same claim step 3 made at
+    # ×4 and on the ring, re-made here so the two halves share a fixture.
+    _, tf  = both_detailed(frozen, (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    _, tfm = both_detailed(mutXd(frozen, 0.99), (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    for k in (:V_B1, :ω_G1, :f_coi)
+        @test all(getproperty(tf, k) .=== getproperty(tfm, k))
+    end
+
+    # LIVE: it moves, and by 12.7 bands on the voltage channel.
+    o5, t5 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+    o9, t9 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    _, tm  = both_detailed(mutXd(net, 0.99), (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    bandV = convergence_band(o5, o9, t5, t9; channel = chan(:V_B1))
+    @test maximum(abs, t9.V_B1 .- tm.V_B1) > 10 * bandV     # measured 12.7 bands
+    @test !all(t9.V_B1 .=== tm.V_B1)
+
+    # AND THE CHANNEL THAT HIDES IT, asserted rather than left to be discovered.
+    # A 1 % `Xd` error is 12.7 bands on the bus voltage and BELOW the band on
+    # `f_coi` — a hundredth of it. This is the third distinct shape of the same
+    # lesson: step 3 found `V` hiding a stator error that `E′q` showed; here it is
+    # the aggregate frequency hiding a flux error that `V` shows. "Assert per
+    # state" is not a style preference in this tier.
+    bandF = convergence_band(o5, o9, t5, t9; channel = chan(:f_coi))
+    @test maximum(abs, t9.f_coi .- tm.f_coi) < bandF        # measured 0.01 bands
+end
+
+# ===========================================================================
+@testset "the degeneration still took, with the flux live" begin
+    # `X_ls` IS THE FREE POSITIVE CONTROL, and switching the flux on is exactly the
+    # kind of change that could quietly break the `X″ = X′` reduction it tests:
+    # `γ_d2` multiplies `ψ″_d` INSIDE the `E′q` equation, which step 3 ran with a
+    # zero derivative in front of it. It is zero for reasons independent of `T′`,
+    # and that is now measured rather than argued.
+    net  = detailed_pair()
+    grid = collect(0.0:0.02:5.0)
+    o5, t5 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+    o9, t9 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    for frac in (0.1, 0.9)
+        _, alt = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                               X_ls_frac = frac)
+        for k in (:V_B1, :E′q_G1, :f_coi)
+            band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+            @test maximum(abs, getproperty(t9, k) .- getproperty(alt, k)) < band
+        end
+    end
+    # …and their two sub-transient states still drive nothing, seeded ×2 and
+    # shifted — the sharp form, re-run because "decoupled" was established with a
+    # frozen `E′` equation and the coupling that would break it is in that equation.
+    _, wrong = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04), ψ_scale = 2.0)
+    for k in (:V_B1, :E′q_G1, :f_coi)
+        band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+        @test maximum(abs, getproperty(t9, k) .- getproperty(wrong, k)) < band
+    end
+end
+
+# ===========================================================================
+@testset "anti-vacuity: a flux datum wrong on our side only, and the axis it lands on" begin
+    # THE MEASURED RESULT OF THIS TESTSET IS A TABLE, AND THE TABLE IS THE FINDING.
+    # Three flux data are perturbed on OUR side only (the oracle is always built
+    # from the unmutated model), and each lands on ONE channel:
+    #
+    #   mutation      V_B1   E′q_G1   E′d_G1   f_coi        honest gap = ×1.0
+    #   Td0′ × 1.10   ×0.9   ×14.8    ×2.8     ×1.0
+    #   Xd   × 0.90   ×0.9   ×27.0    ×4.6     ×1.0
+    #   Tq0′ × 1.10   ×1.0   ×1.9     ×13.6    ×1.0
+    #
+    # Two things follow, and neither was on the plan's list. The d-axis and the
+    # q-axis flux errors are told apart BY CHANNEL — `E′q` for one, `E′d` for the
+    # other — so a per-state comparison does not merely catch more, it says which
+    # equation is wrong. And the terminal voltage sees NONE of them, because the
+    # stator-`ω` residual on that channel (2.0e-3) is a hundred times larger than
+    # anything a flux error does to it. The aggregate frequency sees nothing at all.
+    net  = detailed_pair()
+    grid = collect(0.0:0.02:5.0)
+    remach(n, f) = NetworkModel(n.S_base, n.f0, n.buses, n.branches,
+                                [f(m) for m in n.machines])
+    tweak(; Xd = 1.0, Td = 1.0, Tq = 1.0) = m ->
+        Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
+                m.Tg; Xd = m.id === :G1 ? Xd * m.Xd : m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
+                Td0′ = m.id === :G1 ? Td * m.Td0′ : m.Td0′,
+                Tq0′ = m.id === :G1 ? Tq * m.Tq0′ : m.Tq0′, Ra = m.Ra)
+
+    o0, t0 = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04))
+    honest = Dict(k => gap(o0, t0, k) for k in (:V_B1, :E′q_G1, :E′d_G1, :f_coi))
+
+    # `mutate` puts the error on the ENGINE's model and leaves the oracle's alone —
+    # `both_detailed`'s own channel for exactly this, unchanged since step 3.
+    run_mut(mk) = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.04),
+                                mutate = nm -> remach(nm, mk))
+
+    for (mk, chan_hit, hit, name) in ((tweak(Td = 1.10), :E′q_G1, 8.0,  "Td0′"),
+                                      (tweak(Xd = 0.90), :E′q_G1, 10.0, "Xd"),
+                                      (tweak(Tq = 1.10), :E′d_G1, 8.0,  "Tq0′"))
+        o, t = run_mut(mk)
+        # It goes red, on the axis it belongs to.
+        @test gap(o, t, chan_hit) > hit * honest[chan_hit]
+        # It does NOT go red on the terminal voltage or on the aggregate — measured,
+        # so "the comparison is blind here" is a number rather than a caveat.
+        @test gap(o, t, :V_B1)  < 1.2 * honest[:V_B1]
+        @test gap(o, t, :f_coi) < 1.05 * honest[:f_coi]
+        # THE CONTROL THAT SEPARATES "INVISIBLE" FROM "NOT APPLIED". Without this
+        # line the two assertions above would also pass if the mutation had quietly
+        # stopped being built. Our own trajectory moves in every case.
+        @test maximum(abs, o.V_B1 .- o0.V_B1) > 1.0e-5
+    end
+    # …and the two axes are separated rather than merely both visible: the q-axis
+    # time constant is 13.6 bands-worth on `E′d` and under two on `E′q`.
+    oq, tq = run_mut(tweak(Tq = 1.10))
+    @test gap(oq, tq, :E′q_G1) < 3.0 * honest[:E′q_G1]
+
+    # THE RESOLUTION OF THIS ORACLE ON THE FLUX EQUATIONS, STATED AS A NUMBER. At
+    # 1 % the same mutation is only twice the honest gap, because the honest gap on
+    # `E′q` is not solver noise — it is the stator-`ω` residual arriving through
+    # `I_d`. So the external check pins the flux data to roughly ten per cent, and
+    # what pins them to 1e-4 is the CLOSED FORM in `test/m5_detailed.jl`. Three
+    # oracles, three different resolutions, none of them redundant.
+    o1, t1 = run_mut(tweak(Xd = 0.99))
+    @test gap(o1, t1, :E′q_G1) > 1.5 * honest[:E′q_G1]      # measured 2.1×
+    @test gap(o1, t1, :E′q_G1) < 5.0 * honest[:E′q_G1]
+end
+
+end # M5 step 4
