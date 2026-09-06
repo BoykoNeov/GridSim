@@ -8,7 +8,7 @@ valuable line.
 
 Status: **steps 0b and 1 done, steps 2-8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
-unchanged, and step 1 brings it to **2039 core / 172 UI / 82 reference**. The
+unchanged, and step 1 brings it to **2083 core / 172 UI / 82 reference**. The
 detailed tier now builds, initialises from a power flow and runs flat;
 `src/engines/detailed.jl` is the first M5 engine code.
 
@@ -258,6 +258,23 @@ re-confirmed and now load-bearing). A bare write to `integrator.u` left the run
 flat at 3.9e-15; the same write followed by `u_modified!` + `auto_dt_reset!`
 produced the seeded 0.05 offset. `_reinitialise_algebraic!` writes bus voltages
 this way, so this is pinned by a test rather than trusted.
+
+**7. The flat run claimed more than it earned until it was forced to step.** Left
+to choose its own step size, `Rodas5P` crosses a 20 s flat horizon in **four
+accepted steps**. So a 10 s flat run sampled at `saveat = 0.05` was asserting ~200
+points that are almost all interpolations inside a handful of enormous steps —
+which really only establishes that an implicit solver parks on an equilibrium,
+something it will do even for equations that are wrong in ways that cancel *at*
+the fixpoint. A third pass with `dtmax = 0.05` forces 201 real steps.
+
+Measured, and it holds: worst drift `4.4e-14` under forced stepping against
+`1.6e-14` unforced — the same order, which is what makes the unforced result
+meaningful rather than merely quiet. Both facts are now pinned by assertions (the
+forced pass must have taken ≥150 steps; the lazy pass must have taken <20), so a
+future change to either cannot silently turn the third pass into a duplicate of
+the first. `dtmax` became a constructor keyword for the same reason the tolerances
+did in M4: a knob no constructor accepts is a knob the standing "run it again and
+see if the number survives" rule cannot turn.
 
 **And one scope note the plan implies but does not state:** the two-area case has
 a **single tie**, so a line trip islands it and the DAE has no second angle

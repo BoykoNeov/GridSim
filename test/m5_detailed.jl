@@ -170,23 +170,46 @@ end
     # ASSERTED PER STATE and never on `f_coi` alone — a wrong internal state can
     # leave frequency flat while a voltage rings, which is the whole reason this
     # check is written channel by channel.
+    #
+    # THE THIRD PASS IS NOT A THIRD TOLERANCE, AND WITHOUT IT THIS CHECK CLAIMS
+    # MORE THAN IT EARNS. Left to choose its own steps, `Rodas5P` crosses a 20 s
+    # flat horizon in **four accepted steps** — so 200 samples at `saveat = 0.05`
+    # are almost all interpolations inside a handful of enormous ones, and what is
+    # really being asserted is that an implicit solver parks on an equilibrium,
+    # which it will do even for equations that are wrong in ways that cancel at
+    # the fixpoint. `dtmax = 0.05` forces 201 real steps. Measured: still flat, to
+    # 4.4e-14 — the same order as the unforced run, which is what makes the
+    # unforced result meaningful rather than merely quiet.
     for (name, net) in (("two_machine", two_machine_system()),
                         ("three_ring",  three_machine_ring()),
                         ("load_bus",    load_bus_system()))
-        for (rtol, atol) in ((1e-3, 1e-6), (1e-8, 1e-11))
-            eng = init!(DetailedEngine, net; reltol = rtol, abstol = atol)
+        for (rtol, atol, dtmax, min_steps) in ((1e-3, 1e-6, Inf,  0),
+                                               (1e-8, 1e-11, Inf, 0),
+                                               (1e-3, 1e-6, 0.05, 150))
+            eng = init!(DetailedEngine, net; reltol = rtol, abstol = atol,
+                        dtmax = dtmax)
             ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
             @test length(ser.t) > 100
+            # the forced pass must actually have stepped, or it silently becomes
+            # a fourth copy of the lazy one
+            @test eng.integrator.stats.naccept >= min_steps
             for ch in keys(ser)
                 ch === :t && continue
                 v = getproperty(ser, ch)
                 drift = maximum(abs, v .- v[1])
-                # 1e-10 is far below every measured value (worst seen: 1.6e-14)
+                # 1e-10 is far below every measured value (worst seen: 4.4e-14)
                 # and far above machine precision, so it is a real gate rather
                 # than either a rubber stamp or a flake.
                 @test drift < 1e-10
             end
         end
+    end
+    # …and the lazy pass really is lazy, which is the fact the comment above rests
+    # on. Pinned so that a future change making the solver step more would not
+    # quietly turn the third pass into a duplicate of the first.
+    let eng = init!(DetailedEngine, three_machine_ring())
+        solve!(eng, (0.0, 10.0); saveat = 0.05)
+        @test eng.integrator.stats.naccept < 20
     end
 end
 
@@ -328,6 +351,13 @@ end
         @test abs(du[eng.Vre_idx[v]]) < 1e-9
         @test abs(du[eng.Vim_idx[v]]) < 1e-9
     end
+    # ANTI-VACUITY: the differential rows must NOT be zero. Without this, a
+    # re-initialisation that quietly zeroed the whole state vector would satisfy
+    # every assertion above — the residual would be perfect because nothing is
+    # happening. After losing a line the machines are genuinely accelerating.
+    @test any(abs(du[eng.ω_idx[k]]) > 1e-6 for k in eachindex(eng.ω_idx))
+    @test all(isfinite, eng.integrator.u)
+    @test all(v -> 0.5 < v < 1.5, current_state(eng).V)   # not a collapsed re-solve
     # …and it keeps stepping afterwards rather than aborting on an inconsistent point
     ser = solve!(eng, (eng.integrator.t, eng.integrator.t + 2.0); saveat = 0.05)
     @test length(ser.t) > 20

@@ -599,6 +599,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                solver = OrdinaryDiffEq.Rodas5P(),
                reltol::Real = _ENGINE_RELTOL,
                abstol::Real = _ENGINE_ABSTOL,
+               dtmax::Real = Inf,
                capacity::Integer = _TRAJ_CAPACITY)
     _assert_detailed_tier(net)
     isempty(net.machines) && throw(ArgumentError(
@@ -726,6 +727,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      reltol = Float64(reltol), abstol = Float64(abstol),
+                                     dtmax = Float64(dtmax),
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 
