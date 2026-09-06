@@ -54,6 +54,12 @@ type every existing test constructs.
       unreviewable — and here it is provable rather than asserted, see F2.
 - [x] Anti-vacuity: delete one `include` line and confirm the count *drops*.
       Deleting `m3_two_area.jl`'s include gives **1811/1811**, 62 fewer.
+- [x] **All three suites re-run, not just the one that changed.** The status line
+      above states an entry state of 1873 core / 172 UI / 82 reference, so all
+      three are the claim: **1873 / 172 / 82**, each green after the split. Neither
+      `ui/test/` nor `reference/test/` reaches into `test/` — checked before
+      running, since a suite that `include`d a hoisted helper would have broken
+      silently — but a suite nobody ran is not a suite that passed.
 
 ### What this step found that the plan did not anticipate
 
@@ -76,7 +82,9 @@ green suite distinguishes "every test ran" from "sixty-two of them silently did
 not"; only reading the number does. So this step's real gate is a **reconstruction
 check**: the split was emitted mechanically from a table of line ranges, and a
 verifier reassembles the original from the files **on disk** by those ranges and
-diffs it against `git show 86651ab:test/runtests.jl`. All **4,892** content lines
+diffs it against `git show 86651ab:test/runtests.jl` — confirmed to be the same
+blob as the working tree it was actually taken from, since `git diff 86651ab
+97bcb33 -- test/runtests.jl` is empty. All **4,892** content lines
 come back byte-identical, the ranges tile the original exactly once, and the frame
 (`using`s, the two scenario modules, the outer testset) is verbatim. A dropped line,
 a mis-closed testset, a stray edit or a line-ending slip all fail there; none of
