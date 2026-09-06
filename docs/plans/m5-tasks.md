@@ -6,9 +6,10 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **not started.** Entered at `86651ab` with **1873 core / 172 UI / 82
-reference** tests green. The physics is worked on paper in `m5-prestudy.md`; no M5
-code exists.
+Status: **step 0b done, steps 1-8 open.** Entered at `86651ab` with **1873 core /
+172 UI / 82 reference** tests green; the suite split leaves the core count
+unchanged at **1873**. The physics is worked on paper in `m5-prestudy.md`; no M5
+*engine* code exists yet.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -37,17 +38,85 @@ targeted; M4 step 4's round-winning check was not on the plan's list at all.
 Refactor before feature: the old suite is the only oracle, and D3 changes the one
 type every existing test constructs.
 
-- [ ] Every helper defined between testsets (`ratio_ring`, `lockstep_coi`,
-      `pb_both`, `overlay_pair`, …) moved to `test/helpers.jl`, `include`d at top
-      level **before** the outer testset — the scope trap named in
-      `docs/plans/README.md` §Structure notes.
-- [ ] One file per milestone, `include`d in the same order as today.
-- [ ] **Gate: the test count is identical, 1873 core.** A mechanical move that
-      silently drops a testset is the one failure this step can introduce.
-- [ ] No assertion text changed in this commit. A move and an edit in one diff is
-      unreviewable.
-- [ ] Anti-vacuity: delete one `include` line and confirm the count *drops* —
-      i.e. that the count is actually being read and compared, not printed.
+- [x] Every helper defined between testsets moved to `test/helpers.jl`, `include`d
+      at top level **before** the outer testset — the scope trap named in
+      `docs/plans/README.md` §Structure notes. All fifteen: `argerr_msg`,
+      `RECORD_ENTRY_POINTS`, `scale_inertia`, `trip_and_run`, `P0_of`,
+      `governed_ring`, `_split_speed_net`, `_pole_slip_net`, `_SLIP_THR`,
+      `ratio_ring`, `lockstep_coi`, `pb_steps!`, `pb_exc`, `pb_both`,
+      `overlay_pair`.
+- [x] One file per milestone, `include`d in the same order as today — **and the
+      two halves of that sentence turned out to be incompatible.** See F1.
+- [x] **Gate: the test count is identical, 1873 core.** Measured on both sides
+      rather than read off the old note: `86651ab` gives 1873/1873, the split gives
+      1873/1873.
+- [x] No assertion text changed in this commit. A move and an edit in one diff is
+      unreviewable — and here it is provable rather than asserted, see F2.
+- [x] Anti-vacuity: delete one `include` line and confirm the count *drops*.
+      Deleting `m3_two_area.jl`'s include gives **1811/1811**, 62 fewer.
+
+### What this step found that the plan did not anticipate
+
+**F1 — "one file per milestone" and "the same order as today" cannot both hold,
+because the milestones interleave.** M3 inserted its steps 1–5 *ahead of* M2's own
+tail: the line-trip block that `89c7074` appended at the end of M2's tests now sits
+at line 3301, after 1,600 lines of M3. Preserving the execution order was chosen
+over grouping by milestone — the gate for a refactor is that nothing changed but
+the boundaries, and reordering execution is the one thing the count cannot
+attribute. So M2 and M3 each occupy **two** files (`m2_network.jl` /
+`m2_events_and_coi.jl`, `m3_governors_protection.jl` / `m3_two_area.jl`), and each
+says in its own header why it sits where it does. Grouping by milestone remains
+available as a *separate* later commit that only reorders — then a failure is
+attributable to the reorder.
+
+**F2 — the count is a weak gate, and the anti-vacuity run proved exactly how
+weak.** With one `include` deleted the suite reported 1811/1811, `Pkg.test()` exited
+**0**, and the last line still read `Testing GridSim tests passed`. Nothing about a
+green suite distinguishes "every test ran" from "sixty-two of them silently did
+not"; only reading the number does. So this step's real gate is a **reconstruction
+check**: the split was emitted mechanically from a table of line ranges, and a
+verifier reassembles the original from the files **on disk** by those ranges and
+diffs it against `git show 86651ab:test/runtests.jl`. All **4,892** content lines
+come back byte-identical, the ranges tile the original exactly once, and the frame
+(`using`s, the two scenario modules, the outer testset) is verbatim. A dropped line,
+a mis-closed testset, a stray edit or a line-ending slip all fail there; none of
+them fails a count.
+
+**F3 — the working copy was CRLF while `.gitattributes` mandates LF.** `*
+text=auto eol=lf` means a fresh checkout hands back LF, but the file on disk was
+CRLF, and `text=auto` normalises on comparison so `git status` called it clean. The
+first split was generated from the stale copy; committing it would have produced a
+whole-file diff and made the pure-move claim unverifiable. The splitter now takes
+its line ending from the source it reads, and the verifier refuses mixed endings.
+
+**F4 — hoisting is a name-collision hazard, because locals shadow and globals
+collide.** Inside the outer testset those fifteen helpers were *locals*: a name that
+`GridSim` or `Test` exports would have been silently shadowed. At module scope the
+same name is a redefinition. `intersect` against `names(GridSim)`, `names(Test)` and
+`names(Base)`: **none**. This is the M1 export-collision bug class one level in, and
+it is worth re-running whenever a helper is added.
+
+**F5 — two Julia facts make the layout legal, and both are load-bearing.**
+`include` evaluates its file at **module** top level, never in the local scope of
+the block the call appears in — which is *why* the helpers had to be hoisted, not a
+style preference. And `@testset` nesting is **dynamic**, not lexical: `Test` keeps a
+task-local stack, so a `@testset` inside an included file registers as a child of
+whatever testset is running when the `include` executes. That is what lets the
+includes sit inside the outer testset and still report as one tree. Both are written
+into `runtests.jl` itself, because the next person to add a file needs them.
+
+**F6 — one comment the move made visibly stale, left verbatim.** `# Two shared
+helpers, defined once for the block below.` is followed by *three* helpers, and
+"below" now means another file. The "two" was already wrong before the split. It is
+not corrected here because this commit is a pure move; the group header added above
+it names the file that uses them.
+
+**F7 — wall-clock is not measurable on this machine right now, and step 1 needs
+it to be.** Four runs of suites with identical content took 1m25, 2m28, 5m15 and
+1m46, tracking an unrelated long-lived `julia.exe`. So **no timing claim is made
+about the split**. This matters beyond bookkeeping: **S3** (D10) is a wall-clock
+measurement and it is the number that decides D2. It must be taken on a quiet
+machine, with the contending processes checked first, or it will decide D2 on noise.
 
 ## Step 1 — algebraic network, power flow, flat run (D1, D3, D7)
 

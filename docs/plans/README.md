@@ -11,7 +11,7 @@ stands; read the context file before re-litigating a decision.
 | M2 | Canonical `NetworkModel`; multi-machine classical swing engine on NetworkDynamics; bounded recorder; `TripLine`; `coi_model` as the compiled aggregate view; multi-machine window | Done | `m2-*.md` |
 | M3 | Governor droop as a third state; per-machine load-shedding ladders; out-of-step tie relay; scheduled generation ramps; the two-area Iberian case with its sweep; Figure 3-67 | Done | `m3-*.md` |
 | M4 | Run-then-playback (`solve!`); the cross-run divergence read; a scrubbable overlay window; PowerDynamics as an external oracle in `reference/`; dependency housekeeping | **Done** — 1873 core / 172 UI / 82 reference, all three re-resolved from scratch | `m4-*.md` |
-| M5 | The detailed machine tier: algebraic bus voltages (a DAE), flux dynamics, a voltage regulator, power-flow initialisation, and the Iberian criterion the tier exists for | **Planned, not started** — trio written, nine steps, cut line stated up front | `m5-*.md` (physics worked ahead in `m5-prestudy.md`) |
+| M5 | The detailed machine tier: algebraic bus voltages (a DAE), flux dynamics, a voltage regulator, power-flow initialisation, and the Iberian criterion the tier exists for | **In progress** — step 0b done (the suite split, 1873 core unchanged); steps 1–8 open | `m5-*.md` (physics worked ahead in `m5-prestudy.md`) |
 
 Cross-cutting:
 
@@ -72,16 +72,24 @@ switches off; and 3 is the milestone's purpose, step 7.
 
 ## Structure notes
 
-- **`test/runtests.jl` is one 5,000-line file** with one outer `@testset`. It
-  works, and it is the right shape for `Pkg.test()`; it is not the right shape for
-  reading. The split is mechanical but not blind: helpers (`ratio_ring`,
-  `lockstep_coi`, `pb_both`, `overlay_pair`, …) are defined *between* testsets
-  inside the outer testset's local scope, so a file `include`d from there would not
-  see them. The split therefore means moving every helper to `test/helpers.jl`,
-  `include`d at top level before the outer testset, then one file per milestone in
-  the same order. Do it on a machine that can run the suite; do not do it blind.
-  **Scheduled as M5 step 0b** (`m5-context.md` D9), before M5 adds a milestone's
-  worth of tests to it, with the unchanged test count (1873 core) as the gate.
+- **`test/runtests.jl` was one 5,000-line file** with one outer `@testset`. **Split
+  in M5 step 0b** (2026-09-06) into `test/helpers.jl` plus eight files, `include`d
+  inside the one outer testset, at an unchanged 1873 core tests. Adding a file means
+  knowing the three things the split rests on:
+  - **Helpers live in `test/helpers.jl`, `include`d at top level.** `include`
+    evaluates its file at *module* scope, never in the local scope of the block the
+    call sits in — so a helper left inside the outer testset is invisible to every
+    file included from it. That was this note's original trap, and it is real.
+  - **`@testset` nesting is dynamic, not lexical** (`Test` keeps a task-local
+    stack), which is why testsets in included files still report as one tree.
+  - **The include order is execution order, not milestone order.** M3 inserted its
+    steps 1–5 ahead of M2's own tail, so M2 and M3 each occupy two files; keeping
+    the order was chosen over grouping by milestone, and each file's header says so.
+
+  A **hoisted helper becomes a global**, so its name is checked against
+  `names(GridSim)`/`names(Test)`/`names(Base)` for the same reason exports are
+  checked against GLMakie's below — inside the testset it was a local, and a local
+  shadows silently.
 - **Exports are checked against GLMakie's** (`intersect(names(GridSim),
   names(GLMakie))` must stay empty) every time a name is added — the collision cost
   a round in M1. M4 step 2's three names were added in a session without Julia,

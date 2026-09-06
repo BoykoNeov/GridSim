@@ -286,6 +286,56 @@ before the outer testset, then one file per milestone in the same order.
 changed in the same commit. A mechanical move that silently drops a testset is the
 failure this step could introduce, and the count is what catches it.
 
+### What step 0b measured (2026-09-06)
+
+**Done, at 1873/1873 on both sides.** Nine files: `helpers.jl` at top level, then
+`scaffold`, `m1_frequency`, `orchestration`, `m2_network`,
+`m3_governors_protection`, `m2_events_and_coi`, `m3_two_area`, `m4_playback`
+included, in that order, inside the one outer testset. `m5-tasks.md` step 0b carries
+the findings; three of them change how a later step should be run.
+
+**The plan's own instruction was self-contradictory, and the contradiction was the
+finding.** "One file per milestone, in the same order as today" cannot both hold:
+M3 inserted its steps 1-5 *ahead of* M2's tail, so the line-trip block `89c7074`
+appended at the end of M2's tests now sits 1,600 lines further down than M3's newest
+test. The order was kept and the milestone grouping given up, because reordering
+execution is the one change a test count cannot attribute. M2 and M3 therefore have
+two files each. Regrouping stays available as a later commit that *only* reorders.
+
+**The count is a weaker gate than D9 assumed, and the anti-vacuity run measured how
+much weaker.** With one `include` removed the suite reported 1811/1811, exited **0**
+and printed `Testing GridSim tests passed`. A green suite does not distinguish "all
+1873 ran" from "1811 ran and 62 silently did not". So the move was emitted
+mechanically from a table of line ranges and gated on a **reconstruction check** --
+reassemble the pre-split file from the split files on disk and diff. 4,892 content
+lines byte-identical. That check, not the count, is what makes "pure move"
+a claim rather than an assurance.
+
+**Two Julia facts the split rests on**, both now written into `runtests.jl`:
+`include` evaluates at *module* top level regardless of where the call sits (so the
+helpers *had* to be hoisted -- the README's trap, confirmed), and `@testset` nesting
+is *dynamic* via a task-local stack (so testsets in included files still register
+under the outer one and the summary stays a single tree).
+
+**Hoisting is a collision hazard both ways**: inside the testset the fifteen helpers
+were locals, which silently *shadow* an import; at module scope the same name
+*collides*. Checked against `names(GridSim)`, `names(Test)` and `names(Base)` --
+none. Worth re-running whenever a helper is added, for the reason the GLMakie export
+check exists.
+
+**A line-ending trap, and it would have destroyed the evidence.** `.gitattributes`
+says `* text=auto eol=lf`, so a checkout gives LF -- but the working copy was CRLF,
+and `text=auto` normalises on comparison, so `git status` called it clean. A split
+generated from the stale copy is a whole-file diff, which is precisely the diff the
+gate needs to be readable. Generate from the checked-out form; take the line ending
+from the source.
+
+**S3's measurement needs a quiet machine, and this one was not.** Four runs of
+suites with *identical* content took 1m25, 2m28, 5m15 and 1m46, tracking an
+unrelated long-lived `julia.exe`. No timing claim is made about the split -- and
+**S3 (D10) is a wall-clock measurement that decides D2**, so it must be taken with
+the contending processes checked first, or D2 gets decided by noise.
+
 ## D10 — Three questions about someone else's tooling are spikes, scheduled before what depends on them
 
 `m5-prestudy.md` names three claims it explicitly refuses to make, because each is
