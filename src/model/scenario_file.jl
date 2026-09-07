@@ -34,7 +34,8 @@ const Layout = Dict{Symbol,Tuple{Float64,Float64}}
 # so the writer and the reader cannot disagree about the list.
 const _MACHINE_FIELDS = (:S_rated, :H, :D, :Xd′, :E′, :P0, :R, :Pmax, :Tg,
                          :Xd, :Xq, :Xq′, :Td0′, :Tq0′, :Ra,
-                         :K_A, :T_E, :Efd_min, :Efd_max)
+                         :K_A, :T_E, :Efd_min, :Efd_max,
+                         :V_set, :Q_min, :Q_max)
 
 # The prime (`′`) is not a bare-key character in TOML: a file would have to spell
 # `"Xd′" = 0.3` with quotes, and the first hand-written file did not (it was the
@@ -47,10 +48,15 @@ const _FILE_KEYS = Dict{Symbol,String}(f => _file_key(f) for f in _MACHINE_FIELD
 # The order keys are written in. `TOML.print` sorts keys through `by`, at every
 # level, so one rank table covers the top level and each record.
 const _KEY_RANK = Dict{String,Int}(
-    "name" => 1, "S_base" => 2, "f0" => 3, "layout" => 4,
-    "buses" => 5, "branches" => 6, "machines" => 7, "loads" => 8,
+    "name" => 1, "S_base" => 2, "f0" => 3, "slack" => 4, "layout" => 5,
+    "buses" => 6, "branches" => 7, "machines" => 8, "loads" => 9,
     "id" => 11, "bus" => 12, "from" => 13, "to" => 14, "V_base" => 15,
     "X" => 16, "rating" => 17, "Q0" => 30, "a_z" => 31, "a_i" => 32, "a_p" => 33)
+# `slack` is a TOP-LEVEL key with its own rank, not a bus or machine record field:
+# it is a field of `NetworkModel`, so it does not ride along with either
+# (`m6-context.md` D8). `Branch.R` needs no rank of its own — the machine record's
+# `R` (a governor droop) already claims the string, and the two share the ordering
+# harmlessly because they never appear in the same table.
 for (i, f) in enumerate(_MACHINE_FIELDS)
     _KEY_RANK[_file_key(f)] = 40 + i
 end
@@ -73,11 +79,12 @@ function write_scenario(path::AbstractString, net::NetworkModel;
     isempty(name) || (doc["name"] = String(name))
     doc["S_base"] = net.S_base
     doc["f0"] = net.f0
+    doc["slack"] = String(net.slack)
     doc["buses"] = [Dict{String,Any}("id" => String(b.id), "V_base" => b.V_base)
                     for b in net.buses]
     doc["branches"] = [Dict{String,Any}("id" => String(br.id), "from" => String(br.from),
                                         "to" => String(br.to), "X" => br.X,
-                                        "rating" => br.rating)
+                                        "rating" => br.rating, "R" => br.R)
                        for br in net.branches]
     doc["machines"] = [begin
                            d = Dict{String,Any}("id" => String(m.id), "bus" => String(m.bus))
@@ -136,8 +143,10 @@ file fails exactly where an invalid model does. `layout` is a [`Layout`](@ref), 
 `nothing` when the file has no `[layout]` table; `name` is `""` when absent.
 
 Machine fields beyond the classical eight are optional and default the way the
-`Machine` constructor defaults them (no governor, frozen flux, no regulator), so a
-hand-written file need only say what it means. Primed names are spelled with
+`Machine` constructor defaults them (no governor, frozen flux, no regulator, a
+1.0 pu voltage schedule and no reactive limits), so a hand-written file need only
+say what it means. `[[branches]].R` and the top-level `slack` default the same way
+(a lossless line; the bus of the first machine) — `m6-context.md` D8. Primed names are spelled with
 `_p` in the file (`Xd_p`, `E_p`, …), because TOML has no prime in a bare key.
 """
 function read_scenario(path::AbstractString)
@@ -146,6 +155,15 @@ function read_scenario(path::AbstractString)
     name = String(get(doc, "name", ""))
     S_base = _field(doc, "S_base", Float64, "the file")
     f0 = _field(doc, "f0", Float64, "the file")
+    # M6 step 1 — read-side default, and it is DELIBERATELY still a default at this
+    # step. `m6-context.md` D8 decides that a file with no slack must eventually be
+    # REJECTED, because the slack is the one new field whose absence has no physical
+    # meaning; that rejection, its message and its round-trip test are step 5's box.
+    # Defaulting here in the meantime is what keeps a pre-M6 file readable while the
+    # milestone is mid-flight, and it is why the writer above already emits the key:
+    # nothing written after this step leans on the default.
+    slack_str = _field(doc, "slack", String, "the file"; default = "")
+    slack = isempty(slack_str) ? nothing : Symbol(slack_str)
 
     buses = Bus[]
     for (i, rec) in enumerate(get(doc, "buses", Any[]))
@@ -160,7 +178,8 @@ function read_scenario(path::AbstractString)
         push!(branches, Branch(id, Symbol(_field(rec, "from", String, w)),
                                Symbol(_field(rec, "to", String, w)),
                                _field(rec, "X", Float64, w),
-                               _field(rec, "rating", Float64, w)))
+                               _field(rec, "rating", Float64, w);
+                               R = _field(rec, "R", Float64, w; default = 0.0)))
     end
     machines = Machine[]
     for (i, rec) in enumerate(get(doc, "machines", Any[]))
@@ -179,7 +198,10 @@ function read_scenario(path::AbstractString)
                                 Ra = opt(:Ra, 0.0),
                                 K_A = opt(:K_A, 0.0), T_E = opt(:T_E, Inf),
                                 Efd_min = opt(:Efd_min, -Inf),
-                                Efd_max = opt(:Efd_max, Inf)))
+                                Efd_max = opt(:Efd_max, Inf),
+                                V_set = opt(:V_set, 1.0),
+                                Q_min = opt(:Q_min, -Inf),
+                                Q_max = opt(:Q_max, Inf)))
     end
     loads = Load[]
     for (i, rec) in enumerate(get(doc, "loads", Any[]))
@@ -191,7 +213,7 @@ function read_scenario(path::AbstractString)
                           _field(rec, "a_i", Float64, w; default = 0.0),
                           _field(rec, "a_p", Float64, w; default = 0.0)))
     end
-    net = NetworkModel(S_base, f0, buses, branches, machines, loads)
+    net = NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack)
 
     layout = nothing
     if haskey(doc, "layout")

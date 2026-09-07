@@ -165,6 +165,35 @@ should happen anyway.
 
 ---
 
+### What step 1 measured (2026-09-07)
+
+**D3's word "promotion" was not literally true, and the correction is a lookup
+rather than a rename.** `DetailedEngine`'s private `slack` names a **machine**
+(`init!` refuses a non-machine by name — "a passive bus has no rotor angle to
+pin"), and `NetworkModel.slack` names a **bus**. They are two fields in bijection
+only where the reference bus carries exactly one machine, so moving one into the
+other would have silently reinterpreted every call site that passes an explicit
+machine — `scripts/iberia_two_area.jl` passes `slack = :CE`, and its 5,662.4 MW is
+the milestone the repo just certified. What actually moved is the **default**:
+
+- the keyword still names a machine, unchanged;
+- the default is now the machine at `net.slack` instead of `net.machines[1]`;
+- `NetworkModel.slack` defaults to `machines[1].bus` **after the bus sort**, not to
+  `buses[1].id`. Since M5 a bus may carry no machine, and `machines` is stored
+  bus-sorted, so `machines[1]` is the machine on the first *machine-carrying* bus —
+  which is exactly what the old `ids[1]` picked. That identity is what makes the
+  change bit-identical rather than merely equivalent, and it is why the default is
+  written against the machine vector and not against the bus vector.
+
+**"The slack bus carries a machine" is an ENGINE guard, not a model guard.** The
+model validates only that the slack names a real bus. This is M5 D3's precedent
+applied again (three guards moved out of `NetworkModel` into `SwingEngine` because
+each was a property of a tier and not of the data), and it has a concrete
+consequence the scenario editor needs: a half-built draft — buses placed, no
+machines attached yet — must still be constructible.
+
+---
+
 ## D4 — `R = 0.0` is the default, and "no number moves" is step 1's gate
 
 Every `Branch` in the repo today is a pure reactance. Adding `R` with a default of
@@ -187,6 +216,61 @@ nothing else is a short line, and this is stated in the type's own documentation
 a reader cannot mistake incompleteness for a modelling choice. The moment a case
 needs a long line or a tap, that is a new decision with its own oracle question,
 not a field quietly appended.
+
+---
+
+### What step 1 measured — and the one box the plan mis-scoped (2026-09-07)
+
+**The anti-vacuity mutation as the plan wrote it could not pass, and the reason is
+the plan's own ordering rule.** All five readers of `Branch.X` are lossless *by
+construction*: `_coupling` is `E′ᵢE′ⱼ/X` with no place for a resistance;
+`branch_arrays` and `branch_topology` return `X` alone; both `DetailedEngine` edge
+models and `branch_power` compute `(Vf − Vt)/(jX)`. So the honest step-1 answer at
+all five sites is **"deliberately unchanged"** — which the checklist permits — and
+then "set one branch's `R` non-zero and show a number moves" has nothing to move.
+Wiring `R` into those paths *is* a physics change, inside the step whose gate is
+"no number moves".
+
+Rather than quietly dropping the box or quietly widening the step, the mutation was
+**re-scoped, and the real one re-assigned**:
+
+- **Step 1's mutation is behavioural, not numerical.** `R ≠ 0` now makes every tier
+  **refuse the model by name** (`_assert_lossless_branches`, called from
+  `SwingEngine`, `DetailedEngine` and `reference/`'s `build_oracle`). This is
+  exactly the shape M5 used for `Load`'s ZIP shares — validated by the type from the
+  step that adds it, refused by the engines until the step that solves it — and it
+  is what makes "nothing reads `R`" a *stated boundary* instead of an untested
+  hope. Setting `R` therefore demonstrably changes what the repo does; what it does
+  not change is any number a run produces, because there is now no such run.
+- **The numerical mutation moves to step 3**, where it already has a home: the
+  losses identity (the slack's pickup equals the summed branch losses) is red the
+  moment `R` fails to reach the residual equations.
+
+**The step could not be confined to the model file, and a guard is why.**
+`test/scenario_file.jl` asserts `fieldnames(Machine) == (:id, :bus,
+_MACHINE_FIELDS...)`, so growing `Machine` turns that test red until the writer
+grows too. That is the guard working exactly as designed ("if `Machine` grows a
+field this test goes red before a file silently stops carrying it"), so step 1
+carries the file change for the three machine fields, and `Branch.R` and the
+top-level `slack` key went in with it rather than leaving a mid-milestone window in
+which the file silently drops a field. What remains genuinely step 5's is the
+**decision** in D8: turning the slack's read-side default into a rejection, its
+message, and the pre-M6 round-trip test.
+
+**Two integration sites the plan named neither of.** `ui/src/editor.jl` rebuilt
+`Bus`/`Branch`/`Load` generically by splatting `fieldnames` into the positional
+constructor, which a keyword-only `Branch.R` breaks outright — `Branch` now has its
+own rebuild method, the way `Machine` already did. And the editor had to start
+**carrying** the slack (through open, save, rename and delete), because otherwise
+opening a file with a declared slack and saving it again re-defaults it silently —
+D8's failure mode arriving through the UI instead of through the reader.
+
+**One thing left owed to step 5, named here so it is not discovered:**
+`docs/scenarios/three-machine-ring.toml` is a real pre-M6 file with no slack key.
+It reads correctly today on the read-side default, and it is the file
+`ui/README.md` tells a reader to open. When step 5 makes a missing slack a
+rejection, that file and that documented entry point break unless step 5 updates
+them.
 
 ---
 

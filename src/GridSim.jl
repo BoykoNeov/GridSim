@@ -130,6 +130,11 @@ export two_machine_system, three_machine_ring
 # alias the editor names in a signature. All three checked clear against GLMakie's
 # exports before being added (2026-09-07) — the standing check.
 export write_scenario, read_scenario, Layout
+# M6 step 1 — a bus's role in a power flow, DERIVED from the declared slack and
+# what is attached rather than stored (`m6-context.md` D3). Both checked clear
+# against GLMakie's exports before being added (2026-09-07) — the standing check
+# since M1, when a collision cost a round.
+export bus_roles, bus_role
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

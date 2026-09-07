@@ -38,11 +38,16 @@ mutable struct ScenarioEditor
     layout::Layout
     # `(kind, id)` with kind one of :bus, :machine, :load, :branch — or nothing.
     selection::Union{Nothing,Tuple{Symbol,Symbol}}
+    # M6 step 1 — the declared reference bus, CARRIED so that opening a file and
+    # saving it again cannot silently re-default it. `nothing` means "let
+    # `NetworkModel` derive it", which is what a draft with no buses yet needs.
+    # Selecting one on the map, and drawing it there, is step 5.
+    slack::Union{Nothing,Symbol}
 end
 
 ScenarioEditor(; S_base::Real = 100.0, f0::Real = 50.0, name::AbstractString = "") =
     ScenarioEditor(Float64(S_base), Float64(f0), String(name),
-                   Bus[], Branch[], Machine[], Load[], Layout(), nothing)
+                   Bus[], Branch[], Machine[], Load[], Layout(), nothing, nothing)
 
 """
     ScenarioEditor(net::NetworkModel; layout = nothing, name = "")
@@ -58,6 +63,7 @@ function ScenarioEditor(net::NetworkModel; layout = nothing, name::AbstractStrin
     append!(ed.machines, net.machines)
     append!(ed.loads, net.loads)
     layout === nothing || merge!(ed.layout, layout)
+    ed.slack = net.slack
     _place_missing!(ed)
     return ed
 end
@@ -225,6 +231,10 @@ function remove!(ed::ScenarioEditor, kind::Symbol, id::Symbol)
         filter!(l -> l.bus !== id, ed.loads)
         filter!(br -> br.from !== id && br.to !== id, ed.branches)
         delete!(ed.layout, id)
+        # M6 step 1 — a declared slack that has just been deleted would make
+        # `build_model` throw on a bus the editor no longer shows. Fall back to
+        # "let the model derive it", the same thing a fresh draft carries.
+        ed.slack === id && (ed.slack = nothing)
     end
     filter!(x -> x.id !== id, _collection(ed, kind))
     sel = ed.selection
@@ -247,6 +257,7 @@ function rename!(ed::ScenarioEditor, kind::Symbol, id::Symbol, new_id::Symbol)
     String(new_id) == "" && throw(ArgumentError("editor: an id cannot be empty."))
     if kind === :bus
         ed.layout[new_id] = ed.layout[id]; delete!(ed.layout, id)
+        ed.slack === id && (ed.slack = new_id)   # M6 step 1 — follows the rename
         for (k, m) in pairs(ed.machines)
             m.bus === id && (ed.machines[k] = _with(m, :bus, new_id))
         end
@@ -276,9 +287,17 @@ function _with(m::Machine, f::Symbol, v)
                    g(:R), g(:Pmax), g(:Tg);
                    Xd = g(:Xd), Xq = g(:Xq), Xq′ = g(:Xq′), Td0′ = g(:Td0′),
                    Tq0′ = g(:Tq0′), Ra = g(:Ra), K_A = g(:K_A), T_E = g(:T_E),
-                   Efd_min = g(:Efd_min), Efd_max = g(:Efd_max))
+                   Efd_min = g(:Efd_min), Efd_max = g(:Efd_max),
+                   V_set = g(:V_set), Q_min = g(:Q_min), Q_max = g(:Q_max))
 end
-function _with(x::Union{Bus,Branch,Load}, f::Symbol, v)
+# `Branch.R` is keyword-only on the constructor (M6 step 1), so the generic
+# splat-every-field rebuild below cannot build one: `fieldnames` would hand `R` to
+# a five-positional method. Its own method, for the same reason `Machine` has one.
+function _with(b::Branch, f::Symbol, v)
+    g(n) = n === f ? v : getfield(b, n)
+    return Branch(g(:id), g(:from), g(:to), g(:X), g(:rating); R = g(:R))
+end
+function _with(x::Union{Bus,Load}, f::Symbol, v)
     T = typeof(x)
     return T((n === f ? v : getfield(x, n) for n in fieldnames(T))...)
 end
@@ -329,7 +348,7 @@ shows and what the engines run are one thing, or the constructor says why not.
 """
 build_model(ed::ScenarioEditor) =
     NetworkModel(ed.S_base, ed.f0, copy(ed.buses), copy(ed.branches),
-                 copy(ed.machines), copy(ed.loads))
+                 copy(ed.machines), copy(ed.loads); slack = ed.slack)
 
 """
     power_balance(ed) -> Float64
@@ -384,6 +403,7 @@ function load!(ed::ScenarioEditor, path::AbstractString)
     empty!(ed.machines); append!(ed.machines, sc.net.machines)
     empty!(ed.loads); append!(ed.loads, sc.net.loads)
     empty!(ed.layout); sc.layout === nothing || merge!(ed.layout, sc.layout)
+    ed.slack = sc.net.slack        # M6 step 1 — carried, so save-after-open keeps it
     ed.selection = nothing
     _place_missing!(ed)
     return ed

@@ -202,6 +202,26 @@ all**, which is the constant-`Efd` case every check before step 5 was written fo
                    derivative**, never as a clamp on the state (the M1 rule; see
                    `_detailed_machine_bus!`).
 
+**M6 step 1 — the three fields a POWER FLOW needs, which the dynamics do not.**
+They describe the machine's *terminal* schedule, not its internal state, and no
+engine in `src/engines/` reads any of them:
+
+  - `V_set`      — pu, the **terminal** voltage magnitude a generator bus holds in
+                   a power flow. Default **`1.0`**, deliberately NOT `E′`. `E′` is
+                   the internal voltage behind `Xd′` (or behind `Ra + jXq` at the
+                   detailed tier); `V_set` is the magnitude at the bus. M5 step 8
+                   measured what happens when one number serves two denominations —
+                   a pre-event tier offset larger than the disturbance it was drawn
+                   to show — so the default is the flat-start 1.0 pu every power
+                   flow uses, and a scheduled voltage is stated, never inferred.
+  - `Q_min`,
+    `Q_max`      — pu **on the system base** (unlike `H`, `D` and the reactances,
+                   which are on `S_rated`), reactive limits. Defaults `-Inf`/`Inf`,
+                   i.e. unlimited, the same idiom and the same reason as
+                   `Efd_min`/`Efd_max` above. A generator bus whose limit binds
+                   stops holding `V_set` and becomes a load bus at its limit — the
+                   thing that makes a power flow a power flow (M6 step 3).
+
 **`Vref` is deliberately NOT here.** The setpoint is *derived* at initialisation
 from the solved equilibrium (`Vref = |V| + Efd/K_A`), for the same reason the
 detailed tier takes `Pm` from the power flow rather than from `Machine.P0`: a
@@ -256,6 +276,10 @@ struct Machine
     T_E::Float64       # s     — exciter lag (Inf = field voltage frozen)
     Efd_min::Float64   # pu    — field-voltage floor (-Inf = unlimited)
     Efd_max::Float64   # pu    — field-voltage ceiling (Inf = unlimited)
+    # M6 step 1 — the power flow's terminal schedule. NO ENGINE READS THESE.
+    V_set::Float64     # pu    — scheduled TERMINAL voltage magnitude (not E′)
+    Q_min::Float64     # pu on S_base — reactive floor   (-Inf = unlimited)
+    Q_max::Float64     # pu on S_base — reactive ceiling ( Inf = unlimited)
 
     # Reject a machine that is wrong on its face rather than letting it poison a
     # solve — the spirit of `GeneratingUnit`'s headroom guard. `H > 0` is strict
@@ -286,7 +310,8 @@ struct Machine
                      Xd::Real = Xd′, Xq::Real = Xd′, Xq′::Real = Xd′,
                      Td0′::Real = Inf, Tq0′::Real = Inf, Ra::Real = 0.0,
                      K_A::Real = 0.0, T_E::Real = Inf,
-                     Efd_min::Real = -Inf, Efd_max::Real = Inf)
+                     Efd_min::Real = -Inf, Efd_max::Real = Inf,
+                     V_set::Real = 1.0, Q_min::Real = -Inf, Q_max::Real = Inf)
         S_rated > 0 || throw(ArgumentError(
             "Machine $id: S_rated ($S_rated) must be > 0 MVA."))
         H > 0 || throw(ArgumentError(
@@ -368,27 +393,60 @@ struct Machine
             "only equilibrium of T_E·dEfd/dt = −Efd + K_A(Vref − |V|) at K_A = 0 " *
             "is Efd = 0, so the field decays away from the dispatched value. Use " *
             "T_E = Inf to hold the field voltage, or K_A > 0 to regulate it."))
+        # M6 step 1. `V_set` is a voltage MAGNITUDE, so zero is not a degenerate
+        # schedule, it is a collapsed bus — and it would be the residual's own
+        # spurious basin (m6-context.md D6) written in as data. The reactive limits
+        # take `Efd_max ≥ Efd_min`'s form exactly, `Inf` included.
+        V_set > 0 || throw(ArgumentError(
+            "Machine $id: V_set ($V_set) must be > 0 pu — it is a scheduled " *
+            "terminal voltage MAGNITUDE, and zero is a collapsed bus, not a " *
+            "machine with the schedule switched off."))
+        Q_max ≥ Q_min || throw(ArgumentError(
+            "Machine $id: Q_max ($Q_max) must be ≥ Q_min ($Q_min) pu."))
         return new(id, bus, Float64(S_rated), Float64(H), Float64(D),
                    Float64(Xd′), Float64(E′), Float64(P0),
                    Float64(R), Float64(Pmax), Float64(Tg),
                    Float64(Xd), Float64(Xq), Float64(Xq′),
                    Float64(Td0′), Float64(Tq0′), Float64(Ra),
-                   Float64(K_A), Float64(T_E), Float64(Efd_min), Float64(Efd_max))
+                   Float64(K_A), Float64(T_E), Float64(Efd_min), Float64(Efd_max),
+                   Float64(V_set), Float64(Q_min), Float64(Q_max))
     end
 end
 
 """
     Branch
 
-One transmission branch (line or transformer), modelled as a pure series
-reactance — the classical tier neglects resistance and shunt charging, which is
-what makes the network lossless and the power balance `Σ P0 = 0` exact.
+One transmission branch (line or transformer), modelled as a **series impedance**
+`R + jX`. `R` defaults to zero, and at that default this is exactly the pure
+series reactance M2–M5 assumed: the network is lossless and the schedule balance
+`Σ P0 = 0` is exact.
 
   - `id`     — unique name.
   - `from`, `to` — bus ids (undirected; the sign convention lives in the engine).
   - `X`      — pu **on the system base**, series reactance.
   - `rating` — MVA, thermal rating. Carried for the UI boundary; the dynamics do
                not read it (there is no overload protection until M2b).
+  - `R`      — pu **on the system base**, like `X`, series resistance. Keyword-only
+               and zero by default (M6 step 1, `m6-context.md` D4), so every branch
+               written before M6 builds the identical object.
+
+**`Branch.R` is a resistance; `Machine.R` is a governor droop.** They are two
+unrelated quantities that share a letter by convention, and they share a key name
+(`R`) in the scenario file's `[[branches]]` and `[[machines]]` records. Said here
+because the file makes them look like one field.
+
+**NO TIER READS `R` YET, AND THE ENGINES REFUSE IT** (`_assert_lossless_branches`).
+A resistance that silently reached the classical or detailed edge model would move
+M5's certified numbers with nothing to say so; a resistance that is validated here
+and rejected there is the shape M5's `Load` ZIP shares already used — data that is
+only sometimes read is exactly the data that gets set wrong and noticed a
+milestone later. The refusal lifts when M6 step 3's power flow reads it.
+
+**What a `Branch` still does NOT carry, named rather than implied** (D4): line
+charging susceptance (`B`) and transformer tap ratios. `R + jX` and nothing else is
+a **short line**. This is incompleteness, not a modelling choice, and the moment a
+case needs a long line or a tap that is a new decision with its own oracle
+question, not a field quietly appended.
 """
 struct Branch
     id::Symbol
@@ -396,15 +454,25 @@ struct Branch
     to::Symbol
     X::Float64        # pu on the SYSTEM base — series reactance
     rating::Float64   # MVA — thermal rating (metadata for now)
+    R::Float64        # pu on the SYSTEM base — series resistance (0 = lossless)
 
-    function Branch(id::Symbol, from::Symbol, to::Symbol, X::Real, rating::Real)
+    # `R` is KEYWORD-ONLY, and appended to the field list rather than placed beside
+    # `X`, so that every one of the ~50 existing five-positional call sites builds a
+    # bit-identical object. `R ≥ 0` and not `> 0`: unlike `X`, which is a coupling
+    # denominator, zero resistance is the ordinary case and the default.
+    function Branch(id::Symbol, from::Symbol, to::Symbol, X::Real, rating::Real;
+                    R::Real = 0.0)
         from === to && throw(ArgumentError(
             "Branch $id: from and to are both $from — a self-loop is not a branch."))
         X > 0 || throw(ArgumentError(
             "Branch $id: X ($X) must be > 0 pu — it is the coupling denominator."))
         rating > 0 || throw(ArgumentError(
             "Branch $id: rating ($rating) must be > 0 MVA."))
-        return new(id, from, to, Float64(X), Float64(rating))
+        R ≥ 0 || throw(ArgumentError(
+            "Branch $id: R ($R) must be ≥ 0 pu — a negative series resistance " *
+            "generates power in the line. (This is the LINE's resistance; " *
+            "Machine.R is a governor droop.)"))
+        return new(id, from, to, Float64(X), Float64(rating), Float64(R))
     end
 end
 
@@ -493,7 +561,7 @@ struct Load
 end
 
 """
-    NetworkModel(S_base, f0, buses, branches, machines)
+    NetworkModel(S_base, f0, buses, branches, machines, loads = Load[]; slack = nothing)
 
 The canonical M2 network: buses, the branches between them, and the machines on
 them, plus the system-wide bases.
@@ -502,6 +570,25 @@ them, plus the system-wide bases.
   - `f0`     — Hz, nominal frequency.
   - `buses`, `branches`, `machines` — topology and metadata.
   - `bus_index` — bus id → **vertex index**, built at construction.
+  - `slack`  — the id of the **reference bus** (M6 step 1). Keyword-only; defaults
+               to the bus of `machines[1]` *after* the bus sort, which on every
+               pre-M6 model is the bus of the first machine and therefore
+               reproduces `DetailedEngine`'s old default exactly.
+
+**The slack is a bus, and `DetailedEngine`'s `slack` is a machine.** They are two
+fields, in bijection only on a model where the reference bus carries exactly one
+machine. The engine's *default* now follows this field (`m6-context.md` D3); its
+keyword still names a machine, because a rotor angle is what it pins.
+
+**Bus roles are DERIVED, never stored** — see [`bus_roles`](@ref). A stored
+slack/PV/PQ type is a second source of truth about what is attached to a bus and
+can disagree with it; the slack is the one thing that cannot be read off the
+topology, because it is a **dispatch** choice (M5 D13), so it is the one thing
+stored. `NetworkModel` validates only that it names a real bus: "the slack bus
+carries a machine" is a property of the tier that solves, not of the data, and it
+lives at the engine boundary for the same reason M5 moved three guards out of here
+into `SwingEngine`. A half-built editor model — buses placed, no machines yet — must
+still be constructible.
 
 **Machines are stored in bus order**: `machines[v]` is the machine on `buses[v]`.
 The constructor reorders the machines it is given to enforce this, so a single
@@ -548,10 +635,12 @@ struct NetworkModel
     bus_index::Dict{Symbol,Int}    # bus id -> vertex index
     machines_at_bus::Vector{Vector{Int}}  # vertex -> indices into `machines` (may be empty)
     load_at_bus::Vector{Int}          # vertex -> index into `loads`, or 0 for none
+    slack::Symbol                     # id of the reference bus (M6 step 1, D3)
 
     function NetworkModel(S_base::Real, f0::Real, buses::Vector{Bus},
                           branches::Vector{Branch}, machines::Vector{Machine},
-                          loads::Vector{Load} = Load[])
+                          loads::Vector{Load} = Load[];
+                          slack::Union{Symbol,Nothing} = nothing)
         S_base > 0 || throw(ArgumentError("NetworkModel: S_base ($S_base) must be > 0 MVA."))
         f0 > 0 || throw(ArgumentError("NetworkModel: f0 ($f0) must be > 0 Hz."))
         isempty(buses) && throw(ArgumentError("NetworkModel: needs at least one bus."))
@@ -641,7 +730,16 @@ struct NetworkModel
             "reference and its own frequency, so one aggregate read-out would be " *
             "meaningless. Split it into separate models, or add the missing branch."))
 
-        # --- lossless network ⇒ scheduled generation must meet scheduled load ---
+        # --- scheduled generation must meet scheduled load ------------------------
+        # M6 STEP 1 ANNOTATION: this guard used to justify itself with "the network
+        # is lossless in P". With `Branch.R` in the model that reason is conditional,
+        # and the ARITHMETIC is unaffected — this is the SCHEDULE balance at nominal
+        # voltage, where no branch quantity appears at all, so a lossy model with
+        # `Σ P0_machines = Σ P0_loads` still constructs and still should. What a lossy
+        # model's balance actually is gets checked somewhere else entirely: by M6
+        # step 3's identity that the slack's pickup equals the summed branch losses.
+        # (No engine reads `R` yet — `_assert_lossless_branches` refuses it — so
+        # today the old reason still holds for everything that runs.)
         # Widened for `Load`, whose sign convention is the opposite of a machine's:
         # a machine's `P0` is an INJECTION (negative = absorbing, M2a's load) and a
         # load's `P0` is a DRAW. On every M2/M3 model `loads` is empty and this is
@@ -666,8 +764,25 @@ struct NetworkModel
         # There is deliberately NO Σ Q0 guard — see the docstring. A series reactance
         # absorbs I²X of reactive power, so the P balance does not have a Q twin.
 
+        # --- the reference bus (M6 step 1, m6-context.md D3) ----------------------
+        # The default is `ordered[1].bus`, NOT `buses[1].id`: since M5 a bus may
+        # carry no machine, and `ordered` is the bus-sorted machine vector, so
+        # `ordered[1]` is the machine on the first machine-carrying bus — which is
+        # exactly the machine `DetailedEngine`'s old `ids[1]` default picked. That
+        # identity is what makes the promotion bit-identical rather than merely
+        # equivalent. A model with no machines at all defaults to the first bus:
+        # nothing can solve it yet, but it must be constructible (a draft in the
+        # editor is exactly this model).
+        slack_bus = slack === nothing ?
+            (isempty(ordered) ? buses[1].id : ordered[1].bus) : slack
+        haskey(bus_index, slack_bus) || throw(ArgumentError(
+            "NetworkModel: slack = :$slack_bus is not a bus in this model " *
+            "(buses: $(join([b.id for b in buses], ", "))). The slack is the angle " *
+            "reference and the bus that picks up the losses; it is a dispatch " *
+            "choice, so it is declared rather than derived."))
+
         return new(Float64(S_base), Float64(f0), buses, branches, ordered,
-                   ordered_loads, bus_index, machines_at, load_at)
+                   ordered_loads, bus_index, machines_at, load_at, slack_bus)
     end
 end
 
@@ -679,8 +794,8 @@ validation — the positional inner constructor is the only path, so no
 `NetworkModel` can exist unvalidated regardless of how it was built (including a
 future `from_powersystems`, D5).
 """
-NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[]) =
-    NetworkModel(S_base, f0, buses, branches, machines, loads)
+NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[], slack = nothing) =
+    NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack)
 
 # Duplicate-id rejection, shared by the three collections so the message reads the
 # same in each. `key` extracts the id.
@@ -893,6 +1008,72 @@ function branch_arrays(net::NetworkModel)
         K[e]   = _coupling(net.machines[i], net.machines[j], br)
     end
     return (; src, dst, X, K)
+end
+
+"""
+    bus_roles(net::NetworkModel) -> Vector{Symbol}
+
+Each bus's role in a power flow, in **vertex order** — `:slack`, `:generator` or
+`:load`. Derived from `net.slack` plus what is attached, never stored
+(`m6-context.md` D3):
+
+  - the declared slack bus is `:slack`, whatever sits on it;
+  - a bus carrying at least one machine is `:generator` (holds `P` and `V_set`);
+  - every other bus is `:load` (holds `P` and `Q`).
+
+There is no way to force a generator bus to behave as a load bus by declaration.
+That happens only when its reactive limits bind, which is the physical reason it
+should happen at all — and it is a property of a *solution*, not of the model, so
+it cannot be a field here.
+"""
+function bus_roles(net::NetworkModel)
+    v_slack = net.bus_index[net.slack]      # constructor guarantees this resolves
+    roles = Vector{Symbol}(undef, length(net.buses))
+    for v in eachindex(net.buses)
+        roles[v] = v == v_slack ? :slack :
+                   isempty(net.machines_at_bus[v]) ? :load : :generator
+    end
+    return roles
+end
+
+"""
+    bus_role(net::NetworkModel, bus::Symbol) -> Symbol
+
+One bus's role — see [`bus_roles`](@ref). Throws if the bus is not in the model
+(a missing bus is a typo, the way `load_at` treats one).
+"""
+function bus_role(net::NetworkModel, bus::Symbol)
+    v = get(net.bus_index, bus, 0)
+    v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
+    return bus === net.slack ? :slack :
+           isempty(net.machines_at_bus[v]) ? :load : :generator
+end
+
+"""
+    _assert_lossless_branches(net::NetworkModel, who::AbstractString)
+
+Refuse a branch carrying a series resistance, by name — the M6 step 1 half of the
+`_assert_frozen_flux` family, and there for exactly the same reason.
+
+`Branch.R` is validated by the type from M6 step 1 and read by **nothing**: the
+classical tier's coupling is `E′ᵢE′ⱼ/X`, the detailed tier's edge current is
+`(Vf − Vt)/(jX)`, and `branch_arrays`/`branch_topology`/`branch_power` carry `X`
+alone. A model with `R ≠ 0` run at either tier is therefore a *different network*
+than its data describes — a lossless one — silently and with a plausible answer.
+
+The guard lifts when M6 step 3's power flow reads `R`, at which point this function
+is the list of what still has to learn it.
+"""
+function _assert_lossless_branches(net::NetworkModel, who::AbstractString)
+    for br in net.branches
+        br.R == 0.0 || throw(ArgumentError(
+            "$who: branch $(br.id) carries a series resistance R = $(br.R) pu, and " *
+            "nothing in src/engines/ reads it — the classical coupling is E′E′/X and " *
+            "the detailed edge current is (Vf − Vt)/(jX), both lossless. Running it " *
+            "here would silently simulate a lossless line where the data says a lossy " *
+            "one. Set R = 0.0, or use the M6 power flow, which does read it."))
+    end
+    return nothing
 end
 
 """

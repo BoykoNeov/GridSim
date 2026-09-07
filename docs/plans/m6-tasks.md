@@ -56,35 +56,101 @@ step 8's mutation found its own check's premise wrong.
 
 ## Step 1 — the fields the ladder needs, added without moving a number (D3, D4)
 
-- [ ] `Branch` gains `R::Float64`, defaulted to `0.0`, documented in pu on the
-      **system** base like `X` is.
-- [ ] `Branch`'s docstring states what is still absent — line charging and taps —
-      so incompleteness cannot be read as a modelling choice (D4).
-- [ ] `Machine` gains `V_set`, `Q_min`, `Q_max`, with defaults that reproduce
-      today's behaviour exactly.
-- [ ] `NetworkModel` gains `slack::Symbol`, validated to name a real bus. The
-      private field in `DetailedEngine` now reads the model's (D3).
-- [ ] Bus roles derived, not stored — a helper that returns the role of each bus
-      from the slack plus what is attached, with the rejection cases tested
-      (a slack naming a missing bus; more than one machine at a bus for the tiers
-      that forbid it).
-- [ ] **Gate — the invariant, and it is TWO claims, not one:** (a) the full core
-      suite passes at **2835 unchanged**, and (b) M5's criterion numbers are
-      bit-identical. **Only (a) is checked by the suite going green.** M5's
-      criterion numbers (the 1.03× `P_max`, the 14-of-14 walk) are asserted with
-      tolerances, so the underlying float can move and the test still passes. (b)
-      therefore means *printing the values and comparing them*, not inferring them
-      from a green run.
-- [ ] **The field has five readers, so check five.** `Branch.X` is read by
-      `branch_arrays`, `SwingEngine`'s edge model, both `DetailedEngine` edge
-      models (static and dynamic) and `_branch_flows`. Adding `R` beside it means
-      each is inspected and each is stated as either updated or deliberately
-      unchanged — the same logic that turned step 0's one owed SPEC annotation into
-      six.
-- [ ] **Anti-vacuity mutation:** set one branch's `R` non-zero in an isolated
-      fixture and show a number moves. Without this the gate above passes trivially
-      if nothing reads the field.
-- [ ] `git diff Project.toml` after any `Pkg` operation, and the comments put back.
+Done 2026-09-07. Entered at **2835 core / 382 UI / 986 reference**; leaves
+**2899 core** (2835 unchanged + 64 new in `test/m6_steady_state.jl`).
+
+- [x] `Branch` gains `R::Float64`, defaulted to `0.0`, documented in pu on the
+      **system** base like `X` is. **Keyword-only**, so all ~50 five-positional call
+      sites — including `reference/test/runtests.jl`'s two branch rebuilds — build a
+      bit-identical object, and `@test_throws MethodError` on a six-positional call
+      pins that there was never a positional form to have supplied it by accident.
+      `R ≥ 0` and not `> 0`: unlike `X`, which is a coupling denominator, zero is the
+      ordinary case. The rejection message says "governor droop" out loud, because
+      **`Machine.R` is a droop and `Branch.R` is a resistance** and the scenario file
+      gives them the same key in two different tables.
+- [x] `Branch`'s docstring states what is still absent — line charging (`B`) and
+      transformer taps — so incompleteness cannot be read as a modelling choice (D4).
+- [x] `Machine` gains `V_set`, `Q_min`, `Q_max`, keyword-only, with defaults that
+      reproduce today's behaviour exactly. **`V_set` defaults to `1.0`, NOT to
+      `E′`** — `E′` is the internal voltage behind `X′d` (behind `Ra + jXq` at the
+      detailed tier) and `V_set` is the magnitude at the terminal. M5 step 8 measured
+      what one number serving two denominations costs (a pre-event tier offset larger
+      than the disturbance it was drawn to show), so the two are separate numbers
+      from the first line. `Q_min`/`Q_max` take `Efd_min`/`Efd_max`'s form exactly,
+      `Inf` included, and every fixture in the repo is asserted to carry the defaults.
+- [x] `NetworkModel` gains `slack::Symbol`, validated to name a real bus. The
+      private field in `DetailedEngine` now reads the model's (D3) — **but as a
+      lookup, not a rename, because D3's "promotion" was not literally true.** See
+      D3's "What step 1 measured": the engine's slack is a MACHINE and the model's is
+      a BUS, so the keyword stays a machine and only the default moved, and the
+      model's default derives from `machines[1].bus` (not `buses[1].id`) which is
+      what makes it bit-identical to the old `ids[1]`.
+- [x] Bus roles derived, not stored — `bus_roles(net)` / `bus_role(net, bus)`, both
+      checked clear against `names(GLMakie)` before export. Rejection cases tested: a
+      slack naming a missing bus (rejected by the model, with the message naming
+      every bus it could have been), a bus that is not in the model (`bus_role`), and
+      **a declared slack carrying no machine, which the MODEL accepts and the ENGINE
+      refuses** — M5 D3's precedent, and the thing that keeps a half-built editor
+      draft constructible.
+- [x] **Gate — the invariant, and it is TWO claims, not one:** (a) **the full core
+      suite passes with every one of the 2835 pre-existing tests green** (2899 total,
+      exit 0, no failures); and (b) **M5's criterion numbers are bit-identical**.
+      (b) was checked the only way it can be — a harness
+      (`W:\temp\claude\gridsim-m6\criterion_snapshot.jl`) that prints the slip
+      boundary, the classical / frozen / flux-only / criterion cells and all 14 swept
+      cells at shortest-round-trip precision, **captured at HEAD before the first
+      edit** (the numbers stop existing the moment the tree changes) and diffed after.
+      Captures: `criterion-HEAD.txt` / `criterion-STEP1.txt`. **Both captures are bit-identical** — 169 printed values, same MD5 (`c79b7c07d039b66efdeff10e45e88305`), the only textual difference being three precompilation lines the second run emitted. So the criterion cell's `over = 1.0295274854320615`, the frozen control's `0.9613881912556272` against a derived ceiling of `5287.640840616782`, the 5,500 MW boundary and all 14 swept cells are unchanged **to the bit**, not merely within M5's tolerances.
+- [x] **The field has five readers, so check five.** `Branch.X` is read by
+      `branch_arrays`, `SwingEngine`'s edge model, both `DetailedEngine` edge models
+      and `branch_power`. **All five are stated as DELIBERATELY UNCHANGED**, and the
+      statement is executed rather than asserted about: the same model with and
+      without `R` gives `branch_topology`/`branch_arrays` outputs equal under `===`,
+      i.e. bit equality rather than `≈`.
+- [x] **Anti-vacuity mutation — re-scoped, because the planned one could not pass.**
+      Every one of those five readers is lossless *by construction*, so there is no
+      number for a non-zero `R` to move, and making one would be a physics change
+      inside the step whose gate forbids it. What `R ≠ 0` does instead is make every
+      tier **refuse the model by name** (`_assert_lossless_branches`, wired into
+      `SwingEngine`, `DetailedEngine` and `reference/`'s `build_oracle`) — M5's
+      `Load`-ZIP-shares shape exactly. So the field is demonstrably not inert, and the
+      **numerical** mutation moves to step 3's losses identity, where a resistance
+      that fails to reach the residual equations is red. Recorded in D4.
+- [x] No `Pkg` operation was needed — `NonlinearSolve` and `SparseArrays` become
+      direct dependencies in step 2, not here, so there is no `Project.toml` to diff.
+
+### What this step found that the plan did not anticipate
+
+**F1 — the step could not be confined to the model file, and a guard is the
+reason.** `test/scenario_file.jl` asserts `fieldnames(Machine) == (:id, :bus,
+_MACHINE_FIELDS...)`; growing `Machine` turns it red until the writer grows too.
+That is the guard doing precisely its stated job, so the file work for the three
+machine fields is step 1's, and `Branch.R` plus the top-level `slack` key went in
+beside it rather than leaving a window in which the file silently drops a field.
+What is still step 5's is the **decision** in D8 — the slack's read-side default
+becoming a rejection, its message, and the pre-M6 round-trip test.
+
+**F2 — two UI integration sites the plan named neither of.** `ui/src/editor.jl`
+rebuilt `Bus`/`Branch`/`Load` by splatting `fieldnames` into the positional
+constructor, which a keyword-only `Branch.R` breaks outright; `Branch` now has its
+own rebuild method, as `Machine` already did. And the editor had to start
+**carrying** the slack through open / save / rename / delete, because otherwise
+opening a file with a declared slack and saving it re-defaults it silently — D8's
+failure mode arriving through the UI rather than through the reader.
+
+**F3 — a guard's stated reason went stale even though its arithmetic did not.**
+`NetworkModel`'s Σ-balance guard justified itself with "the network is lossless in
+P". With `Branch.R` in the model that reason is conditional. The guard still
+*works* — it is the schedule balance at nominal voltage, where no branch quantity
+appears at all — so it is annotated in place rather than changed, with a pointer to
+where a lossy model's balance actually gets checked (step 3's slack-pickup
+identity). Same habit that turned step 0's one owed SPEC annotation into six.
+
+**F4 — owed to step 5, named now so it is not discovered.**
+`docs/scenarios/three-machine-ring.toml` is a genuine pre-M6 file with no slack
+key, and it is the file `ui/README.md` tells a reader to open. It reads correctly
+today on the read-side default; when step 5 turns that default into a rejection,
+the file **and the documented entry point** break unless step 5 updates both.
 
 ---
 

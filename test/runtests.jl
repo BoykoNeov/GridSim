@@ -58,5 +58,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m4_playback.jl"))
     include(joinpath(@__DIR__, "m5_detailed.jl"))
     include(joinpath(@__DIR__, "scenario_file.jl"))
+    include(joinpath(@__DIR__, "m6_steady_state.jl"))
 
 end

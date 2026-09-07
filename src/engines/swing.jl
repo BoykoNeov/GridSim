@@ -583,6 +583,7 @@ cannot.
 function _assert_classical_tier(net::NetworkModel)
     _assert_one_machine_per_bus(net, "SwingEngine")
     _assert_frozen_flux(net, "SwingEngine")
+    _assert_lossless_branches(net, "SwingEngine")   # M6 step 1 — R is validated, not read
     isempty(net.loads) || throw(ArgumentError(
         "SwingEngine: the model carries $(length(net.loads)) Load(s) " *
         "($(join([l.id for l in net.loads], ", "))). The classical tier represents " *

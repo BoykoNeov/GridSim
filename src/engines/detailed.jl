@@ -573,6 +573,10 @@ Each rejection names the step that lifts it, so a boundary is never mistaken for
 bug.
 """
 function _assert_detailed_tier(net::NetworkModel)
+    # M6 step 1. `Branch.R` exists in the model and this tier's edge current is
+    # `(Vf − Vt)/(jX)`, so a lossy branch would be silently simulated as a lossless
+    # one. Refused here until M6 step 3's power flow reads it.
+    _assert_lossless_branches(net, "DetailedEngine")
     for (v, ks) in pairs(net.machines_at_bus)
         length(ks) <= 1 || throw(ArgumentError(
             "DetailedEngine: bus $(net.buses[v].id) carries $(length(ks)) machines " *
@@ -932,7 +936,7 @@ function _read_static(net::NetworkModel, bt, u::Vector{Float64}, p::Vector{Float
 end
 
 """
-    init!(DetailedEngine, net::NetworkModel; t0=0.0, dt=0.02, slack=first machine,
+    init!(DetailedEngine, net::NetworkModel; t0=0.0, dt=0.02, slack=the model's slack bus,
           solver=Rodas5P(), reltol, abstol, capacity)
 
 Build the detailed tier's engine: compile both networks, solve the power flow,
@@ -992,7 +996,22 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     ω₀ = 2π * net.f0
     t0f = Float64(t0)
 
-    slack_id = slack === nothing ? ids[1] : slack
+    # M6 step 1 (`m6-context.md` D3). The KEYWORD still names a MACHINE — a rotor
+    # angle is what this engine pins, and a passive bus has none — but the DEFAULT
+    # now reads the model's declared reference bus instead of "whichever machine
+    # came first". On every pre-M6 model those are the same machine to the bit:
+    # `NetworkModel` defaults `slack` to `machines[1].bus` after the bus sort, so
+    # its first machine is `net.machines[1]`, which is what `ids[1]` was.
+    slack_id = slack
+    if slack_id === nothing
+        ks = net.machines_at_bus[net.bus_index[net.slack]]
+        isempty(ks) && throw(ArgumentError(
+            "DetailedEngine: the model's slack bus :$(net.slack) carries no machine. " *
+            "The slack supplies the angle reference, so it must be a machine — a " *
+            "passive bus has no rotor angle to pin. Declare a slack bus that carries " *
+            "one, or pass `slack = <machine id>` explicitly."))
+        slack_id = net.machines[ks[1]].id
+    end
     k_slack = findfirst(==(slack_id), ids)
     k_slack === nothing && throw(ArgumentError(
         "DetailedEngine: slack = :$slack_id is not a machine in this model " *

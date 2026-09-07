@@ -301,6 +301,10 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         "build_oracle: tier must be :swing, :classical, :sauer_pai or " *
         ":sauer_pai_avr, got :$tier."))
     _assert_governor_free(net)
+    # M6 step 1. The oracle's own line model is `(Vf − Vt)/(jX)` too (see the tier
+    # sections below), so a lossy branch is refused here for the same reason
+    # `SwingEngine` and `DetailedEngine` refuse it: it would be silently dropped.
+    GridSim._assert_lossless_branches(net, "build_oracle")
 
     # The two detailed tiers share every mapping but the injector: `:sauer_pai` puts
     # the machine on the bus with its field voltage HELD, `:sauer_pai_avr` wraps it
