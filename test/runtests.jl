@@ -57,5 +57,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m3_two_area.jl"))
     include(joinpath(@__DIR__, "m4_playback.jl"))
     include(joinpath(@__DIR__, "m5_detailed.jl"))
+    include(joinpath(@__DIR__, "scenario_file.jl"))
 
 end

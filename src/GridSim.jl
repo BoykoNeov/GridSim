@@ -48,6 +48,9 @@ include("model/system_model.jl")
 # The aggregate `SystemModel` above is not replaced: at M2 step 6 it becomes a
 # compiled *view* of this one (`coi_model`), per SPEC §3.2.
 include("model/network_model.jl")
+# The model on disk (TOML, a stdlib) with the editor's map positions beside it
+# and never inside it — SPEC §3.5, render state is not simulation state.
+include("model/scenario_file.jl")
 
 # --- perturbation events (live injection) ---
 include("events/events.jl")
@@ -122,6 +125,11 @@ export machine_arrays, branch_arrays, machine_at
 # check since M1: `Load`, `load_arrays`, `branch_topology`, `machines_at`, `load_at`.
 export Load, load_arrays, branch_topology, machines_at, load_at
 export two_machine_system, three_machine_ring
+# The scenario file: a `NetworkModel` round-tripped through TOML, with the map
+# layout as a separate return rather than a field of `Bus`. `Layout` is a type
+# alias the editor names in a signature. All three checked clear against GLMakie's
+# exports before being added (2026-09-07) — the standing check.
+export write_scenario, read_scenario, Layout
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

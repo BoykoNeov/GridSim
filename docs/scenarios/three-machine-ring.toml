@@ -1,0 +1,105 @@
+name = "three-machine ring"
+S_base = 100.0
+f0 = 50.0
+loads = []
+
+[layout]
+B1 = [0.0, 1.0]
+B2 = [0.866025, -0.5]
+B3 = [-0.866025, -0.5]
+
+[[buses]]
+id = "B1"
+V_base = 400.0
+[[buses]]
+id = "B2"
+V_base = 400.0
+[[buses]]
+id = "B3"
+V_base = 400.0
+
+[[branches]]
+id = "L12"
+from = "B1"
+to = "B2"
+X = 0.25
+rating = 500.0
+[[branches]]
+id = "L23"
+from = "B2"
+to = "B3"
+X = 0.25
+rating = 500.0
+[[branches]]
+id = "L31"
+from = "B3"
+to = "B1"
+X = 0.25
+rating = 500.0
+
+[[machines]]
+id = "G1"
+bus = "B1"
+S_rated = 300.0
+H = 4.0
+D = 2.0
+Xd_p = 0.3
+E_p = 1.05
+P0 = 80.0
+R = +inf
+Pmax = 80.0
+Tg = 1.0
+Xd = 0.3
+Xq = 0.3
+Xq_p = 0.3
+Td0_p = +inf
+Tq0_p = +inf
+Ra = 0.0
+K_A = 0.0
+T_E = +inf
+Efd_min = -inf
+Efd_max = +inf
+[[machines]]
+id = "G2"
+bus = "B2"
+S_rated = 200.0
+H = 3.0
+D = 2.0
+Xd_p = 0.2
+E_p = 1.03
+P0 = 30.0
+R = +inf
+Pmax = 30.0
+Tg = 1.0
+Xd = 0.2
+Xq = 0.2
+Xq_p = 0.2
+Td0_p = +inf
+Tq0_p = +inf
+Ra = 0.0
+K_A = 0.0
+T_E = +inf
+Efd_min = -inf
+Efd_max = +inf
+[[machines]]
+id = "G3"
+bus = "B3"
+S_rated = 500.0
+H = 5.0
+D = 2.0
+Xd_p = 0.5
+E_p = 1.04
+P0 = -110.0
+R = +inf
+Pmax = -110.0
+Tg = 1.0
+Xd = 0.5
+Xq = 0.5
+Xq_p = 0.5
+Td0_p = +inf
+Tq0_p = +inf
+Ra = 0.0
+K_A = 0.0
+T_E = +inf
+Efd_min = -inf
+Efd_max = +inf
