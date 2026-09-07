@@ -1220,3 +1220,188 @@ end
 end
 
 end # M5 step 4
+
+# ===========================================================================
+# M5 step 5 — the UNLIMITED exciter against PowerDynamics' AVRTypeI
+# ===========================================================================
+#
+# WHAT IS COMPARED, AND WHAT DELIBERATELY IS NOT. Our exciter is one lag with hard
+# limits on the field voltage. `AVRTypeI` degenerates onto the lag exactly
+# (`Kf = 0`, `Se1 = Se2 = 0`, `Ke = 1`, `tmeas_lag = false`, `Ta → 0`) and does NOT
+# have our limits: theirs sit on the regulator output `vr`, one block upstream. So
+# the LIMITED exciter is refused by `build_oracle(tier = :sauer_pai_avr)` by name,
+# and gets its check from a closed form in the core suite instead — which is four
+# orders sharper than this comparison anyway. This is the unlimited loop only.
+#
+# THE FIXTURE IS `infinite_bus_system`, NOT `regulator_bus_system`, and the reason
+# is structural rather than a preference: `_assert_sauer_pai_tier` refuses a
+# machine-free bus, and the three-path fixture's junctions are exactly that. Two
+# buses, two machines, no load — which also means a line trip would island the
+# machine, so the disturbance is a **setpoint step**: a parameter on our side
+# (`Vref_pidx`) and a parameter on theirs (`gen₊avr₊vref`), needing no event type.
+#
+# AND IT MAKES THE COMPARISON UNUSUALLY CLEAN. At zero loading `ω ≡ 1` exactly on
+# both sides, so the stator-`ω` residual that held M5 step 4's external oracle to
+# ~10 % vanishes IDENTICALLY here. The only difference left between the two models
+# is the exciter's own extra lag.
+#
+# THE BAND, DERIVED AND WRITTEN BEFORE THE GAP WAS SEEN. `Ta → 0` is a LIMIT, not a
+# setting — their `Ta` multiplies a derivative, so zero would change the structure
+# of their model — which means this comparison is one lag richer than ours by
+# construction. To first order the extra lag delays the amplifier by `Ta`, so the
+# field-voltage gap is `≈ Ta·dEfd/dt ≈ Ta·K_A·ΔVref/T_E`, and against the
+# excursion itself (`≈ K_A·ΔVref/(1 + G)`, with `G` the DC loop gain) the
+# RELATIVE gap is
+#
+#     Ta·(1 + G)/T_E
+#
+# That is a prediction with `Ta` in it, so the check that matters is not its size
+# but its SIGNATURE: halve `Ta` and the gap halves. A tolerance cannot be wrong in
+# a way a signature cannot.
+# ===========================================================================
+
+# One GridSim run and one PowerDynamics run of the same setpoint step, on one grid.
+function both_avr(net, tspan, grid; ΔVref = 0.02, avr_Ta = 0.001,
+                  reltol = 1.0e-9, abstol = 1.0e-12)
+    eng  = init!(DetailedEngine, net; slack = :G_inf, reltol = reltol, abstol = abstol)
+    case = build_oracle(net; tier = :sauer_pai_avr, avr_Ta = avr_Ta)
+    # THE STEP GOES IN ON BOTH SIDES FROM THE SAME NUMBER. `Vref` is DERIVED at
+    # initialisation on our side, so it is read off the engine rather than
+    # recomputed here — the two sides cannot come to disagree about what the
+    # pre-disturbance setpoint was.
+    k, v = 1, case.mach_bus[1]
+    Vref = eng.params[eng.Vref_pidx[k]] + ΔVref
+    eng.params[eng.Vref_pidx[k]] = Vref
+    case.s0.p.v[v, :gen₊avr₊vref] = Vref
+    ours   = solve!(eng, tspan; saveat = grid)
+    theirs = oracle_solve(case, tspan; saveat = grid, reltol = reltol, abstol = abstol)
+    return ours, theirs, case
+end
+
+@testset "M5 step 5 — the unlimited exciter against AVRTypeI" begin
+
+# ===========================================================================
+@testset "the flat run: two exciters at rest at the same point" begin
+    # Before anything moves, the seeding has to be right: their `vfout` and `vr`
+    # both sit at OUR dispatched field voltage, and their `vref` is OUR derived
+    # setpoint. If any of the three were off, this run would show a startup
+    # transient on one side only — which is exactly what a supplied (rather than
+    # derived) setpoint would produce, and the reason ours is derived.
+    net  = infinite_bus_system(; K_A = 20.0, T_E = 0.5)
+    grid = collect(0.0:0.05:10.0)
+    for (rt, at) in ((1.0e-9, 1.0e-12), (1.0e-6, 1.0e-9))
+        o, t, _ = both_avr(net, (0.0, 10.0), grid; ΔVref = 0.0, reltol = rt, abstol = at)
+        @test keys(o) == keys(t)
+        for k in keys(o)
+            k === :t && continue
+            a, b = getproperty(o, k), getproperty(t, k)
+            @test maximum(abs, a .- a[1]) < 1.0e-8       # ours is flat
+            @test maximum(abs, b .- b[1]) < 1.0e-8       # so is theirs
+            @test maximum(abs, a .- b)    < 1.0e-8       # …at the same place
+        end
+        # …and the exciter is actually armed, not a fixed field wearing its name.
+        @test machine_arrays(net).K_A[1] == 20.0
+        @test machine_arrays(net).T_E[1] == 0.5
+    end
+end
+
+# ===========================================================================
+@testset "the setpoint step: the gap is FIRST ORDER IN Ta, and halves with it" begin
+    net  = infinite_bus_system(; K_A = 20.0, T_E = 0.5)
+    grid = collect(0.0:0.02:10.0)
+    ma   = machine_arrays(net)
+    Xe   = net.branches[1].X + ma.Xd′[2]
+    G    = ma.K_A[1] * Xe / (Xe + ma.Xd[1])
+    @test Xe ≈ 0.25 atol = 1.0e-12
+    @test G ≈ 5.1546 rtol = 1.0e-4
+
+    ΔV = 0.02
+    excursion = ma.K_A[1] * ΔV / (1 + G)                 # the closed-loop DC move
+    gaps = Float64[]
+    for Ta in (0.001, 0.0005)
+        o, t, case = both_avr(net, (0.0, 10.0), grid; ΔVref = ΔV, avr_Ta = Ta)
+        @test case.avr_Ta == Ta
+        @test case.regulated == [true, false]            # G_inf got an AVRFixed
+        # The machine really did move, on both sides, by the predicted amount.
+        @test o.Efd_G1[end] - o.Efd_G1[1] ≈ excursion rtol = 1.0e-3
+        @test t.Efd_G1[end] - t.Efd_G1[1] ≈ excursion rtol = 1.0e-3
+        push!(gaps, gap(o, t, :Efd_G1))
+        # THE BAND, from the formula above and not from the gap.
+        @test gaps[end] < 3 * Ta * (1 + G) / ma.T_E[1] * excursion
+    end
+    # ── THE SIGNATURE. Halving `Ta` halves the gap; a difference that behaved
+    #    otherwise would not be the missing amplifier lag.
+    @test gaps[2] / gaps[1] ≈ 0.5 rtol = 0.15
+    # …and it is a resolved comparison rather than round-off: the gap is far above
+    # what either side's own convergence would explain.
+    @test gaps[1] > 1.0e-6
+
+    # ── THE STATOR-ω RESIDUAL IS ABSENT HERE, AND THAT IS ASSERTED, NOT ASSUMED.
+    #    It is the term that held step 4's external oracle to ~10 %, it is first
+    #    order in slip, and at zero loading the rotor does not move at all.
+    o, t, _ = both_avr(net, (0.0, 10.0), grid; ΔVref = ΔV, avr_Ta = 0.001)
+    @test maximum(abs, o.ω_G1) < 1.0e-12
+    @test maximum(abs, t.ω_G1) < 1.0e-12
+    @test maximum(abs, o.δ_G1 .- o.δ_G1[1]) < 1.0e-9
+end
+
+# ===========================================================================
+@testset "the tier refuses what it cannot compare, by name" begin
+    # A LIMITED exciter has no counterpart: their limits are on `vr`, ours on
+    # `Efd`. Refused rather than compared, because the gap would be read as a
+    # fidelity finding.
+    lim = infinite_bus_system(; K_A = 20.0, T_E = 0.5)
+    lim2 = NetworkModel(lim.S_base, lim.f0, lim.buses, lim.branches,
+        [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
+                 m.Tg; Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = m.Td0′,
+                 Tq0′ = m.Tq0′, Ra = m.Ra, K_A = m.K_A, T_E = m.T_E,
+                 Efd_min = m.Efd_min, Efd_max = m.id === :G1 ? 2.0 : m.Efd_max)
+         for m in lim.machines])
+    @test_throws ArgumentError build_oracle(lim2; tier = :sauer_pai_avr)
+    # A case with no live regulator anywhere is `:sauer_pai` wearing a costume.
+    @test_throws ArgumentError build_oracle(infinite_bus_system(); tier = :sauer_pai_avr)
+    # `Ta` is their amplifier's denominator, and zero would restructure their model.
+    @test_throws ArgumentError build_oracle(infinite_bus_system(; K_A = 20.0, T_E = 0.5);
+                                            tier = :sauer_pai_avr, avr_Ta = 0.0)
+    # And the HELD-field tier refuses a machine carrying a regulator, so an exciter
+    # cannot be silently dropped by picking the wrong tier.
+    @test_throws ArgumentError build_oracle(infinite_bus_system(; K_A = 20.0, T_E = 0.5);
+                                            tier = :sauer_pai)
+end
+
+# ===========================================================================
+@testset "anti-vacuity: the comparison can see the exciter at all" begin
+    # If the AVR were not actually wired to the machine's field input, every check
+    # above would still pass — their machine would hold its seeded `vf` and ours
+    # would move, but a small enough step makes that look like agreement. So the
+    # GAIN is mutated on one side and the two must come apart by the predicted
+    # amount: doubling `K_A` doubles the excursion, which is a different number
+    # from the one a disconnected exciter would produce (zero).
+    net  = infinite_bus_system(; K_A = 20.0, T_E = 0.5)
+    big  = infinite_bus_system(; K_A = 40.0, T_E = 0.5)
+    grid = collect(0.0:0.02:10.0)
+    o1, t1, _ = both_avr(net, (0.0, 10.0), grid; ΔVref = 0.02)
+    o2, t2, _ = both_avr(big, (0.0, 10.0), grid; ΔVref = 0.02)
+    ma  = machine_arrays(net)
+    Xe  = net.branches[1].X + ma.Xd′[2]
+    G1  = 20.0 * Xe / (Xe + ma.Xd[1])
+    G2  = 40.0 * Xe / (Xe + ma.Xd[1])
+    # Both sides move, and both land on the closed-loop DC gain for their OWN K_A.
+    @test o2.Efd_G1[end] - o2.Efd_G1[1] ≈ 40.0 * 0.02 / (1 + G2) rtol = 1.0e-3
+    @test t2.Efd_G1[end] - t2.Efd_G1[1] ≈ 40.0 * 0.02 / (1 + G2) rtol = 1.0e-3
+    # …and the two gains give a different answer on THEIR side too — which is what
+    # says their exciter is connected rather than seeded and idle.
+    #
+    # THE SIZE OF THAT DIFFERENCE IS NOT THE OBVIOUS ONE, and the threshold written
+    # here first (`> 0.05`, i.e. "doubling the gain should roughly double the move")
+    # was wrong by an order of magnitude. Doubling `K_A` doubles `G` too, and the
+    # closed-loop gain `K_A/(1 + G)` is already near its ceiling: 0.06499 against
+    # 0.07074, a difference of **0.00575**. Asserting the predicted difference is
+    # both sharper and correct where a threshold picked by eye was neither.
+    @test abs(t2.Efd_G1[end] - t1.Efd_G1[end]) ≈
+          abs(40.0 * 0.02 / (1 + G2) - 20.0 * 0.02 / (1 + G1)) rtol = 5.0e-3
+    @test abs(t2.Efd_G1[end] - t1.Efd_G1[end]) > 1.0e-3      # …and not a null move
+    @test abs(t2.V_B1[end] - t1.V_B1[end]) > 1.0e-3
+end
+
+end # M5 step 5
