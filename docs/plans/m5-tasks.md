@@ -1168,8 +1168,15 @@ equivalence is a property of two *other* invariants rather than of this code.
       labelled, `un-oracled` rows stated out loud. Step 8's own section added; the
       passive bus is the `un-oracled — out of reach` row.
 - [x] `docs/plans/README.md` M5 row updated as steps land.
-- [ ] Re-resolve all three environments from deleted manifests at the end, as M4
+- [x] Re-resolve all three environments from deleted manifests at the end, as M4
       step 5 did — the gitignored-manifest trap has now caught this repo twice
-      (`m4-context.md` D15, and the 2026-08-18 stale dev manifest).
+      (`m4-context.md` D15, and the 2026-08-18 stale dev manifest). Done: all three
+      manifests deleted and re-resolved, giving **NetworkDynamics 1.3.0, GLMakie
+      0.13.14** (up from 0.13.13, on which the standing export-collision check was
+      last measured — re-run, still empty) and **PowerDynamics 5.0.0**. All three
+      suites then re-run ON the fresh manifests: **2835 core / 382 UI / 986
+      reference**. The reference count in particular is MEASURED here and not
+      carried over — quoting it from the old manifest, in the commit that replaced
+      that manifest, is exactly M4 step 5's "same counts, but nobody knew".
 - [x] `Pkg.add` rewrites `Project.toml` and drops every comment — `git diff` after
       any dependency change and put them back. No dependency changed in step 8.

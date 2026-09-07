@@ -771,6 +771,12 @@ slider and a cursor at the flat start shows nothing. Note that this is the large
 panel is the pre-event offset, and putting the saved cursor there would frame the
 one number on the panel that is an artefact.
 
+**On the shipped scenario that lands on the LAST sample**, and that is the answer
+rather than an edge to be avoided: the response is monotone to a new equilibrium, so
+the furthest the voltage ever gets from where it started is where it settles. It is
+not the last sample by construction — the frozen-flux control overshoots and
+recovers, and its frame is cursored at sample 165 of 3001.
+
 It is moved through `set_close_to!` on the very slider a user drags, not by writing
 the cursor directly.
 """

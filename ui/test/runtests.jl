@@ -96,12 +96,17 @@ pb_gen() = PWIN(three_machine_ring(); horizon = 60.0,
 # `vw_avr()` arms the exciter.
 #
 # MEMOISED, because each one solves a 60 s DAE at reltol 1e-5 and several testsets
-# want the same window. `Ref{Any}` rather than recomputing: M4's playback tests
-# re-solved per testset and this tier is an order of magnitude dearer.
+# want the same window — `vw_flux()` is asked for about ten times. M4's playback
+# tests re-solved per testset and this tier is an order of magnitude dearer.
+#
+# `get!(build, dict, key)` and NOT `get!(dict, key, build())`: the three-argument
+# form evaluates its default EAGERLY, so it would solve the DAE on every call and
+# then throw the result away whenever the key was already there — a cache that
+# costs exactly what having no cache costs, while reading as though it does not.
 const VBUILD = GridSimUI._build_voltage_window
 const VWIN = GridSimUI._voltage_window
 const _VW_CACHE = Dict{Symbol,Any}()
-_vw(key, build) = get!(_VW_CACHE, key, build())
+_vw(key, build) = get!(build, _VW_CACHE, key)
 
 vw_flux() = _vw(:flux, () -> VWIN())
 vw_frozen() = _vw(:frozen, () -> VWIN(governed_ring(), governed_ring()))
@@ -1065,9 +1070,18 @@ end
         i = GridSimUI._peak_movement_index(win)
         moved = maximum(abs(v[i] - v[1]) for v in win.V)
         @test moved ≈ maximum(win.excursions)
-        # ...and it is not simply "the last sample" by construction: on the run that
-        # rises and settles it is still where the movement peaks.
-        @test i in eachindex(win.t)
+        # ON THE SHIPPED RUN THAT IS THE LAST SAMPLE, and saying so is the point.
+        # The response is monotone to a new equilibrium, so the largest movement is
+        # the settled value — which is the answer here, not an edge artefact.
+        @test i == lastindex(win.t)
+        # ANTI-VACUITY: that is a property of THIS run and not of the function, so
+        # without a run whose peak is interior, "the cursor is placed on the
+        # movement" cannot be told from "the cursor is always placed at the end".
+        # The frozen-flux control overshoots and recovers, and its peak lands at
+        # sample 165 of 3001.
+        j = GridSimUI._peak_movement_index(vw_frozen())
+        @test j < lastindex(win.t)
+        @test j > firstindex(win.t)
     end
 
     # --- the scenario editor (its own file; see the header there) --------------
