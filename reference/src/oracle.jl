@@ -179,19 +179,16 @@ end
 # divides by `X′_d − X_ls`, so `X_ls = X′_d` is a division by zero inside somebody
 # else's component, which surfaces as a NaN trajectory rather than as an error.
 function _assert_sauer_pai_tier(net::NetworkModel, X_ls::Vector{Float64})
-    isempty(net.loads) || throw(ArgumentError(
-        "build_oracle(tier = :sauer_pai): the model carries $(length(net.loads)) load(s) " *
-        "($(join([l.id for l in net.loads], ", "))). A voltage-dependent load has a " *
-        "PowerDynamics counterpart (`ZIPLoad`) and it is plan step 6, not step 3 — " *
-        "refused rather than silently dropped, because a load quietly absent from " *
-        "one side of a comparison is a physics disagreement that is not one."))
+    # THE TWO REJECTIONS THAT USED TO BE HERE ARE GONE, AND M5 STEP 6 IS WHY. A
+    # load is now a `ZIPLoad` injector on its bus and a machine-free bus is now
+    # `MTKBus()` with the load as its only injector (or with none at all, for a
+    # bare junction) — both expressible all along, and both unbuilt until the step
+    # that needed them. Nothing replaces them: the one restriction the mapping does
+    # carry is on OUR side (they give `P` and `Q` separate share triples and we give
+    # them one), so there is nothing about the model in hand to refuse. It is stated
+    # in `_zip_injector` instead.
     for (v, ks) in pairs(net.machines_at_bus)
-        isempty(ks) && throw(ArgumentError(
-            "build_oracle(tier = :sauer_pai): bus $(net.buses[v].id) carries no machine. " *
-            "`DetailedEngine` represents that as a passive algebraic node and " *
-            "PowerDynamics would need a bus with no injector — expressible, unbuilt, " *
-            "and it arrives with the loads in plan step 6."))
-        length(ks) == 1 || throw(ArgumentError(
+        length(ks) == 1 || isempty(ks) || throw(ArgumentError(
             "build_oracle(tier = :sauer_pai): bus $(net.buses[v].id) carries " *
             "$(length(ks)) machines. `DetailedEngine` refuses this too " *
             "(`_assert_detailed_tier`), for the same reason and with the same status: " *
@@ -339,6 +336,19 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         # the same frozen-flux assumption — did not. Core's own guard is called
         # rather than copied, so the three cannot drift apart.
         GridSim._assert_frozen_flux(net, "build_oracle(tier = :$tier)")
+        # A LOAD HAS NO HOME AT THE CLASSICAL TIER on either side, and saying so
+        # here rather than letting it surface is the M5 step 6 addition. `SwingEngine`
+        # refuses a model carrying `Load` outright (a constant-magnitude `E` behind a
+        # reactance holds voltage up by construction, so a voltage-dependent draw is
+        # not representable), and this builder would otherwise construct a
+        # PowerDynamics network with the load quietly absent and only fail several
+        # hundred lines later, inside the seed.
+        isempty(net.loads) || throw(ArgumentError(
+            "build_oracle(tier = :$tier): the model carries $(length(net.loads)) " *
+            "load(s) ($(join([l.id for l in net.loads], ", "))). A voltage-dependent " *
+            "load is a DETAILED-tier object — `SwingEngine` refuses it too, and for " *
+            "the same reason. Use tier = :sauer_pai, where M5 step 6 maps it onto " *
+            "`ZIPLoad`. This is a tier boundary, not unbuilt work."))
         # Called explicitly, not left to the `SwingEngine` at the bottom of this
         # function: everything between here and there indexes `machine_arrays` BY
         # VERTEX, which is only legal once one-machine-per-bus holds. Since M5
@@ -394,9 +404,15 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     buses = NetworkDynamics.VertexModel[]
     mach_of_bus = zeros(Int, nb)
     for k in eachindex(mach_bus); mach_of_bus[mach_bus[k]] = k; end
+    # Loads by VERTEX (M5 step 6). `load_arrays` is the one place a load converts,
+    # on our side and therefore on this one — the module header's rule about the
+    # model applied to a unit conversion.
+    la = load_arrays(net)
+    load_of_bus = zeros(Int, nb)
+    for j in eachindex(la.bus); load_of_bus[la.bus[j]] = j; end
     for v in 1:nb
         k = mach_of_bus[v]
-        inj = if detailed
+        inj = k == 0 ? nothing : if detailed
             # `SauerPaiMachine` is SIXTH order; ours is fourth. The mapping is its
             # `X″ = X′` degeneration, where `γ_1 = 1` and `γ_2 = 0` EXACTLY, and
             # every remaining line collapses onto `m5-prestudy.md` §2 with nothing
@@ -454,7 +470,18 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
                                        X′_d = ma.Xd′[v], H = ma.H[v], D = ma.D[v],
                                        vf_set = ma.E[v], τ_m_set = ma.Pm[v])
         end
-        b = compile_bus(MTKBus(inj); vidx = v, name = net.buses[v].id)
+        # A BUS IS ITS INJECTORS, and after step 6 there may be nought, one or two
+        # of them. `MTKBus(mach, load)` is the shape their own docstring draws, and
+        # `MTKBus()` — a bare Kirchhoff node — is what a junction with neither is.
+        # Our side has exactly the same three cases: a machine vertex, a machine
+        # vertex whose `G`/`B` are non-zero, and a passive vertex.
+        j = load_of_bus[v]
+        mtk = if inj === nothing
+            j == 0 ? MTKBus() : MTKBus(_zip_injector(la, j))
+        else
+            j == 0 ? MTKBus(inj) : MTKBus(inj, _zip_injector(la, j))
+        end
+        b = compile_bus(mtk; vidx = v, name = net.buses[v].id)
         if !isempty(gen_trip_times[v])
             psym = tier === :swing ? _ms(mpfx, "Pm") : _ms(mpfx, "τ_m_set")
             aff = ComponentAffect([], [psym]) do u, p, ctx
@@ -509,6 +536,48 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips,
                       bus_ids, mach_bus, X_ls, mpfx, regulated, Float64(avr_Ta))
 end
+
+"""
+    _zip_injector(la, j) -> ZIPLoad
+
+Our `Load` as PowerDynamics' `ZIPLoad` (M5 step 6). **Four convention questions
+were settled by reading their source before any band was written down**, which is
+the rule M4 step 4 paid for — that step's plan named the wrong component and the
+source said so.
+
+**1. The sign is an INJECTION, so a drawing load is NEGATIVE.** Their equations are
+`terminal.i_r ~ real(S/u)`, `i_i ~ -imag(S/u)`, i.e. `i = conj(S)/conj(u)` — the
+current the component pushes INTO the bus. Their own `Pset` carries `guess = -1`
+and their `ConstantYLoad` writes `iload = -Y·u`, so both say the same thing. Ours
+is the opposite: `Load.P0` is positive when consuming, and the engine SUBTRACTS
+`_load_current` in the Kirchhoff sum. So `Pset = -P`, `Qset = -Q`, and the two
+sides then hold the same equation rather than the same numbers.
+
+**2. Their shares normalise where ours do.** `Vrel = |V|/Vset` with `Vset = 1`
+gives `P = Pset(KpZ|V|² + KpI|V| + KpC)`, which is our polynomial exactly. Had they
+normalised anywhere else, `P₀` and `Pset` would denominate different quantities and
+the comparison would be measuring the normalisation rather than the load model.
+
+**3. It carries no state.** Every equation is algebraic, so this injector adds
+nothing to seed — which is why `_seed_sauer_pai!` is untouched by this step and
+why the band below is not one lag richer the way `AVRTypeI`'s is.
+
+**4. THEIR MODEL IS STRICTLY MORE GENERAL THAN OURS, and the restriction is on our
+side.** They carry SEPARATE share triples for `P` and `Q` (`KpZ/KpI/KpC` against
+`KqZ/KqI/KqC`); `Load` carries one triple and applies it to both. So the mapping
+sends our single triple to both of theirs, and a `ZIPLoad` whose two triples differ
+is a model we cannot express — a real restriction, recorded here rather than
+discovered as a disagreement later.
+
+`KpC` and `KqC` have DEFAULT EXPRESSIONS on their side (`1 - KpZ - KpI`) that would
+compute the right thing. All six are passed anyway, for this file's standing
+reason: a default is not a guarantee.
+"""
+_zip_injector(la, j::Int) = Library.ZIPLoad(;
+    name = :load, Vset = 1.0,
+    Pset = -la.P[j], Qset = -la.Q[j],
+    KpZ = la.a_z[j], KpI = la.a_i[j], KpC = la.a_p[j],
+    KqZ = la.a_z[j], KqI = la.a_i[j], KqC = la.a_p[j])
 
 """
     _with_exciter(mach, ma, k, regulated, Ta) -> CompositeInjector

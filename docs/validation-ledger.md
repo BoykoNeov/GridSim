@@ -125,7 +125,7 @@ to be written where the rows are, or the rows overclaim.
 | The `E′`-behind-`X′d` radial reduction `X − X′d,ᵢ − X′d,ⱼ` | Exact — proven by the *absence* of any loading-independent residual once the torque term is accounted for. Enforced structurally: branch degree ≠ 1 and a non-positive reduced reactance are both thrown | **external** + structural |
 | The oracle's own accuracy | Its self-convergence error is 3.5× ours at reltol 1e-3 and 18× at 1e-7 — **the floor is below us**, which is what D7 means by "not a ceiling" | convergence (measured) |
 
-## Detailed (DAE) tier — M5 steps 1-5, `src/engines/detailed.jl`
+## Detailed (DAE) tier — M5 steps 1-6, `src/engines/detailed.jl`
 
 External as of step 3: PowerDynamics' `SauerPaiMachine` at its `X″ = X′`
 degeneration, with the flux frozen on **both** sides. The rows below that say
@@ -155,7 +155,7 @@ what makes this comparison clean, and step 4 is what switches it on.
 | The rotor-frame convention (`Vd + jVq = V·e^{−j(δ−π/2)}`) | **One check, and the two that look like they cover it provably do not.** Both mutations run: a *reflected* frame is caught at build time by the fixpoint residual (5.03 against a 1e-10 gate); a *consistently turned* frame (δ → δ + π/2 at both sites) passes the residual, the air-gap-power identity and the flat run, and is caught only by asserting `E′d = 0` and `E′q = Machine.E′` at the degeneration — a turned frame lands `E′d = [1.05, 1.02]`, `E′q ≈ 0` | **structural (mutation-checked, both branches run)** |
 | The air-gap power's two expressions agree | Build-time: the two-axis bracket `E′d·Id + E′q·Iq + (X′q−X′d)·Id·Iq` against the phasor `Re(Ẽ·conj(I))`. Provably one quantity (both reduce to `Vd·Id + Vq·Iq + Ra·\|I\|²`), so a gap is the rotation disagreeing with the stator inversion. **Its reach is stated in the code**: it cannot see a globally consistent frame turn | derived (structural), **reach named** |
 | Detailed data handed to the classical tier | `_assert_frozen_flux` refuses `SwingEngine`, `coi_model` **and** `build_oracle(:swing)`/`(:classical)` by name (M5 steps 2-3, D17). `Ra` is in the list because it changes the *initialisation* even where it changes no dynamics. The third consumer calls core's own guard rather than a copy, so the three cannot drift | structural (guard); **all three entry points closed** |
-| ZIP `a_i`/`a_p`, `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built**, and each is refused by name at build time with the step that owns it. (The flux equations left this row in M5 step 4; **the regulator left it in step 5** — see the block below.) | **un-built, and refused rather than faked** |
+| `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built**, and each is refused by name at build time with the step that owns it. (The flux equations left this row in M5 step 4, the regulator in step 5, and **the ZIP shares in step 6** — see the block below.) | **un-built, and refused rather than faked** |
 
 ### The voltage regulator (M5 step 5)
 
@@ -177,6 +177,27 @@ runs on, so none of them moved.
 | …and whether the engines that still carry that guard are stalling | **They are not, and the reason is one number nobody chose.** A `SwingEngine` governor driven onto its headroom for 20,000 s LANDS — `ΔPm` settles **3.1e-11 pu above** its ceiling, inside the guard's absolute 1e-10 window with 3× to spare, `dt` around 0.09 s. The required window scales with the state's speed: a 1 s governor lag needs 3e-11, a 0.05 s exciter lag needs 5e-8 (500× the window). Left alone deliberately — changing the constant would move M2, M3 and M4 numbers | **measurement (margin quantified, not a fix)** |
 | A hard saturation is a discontinuous RHS | Swept over eight ceilings (1.05 … 3.0) at reltol 1e-9: seven complete, and `Efd_max = 1.2` does not — and it is isolated in the TOLERANCE too, completing at 1e-6 (overshoot 8.3e-6) and 1e-11 (6.1e-10) and failing only at the 1e-9 between them. Non-monotone in two parameters is conditioning at the kink, not a boundary. `FBDF` completes it (1.7e-9) and is asserted; which Rodas5P version fails where is not something a test should pin | **measurement (isolated failure, workaround asserted)** |
 | The exciter's steady-state gain, its lag, and the limits, against an outside implementation | See the `:sauer_pai_avr` block below — **the UNLIMITED loop only.** The limited exciter has no counterpart in `AVRTypeI` (their limits sit on the regulator output `vr`, one block upstream of the field voltage), and `build_oracle` refuses it by name rather than comparing two different models | **external (unlimited) / refused (limited)** |
+
+### Voltage-dependent load (M5 step 6)
+
+The ZIP load `P = P₀(a_z|V|² + a_i|V| + a_p)`, `Q` likewise. `Load` validated the
+three shares from step 1 and the engine refused the two it did not solve; step 6
+solves them, on the dynamic path and the power-flow path both. The default is
+`a_z = 1`, which is the constant-impedance load every pre-step-6 row above runs on,
+and it is **bitwise** what it was — so no earlier number moved.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| The ZIP current itself | Unit-tested with `===`, not `≈`, because both claims in its docstring are exact or nothing: the constant-impedance path is **bitwise** `I = (G + jB)·V`, and `k = 1` at `\|V\| = 1` for every share split (which is what makes `P₀` mean "drawn at nominal voltage"). Anti-vacuity in the same testset: away from `\|V\| = 1` the currents must differ, or a `k` hard-wired to one would pass both | **exact (`===`), with its own anti-vacuity** |
+| The two new shares are actually solved | **The three-way ORDERING of drawn power, which needs no tolerance.** The network is lossless, so `Σ Pm` at the solved point IS the draw, read off the engine's parameters rather than recomputed: `1.054270 < 1.074905 < 1.100000` pu at `\|V\| ≈ 0.977`, strictly ordered by algebra, with the bus voltage falling the other way. A build that ignored `a_i`/`a_p` makes all three identical — and `load_bus_system` solves below 1.0 pu precisely so they cannot coincide | **derived ordering (no tolerance chosen)** |
+| Each ZIP term's closed form | Three, one per term: `P₀\|V\|²` (step 1's), `P₀\|V\|`, and `P₀` **exactly** — the constant-power draw has no voltage in it at all, and matches the schedule to 8.9e-16 rather than to a power-flow tolerance | **closed form, 1e-14 (constant power)** |
+| The dynamic RHS and the power-flow RHS agree about the load | **The flat run**, which is the only check that can see them disagree: they are different vertex models calling the same function, and if one lacked the shares the fixpoint would not be an equilibrium of the equations integrated. Four splits × two tolerances, per channel, worst 1.2e-13 against a 1e-10 gate | self-consistency, per state |
+| …and the mutations that prove that flat run is not vacuous | **Both run, and one of them was found to be a DUPLICATE.** "Dynamic path drops the shares" gives +0.157 Hz — numerically the same run as step 1's `Pm`-from-schedule control, because both are the same 0.046 pu imbalance seen from opposite sides. The discriminating mutation is the mirror one (power flow constant-impedance, dynamics constant-power): **−0.15616 Hz**, and the SIGN is what is asserted | **positive control (sign); the duplicate is recorded, not hidden** |
+| The solve landed on the right branch of a two-valued problem | **The P-V nose, in closed form.** One machine feeding a machine-free load bus through `X`: `u² + u(2QX − E²) + (PX)² + (QX)² = 0` with `u = \|V\|²`, so a constant-power load is served at **two** voltages (0.971792 and 0.195244 pu), both honest roots of the same residual. The fixpoint matches the high root to 1e-9 | **closed form (exact), branch identified** |
+| How much a constant-power load can be served at all | **A DERIVED limit, not a chosen one**: `P_max = E√(E² − 4QX)/(2X)` = 1.62524 pu. At 1.62 pu the roots are still distinct and the solve returns an answer; at 1.63 pu the discriminant is negative and the fixpoint solver reports MaxIters. A limit derived on paper predicts to better than half a percent where somebody else's Newton stops converging. **And it is distinguished from the OTHER refusal**: at 1.30 pu the high root exists (0.885364, matched to six digits) and it is the `\|V\| ∈ [0.9, 1.1]` band that rejects the case, not the nose | **closed form (derived limit), 0.3 %** |
+| `\|V\| → 0` with a constant-power share | **Nothing, and deliberately — see `m5-context.md` D23.** The current diverges, because a load drawing constant power from a dead bus is a model with no solution. No low-voltage cut-over is added: its threshold is a parameter nobody has chosen, and step 7's collapse runs are the ones it would corrupt. PowerDynamics' own `ZIPLoad` carries no regularisation either (their `ConstantCurrentLoad` does) | **un-guarded BY DECISION, stated** |
+| Frequency-dependent load | **Nothing — it stays on the machine's `D`** until something measures the difference. Recorded in `Load`'s docstring and `m5-prestudy.md` §6 rather than silently omitted | **un-built, named** |
+| `P` and `Q` sharing one ZIP split | **A restriction on OUR side, found by reading their source.** `ZIPLoad` carries separate triples for `P` and `Q`; `Load` carries one and applies it to both, so a load whose two splits differ is not expressible here. Asserted in the oracle suite (both of their triples receive ours) rather than left in prose | **restriction, asserted** |
 
 ## External oracle for the detailed tier (M5 steps 3-4) — `SauerPaiMachine` at `X″ = X′`
 
@@ -236,14 +257,36 @@ oracle to ~10 % **vanishes identically** and the exciter is the only difference 
 | A regulator handed to the held-field tier | `build_oracle(tier = :sauer_pai)` calls core's own `_assert_no_regulator`, so an exciter cannot be silently dropped by picking the wrong tier. Core's guard, not a copy | structural (guard) |
 | `Efd_<id>` at the `:sauer_pai` tier | **Nothing, and said out loud.** The channel is a held parameter on their side and a zero-derivative state on ours, so it is constant on both and carries no information there. It exists so the two key sets match, which `divergence` and the suite's `keys(o) == keys(t)` both require | **vacuous by construction, named** |
 
+## External oracle for the load (M5 step 6) — `ZIPLoad`
+
+**The header claim, before the rows.** `ZIPLoad` carries **no state** and its
+polynomial with `Vset = 1` is ours term for term, so unlike the exciter comparison
+there is no structural gap to allow for. Two rejections were lifted to get here: a
+load is now a `ZIPLoad` injector on its bus, and a machine-free bus is `MTKBus()`
+with the load as its only injector — or with none at all, for a bare junction. In
+exchange the **classical** tiers now refuse a load by name, which they did not
+before; that is a tier boundary (`SwingEngine` refuses the same model) rather than
+unbuilt work.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| The load equation itself | **The flat run, and it is the sharpest check here by four orders.** At `ω ≡ 1` the stator-`ω` residual vanishes identically (the same argument D22 used one mechanism along), so nothing separates the two sides but the load equation and round-off. Four splits × two tolerances, per channel: worst 1.1e-13 against a 1e-11 gate. Not a soft check — the seed is OUR fixpoint, so a difference in sign, normalisation or which share multiplies which power of `\|V\|` would move their bus voltages off it | **external, round-off (1e-11)** |
+| …and how far it WOULD move | **Ten orders.** Our side built on a constant-impedance load and theirs on a constant-power one: 8.1e-3 on a rotor angle, 4.0e-3 on the load bus voltage. Repeated at every split | **external anti-vacuity (10 orders)** |
+| …and the channel that cannot see it | **`f_coi` reads 1.4e-14 through that mutation — exactly what it reads unmutated.** Both runs are flat (each side at its OWN equilibrium), so every rate-like channel reports agreement: `ω`, `E′q`, `E′d`, `Efd`, and the slack angle `δ_G1` (pinned at zero on both sides, 7.8e-14). A load model wrong by 4 % in drawn power reads GREEN on the default channel. Asserted as a requirement, not a caveat — see `m5-context.md` D24 | **finding: the check must name a POSITION channel** |
+| Whether the load adds a residual of its own on a transient | **No, and shown by SCALING rather than by a bound.** A magnitude bound could not separate a load error from step 3's known stator-`ω` residual. So `gap / (slip × \|V\|)` is measured at four splits × three disturbance sizes: it holds to three digits over a fourfold change in disturbance (Z 0.962, I 1.077, P 1.232, mix 1.121) and stays of order one. A load-model error would add a slip-INDEPENDENT offset and the ratio would fall as the disturbance grew | **external, signature (first order in slip)** |
+| The sign convention | Read back off the constructed case: a load drawing 110 MW on a 100 MVA base appears as `Pset = −1.1`. Theirs is an INJECTION (`guess = -1`; their `ConstantYLoad` writes `iload = −Y·u`) and ours is a draw, so getting it backwards would turn a load into a generator of the same size | **structural, asserted from the built case** |
+| The normalisation | `Vset = 1` asserted, which is what makes their `Vrel` our `\|V\|`. Anywhere else and their `Pset` denominates a different quantity from our `P₀`, and the comparison measures the normalisation | structural, asserted |
+| Their share defaults | `KpC`/`KqC` have default EXPRESSIONS (`1 − KpZ − KpI`) that compute the right value. All six are passed explicitly anyway — a default is not a guarantee — and the test asserts the passed value equals what the default would have produced, so removing the default changes nothing | structural, asserted |
+
 ## Owed rows
 
 Rows M5 will need before it ships:
 
 - The M5 rows: flux equations, exciter, power-flow initialisation, algebraic
-  network — **all delivered, steps 1-5, in the two blocks above.** Still owed:
-  **voltage-dependent load** (plan step 6) and the **D8 flat run across an event**
-  (plan step 7).
+  network, **voltage-dependent load** — **all delivered, steps 1-6, in the blocks
+  above.** Still owed: the **D8 flat run across an event**, M3's protection
+  re-validated at this tier, and the Iberian criterion itself (all plan step 7);
+  and the voltage-visible window (plan step 8).
 - M5 also inherited one **choice** from step 4: the detailed tier's external check
   wants `SauerPaiMachine`, which is above `ClassicalMachine`, so the torque
   convention (D14) had to be re-read from *that* component's source rather than

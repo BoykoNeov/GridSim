@@ -87,12 +87,12 @@ end
     # the whole reason this repo names its refusals
     @test occursin("unbuilt work", argerr_msg(() -> init!(DetailedEngine, two_up)))
 
-    # a ZIP share this step does not solve is refused rather than ignored
+    # A ZIP share was refused here through step 5 and is SOLVED as of step 6, so
+    # the rejection is gone and the check that it is gone lives here — a lifted
+    # precondition that nothing asserts is one that can come back by accident.
     zip_net = NetworkModel(100.0, 50.0, net.buses, net.branches, net.machines,
                            [Load(:L3, :B3, 110.0, 30.0, 0.5, 0.5, 0.0)])
-    @test occursin("constant-impedance term only",
-                   argerr_msg(() -> init!(DetailedEngine, zip_net)))
-    @test occursin("step 6", argerr_msg(() -> init!(DetailedEngine, zip_net)))
+    @test init!(DetailedEngine, zip_net) isa DetailedEngine
 
     # the slack must be a machine: a passive bus has no rotor angle to pin
     @test occursin("not a machine",
@@ -1510,3 +1510,273 @@ end
 end
 
 end # M5 step 5
+
+
+# =============================================================================
+# M5 STEP 6 — VOLTAGE-DEPENDENT LOAD
+# =============================================================================
+#
+# The step that lets voltage actually FALL. Through step 5 a load drew `P₀·|V|²`
+# and nothing else; the constant-current and constant-power terms were validated
+# by `Load` and refused by the engine with this step named. They are solved now,
+# on both the dynamic path and the power-flow path, and the checks below are
+# ordered by what they can catch:
+#
+#   1. arithmetic — `_load_current` alone, with `===` rather than `≈`, because the
+#      two exactness claims in its docstring are exact or they are nothing;
+#   2. the fixpoint — the three pure ZIP cases on one fixture, whose drawn powers
+#      are STRICTLY ORDERED by algebra with no tolerance to choose;
+#   3. the flat run — the only check that can see the two paths disagreeing, since
+#      it is the one that runs the dynamic equations from the power flow's answer;
+#   4. a closed form with TWO roots — the P-V nose, which gives this step a derived
+#      limit rather than a chosen one, and an assertion about WHICH solution the
+#      solve landed on;
+#   5. the mutations, run rather than predicted — and one of them turned out to be
+#      indistinguishable from a control that was already in this file.
+
+@testset "M5 step 6 — voltage-dependent load" begin
+
+# --- 1. the arithmetic, exactly ---------------------------------------------
+@testset "_load_current: the two exactnesses are exact, not approximate" begin
+    G, B = 0.7, -0.3
+    # THE DEFAULT PATH IS BITWISE WHAT IT WAS. Every M5 number measured before this
+    # step was measured on `I = (G + jB)·V`, and `===` is the only comparison that
+    # can say so — `≈` would pass a `k` that is `1 + 2eps` (M4 step 3's lesson: the
+    # off-by-one was caught by `===` and by nothing weaker).
+    for (Vre, Vim) in ((0.93, -0.11), (1.0, 0.0), (-0.4, 0.88), (0.0, 0.5))
+        @test GridSim._load_current(Vre, Vim, G, B, 0.0, 0.0) ===
+              (G * Vre - B * Vim, G * Vim + B * Vre)
+    end
+    # `k = 1` AT |V| = 1 FOR EVERY SPLIT. This is what makes `P₀` mean "drawn at
+    # nominal voltage" regardless of the share split — the property `Load`'s
+    # sum-to-one guard exists to buy, asserted here where it is actually used.
+    for (a_i, a_p) in ((0.4, 0.35), (1.0, 0.0), (0.0, 1.0), (0.5, 0.5))
+        @test GridSim._load_current(1.0, 0.0, G, B, a_i, a_p) ===
+              GridSim._load_current(1.0, 0.0, G, B, 0.0, 0.0)
+        @test GridSim._load_current(0.0, -1.0, G, B, a_i, a_p) ===
+              GridSim._load_current(0.0, -1.0, G, B, 0.0, 0.0)
+    end
+    # …and away from |V| = 1 it is NOT the same current, or the two blocks above
+    # would both pass against a `k` hard-wired to one.
+    @test GridSim._load_current(0.8, 0.0, G, B, 0.0, 1.0)[1] >
+          GridSim._load_current(0.8, 0.0, G, B, 0.0, 0.0)[1]
+    # the scalar itself: at |V| = 0.5 a constant-power load draws four times the
+    # current the same nominal admittance would
+    let (Ire, _) = GridSim._load_current(0.5, 0.0, G, B, 0.0, 1.0)
+        @test Ire ≈ (G * 0.5) * 4 atol = 1e-14
+    end
+    # A BUS WITH NO LOAD IS ARITHMETICALLY NO LOAD, including at a voltage where a
+    # `1/|V|²` would be enormous — nothing here divides by a zero it did not have.
+    @test GridSim._load_current(1e-8, 0.0, 0.0, 0.0, 0.0, 0.0) === (0.0, 0.0)
+end
+
+# --- 2. the fixpoint: three cases, strictly ordered --------------------------
+@testset "the ZIP terms are SOLVED, and their drawn powers are ordered" begin
+    # THE ORDERING IS THE DISCRIMINATOR AND IT NEEDS NO TOLERANCE. The network is
+    # lossless, so `Σ Pm` at the solved point IS the power the load draws — read
+    # from the engine's own parameters, not recomputed from the formula under
+    # test. `load_bus_system` solves at |V| < 1, which is exactly where the three
+    # ZIP terms stop agreeing: `P₀|V|² < P₀|V| < P₀`. A build that ignored `a_i`
+    # and `a_p` would make all three identical.
+    draw = Dict{Symbol,Float64}()
+    volt = Dict{Symbol,Float64}()
+    for (nm, sh) in ((:Z, (a_z = 1.0, a_i = 0.0, a_p = 0.0)),
+                     (:I, (a_z = 0.0, a_i = 1.0, a_p = 0.0)),
+                     (:P, (a_z = 0.0, a_i = 0.0, a_p = 1.0)))
+        eng = init!(DetailedEngine, load_bus_system(; sh...))
+        draw[nm] = sum(eng.params[i] for i in eng.Pm_pidx)
+        volt[nm] = current_state(eng).V[3]
+    end
+    @test draw[:Z] < draw[:I] < draw[:P]
+    # …and the voltage falls the other way, because more draw is more drop
+    @test volt[:Z] > volt[:I] > volt[:P]
+    # the measured values, so a change that preserves the ordering but moves the
+    # numbers is still visible
+    @test draw[:Z] ≈ 1.054270011424 atol = 1e-10      # P₀|V|², the step-1 number
+    @test draw[:I] ≈ 1.074904942688 atol = 1e-10
+    @test volt[:Z] ≈ 0.978992994415 atol = 1e-10
+    @test volt[:P] ≈ 0.974951270571 atol = 1e-10
+
+    # THE CONSTANT-POWER CASE HAS A CLOSED FORM WITH NO VOLTAGE IN IT AT ALL, and
+    # it is the sharpest single number this step produces: a constant-power load
+    # draws `P₀` whatever the network does, so `Σ Pm` must equal the schedule
+    # EXACTLY, not to a power-flow tolerance. Measured: 8.9e-16, i.e. round-off.
+    let net = load_bus_system(; a_z = 0.0, a_i = 0.0, a_p = 1.0)
+        eng = init!(DetailedEngine, net)
+        @test sum(eng.params[i] for i in eng.Pm_pidx) ≈ load_arrays(net).P[1] atol = 1e-14
+    end
+    # the constant-impedance closed form step 1 already had, restated at the share
+    # that now has to be READ rather than assumed
+    let net = load_bus_system(; a_z = 1.0)
+        eng = init!(DetailedEngine, net)
+        la = load_arrays(net)
+        @test sum(eng.params[i] for i in eng.Pm_pidx) ≈
+              la.P[1] * current_state(eng).V[la.bus[1]]^2 atol = 1e-10
+    end
+    # …and the constant-CURRENT one, which is neither of the two above
+    let net = load_bus_system(; a_z = 0.0, a_i = 1.0, a_p = 0.0)
+        eng = init!(DetailedEngine, net)
+        la = load_arrays(net)
+        @test sum(eng.params[i] for i in eng.Pm_pidx) ≈
+              la.P[1] * current_state(eng).V[la.bus[1]] atol = 1e-10
+    end
+end
+
+# --- 3. the flat run, which is the check that the two paths agree ------------
+@testset "the flat run with a ZIP load, at two tolerances" begin
+    # THIS IS THE CHECK THAT DISCRIMINATES THE WIRING. The dynamic RHS and the
+    # power-flow RHS are two different vertex models that both call
+    # `_load_current`; if only one of them were handed the shares, the fixpoint
+    # would not be an equilibrium of the equations that are integrated, and the
+    # run would not be flat. Nothing else in this file can see that.
+    for (a_z, a_i, a_p) in ((0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.2, 0.3, 0.5))
+        net = load_bus_system(; a_z = a_z, a_i = a_i, a_p = a_p)
+        for (rtol, atol) in ((1e-3, 1e-6), (1e-8, 1e-11))
+            eng = init!(DetailedEngine, net; reltol = rtol, abstol = atol)
+            ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+            @test length(ser.t) > 100
+            for ch in keys(ser)
+                ch === :t && continue
+                v = getproperty(ser, ch)
+                # worst measured across all six runs: 1.2e-13
+                @test maximum(abs, v .- v[1]) < 1e-10
+            end
+        end
+    end
+end
+
+# --- 4. the closed form with two roots, and which one we are on --------------
+#
+# A machine-free load bus fed from ONE machine through a reactance is the textbook
+# P-V nose, and it is the closed form this step is worth having. With the source
+# `E∠0` behind `jX` (`X = Xq + X_line`, `Ra = 0`) and `S = P + jQ` drawn at the far
+# bus, `S = j(EV − |V|²)/X` gives, with `u = |V|²`,
+#
+#     u² + u(2QX − E²) + (PX)² + (QX)² = 0
+#
+# — a QUADRATIC, so there are two voltages at which the same constant-power load is
+# served, and both are honest roots of the residual the solver drives to zero. The
+# discriminant vanishing is the nose:
+#
+#     P_max = E·sqrt(E² − 4QX) / (2X)
+#
+# and that limit is DERIVED, not chosen — which is the whole reason this fixture
+# exists rather than another band on `load_bus_system`.
+_zip_radial(P0, Q0; a_z = 0.0, a_i = 0.0, a_p = 1.0, X = 0.20) =
+    NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+        [Branch(:L12, :B1, :B2, X, 500.0)],
+        [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, P0)],
+        [Load(:L2, :B2, P0, Q0, a_z, a_i, a_p)])
+
+# the two roots, high branch first; `NaN`s past the nose
+function _pv_roots(E, X, P, Q)
+    b = 2Q * X - E^2
+    d = b^2 - 4 * ((P * X)^2 + (Q * X)^2)
+    d < 0 && return (NaN, NaN)
+    return (sqrt((-b + sqrt(d)) / 2), sqrt((-b - sqrt(d)) / 2))
+end
+_pv_max(E, X, Q) = E * sqrt(E^2 - 4Q * X) / (2X)
+
+@testset "the P-V nose: two roots, the branch we land on, and a derived limit" begin
+    net = _zip_radial(60.0, 20.0)
+    ma, bt, la = machine_arrays(net), branch_topology(net), load_arrays(net)
+    E, X = ma.E[1], ma.Xq[1] + bt.X[1]
+    hi, lo = _pv_roots(E, X, la.P[1], la.Q[1])
+
+    # THE TWO ROOTS ARE FAR APART, so "which one" is a real question rather than a
+    # rounding one: 0.972 pu and 0.195 pu, both exact solutions of the same
+    # equations, and the residual cannot tell them apart (the header above
+    # `_check_power_flow` measured the collapsed one converging 400x TIGHTER).
+    @test hi ≈ 0.971792026 atol = 1e-8
+    @test lo ≈ 0.195244100 atol = 1e-8
+    @test hi - lo > 0.7
+
+    # AND WE ARE ON THE HIGH ONE. The closed form is exact — nothing here is
+    # linearised — so this is a 1e-9 claim rather than a band.
+    eng = init!(DetailedEngine, net)
+    @test current_state(eng).V[2] ≈ hi atol = 1e-9
+    @test !isapprox(current_state(eng).V[2], lo; atol = 1e-2)
+
+    # THE DERIVED LIMIT, AND THE SOLVER'S OWN FAILURE BRACKETING IT. `P_max` is
+    # 1.62524 pu at this `Q`. Scanned: at 1.62 pu the roots are still distinct
+    # (0.7283 / 0.6724) and the solve returns an answer; at 1.63 pu the
+    # discriminant is negative, there is no solution to find, and the fixpoint
+    # solver reports exactly that. So a limit derived on paper predicts, to better
+    # than half a percent, where somebody else's Newton stops converging.
+    @test _pv_max(E, X, la.Q[1]) ≈ 1.625240 atol = 1e-5
+    @test all(!isnan, _pv_roots(E, X, 1.62, la.Q[1]))
+    @test all(isnan,  _pv_roots(E, X, 1.63, la.Q[1]))
+    # …and the roots coalesce as the nose is approached, which is what makes the
+    # limit a nose rather than an arbitrary cut-off
+    let r1 = _pv_roots(E, X, 1.50, la.Q[1]), r2 = _pv_roots(E, X, 1.62, la.Q[1])
+        @test (r1[1] - r1[2]) > (r2[1] - r2[2]) > 0
+        @test (r2[1] - r2[2]) < 0.06
+    end
+    # the engine past the nose: it does not return a wrong answer, it fails
+    @test_throws Exception init!(DetailedEngine, _zip_radial(170.0, 20.0))
+    # BELOW the nose but below the voltage band it also refuses — and the two
+    # refusals are DIFFERENT THINGS, which is why both are named here. At 130 MW
+    # the high root still exists and is what the solve finds (0.885364 pu, and the
+    # closed form agrees to six digits); it is the |V| ∈ [0.9, 1.1] band, not the
+    # nose, that rejects the case. Mistaking one refusal for the other would read
+    # "infeasible" off a case that is merely poorly served.
+    let (h130, l130) = _pv_roots(E, X, 1.30, la.Q[1])
+        @test !isnan(h130) && !isnan(l130)
+        @test h130 ≈ 0.885364426 atol = 1e-8          # the value the solve returns
+    end
+    @test occursin("outside", (try; init!(DetailedEngine, _zip_radial(130.0, 20.0)); ""
+                               catch e; sprint(showerror, e) end))
+    # …and at 120 MW, between the two, the engine simply builds — so neither
+    # refusal is always-on.
+    @test init!(DetailedEngine, _zip_radial(120.0, 20.0)) isa DetailedEngine
+end
+
+# --- 5. the mutations, RUN --------------------------------------------------
+@testset "the ZIP wiring's anti-vacuity controls, and what running them found" begin
+    la_bus = load_arrays(load_bus_system()).bus[1]
+    a_p_pidx(eng, v) = NetworkDynamics.SII.parameter_index(
+        eng.nw, NetworkDynamics.VPIndex(v, :a_p))
+
+    # MUTATION A — the dynamic path drops the shares the power flow honoured. The
+    # fixpoint is solved for a constant-POWER load (drawing 1.100 pu) and the
+    # integrated equations are then made constant-impedance (drawing 1.054 pu), so
+    # generation exceeds load by 0.046 pu and frequency RISES.
+    let net = load_bus_system(; a_z = 0.0, a_i = 0.0, a_p = 1.0)
+        eng = init!(DetailedEngine, net)
+        eng.params[a_p_pidx(eng, la_bus)] = 0.0
+        ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+        Δf = ser.f_coi[end] - ser.f_coi[1]
+        @test Δf > 0.1
+        @test Δf ≈ 0.1570 atol = 1e-3
+    end
+
+    # …AND RUNNING IT IS WHAT FOUND THIS: mutation A is NUMERICALLY THE SAME RUN as
+    # the `Pm`-from-the-schedule control already in this file (+0.157 Hz, ~6.6 rad),
+    # and not by coincidence. Both are the same 0.046 pu imbalance between what the
+    # machines inject and what the load draws; the two bugs differ in which side of
+    # that equality is wrong, and the trajectory cannot see which. A mutation's
+    # MAGNITUDE is not its identity. So the control that actually discriminates the
+    # ZIP wiring is the one below, whose sign is the other way.
+
+    # MUTATION C — the power flow solved a constant-IMPEDANCE load and the dynamic
+    # path draws constant POWER. Same 0.046 pu, opposite direction: the load now
+    # draws MORE than the machines were told to make, and frequency FALLS.
+    let net = load_bus_system()                       # a_z = 1
+        eng = init!(DetailedEngine, net)
+        eng.params[a_p_pidx(eng, la_bus)] = 1.0
+        ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+        Δf = ser.f_coi[end] - ser.f_coi[1]
+        @test Δf < -0.1                                # the SIGN is the finding
+        @test Δf ≈ -0.15616 atol = 1e-3
+    end
+
+    # THE POSITIVE CONTROL FOR THE CONTROLS: the unmutated run of the same fixture
+    # is flat, so the two numbers above are the mutation and not the fixture.
+    let eng = init!(DetailedEngine, load_bus_system(; a_z = 0.0, a_i = 0.0, a_p = 1.0))
+        ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+        @test maximum(abs, ser.f_coi .- ser.f_coi[1]) < 1e-10
+    end
+end
+
+end # M5 step 6

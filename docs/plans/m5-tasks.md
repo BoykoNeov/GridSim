@@ -839,13 +839,118 @@ post-trip sample rather than at the jump alone.
 
 ## Step 6 — voltage-dependent load
 
-- [ ] ZIP at the bus (`m5-prestudy.md` §6); constant-impedance the default,
+**DONE, 2026-09-07.** 2696 core / 281 UI / 986 reference, all green (+193 core,
++417 reference). Commit: the ZIP load and its oracle.
+
+- [x] ZIP at the bus (`m5-prestudy.md` §6); constant-impedance the default,
       because it has the closed form (it folds into the admittance) and is what
-      `ZIPLoad` configures down to.
-- [ ] Closed form for the constant-impedance case, checked against the fixpoint.
-- [ ] Frequency-dependent load stays on the machine until something measures the
-      difference — recorded, not silently omitted.
-- [ ] External: `ZIPLoad` configured to match.
+      `ZIPLoad` configures down to. **The whole thing collapsed to one voltage-
+      dependent scalar on the admittance that was already there** —
+      `I = (G + jB)·V·k(|V|)` with `k = a_z + a_i/|V| + a_p/|V|²` — so the change to
+      the right-hand side is four lines and the rest of the step is checks.
+- [x] Wired on BOTH paths: the dynamic vertex models and the power-flow ones, which
+      are different vertex models calling the same function. The flat run is the
+      only check that can see one of them missing, and it is the check this step
+      leans on.
+- [x] Closed form for the constant-impedance case, checked against the fixpoint —
+      and **two more it did not ask for**: constant current (`P₀|V|`) and constant
+      power (`P₀`, with no voltage in it at all, matched to 8.9e-16).
+- [x] **The three-way ORDERING, which needs no tolerance at all**: at the solved
+      `|V| = 0.975…0.979` the drawn powers are `1.054270 < 1.074905 < 1.100000` pu.
+      A build that ignored the two new shares would make all three identical.
+- [x] Frequency-dependent load stays on the machine until something measures the
+      difference — recorded in `Load`'s docstring and in `m5-prestudy.md` §6, not
+      silently omitted.
+- [x] External: `ZIPLoad` configured to match, **after reading their source** (F3
+      below). The two rejections `_assert_sauer_pai_tier` carried — no loads, no
+      machine-free buses — are both lifted; a bare junction is `MTKBus()`.
+- [x] A closed form with TWO roots (the P-V nose), which was not on this list and is
+      the best thing in the step — see F2.
+- [x] Both anti-vacuity mutations RUN, and one of them turned out to be the same run
+      as a control already in the file (F4).
+
+### What running step 6 found
+
+**F1 — there is no guard at `|V| → 0`, and that is a decision rather than an
+oversight (`m5-context.md` D23).** With `a_p > 0` the drawn current diverges as the
+voltage collapses, because a load that draws constant power from a dead bus is a
+model with no solution. A low-voltage cut-over to constant impedance is what
+production load models do and it is a threshold nobody here has chosen; step 7's
+collapse runs are what would earn one. Two things support leaving it bare: D20 already
+measured that a step-rejecting domain guard does not compose with this engine's
+construction, and **PowerDynamics made the same call** — their `ConstantCurrentLoad`
+carries an explicit `ε` regularisation and their `ZIPLoad`, the component we are
+checked against, carries none.
+
+**F2 — the constant-power load has a closed form with TWO roots, and it gives the
+step a DERIVED limit.** A machine-free load bus fed from one machine through a
+reactance is the textbook P-V nose: with `u = |V|²`,
+`u² + u(2QX − E²) + (PX)² + (QX)² = 0`. Two voltages serve the same load, both are
+honest roots of the residual the solver drives to zero (0.9718 and 0.1952 pu on the
+fixture), and the discriminant vanishing gives `P_max = E·√(E² − 4QX)/(2X)`.
+Measured: `P_max` = 1.62524 pu; at 1.62 pu the roots are still distinct and the solve
+returns an answer, at 1.63 pu there is nothing to find and the fixpoint solver says
+so. **A limit derived on paper predicts, to better than half a percent, where
+somebody else's Newton stops converging** — and it also separates two refusals that
+look alike: at 1.30 pu the high root exists (0.885364, matched to six digits) and it
+is the `|V| ∈ [0.9, 1.1]` band, not the nose, that rejects the case.
+
+**F3 — reading their source first settled four conventions, and one of them is a
+restriction on OUR side.** (1) Their `Pset` is an INJECTION — `guess = -1`, and their
+`ConstantYLoad` writes `iload = −Y·u` — so a drawing load is negative and the builder
+negates. (2) `Vset = 1` makes their `Vrel` our `|V|`, so the shares normalise where
+ours do and the comparison is not measuring the normalisation. (3) `ZIPLoad` carries
+no state, so nothing new is seeded and the band is not one lag richer the way
+`AVRTypeI`'s is. (4) **They give `P` and `Q` SEPARATE share triples and we give them
+one**, so a `ZIPLoad` whose two triples differ is a model we cannot express. Recorded
+now rather than discovered as a disagreement later — the M4 step 4 rule, applied.
+
+**F4 — the obvious anti-vacuity mutation is numerically the SAME RUN as a control
+already in the file, and only running it showed that.** "The dynamic path drops the
+shares the power flow honoured" gives +0.157 Hz and ~6.6 rad — identical, to three
+digits, to step 1's `Pm`-from-the-schedule control. Not a coincidence: both are the
+same 0.046 pu imbalance between what the machines inject and what the load draws, and
+the trajectory cannot see which side of that equality is wrong. **A mutation's
+magnitude is not its identity.** The control that does discriminate is the mirror one
+— the power flow solves a constant-impedance load and the dynamic path draws constant
+power — which is the same 0.046 pu the other way and lands at **−0.15616 Hz**. The
+sign is the finding, and it is what is asserted.
+
+**F5 — a settled system's frequency cannot carry a difference of EQUILIBRIA, and the
+oracle's load check must therefore name a position channel.** Building our side on a
+constant-impedance load and theirs on a constant-power one puts the two sides at
+different equilibria — 8.1e-3 on a rotor angle, 4.0e-3 on the load bus voltage,
+against the 1e-13 the honest comparison agrees to. But **both runs are still perfectly
+flat**, so every rate-like channel is at round-off: `f_coi` reads 1.4e-14, exactly
+what it reads unmutated, and so do `ω`, `E′q`, `E′d` and `Efd`. A load model wrong by
+4 % in drawn power reads GREEN on the channel that is the default everywhere else in
+that file. This is step 5's F4b turned around — there, a settled observable could not
+carry a rate. Nor can every position channel: `δ_G1` is the SLACK, pinned at zero on
+both sides, and cannot carry it either (7.8e-14).
+
+**F6 — the transient gap is step 3's residual and the load adds none, shown by
+scaling rather than assumed.** On a run with real slip the two sides differ, and a
+magnitude bound could never separate the known stator-`ω` residual from a load-model
+error hiding inside it. So `gap / (slip × |V|)` was measured at four ZIP splits and
+three disturbance sizes: it holds to **three digits over a fourfold change in
+disturbance** at every split (Z 0.962, I 1.077, P 1.232, mix 1.121) and is of order
+one throughout. A load-model error would put a slip-independent offset into the gap
+and the ratio would fall as the disturbance grew. It does not.
+
+**F7 — the gitignored-manifest trap, for the third time in this repo.** The
+`reference/` environment could not load GridSim at all: `TOML` became a dependency
+when the scenario editor landed two days ago, and `reference/Manifest.toml` — which is
+gitignored, like every manifest here — still described the old dependency set.
+`Pkg.resolve()` fixes it and reports "no packages added or removed", because a
+dev-dependency's dep LIST changing is not a package change. Nothing in git ever looked
+wrong. Previous occurrences: `m4-context.md` D15, and the 2026-08-18 stale dev
+manifest found in M4 step 5.
+
+**F8 — the refusal step 5's F6 worked around is gone.** `_assert_sauer_pai_tier`
+refused a machine-free bus, which is why step 5's external comparison had to move off
+`regulator_bus_system` to `infinite_bus_system`. That refusal is lifted here. Step 5's
+F6 is left as written — it is a dated record of why that step did what it did — but
+the workaround it describes is no longer necessary.
 
 ## Step 7 — the criterion (the milestone's purpose)
 

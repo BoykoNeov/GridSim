@@ -176,8 +176,7 @@
 #     change shape at run time. It needs a machine status that zeroes the injected
 #     current without turning `X′d` into a shunt to ground;
 #   - more than one machine on a bus. The canonical model expresses it (M5 step 1
-#     made sure of that); this engine's vertex models do not yet, and say so;
-#   - the ZIP `a_i`/`a_p` shares (plan step 6). Only constant impedance is solved.
+#     made sure of that); this engine's vertex models do not yet, and say so.
 #
 # THE RE-INITIALISATION IS NOT VALIDATED BY THE FLAT RUN, and this needs saying
 # because the two look alike. Step 1's flat run has NO event in it: it proves the
@@ -321,15 +320,50 @@ through a second copy of the same two lines.
 @inline _dq(re, im, δ) = (re * sin(δ) - im * cos(δ), re * cos(δ) + im * sin(δ))
 
 """
-    _load_current(Vre, Vim, G, B) -> (Ire, Iim)
+    _load_current(Vre, Vim, G, B, a_i, a_p) -> (Ire, Iim)
 
-A constant-impedance load's drawn current, `I = (G + jB)·V`.
+A ZIP load's drawn current (M5 step 6). `P = P₀·(a_z|V|² + a_i|V| + a_p)` and `Q`
+likewise, so `S = (P₀ + jQ₀)·f(|V|)` and
 
-The admittance comes from the scheduled draw at nominal voltage: `Y = conj(S)/|V₀|²`
-with `|V₀| = 1`, i.e. `G = P₀` and `B = −Q₀` (per unit). A bus with no load carries
-`G = B = 0`, which is arithmetically no load at all rather than a special case.
+    I = conj(S)/conj(V) = (G + jB)·V·k(|V|),   k = a_z + a_i/|V| + a_p/|V|²
+
+with the same `G = P₀`, `B = −Q₀` the constant-impedance case has always used. **The
+whole ZIP is one voltage-dependent scalar on the admittance that was already
+there** — the constant-impedance term folds into `Y` exactly (`k = a_z`), and the
+other two are that same `Y` scaled by a function of `|V|` alone.
+
+`a_z` is not passed: the shares sum to one (`Load` enforces it), so `a_z = 1 − a_i −
+a_p` and the form used below is `k = 1 + a_i(1/|V| − 1) + a_p(1/|V|² − 1)`. That
+grouping makes two exactnesses hold in floating point rather than approximately:
+`k = 1` at `|V| = 1` for every share split — which is what makes `P₀` mean "drawn at
+nominal voltage" — and `k = 1` identically when `a_i = a_p = 0`.
+
+**The constant-impedance path is bitwise what it was**, and deliberately: it returns
+before the `hypot` and the division, so the default load model is the same
+arithmetic it was before this step and every M5 number measured against it still
+stands. The branch is on parameters, not states, so it costs no type stability.
+
+**There is no guard at `|V| → 0`, and that is a decision (m5-context.md D23).** With
+`a_p > 0` the current diverges there, because a load that draws constant power from
+a collapsed bus is a model with no solution — the singularity is the model telling
+the truth. A low-voltage cut-over to constant impedance is what production load
+models do, and it is a threshold nobody here has chosen; step 7's collapse runs are
+what would earn one. Note that PowerDynamics made the same call: its
+`ConstantCurrentLoad` carries an explicit `ε` regularisation and its `ZIPLoad` — the
+component this step is checked against — carries none.
+
+A bus with no load carries `G = B = a_i = a_p = 0`, which is arithmetically no load
+at all rather than a special case.
 """
-@inline _load_current(Vre, Vim, G, B) = (G * Vre - B * Vim, G * Vim + B * Vre)
+@inline function _load_current(Vre, Vim, G, B, a_i, a_p)
+    Ire = G * Vre - B * Vim
+    Iim = G * Vim + B * Vre
+    # Constant impedance (and "no load at all"): k ≡ 1, and no sqrt is computed.
+    (a_i == 0.0) & (a_p == 0.0) && return (Ire, Iim)
+    invV = inv(hypot(Vre, Vim))
+    k = 1 + a_i * (invV - 1) + a_p * (invV * invV - 1)
+    return (k * Ire, k * Iim)
+end
 
 """
     _detailed_machine_bus!(dv, v, esum, p, t)
@@ -361,11 +395,12 @@ function _detailed_machine_bus!(dv, v, esum, p, t)
     Td0′, Tq0′, Ra      = p[6], p[7], p[8]
     H, D, ω₀            = p[9], p[10], p[11]
     invR, headroom, Tg  = p[12], p[13], p[14]
-    G, B, mstat         = p[15], p[16], p[17]
-    K_A, T_E            = p[18], p[19]
-    Efd_min, Efd_max, Vref = p[20], p[21], p[22]
+    G, B, a_i, a_p      = p[15], p[16], p[17], p[18]
+    mstat               = p[19]
+    K_A, T_E            = p[20], p[21]
+    Efd_min, Efd_max, Vref = p[22], p[23], p[24]
     Id, Iq, Ire, Iim, Pe = _stator(Vre, Vim, δ, E′q, E′d, Ra, Xd′, Xq′, mstat)
-    Lre, Lim = _load_current(Vre, Vim, G, B)
+    Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]                 # KCL, real
     dv[2] = Iim - Lim + esum[2]                 # KCL, imaginary
     dv[3] = ω₀ * ω
@@ -428,7 +463,7 @@ whole reason the tier exists** — the classical tier cannot carry it, because i
 has no differential state at all.
 """
 function _detailed_passive_bus!(dv, v, esum, p, t)
-    Lre, Lim = _load_current(v[1], v[2], p[1], p[2])
+    Lre, Lim = _load_current(v[1], v[2], p[1], p[2], p[3], p[4])
     dv[1] = -Lre + esum[1]
     dv[2] = -Lim + esum[2]
     return nothing
@@ -463,16 +498,17 @@ are held, not solved for.
 """
 function _static_machine_bus!(dv, v, esum, p, t)
     Vre, Vim, δ = v[1], v[2], v[3]
-    Pset, E, Xq, Ra, G, B = p[1], p[2], p[3], p[4], p[5], p[6]
-    mode, δ_target, mstat = p[7], p[8], p[9]
-    Xd′, Xq′, E′q, E′d    = p[10], p[11], p[12], p[13]
+    Pset, E, Xq, Ra       = p[1], p[2], p[3], p[4]
+    G, B, a_i, a_p        = p[5], p[6], p[7], p[8]
+    mode, δ_target, mstat = p[9], p[10], p[11]
+    Xd′, Xq′, E′q, E′d    = p[12], p[13], p[14], p[15]
     if mode > 1.5
         _, _, Ire, Iim, _ = _stator(Vre, Vim, δ, E′q, E′d, Ra, Xd′, Xq′, mstat)
         Pe = zero(Ire)                          # unused in this mode; see below
     else
         Ire, Iim, Pe = _machine_injection(Vre, Vim, δ, E, Ra, Xq, mstat)
     end
-    Lre, Lim = _load_current(Vre, Vim, G, B)
+    Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]
     dv[2] = Iim - Lim + esum[2]
     dv[3] = mode > 0.5 ? (δ - δ_target) : (Pe - Pset)
@@ -505,16 +541,10 @@ function _assert_detailed_tier(net::NetworkModel)
             "second vertex model rather than a wider one. Not a tier boundary — " *
             "unbuilt work, and named here so it cannot be mistaken for one."))
     end
-    for l in net.loads
-        (l.a_i == 0.0 && l.a_p == 0.0) || throw(ArgumentError(
-            "DetailedEngine: load $(l.id) has ZIP shares (a_z, a_i, a_p) = " *
-            "($(l.a_z), $(l.a_i), $(l.a_p)). Step 1 solves the constant-impedance " *
-            "term only — it is the case that folds into the admittance and the case " *
-            "with a closed form. The constant-current and constant-power terms are " *
-            "plan step 6, and are refused rather than silently ignored, because a " *
-            "load quietly drawing the wrong power is the failure this whole tier " *
-            "exists to see."))
-    end
+    # The ZIP shares were refused here through step 5 and are solved as of step 6
+    # (`_load_current`). Nothing replaces the rejection: `Load` already validates
+    # that the three shares are non-negative and sum to one, and every split of
+    # that sum is now integrated on both the dynamic and the power-flow path.
     return nothing
 end
 
@@ -540,18 +570,27 @@ _detailed_edge() = NetworkDynamics.EdgeModel(
     g = NetworkDynamics.AntiSymmetric(_branch_current!),
     outsym = [:I_re, :I_im], psym = _DETAILED_EDGE_PSYM, name = :branch)
 
-# The load admittance seen at each VERTEX, `Y = conj(S)/|V₀|²` with `|V₀| = 1`.
-# Zero where a bus carries no load, which is arithmetically no load rather than a
-# branch in the RHS. Converted through `load_arrays`, the one place loads convert.
-function _bus_admittance(net::NetworkModel)
+# The load seen at each VERTEX: the nominal admittance `Y = conj(S)/|V₀|²` with
+# `|V₀| = 1`, plus the two ZIP shares that scale it (`_load_current`). Zero
+# throughout where a bus carries no load, which is arithmetically no load rather
+# than a branch in the RHS. `a_z` is not returned — it is `1 − a_i − a_p` and
+# `_load_current` uses it in that form. Converted through `load_arrays`, the one
+# place loads convert.
+function _bus_load(net::NetworkModel)
     la = load_arrays(net)
-    G = zeros(Float64, length(net.buses))
-    B = zeros(Float64, length(net.buses))
+    nb = length(net.buses)
+    G   = zeros(Float64, nb)
+    B   = zeros(Float64, nb)
+    a_i = zeros(Float64, nb)
+    a_p = zeros(Float64, nb)
     for k in eachindex(la.bus)
-        G[la.bus[k]] =  la.P[k]
-        B[la.bus[k]] = -la.Q[k]
+        v = la.bus[k]
+        G[v]   =  la.P[k]
+        B[v]   = -la.Q[k]
+        a_i[v] =  la.a_i[k]
+        a_p[v] =  la.a_p[k]
     end
-    return G, B
+    return G, B, a_i, a_p
 end
 
 # The dynamic (DAE) network: a machine vertex where there is a machine, a passive
@@ -562,13 +601,13 @@ function _dynamic_network(net::NetworkModel, g)
         f = _detailed_machine_bus!, g = NetworkDynamics.StateMask(1:2),
         sym = [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d, :Efd],
         psym = [:Pm, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
-                :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :mstat,
+                :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :a_i, :a_p, :mstat,
                 :K_A, :T_E, :Efd_min, :Efd_max, :Vref],
         mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
         name = :machine_bus)
     vpassive = NetworkDynamics.VertexModel(
         f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im], psym = [:G, :B],
+        sym = [:V_re, :V_im], psym = [:G, :B, :a_i, :a_p],
         mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0]), name = :passive_bus)
     verts = [isempty(net.machines_at_bus[v]) ? vpassive : vmachine
              for v in 1:length(net.buses)]
@@ -581,12 +620,12 @@ function _static_network(net::NetworkModel, g)
     vmachine = NetworkDynamics.VertexModel(
         f = _static_machine_bus!, g = NetworkDynamics.StateMask(1:2),
         sym = [:V_re, :V_im, :δ],
-        psym = [:Pset, :E, :Xq, :Ra, :G, :B, :mode, :δ_target, :mstat,
+        psym = [:Pset, :E, :Xq, :Ra, :G, :B, :a_i, :a_p, :mode, :δ_target, :mstat,
                 :Xd′, :Xq′, :E′q, :E′d],
         mass_matrix = LinearAlgebra.Diagonal(zeros(3)), name = :pf_machine_bus)
     vpassive = NetworkDynamics.VertexModel(
         f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im], psym = [:G, :B],
+        sym = [:V_re, :V_im], psym = [:G, :B, :a_i, :a_p],
         mass_matrix = LinearAlgebra.Diagonal(zeros(2)), name = :pf_passive_bus)
     verts = [isempty(net.machines_at_bus[v]) ? vpassive : vmachine
              for v in 1:length(net.buses)]
@@ -885,7 +924,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     g, bt = _detailed_graph(net)
     nb, nm, ne = length(net.buses), length(net.machines), length(net.branches)
     ids = Symbol[m.id for m in net.machines]
-    G, B = _bus_admittance(net)
+    G, B, aI, aP = _bus_load(net)
     ω₀ = 2π * net.f0
     t0f = Float64(t0)
 
@@ -940,8 +979,10 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     for v in 1:nb
         su[sVre_idx[v]] = 1.0                 # the flat start, and the only guess made
         su[sVim_idx[v]] = 0.0
-        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :G))] = G[v]
-        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :B))] = B[v]
+        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :G))]   = G[v]
+        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :B))]   = B[v]
+        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :a_i))] = aI[v]
+        sp[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, :a_p))] = aP[v]
     end
     for k in 1:nm
         su[sδ_idx[k]]        = 0.0
@@ -977,8 +1018,10 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     for v in 1:nb
         u0[Vre_idx[v]] = real(V[v])
         u0[Vim_idx[v]] = imag(V[v])
-        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :G))] = G[v]
-        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :B))] = B[v]
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :G))]   = G[v]
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :B))]   = B[v]
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :a_i))] = aI[v]
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, :a_p))] = aP[v]
     end
     # EVERY MACHINE STATE IN CLOSED FORM (`m5-prestudy.md` §4). `δ` is never
     # *seeded*, only computed from a converged network solution, which is what

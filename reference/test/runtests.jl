@@ -543,13 +543,12 @@ chan(k) = s -> getproperty(s, k)
 @testset "the detailed tier's preconditions are structural, not documented" begin
     ring = three_machine_ring()
 
-    # Loads and machine-free buses are STEP 6, and each says so. A load quietly
-    # absent from one side of a comparison is a physics disagreement that is not
-    # one, which is the failure this whole tier exists to see.
-    lb = load_bus_system()
-    msg = argerr_msg(() -> build_oracle(lb; tier = :sauer_pai))
-    @test occursin("load", msg)
-    @test occursin("step 6", msg)
+    # Loads and machine-free buses were STEP 6 and are BUILT as of step 6, so what
+    # stands here is the lifted form: this tier now takes both. The checks that
+    # they are mapped CORRECTLY live in step 6's own block at the bottom of this
+    # file; what is asserted here is only that the refusal is gone, because a
+    # lifted precondition nothing asserts is one that can come back by accident.
+    @test build_oracle(load_bus_system(); tier = :sauer_pai) isa OracleCase
 
     # An unusable `X_ls` is refused rather than divided by. `γ_d1` divides by
     # `X′_d − X_ls` INSIDE PowerDynamics' component, so the failure mode without
@@ -1405,3 +1404,221 @@ end
 end
 
 end # M5 step 5
+
+
+# ===========================================================================
+# M5 STEP 6 — THE ZIP LOAD, AGAINST POWERDYNAMICS' `ZIPLoad`
+# ===========================================================================
+#
+# The two rejections `_assert_sauer_pai_tier` carried through step 5 — no loads,
+# no machine-free buses — are lifted here, and this is the first time a load of
+# any kind has crossed the oracle seam at all.
+#
+# WHAT MAKES THIS COMPARISON DIFFERENT FROM STEP 5'S. The exciter comparison is
+# one lag richer on their side by construction (`Ta → 0` is a limit, not a
+# setting), so its band could never be round-off. `ZIPLoad` carries NO state: every
+# equation in it is algebraic, and with `Vset = 1` its polynomial is ours term for
+# term. So there is no structural gap to allow for, and the flat run below is a
+# round-off comparison rather than a banded one.
+#
+# WHAT IS STILL IN THE WAY IS STEP 3'S RESIDUAL, NOT A NEW ONE. Their static stator
+# carries the rotor speed on the flux terms and ours does not, so on any run with
+# real slip the two sides differ at first order in it. That residual has nothing to
+# do with loads, and the transient testset below is written to SHOW that rather
+# than to assume it: the gap is measured at four ZIP splits and three disturbance
+# sizes, and what is asserted is the SCALING, not a magnitude.
+
+@testset "M5 step 6 — the ZIP load against PowerDynamics' ZIPLoad" begin
+
+# The four splits every testset here runs. Named once: a split that appears in one
+# check and not another is the kind of hole this suite exists to close. (Not
+# `const` — a `@testset` body is a local scope, and `const` is illegal in one.)
+ZIP_SPLITS = (("Z",   (a_z = 1.0, a_i = 0.0, a_p = 0.0)),
+              ("I",   (a_z = 0.0, a_i = 1.0, a_p = 0.0)),
+              ("P",   (a_z = 0.0, a_i = 0.0, a_p = 1.0)),
+              ("mix", (a_z = 0.2, a_i = 0.3, a_p = 0.5)))
+
+# ===========================================================================
+@testset "the rejections are lifted, and the one that replaced them is real" begin
+    # A LOAD AND A MACHINE-FREE BUS BOTH CROSS THE SEAM NOW. `load_bus_system` has
+    # both — three buses, two machines, and a 110 MW / 30 MVAr load on the bus with
+    # no rotating mass — and it is the fixture this whole step runs on.
+    for (_, sh) in ZIP_SPLITS
+        @test build_oracle(load_bus_system(; sh...); tier = :sauer_pai) isa OracleCase
+    end
+    # A bare junction — a bus with neither machine nor load — is `MTKBus()` on
+    # their side, and it is worth one case of its own because it is the only
+    # configuration with NO injector at all.
+    junction = NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0)],
+        [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  40.0),
+         Machine(:G3, :B3, 400.0, 5.0, 2.0, 0.30, 1.04, -40.0)])
+    @test build_oracle(junction; tier = :sauer_pai) isa OracleCase
+
+    # …AND THE CLASSICAL TIERS NOW REFUSE A LOAD BY NAME, which they did not before.
+    # This is a tier boundary rather than unbuilt work — `SwingEngine` refuses the
+    # same model, because a constant-magnitude `E` behind a reactance holds the
+    # voltage up by construction and a voltage-dependent draw has nothing to bite
+    # on. Without this the builder would construct a PowerDynamics network with the
+    # load silently absent and fail several hundred lines later inside the seed.
+    for tier in (:swing, :classical)
+        msg = argerr_msg(() -> build_oracle(load_bus_system(); tier = tier))
+        @test occursin("load", msg)
+        @test occursin("tier boundary", msg)
+    end
+end
+
+# ===========================================================================
+@testset "the flat run: their ZIPLoad agrees with ours at round-off" begin
+    # THIS IS WHERE THE LOAD MODEL IS ACTUALLY CHECKED, and the reason is the same
+    # argument step 5's D22 used one mechanism along: the stator-ω residual is
+    # `(ω − 1)·V` and vanishes IDENTICALLY at synchronous speed. On a flat run
+    # `ω ≡ 1`, so nothing is left between the two sides except the load equation
+    # and round-off — which makes this a `1e-12` comparison rather than a banded
+    # one, and makes it the sharpest check in this file by four orders.
+    #
+    # It is also not a soft check. The seed comes from OUR fixpoint, so if their
+    # polynomial differed from ours in sign, in normalisation, or in which share
+    # multiplies which power of `|V|`, our equilibrium would not be one of theirs
+    # and their bus voltages would move off it. The mutation testset below measures
+    # exactly how far, and the answer is ten orders above this threshold.
+    grid = collect(0.0:0.02:5.0)
+    for (nm, sh) in ZIP_SPLITS
+        net = load_bus_system(; sh...)
+        for (rtol, atol) in ((1.0e-9, 1.0e-12), (1.0e-6, 1.0e-9))
+            o, t = both_detailed(net, (0.0, 5.0), grid; reltol = rtol, abstol = atol)
+            @test keys(o) == keys(t)
+            for k in keys(o)
+                k === :t && continue
+                a, b = getproperty(o, k), getproperty(t, k)
+                @test maximum(abs, a .- a[1]) < 1.0e-10     # ours is flat
+                @test maximum(abs, b .- b[1]) < 1.0e-10     # so is theirs
+                # worst measured across all four splits and both tolerances: 1.1e-13
+                @test maximum(abs, a .- b) < 1.0e-11        # …at the same place
+            end
+        end
+    end
+end
+
+# ===========================================================================
+@testset "the transient: the residual is step 3's, and the load adds none" begin
+    # THE QUESTION THIS ANSWERS. On any run with real slip the two sides differ,
+    # and step 3 identified that difference as the stator-ω residual: first order
+    # in slip, coefficient of order one, zero at synchronous speed. The load model
+    # could hide a second residual inside it — one that does NOT vanish at ω = 1 —
+    # and a magnitude bound could never tell the two apart. Only the scaling can.
+    #
+    # So the same measurement runs at every ZIP split: three disturbance sizes, and
+    # what is asserted is that `gap / (slip × |V|)` is CONSTANT across them and of
+    # order one. A load-model error would put a slip-independent offset into the
+    # gap, and the ratio would then fall as the disturbance grows instead of
+    # holding. Measured, the ratio holds to three digits over a fourfold change in
+    # disturbance, at every split:
+    #
+    #     Z    0.962  0.962  0.962        P    1.234  1.233  1.232
+    #     I    1.078  1.077  1.077        mix  1.121  1.121  1.121
+    #
+    # The coefficient differs slightly BETWEEN splits, and it should: the splits are
+    # different trajectories through the same residual, not the same trajectory.
+    grid = collect(0.0:0.02:5.0)
+    for (nm, sh) in ZIP_SPLITS
+        net = load_bus_system(; sh...)
+        ratios = Float64[]
+        for ΔP in (0.02, 0.04, 0.08)
+            o, t = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G2, ΔP))
+            slip = maximum(abs, o.ω_G2)
+            @test slip > 1.0e-4                       # the disturbance is real
+            push!(ratios, gap(o, t, :V_B3) / (slip * o.V_B3[1]))
+        end
+        # FIRST ORDER IN SLIP: the ratio holds over a 4x change in disturbance.
+        @test maximum(ratios) - minimum(ratios) < 3.0e-3
+        # …AND OF ORDER ONE, which is what says it is the predicted residual rather
+        # than an unknown one. A load-model error would not land here.
+        @test 0.5 < minimum(ratios) < 2.0
+    end
+end
+
+# ===========================================================================
+@testset "anti-vacuity: the two sides disagreeing about the load, and the channel that cannot see it" begin
+    # THE MUTATION. Our engine is built on a constant-IMPEDANCE load and theirs on
+    # a constant-POWER one, on a fixture whose load bus solves at |V| = 0.975. Both
+    # runs are still perfectly flat — each side sits at its OWN equilibrium — so
+    # what the comparison has to see is that the two equilibria are different
+    # PLACES. Measured: 8.1e-3 on a rotor angle and 4.0e-3 on the load bus voltage,
+    # against the 1e-13 the unmutated comparison agrees to. Ten orders.
+    grid = collect(0.0:0.02:5.0)
+    o, t = both_detailed(load_bus_system(; a_z = 0.0, a_i = 0.0, a_p = 1.0),
+                         (0.0, 5.0), grid; mutate = _ -> load_bus_system())
+    @test gap(o, t, :δ_G2) > 1.0e-3
+    @test gap(o, t, :V_B3) > 1.0e-3
+    @test gap(o, t, :V_B1) > 1.0e-4
+
+    # AND THE FINDING THAT RUNNING IT PRODUCED, WHICH IS ABOUT WHERE THE RECORDER
+    # LOOKS RATHER THAN ABOUT THE LOAD. Every RATE-like channel is at round-off
+    # through this mutation — `f_coi` is 1.4e-14, identical to its value in the
+    # unmutated run, and so are `ω`, `E′q`, `E′d` and `Efd`. Nothing is moving on
+    # either side, so a channel that can only report motion reports agreement, and
+    # a load model that is wrong by 4 % in drawn power reads GREEN on it.
+    #
+    # This is step 5's lesson turned around: there, a settled observable could not
+    # carry a rate. Here, a settled system's frequency cannot carry a difference of
+    # equilibria. The consequence is a rule rather than an observation — **the
+    # oracle's load check must name a POSITION channel**, and `f_coi`, which is the
+    # default channel everywhere else in this file, is the one channel that must
+    # not be used for it.
+    @test gap(o, t, :f_coi) < 1.0e-12
+    @test gap(o, t, :ω_G2) < 1.0e-12
+    @test gap(o, t, :E′q_G2) < 1.0e-12
+    # …and not even every position channel: `δ_G1` is the SLACK, pinned at zero on
+    # both sides by construction, so it cannot carry it either (measured 7.8e-14).
+    @test gap(o, t, :δ_G1) < 1.0e-12
+
+    # THE MUTATION IS SEEN AT EVERY SPLIT, not only the pair above — otherwise the
+    # check would rest on one lucky combination.
+    for (nm, sh) in ZIP_SPLITS
+        nm == "Z" && continue                       # the mutation target itself
+        om, tm = both_detailed(load_bus_system(; sh...), (0.0, 5.0), grid;
+                               mutate = _ -> load_bus_system())
+        @test gap(om, tm, :V_B3) > 1.0e-4
+    end
+end
+
+# ===========================================================================
+@testset "the mapping's conventions, asserted rather than described" begin
+    # THE SIGN. Their `Pset` is an INJECTION and our `Load.P0` is a draw, so the
+    # builder negates. Read back off the constructed case: a load drawing 110 MW on
+    # a 100 MVA base must appear as `Pset = −1.1`, and getting this backwards would
+    # turn a load into a generator of the same size.
+    net  = load_bus_system(; a_z = 0.2, a_i = 0.3, a_p = 0.5)
+    case = build_oracle(net; tier = :sauer_pai)
+    la   = load_arrays(net)
+    v    = la.bus[1]
+    @test case.s0.p.v[v, :load₊Pset] ≈ -la.P[1] atol = 1.0e-12
+    @test case.s0.p.v[v, :load₊Qset] ≈ -la.Q[1] atol = 1.0e-12
+    @test case.s0.p.v[v, :load₊Pset] < 0                      # …and it is negative
+
+    # THE NORMALISATION. `Vset = 1` is what makes their `Vrel` our `|V|`; anywhere
+    # else and their `Pset` would denominate a different quantity from our `P₀`,
+    # and the comparison would be measuring the normalisation.
+    @test case.s0.p.v[v, :load₊Vset] == 1.0
+
+    # THE SHARES, INCLUDING THE RESTRICTION. Ours is ONE triple applied to both
+    # `P` and `Q`; theirs is two independent triples. The mapping sends ours to
+    # both of theirs, so a `ZIPLoad` whose two triples differ is a model we cannot
+    # express — a real restriction on our side, asserted here so it is a fact about
+    # the code rather than a sentence in a docstring.
+    for (p, q, ours) in ((:load₊KpZ, :load₊KqZ, la.a_z[1]),
+                         (:load₊KpI, :load₊KqI, la.a_i[1]),
+                         (:load₊KpC, :load₊KqC, la.a_p[1]))
+        @test case.s0.p.v[v, p] ≈ ours atol = 1.0e-12
+        @test case.s0.p.v[v, q] ≈ ours atol = 1.0e-12
+    end
+    # `KpC`/`KqC` have DEFAULT EXPRESSIONS on their side (`1 - KpZ - KpI`) that
+    # would compute the right value. They are passed explicitly anyway, and this is
+    # the assertion that says so: the default and the passed value agree, so if the
+    # default were ever removed nothing here changes.
+    @test case.s0.p.v[v, :load₊KpC] ≈ 1 - la.a_z[1] - la.a_i[1] atol = 1.0e-12
+end
+
+end # M5 step 6

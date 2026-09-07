@@ -429,9 +429,8 @@ bus voltage is an algebraic unknown).
   - `Q0`   — MVAr, reactive power drawn at nominal voltage. May be negative
              (a capacitive bus).
 
-ZIP coefficients (`m5-prestudy.md` §6), **carried and validated here, consumed by
-plan step 6** — the same footing `Machine.Xd′` had in M2 (real data, on the right
-base, with the milestone that reads it named):
+ZIP coefficients (`m5-prestudy.md` §6), **carried and validated here, solved by the
+engine as of M5 step 6**:
 
   - `a_z`, `a_i`, `a_p` — constant-impedance / constant-current / constant-power
     shares, `P = P0·(a_z·V² + a_i·V + a_p)` and `Q` likewise. They must sum to 1,
@@ -439,12 +438,22 @@ base, with the milestone that reads it named):
     `a_z = 1` — pure constant impedance, the case with a closed form (it folds
     into the admittance) and the case PowerDynamics' `ZIPLoad` reduces to.
 
-**The engine, not this type, rejects the shares it has not implemented.** Plan
-step 1 solves only the constant-impedance term, so a load with `a_i` or `a_p`
-non-zero is refused *by the engine* with the step named. Validating the data here
-and refusing to integrate it there is the split this file already uses for `Xd′`:
-data that is only sometimes read is exactly the data that gets set wrong and
-noticed a milestone later.
+**The shares were validated here and refused by the engine from step 1 to step 5**,
+which is the split this file already uses for `Xd′`: data that is only sometimes
+read is exactly the data that gets set wrong and noticed a milestone later. Step 6
+lifted that refusal — `_load_current` solves all three terms, on the dynamic path
+and the power-flow path both — so the split has served its purpose and the
+rejection is gone. `Load` still validates, because the sum-to-one condition is what
+makes `P0` mean "drawn at `V = 1`" whatever the split.
+
+**One triple, applied to both `P` and `Q`, and that is a restriction.**
+PowerDynamics' `ZIPLoad` carries separate share triples for the two, so a load whose
+active and reactive splits differ is expressible there and not here. Named rather
+than discovered as a disagreement later (`m5-tasks.md` step 6, F3).
+
+**Frequency dependence of load is NOT here.** It stays on the machine's `D` until
+something measures the difference — `m5-prestudy.md` §6, recorded rather than
+silently omitted.
 """
 struct Load
     id::Symbol
@@ -1159,7 +1168,7 @@ function three_machine_ring()
 end
 
 """
-    load_bus_system() -> NetworkModel
+    load_bus_system(; a_z = 1.0, a_i = 0.0, a_p = 0.0) -> NetworkModel
 
 Two machines and a **machine-free load bus** — the first fixture in the repo that
 the classical tier cannot run at all, and the one the detailed tier's flat run
@@ -1185,8 +1194,19 @@ a difference that is straightforwardly measurable.
 The machines are rated away from `S_base` and from each other (250 and 400 MVA on
 a 100 MVA base), so a missing or inverted per-unit conversion changes the answer
 instead of hiding behind a weight of one.
+
+**The ZIP shares are a keyword (M5 step 6), and the same three properties that make
+this fixture a positive control for the back-substitution make it one for the load
+model too.** The solved voltage sits below 1.0, and that is precisely where the
+three ZIP terms stop agreeing: at `|V| < 1` a constant-impedance load draws
+`P₀·|V|²`, a constant-current load `P₀·|V|`, and a constant-power load `P₀`
+exactly — strictly increasing in that order, with the ordering set by the algebra
+and no tolerance to choose. On a fixture that solved at `|V| = 1` all three would
+coincide and a share silently ignored would be invisible. The default is the
+constant-impedance load every caller before step 6 built, so those call sites are
+unchanged and their numbers with them.
 """
-function load_bus_system()
+function load_bus_system(; a_z::Real = 1.0, a_i::Real = 0.0, a_p::Real = 0.0)
     buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
     machines = [
         #       id    bus   S_rated    H    D    Xd′    E′     P0
@@ -1194,7 +1214,7 @@ function load_bus_system()
         Machine(:G2, :B2,    400.0,  5.0, 2.0,  0.30,  1.04,  40.0),
     ]
     # Positive P0 = drawn, the opposite convention from a machine's — see `Load`.
-    loads = [Load(:L3, :B3, 110.0, 30.0)]
+    loads = [Load(:L3, :B3, 110.0, 30.0, a_z, a_i, a_p)]
     branches = [
         Branch(:L12, :B1, :B2, 0.25, 500.0),
         Branch(:L23, :B2, :B3, 0.25, 500.0),

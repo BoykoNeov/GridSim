@@ -809,3 +809,73 @@ has no counterpart at all; comparing them would be two different models and the 
 would be read as a fidelity finding. Its oracle is the closed form in the core suite,
 which is four orders sharper than this comparison anyway — the same shape D19 found
 for the flux.
+
+## D23 — The load's singularity at zero voltage is NAMED, not softened (step 6)
+
+A ZIP load with a constant-power share draws `I = (G + jB)·V·(a_z + a_i/|V| +
+a_p/|V|²)`, which diverges as `|V| → 0`. The obvious response is a low-voltage
+cut-over to constant impedance, which is what production load models do. **It is not
+done here, and the reason is that the cut-over voltage is a parameter nobody has
+chosen** — and step 7, whose whole subject is voltage collapse, is exactly the run
+where a number picked for numerical comfort would change the answer it is supposed to
+be measuring.
+
+What is done instead is to record it: in `_load_current`'s docstring, in the ledger as
+a stated boundary, and here. A load that draws constant power from a collapsed bus is
+a model with no solution, and a divergent current followed by a clean solver failure is
+that fact arriving rather than being hidden.
+
+Three things make this the cheap choice rather than a brave one. **D20 already paid
+for the alternative**: a step-rejecting domain guard does not compose with this
+engine's construction, and reaching for `isoutofdomain` on a voltage would be
+re-running a failure this milestone has already measured. **PowerDynamics made the same
+call**: their `ConstantCurrentLoad` carries an explicit `ε` regularisation and their
+`ZIPLoad` — the component step 6 is checked against — carries none, so the oracle
+would not have accepted a regularised comparison anyway. And **the regime is not
+reached in step 6's own runs**: the fixpoint starts flat at `|V| = 1` and every dynamic
+run starts from the fixpoint. If step 7 does reach it, that is a finding, and it will
+have a measurement behind it rather than a threshold in front of it.
+
+## D24 — A settled system's frequency cannot carry a difference of equilibria (measured, step 6)
+
+Step 5's F4b established that a settled observable cannot carry a rate. Step 6 found
+the same edge from the other side, and it changes which channel a check may read.
+
+The measurement: our engine built on a constant-impedance load, PowerDynamics' on a
+constant-power one, same fixture, no disturbance. The two sides sit at **different
+equilibria** — 8.1e-3 apart on a rotor angle, 4.0e-3 on the load bus voltage, against
+the 1e-13 the honest comparison agrees to. And both runs are perfectly flat, because
+each side is at rest at its own equilibrium. So every channel that can only report
+MOTION reports agreement: `f_coi` reads 1.4e-14, which is exactly what it reads with
+no mutation at all, and `ω`, `E′q`, `E′d` and `Efd` are all at round-off too.
+
+**A load model wrong by 4 % in drawn power is invisible in frequency.** `f_coi` is the
+default channel throughout `reference/test/runtests.jl`; on this comparison it is the
+one channel that must not be used. Nor is every position channel safe — `δ_G1` is the
+slack, pinned at zero on both sides by construction, and carries it no better (7.8e-14).
+
+The rule this turns into: **a check on a quantity that differs only in WHERE the
+system settles must read a position channel, and must name it.** The general form of
+both findings is that "which channel the recorder looks at" is part of the claim, not
+part of the plumbing — which is the third time in M5 that has decided red from green
+(step 5's clamp mutation was the second).
+
+## D25 — A mutation's magnitude is not its identity (step 6)
+
+The anti-vacuity mutation written first for the ZIP wiring — the dynamic path drops
+the shares the power flow honoured — produces +0.157 Hz and ~6.6 rad. Those are, to
+three digits, the numbers step 1's `Pm`-from-the-schedule control already produces,
+and running it is the only way that surfaced.
+
+It is not a coincidence and it is not a bug. Both mutations create the same 0.046 pu
+imbalance between what the machines inject and what the load draws; they differ only in
+which side of that equality is the wrong one, and a trajectory cannot see that. So the
+first mutation, run on its own, would have been a second copy of an existing control
+wearing a new name — the exact shape of vacuity this milestone's standing rule exists
+to catch, arriving inside the anti-vacuity check itself.
+
+The mutation that does discriminate is the mirror image: the power flow solves a
+constant-impedance load and the dynamic path draws constant power. Same 0.046 pu, other
+direction, **−0.15616 Hz**. What is asserted is the SIGN, because the sign is the only
+thing that separates the two bugs. Both are kept and both are labelled — the
+indistinguishable one because saying so is the finding.
