@@ -68,8 +68,19 @@ step 8's mutation found its own check's premise wrong.
       from the slack plus what is attached, with the rejection cases tested
       (a slack naming a missing bus; more than one machine at a bus for the tiers
       that forbid it).
-- [ ] **Gate — the invariant:** full core suite passes at **2835 unchanged**, and
-      every M5 criterion number is bit-identical.
+- [ ] **Gate — the invariant, and it is TWO claims, not one:** (a) the full core
+      suite passes at **2835 unchanged**, and (b) M5's criterion numbers are
+      bit-identical. **Only (a) is checked by the suite going green.** M5's
+      criterion numbers (the 1.03× `P_max`, the 14-of-14 walk) are asserted with
+      tolerances, so the underlying float can move and the test still passes. (b)
+      therefore means *printing the values and comparing them*, not inferring them
+      from a green run.
+- [ ] **The field has five readers, so check five.** `Branch.X` is read by
+      `branch_arrays`, `SwingEngine`'s edge model, both `DetailedEngine` edge
+      models (static and dynamic) and `_branch_flows`. Adding `R` beside it means
+      each is inspected and each is stated as either updated or deliberately
+      unchanged — the same logic that turned step 0's one owed SPEC annotation into
+      six.
 - [ ] **Anti-vacuity mutation:** set one branch's `R` non-zero in an isolated
       fixture and show a number moves. Without this the gate above passes trivially
       if nothing reads the field.
@@ -113,6 +124,11 @@ step 8's mutation found its own check's premise wrong.
       voltages at 1.0, the AC angles approach step 2's linear answer as loading
       falls, at the rate the small-angle approximation predicts. A comparison
       between two of *our* solves, so it catches what both oracles might absorb.
+      **This states a RATE, so it needs its band stated before the comparison
+      runs** — step 4's rule applies here too, and for the same reason: this is a
+      two-sided numerical comparison, and a band chosen after the gap is seen is
+      not a check. The band comes from the truncation order of the small-angle
+      approximation, not from either solve's own convergence.
 - [ ] A losses check with `R ≠ 0`: the slack's pickup equals the summed branch
       losses, which is an identity and not a tolerance.
 - [ ] Anti-vacuity mutation: flip a sign in the reactive residual and confirm at
@@ -165,8 +181,14 @@ step 8's mutation found its own check's premise wrong.
 - [ ] **Read-side defaults (D8)**, with a round-trip test that reads a *pre-M6*
       file and asserts each default lands where it should. This is the only thing
       between "a default" and "a silent reinterpretation of every old file".
-- [ ] The slack bus written into the file, and a file with no slack rejected with a
-      message that says which bus to name.
+- [ ] The slack written as a **top-level** key with its own `_KEY_RANK` entry — it
+      is a model field, not a machine or bus record, so it does not ride along with
+      either.
+- [ ] **A file with no slack is REJECTED**, with a message naming the buses it
+      could be. This is D8's one exception and the reason for it is in D8: every
+      other new field has a value that is physically what its absence meant, and
+      the slack has none. Inventing one would record a dispatch choice as though
+      the file had said so (M5 D13).
 - [ ] Editor: line resistance, generator voltage setpoint and reactive limits
       editable **through the constructors** (M5 D5 — one validated path).
 - [ ] Editor: the slack bus selectable, and shown on the map as such.

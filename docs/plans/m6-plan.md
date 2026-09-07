@@ -90,6 +90,15 @@ still passes and every recorded M5 number is bit-identical**. That is the positi
 control. The anti-vacuity mutation is to set one branch's `R` non-zero in a fixture
 nothing else touches and show a number *does* move.
 
+Two things about that gate, because it is easy to under-execute. It is **two
+claims**, and the suite going green checks only the first: M5's criterion numbers
+are asserted with tolerances, so a float can move underneath a passing test —
+"bit-identical" means printing and comparing values. And `Branch.X` has **five
+readers** (`branch_arrays`, `SwingEngine`'s edge model, `DetailedEngine`'s static
+and dynamic edge models, `_branch_flows`), so adding `R` beside it is a five-site
+change where each site is stated as updated or deliberately unchanged. Step 0
+already demonstrated the shape: one owed SPEC annotation turned out to be six.
+
 Owed and named rather than smuggled in: line charging (`B`) and transformer taps
 are **not** added here. They are real and they are absent, and D4 says so out loud
 rather than letting a reader assume the branch model is complete.

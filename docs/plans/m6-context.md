@@ -260,7 +260,8 @@ being carried is missing a criterion, not missing work.
 
 ---
 
-## D8 — The scenario file takes read-side defaults, not a version marker
+## D8 — The scenario file takes read-side defaults, with the slack as the one
+exception that rejects
 
 `scenario_file.jl` writes **every** machine field explicitly, precisely so a
 changing default cannot change a file's meaning. Step 1 adds fields, and every
@@ -276,6 +277,23 @@ Two ways out, and the choice is taken here:
   unlimited. The writer still writes everything, so a file written *after* this
   milestone is still fully explicit, and only files written before it lean on a
   default.
+
+**The slack is the exception, and it is not a defaulting decision at all.** The
+rule above works because each of those fields has a value that is *physically*
+what the absent field meant: a line with no resistance recorded was a lossless
+line, and it still is. `NetworkModel.slack` has no such value. It is a top-level
+model field, not a machine or bus record, so it needs its own key and its own rank
+in `_KEY_RANK` — and no bus is the "obviously intended" reference. Picking the
+first bus, or the largest machine, would be inventing a dispatch choice and
+recording it as if the file had said so, which is M5 D13's point (the slack is a
+**dispatch** choice, not a gauge choice) turned into a silent one.
+
+So a file without a slack is **rejected**, with a message naming the buses it could
+be. The general rule is therefore: *read-side defaults for every field whose
+absence has a physical meaning; the slack rejects, because its absence has none.*
+This was caught as an inconsistency between this decision's prose and
+`m6-tasks.md` step 5's checklist — the checklist was right — and is settled here
+rather than at the point a test goes red.
 
 The invariant that keeps this honest is the one the reader already has: **the file
 goes through the same constructors as everything else** (M5 D5), so a defaulted
