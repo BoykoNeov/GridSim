@@ -125,7 +125,7 @@ to be written where the rows are, or the rows overclaim.
 | The `E′`-behind-`X′d` radial reduction `X − X′d,ᵢ − X′d,ⱼ` | Exact — proven by the *absence* of any loading-independent residual once the torque term is accounted for. Enforced structurally: branch degree ≠ 1 and a non-positive reduced reactance are both thrown | **external** + structural |
 | The oracle's own accuracy | Its self-convergence error is 3.5× ours at reltol 1e-3 and 18× at 1e-7 — **the floor is below us**, which is what D7 means by "not a ceiling" | convergence (measured) |
 
-## Detailed (DAE) tier — M5 steps 1-4, `src/engines/detailed.jl`
+## Detailed (DAE) tier — M5 steps 1-5, `src/engines/detailed.jl`
 
 External as of step 3: PowerDynamics' `SauerPaiMachine` at its `X″ = X′`
 degeneration, with the flux frozen on **both** sides. The rows below that say
@@ -155,7 +155,28 @@ what makes this comparison clean, and step 4 is what switches it on.
 | The rotor-frame convention (`Vd + jVq = V·e^{−j(δ−π/2)}`) | **One check, and the two that look like they cover it provably do not.** Both mutations run: a *reflected* frame is caught at build time by the fixpoint residual (5.03 against a 1e-10 gate); a *consistently turned* frame (δ → δ + π/2 at both sites) passes the residual, the air-gap-power identity and the flat run, and is caught only by asserting `E′d = 0` and `E′q = Machine.E′` at the degeneration — a turned frame lands `E′d = [1.05, 1.02]`, `E′q ≈ 0` | **structural (mutation-checked, both branches run)** |
 | The air-gap power's two expressions agree | Build-time: the two-axis bracket `E′d·Id + E′q·Iq + (X′q−X′d)·Id·Iq` against the phasor `Re(Ẽ·conj(I))`. Provably one quantity (both reduce to `Vd·Id + Vq·Iq + Ra·\|I\|²`), so a gap is the rotation disagreeing with the stator inversion. **Its reach is stated in the code**: it cannot see a globally consistent frame turn | derived (structural), **reach named** |
 | Detailed data handed to the classical tier | `_assert_frozen_flux` refuses `SwingEngine`, `coi_model` **and** `build_oracle(:swing)`/`(:classical)` by name (M5 steps 2-3, D17). `Ra` is in the list because it changes the *initialisation* even where it changes no dynamics. The third consumer calls core's own guard rather than a copy, so the three cannot drift | structural (guard); **all three entry points closed** |
-| The regulator, ZIP `a_i`/`a_p`, `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built, or built and switched off**, and each is refused by name at build time with the step that owns it. (**The flux equations left this row in M5 step 4** — see the three rows below.) | **un-built / un-oracled, and refused rather than faked** |
+| ZIP `a_i`/`a_p`, `inject!(::TripGenerator)`, two machines on a bus | **Nothing — not built**, and each is refused by name at build time with the step that owns it. (The flux equations left this row in M5 step 4; **the regulator left it in step 5** — see the block below.) | **un-built, and refused rather than faked** |
+
+### The voltage regulator (M5 step 5)
+
+The exciter is `T_E·dEfd/dt = −Efd + K_A(Vref − \|V\|)` with hard limits saturating in
+the DERIVATIVE. `Efd` is a state unconditionally, and the defaults (`K_A = 0`,
+`T_E = Inf`) are the regulator OFF — which is what every step-1-to-4 row above still
+runs on, so none of them moved.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| `Vref` is derived from the solved equilibrium, not supplied | The flat run on `regulator_bus_system()`, per state at two tolerances — a regulated machine starts at rest exactly as an unregulated one does. **Positive control is the real bug and it corrected the prediction**: `Vref` off by 0.01 pu does NOT move the field voltage by the open-loop `K_A·ΔVref = 2.0 pu`, it moves it by `K_A·ΔVref/(1 + G) = 0.180 pu` with `G = K_A·Xe/(Xe + Xd) = 10.11` the DC loop gain — 11× smaller, because the extra field raises the terminal voltage and cancels most of the error that produced it. Predicted 0.9660369472, measured 0.9660369472 | **closed form (closed-loop DC gain), 1e-8** |
+| `K_A`, `T_E`, `Efd_min`, `Efd_max` do not convert with the machine base | `Efd` is a voltage, built as `E′q + (Xd − X′d)·Id`, and a reactance times a current is invariant under a change of power base. Control: the same PHYSICAL machine at **twice the rating** (`S_rated`, every machine-base reactance and the inverse of every machine-base power moved together) reproduces the ceiling run to < 1e-9 on `Efd`, `E′q` and `V`. Run through the SATURATED case, because a flat run agrees whether or not the gain converts | **positive control (rating-invariance)** |
+| The ceiling HOLDS under sustained demand, and what the flux does under it | **Step 4's closed form with one constant changed**: while saturated `Efd ≡ Efd_max` is a constant, so the machine is the constant-field machine already validated to 3e-9. Same `T′d = T′do·(X′d + Xe)/(Xd + Xe)` (2.8453 s, fitted to 2e-3), new asymptote `E′q(∞) = [(Xd − X′d)·E_inf + Efd_max·(Xe + X′d)]/(Xe + Xd)` (endpoint to 1e-6 with the finite horizon in the prediction). Anti-vacuity is a PREDICTED move: `Xd` 1.8 → 1.0 shifts τ by 1.5× and the fit lands on the new value | **closed form, 1e-6** |
+| It comes off the ceiling UNAIDED, and when | No event and no state surgery: the terminal voltage recovers under the ceiling field until `K_A(Vref − \|V\|)` falls back through `Efd_max`. The release interval is the same first-order law, `t = −T′d·ln((V_rel − V∞)/(V_sat − V∞))`, and it is checked as a FUNCTION of the ceiling rather than at one point — predicted 7.0106 / 3.8056 / 2.3982 s at `Efd_max` = 1.00 / 1.02 / 1.05, measured 7.010 / 3.805 / 2.398 to the 1 ms sampling grid. All three then settle at the same unlimited equilibrium (0.9928754), which is what "the limit left no trace" means | **closed form, 2 ms (the sample grid)** |
+| A second disturbance while saturated | The run advances to 40 s with a successful retcode across a second line trip — and the claim is checked with a PREDICTION rather than only a retcode, because "still running" is compatible with running wrong: the new reactance changes `T′d` from 2.8453 s to exactly 4.0 s and REVERSES the flux's target (climbing to 1.01443, then falling to 1.00000, both exact). Fitted to 3e-3 | **closed form (post-event), 3e-3** |
+| The state stays inside its limit | **Not by a guard — by the saturation, and the excursion is a measured number.** Above the ceiling the derivative is zero, so the only excursion is the overshoot of the single step that crosses: **5.0e-8 pu**, at two tolerances, not growing over 24 s of sitting there | **measurement (bounded overshoot)** |
+| Clamping the state instead of saturating the derivative (**anti-vacuity**) | **RUN, and it reversed the prediction.** The clamp is applied from the test every `h` seconds to an engine with no limits — M1's bug, faithfully. The headline claim — "the field voltage never goes above its limit" — reads **red or green depending on where it looks**: 0.0 excess sampled at the clamp instants, **0.378 pu** of excess sampled anywhere else (`h` = 0.005), against the correct engine's 5e-8. Two of the remaining claims stay green regardless; the closed form goes red at >100× the honest error. The step-size signature is read on the **excess field**, which is linear in `h` over a 40× range — not on the endpoint flux, which by 24 s has settled into the clamped run's own equilibrium and only decays 0.78 per halving | **positive control (the M1 bug); the mutation makes the answer a property of the recorder** |
+| The `isoutofdomain` guard the plan asked for | **Written, measured to make the ceiling UNREACHABLE, and removed.** The guard accepts a step only if it lands at or below `limit + 1e-10`; a state approaching from below with a finite derivative needs an ever-smaller step to land inside that window, so `dt` collapses geometrically. Measured: MaxIters at `dt` = 9.1e-11 / 1.7e-9 / 1.5e-8 across three exciter settings, and 199,944 accepted steps on a raw solve without reaching the limit. **`swing.jl`'s prose said this could not happen** | **measurement (falsifies a documented claim)** |
+| …and whether the engines that still carry that guard are stalling | **They are not, and the reason is one number nobody chose.** A `SwingEngine` governor driven onto its headroom for 20,000 s LANDS — `ΔPm` settles **3.1e-11 pu above** its ceiling, inside the guard's absolute 1e-10 window with 3× to spare, `dt` around 0.09 s. The required window scales with the state's speed: a 1 s governor lag needs 3e-11, a 0.05 s exciter lag needs 5e-8 (500× the window). Left alone deliberately — changing the constant would move M2, M3 and M4 numbers | **measurement (margin quantified, not a fix)** |
+| A hard saturation is a discontinuous RHS | Swept over eight ceilings (1.05 … 3.0) at reltol 1e-9: seven complete, and `Efd_max = 1.2` does not — and it is isolated in the TOLERANCE too, completing at 1e-6 (overshoot 8.3e-6) and 1e-11 (6.1e-10) and failing only at the 1e-9 between them. Non-monotone in two parameters is conditioning at the kink, not a boundary. `FBDF` completes it (1.7e-9) and is asserted; which Rodas5P version fails where is not something a test should pin | **measurement (isolated failure, workaround asserted)** |
+| The exciter's steady-state gain, its lag, and the limits, against an outside implementation | See the `:sauer_pai_avr` block below — **the UNLIMITED loop only.** The limited exciter has no counterpart in `AVRTypeI` (their limits sit on the regulator output `vr`, one block upstream of the field voltage), and `build_oracle` refuses it by name rather than comparing two different models | **external (unlimited) / refused (limited)** |
 
 ## External oracle for the detailed tier (M5 steps 3-4) — `SauerPaiMachine` at `X″ = X′`
 
@@ -188,14 +209,41 @@ both sides**, which is what leaves exactly one predicted residual to identify.
 | The `X″ = X′` degeneration, re-checked with the flux live | `X_ls` at 0.1 and 0.9 of its range moves every channel by 1.2e-10 against a 2.2e-6 band, and their two `ψ″` states seeded ×2 and shifted still move nothing above it. **Re-run rather than assumed to carry**: `γ_d2` multiplies `ψ″_d` INSIDE the `E′q` equation, and step 3 established the decoupling with a zero derivative in front of that equation | positive control, re-measured at the new fidelity |
 | The read-out's shape actually satisfies `divergence` | The docstring's claim ("applies across the two sides with no adapter") is **called**, not described: `divergence` on the ring line-trip run reproduces the same worst gap the per-channel read gives, reports a departure (as it must — the stator-`ω` residual is real), and **throws** when handed two different grids. Matching key sets is a weaker claim and was the only one made before | structural |
 
+## External oracle for the exciter (M5 step 5) — `AVRTypeI` at `Ta → 0`
+
+**What is compared, and what deliberately is not.** `AVRTypeI` degenerates onto our
+one-lag exciter exactly (`Kf = 0`, `Se1 = Se2 = 0`, `Ke = 1`, `tmeas_lag = false`,
+`Ta → 0`) and does NOT have our limits. `Ta → 0` is a **limit, not a setting** — their
+`Ta` multiplies a derivative — so this comparison is one lag richer than ours by
+construction and the difference is first order in `Ta`.
+
+The fixture is `infinite_bus_system(; K_A, T_E)` rather than the three-path one, and
+that is structural: `_assert_sauer_pai_tier` refuses a machine-free bus, and the
+three-path fixture's junctions are exactly that. Two buses means a line trip would
+island the machine, so the disturbance is a **setpoint step** — a parameter on both
+sides, needing no event type. It also makes the comparison unusually clean: at zero
+loading `ω ≡ 1` exactly on both sides, so the stator-`ω` residual that held the step-4
+oracle to ~10 % **vanishes identically** and the exciter is the only difference left.
+
+| Mechanism | Checked by | Label |
+|:---|:---|:---|
+| Seeding, and that our derived `Vref` is theirs | The flat run per state at two tolerances: their `vfout` and `vr` both seeded at OUR dispatched field voltage and their `vref` at OUR derived setpoint. A supplied (rather than derived) setpoint would show as a startup transient on one side only | **external, per state** |
+| The exciter loop itself | A setpoint step: both sides move by the closed-loop DC gain `K_A·ΔVref/(1 + G)` to 1e-3, and the gap between them is bounded by the **derived** band `Ta·(1 + G)/T_E` × the excursion — written before the gap was seen, from the missing lag rather than from the measurement | **external, band derived from the model difference** |
+| …and that the gap IS the missing lag | **The signature, not the size**: halving `Ta` halves the gap. A tolerance can be wrong in a way a signature cannot | **external, signature (first order in `Ta`)** |
+| The stator-`ω` residual is absent here | Asserted, not assumed: `ω ≡ 0` to 1e-12 on both sides and the rotor angle fixed to 1e-9, because the fixture carries no real loading. That is what lets this band be tight where step 4's could not be | derived + **asserted** |
+| The exciter is actually WIRED, not seeded and idle | Anti-vacuity: `K_A` doubled moves THEIR field voltage onto the new closed-loop gain (and their bus voltage by > 1e-3). A disconnected exciter would hold its seeded value and, at a small enough step, look like agreement | **external, anti-vacuity** |
+| The LIMITED exciter | **Nothing, and refused rather than approximated.** Their limits are on `vr`, ours on `Efd`; a comparison would be two different models and the gap would read as a fidelity finding. Refused by `_assert_avr_tier` by name. The limit's oracle is the closed form above, which is four orders sharper than this comparison | **refused (not un-oracled — the closed form owns it)** |
+| A regulator handed to the held-field tier | `build_oracle(tier = :sauer_pai)` calls core's own `_assert_no_regulator`, so an exciter cannot be silently dropped by picking the wrong tier. Core's guard, not a copy | structural (guard) |
+| `Efd_<id>` at the `:sauer_pai` tier | **Nothing, and said out loud.** The channel is a held parameter on their side and a zero-derivative state on ours, so it is constant on both and carries no information there. It exists so the two key sets match, which `divergence` and the suite's `keys(o) == keys(t)` both require | **vacuous by construction, named** |
+
 ## Owed rows
 
 Rows M5 will need before it ships:
 
-- The M5 rows: flux equations (two limits + small-signal `K`-constants), exciter,
-  power-flow initialisation (flat run), algebraic network (Kirchhoff residual),
-  voltage-dependent load. See `plans/m5-prestudy.md` §3–§5 for the oracle each
-  one gets.
+- The M5 rows: flux equations, exciter, power-flow initialisation, algebraic
+  network — **all delivered, steps 1-5, in the two blocks above.** Still owed:
+  **voltage-dependent load** (plan step 6) and the **D8 flat run across an event**
+  (plan step 7).
 - M5 also inherited one **choice** from step 4: the detailed tier's external check
   wants `SauerPaiMachine`, which is above `ClassicalMachine`, so the torque
   convention (D14) had to be re-read from *that* component's source rather than

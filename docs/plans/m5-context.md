@@ -679,3 +679,133 @@ agrees, and it is the only one of the three that would catch an error the closed
 form and the limit share. It is an argument against reading "checked externally" as
 "checked tightly", which is exactly what `m4-context.md` D7 means by the oracle
 being a floor and not a ceiling.
+
+
+## D20 — A step-rejecting domain guard and a saturation in the derivative do not compose (measured, step 5)
+
+**The plan asked for `isoutofdomain` to gain two indices per machine, for the reason
+`ΔPm` has one. It was written, and it kills the run.**
+
+The guard accepts a proposed step only if the state lands at or below
+`limit + 1e-10`. Above the limit the saturated derivative is zero, so the limit is
+not something the solution crosses — it is a point the solution has to LAND on. As
+the state closes on it, the derivative there is still finite (83 pu/s for this
+exciter), so a step of size `h` overshoots by `≈ 83h` and must be under `1.2e-12` to
+be accepted. Take that step and the state is closer still, and the next must be
+smaller again. **The acceptance window is narrower than the precision with which a
+step can be aimed**, so it shrinks geometrically and the run dies.
+
+Measured on `regulator_bus_system(; Efd_max = 0.95)` with a line trip at 1 s,
+Rodas5P at reltol 1e-9:
+
+| | outcome |
+|:---|:---|
+| guard on, `K_A = 200`, `T_E = 0.05` | MaxIters at t = 1.0021, `dt` = 9.1e-11 |
+| guard on, `K_A = 50`, `T_E = 0.2` | MaxIters at t = 1.0361, `dt` = 1.7e-09 |
+| guard on, `K_A = 20`, `T_E = 0.5` | MaxIters at t = 1.2560, `dt` = 1.5e-08 |
+| guard off, same case | Success; `Efd` exceeds its ceiling by 3.4e-8, once |
+
+In every failing run `Efd = 0.94999999…`: approaching from below, never arriving. On
+a raw solve of the same right-hand side the guard accepted **199,944** steps without
+reaching the limit.
+
+**This falsifies a claim written in the repo.** `engines/swing.jl` says of its own
+guard: *"During continuous integration it cannot stall, because the derivative is
+already zero at the ceiling, which puts the solution at headroom, not above it."*
+The derivative is zero at the ceiling; what does not follow is that the solution
+gets there.
+
+**But the engines that still carry the guard are not stalling, and the reason is one
+number nobody chose.** A `SwingEngine` governor driven onto its headroom for 20,000 s
+LANDS: `ΔPm` settles **3.1e-11 pu above** its ceiling and stays there, `dt` around
+0.09 s. The overshoot a state produces on the step that lands is set by how fast that
+state is — a 1 s governor lag needs 3e-11 and fits inside the absolute `1e-10` window
+with 3× to spare; a 0.05 s exciter lag needs 5e-8 and does not fit at all. So
+`SwingEngine`'s guard is inside its margin by a factor of three, on a constant written
+for round-off. **Left alone deliberately**: changing it would move M2, M3 and M4
+numbers, and that is not step 5's to decide.
+
+**What bounds the state instead** is the thing that was always doing the work — the
+saturation in the derivative. Above the limit the derivative is zero, so the state
+cannot continue to rise, and the only excursion possible is the overshoot of the
+single step that crosses. That number is asserted in `test/`, and it is a LOCAL-ERROR
+effect rather than a constant: 5.3e-5 at reltol 1e-6 and 5.0e-8 at 1e-9, and the
+ordering is what is asserted.
+
+**What a domain guard is still right for** is the case M1 built it for: a limit that
+MOVES, leaving the state stranded far outside it. That is a data problem, fixed at the
+event boundary by re-initialising into the new limit. Our field-voltage limits are
+constant model data and `init!` refuses a dispatch outside them.
+
+**The leftover, also measured.** A hard saturation makes the right-hand side
+discontinuous in the state it saturates, and a stiff adaptive solver is entitled to
+find that hard. Swept over eight ceilings (1.05 … 3.0) at reltol 1e-9, seven complete
+and `Efd_max = 1.2` does not — and it is isolated in the TOLERANCE too, completing at
+1e-6 (overshoot 8.3e-6) and at 1e-11 (6.1e-10) and failing only at the 1e-9 between
+them. Non-monotone in two parameters at once is conditioning at the kink, not a
+boundary of the model. `FBDF` completes it (1.7e-9), and `init!` already takes a
+`solver`, so the workaround is a parameter rather than a change.
+
+## D21 — `Vref` is derived, and the open-loop reading of a setpoint error is wrong by 11x (step 5)
+
+The plan listed the exciter's five parameters as `K_A, T_E, Efd_min, Efd_max, Vref`.
+Four of them are model data; **`Vref` is not, and cannot be.** At a steady state the
+exciter's own equation has one unknown left once the power flow has run
+(`Vref = |V| + Efd/K_A`), so a setpoint supplied as data is a setpoint that does not
+match the dispatch — the machine starts off its own equilibrium and every check
+downstream measures a startup transient instead of the thing it names. This is the
+`Pm`-from-the-power-flow rule (D15) one mechanism along, and it was not on the list.
+
+**And the positive control corrected its own prediction.** "A `Vref` off by 0.01 pu
+drives the field by `K_A·ΔVref = 2.0 pu`" is the open-loop reading and it is wrong by
+11×: the loop closes through the network, because the extra field raises the terminal
+voltage and cancels most of the error that produced it. The DC loop gain is
+
+    G = K_A · dV/dEfd = K_A · Xe/(Xe + Xd) = 10.11
+
+and the answer is `K_A·ΔVref/(1 + G) = 0.180 pu`, which lands to nine digits
+(0.9660369472 predicted, 0.9660369472 measured). `dV/dEfd` is not a new constant — it
+is the two closed forms this step already has, composed. It became the only check in
+the milestone that reads `K_A` **inside** an equation rather than as a label.
+
+**The same open-loop intuition then set two more thresholds, and both were wrong** —
+which makes it a pattern rather than one slip, and worth naming as one:
+
+- The external suite's anti-vacuity control said "doubling `K_A` must move their field
+  voltage by more than 0.05". It moves it by **0.00575** (0.06499 → 0.07074), because
+  doubling `K_A` doubles `G` too and `K_A/(1 + G)` is already near its ceiling. The
+  threshold became the predicted difference at `rtol = 5e-3`.
+- The clamp mutation's step-size signature said the endpoint flux error halves when
+  `h` halves. It moves by **0.78** per halving, because by 24 s the voltage loop has
+  closed around the clamped run as well and the endpoint is a settled observable. The
+  signature moved onto the excess field, which is clean-linear in `h` over 40×.
+
+The rule this step earned: **once a regulator is in the loop, no threshold may be
+written from an open-loop gain.** All three that were, were wrong — by 11×, by 9×, and
+by a factor that was not even the right *shape*.
+
+## D22 — The exciter's external oracle cannot run on the exciter's own fixture (step 5)
+
+`_assert_sauer_pai_tier` refuses a machine-free bus, and `regulator_bus_system`'s two
+bare junctions — the third and fourth buses that make a second line trip survivable —
+are exactly that. So the external comparison moved to `infinite_bus_system`, which has
+two buses and two machines and no load.
+
+Two buses means a line trip would island the machine, so the disturbance became a
+**setpoint step**: a parameter on our side (`Vref_pidx`) and a parameter on theirs
+(`gen₊avr₊vref`), needing no event type on either. That turned out to be a gift rather
+than a compromise. At zero loading `ω ≡ 1` exactly on both sides, so the stator-`ω`
+residual that held M5 step 4's external oracle to ~10 % (D19) **vanishes identically
+here**, and the only difference left between the two models is the exciter's own extra
+lag. The band is therefore derivable rather than measured: `Ta·(1 + G)/T_E` relative,
+first order in `Ta`, and the check that matters is that halving `Ta` halves the gap.
+**Run, it does**: the gap ratio at `Ta` = 0.001 against 0.0005 came out inside 15 % of
+the predicted 0.5, and both gaps sat inside the derived band — a prediction confirmed
+is worth more than a prediction alone, so both numbers are asserted, not just the band.
+
+The LIMITED exciter is refused by name. `AVRTypeI`'s hard limits sit on the regulator
+output `vr`, one block upstream of the field voltage, so our `Efd ∈ [Efd_min, Efd_max]`
+has no counterpart at all; comparing them would be two different models and the gap
+would be read as a fidelity finding. Its oracle is the closed form in the core suite,
+which is four orders sharper than this comparison anyway — the same shape D19 found
+for the flux.

@@ -747,21 +747,95 @@ of the one helper that decides what "the same scenario on both sides" means.
 
 ## Step 5 — the voltage regulator
 
-- [ ] Static exciter, one lag, hard limits (`m5-prestudy.md` §2).
-- [ ] **Limits are saturations in the derivative**, never a clamp on the state —
-      the M1 carried-forward rule, and independently the construction
-      PowerDynamics' `AVRTypeI` arrived at.
-- [ ] `isoutofdomain` gains two indices per machine, for the reason `ΔPm` has one.
-- [ ] Closed form for the ceiling: it holds under sustained demand and **releases
-      unaided** when demand falls, and a second disturbance after saturation does
-      not freeze the integrator (M1's exact test, at this tier).
-- [ ] External comparison for the **unlimited** exciter only. Recorded in the
-      ledger that the **limited** exciter is *not* a matched-fidelity comparison:
-      `AVRTypeI`'s limits sit on the regulator output `vr`, not on `Efd`, and its
-      degeneration to our form needs `Ta → 0`, a limit rather than a setting
-      (`m5-prestudy.md` §2a).
-- [ ] Anti-vacuity: clamp the state instead of saturating the derivative and show
-      a check goes red. This is the M1 bug reproduced deliberately, at a new tier.
+- [x] Static exciter, one lag, hard limits (`m5-prestudy.md` §2). `Efd` is a STATE
+      unconditionally — a vertex model's state count is fixed at compile time, so
+      "a parameter when off, a state when on" was never available — and `T_E = Inf`
+      is the regulator-off default by the same `finite/Inf` arithmetic the flux uses.
+- [x] **Limits are saturations in the derivative**, never a clamp on the state.
+- [x] **`Vref` is DERIVED at initialisation**, not model data. Not on the plan's
+      list; it is the `Pm`-from-the-power-flow rule one mechanism along, and
+      without it the flat run is a startup transient.
+- [ ] ~~`isoutofdomain` gains two indices per machine~~ — **written, measured to
+      make the ceiling UNREACHABLE, and removed.** See "what this step found".
+- [x] Closed form for the ceiling: it holds under sustained demand and **releases
+      unaided** when demand falls, at a time the same closed form predicts to the
+      sampling grid; and a second disturbance after saturation does not freeze the
+      integrator, checked with a prediction rather than only a retcode.
+- [x] External comparison for the **unlimited** exciter only
+      (`build_oracle(tier = :sauer_pai_avr)`), on `infinite_bus_system` rather than
+      the three-path fixture — `_assert_sauer_pai_tier` refuses a machine-free bus.
+      The limited exciter is **refused by name**, with the reason in the message.
+- [x] Anti-vacuity: clamp the state instead of saturating the derivative, RUN, and
+      report which checks survive it. Three of four do, and one is *more* green
+      under the bug.
+
+### What this step found that the plan did not anticipate
+
+**F1 — the `isoutofdomain` guard makes a saturating limit UNREACHABLE.** The plan
+asked for two more indices per machine, by analogy with `ΔPm`. Written, the guard
+kills the run: it accepts a step only if the state lands at or below
+`limit + 1e-10`, and a state approaching from below with a finite derivative needs
+an ever-smaller step to land inside that window. Measured — MaxIters at `dt` =
+9.1e-11 / 1.7e-9 / 1.5e-8 across three exciter settings, and 199,944 accepted steps
+on a raw solve that never reaches the limit. With the guard off the run succeeds and
+the state exceeds its ceiling by **3.4e-8, once**. `engines/swing.jl` says in prose
+that this cannot happen ("the derivative is already zero at the ceiling, which puts
+the solution *at* headroom"); the derivative is zero there, and it does not follow
+that the solution arrives.
+
+**F2 — and the engines that still carry that guard are NOT stalling, for a reason
+nobody chose.** A `SwingEngine` governor driven onto its headroom for 20,000 s
+lands 3.1e-11 pu ABOVE its ceiling — inside the guard's absolute `1e-10` window with
+3× to spare. The window a state needs scales with how fast it is: a 1 s governor lag
+needs 3e-11, a 0.05 s exciter lag needs 5e-8. Left alone deliberately; changing the
+constant would move M2, M3 and M4 numbers.
+
+**F3 — the open-loop reading of a setpoint error is wrong by 11×.** The positive
+control was written as "`Vref` off by `Δ` moves the field by `K_A·Δ`" and measured
+0.180 pu against that 2.0. The loop closes through the network: the DC loop gain is
+`G = K_A·Xe/(Xe + Xd) = 10.11` and the answer is `K_A·Δ/(1 + G)`, which lands to nine
+digits. It became the only check in the milestone that reads `K_A` inside an equation.
+
+**F4 — the headline ceiling check reads RED OR GREEN depending on WHERE IT LOOKS.**
+The clamp mutation was written expecting "three of four claims stay green, and one is
+*better* under the bug (exactly 0 excess against the correct engine's 5e-8)". Run, it
+is sharper than that, and the prediction was half wrong. Sampled at the clamp
+instants the broken state is exactly at its cap — 0.0 excess, at every step size
+tried. Sampled anywhere else it is **0.378 pu above the cap** at `h` = 0.005, seven
+million times the correct engine's excursion. One run, one state variable, two
+maxima. A post-hoc clamp makes the answer a property of the recorder; a saturation in
+the derivative has no such freedom, and that is the cleanest statement of *why* M1's
+carried-forward rule is a rule. The closed form still goes red on its own.
+
+**F4b — a settled observable cannot carry a rate.** The step-size signature was first
+written on the endpoint flux and failed: halving `h` moved it by 0.78, not 0.5. The
+h-scan says why — by 24 s the voltage loop has closed around the clamped run and it
+has found an equilibrium of its own, so the endpoint is partly saturated. The
+**excess field** is clean-linear in `h` over a 40× range (1.2128, 0.7089, 0.3777,
+0.1942, 0.0789, 0.0396 for `h` = 0.02 … 0.0005; the endpoint flux over the same scan:
+0.0140, 0.0128, 0.0110, 0.0086, 0.0052, 0.0031). The check was wrong, not the engine
+— the second time in this step (see F3) that an open-loop intuition set a threshold
+the closed loop does not obey.
+
+**F5 — a hard saturation is a discontinuous RHS, and Rodas5P fails on one isolated
+point.** Swept over eight ceilings, seven complete; `Efd_max = 1.2` does not — and it
+is isolated in the TOLERANCE too, completing at reltol 1e-6 and 1e-11 and failing
+only at the 1e-9 between. `FBDF` completes it. Documented rather than fixed, since
+`init!` already takes a `solver`.
+
+**F6 — the external oracle cannot use this step's own fixture.**
+`_assert_sauer_pai_tier` refuses a machine-free bus, and `regulator_bus_system`'s
+bare junctions are exactly that. The comparison moved to `infinite_bus_system`, which
+is two buses — so a line trip would island the machine and the disturbance became a
+**setpoint step**, a parameter on both sides. That turned out to be a gift: at zero
+loading `ω ≡ 1` exactly, so the stator-`ω` residual that held step 4's oracle to ~10 %
+vanishes identically and the exciter is the only difference left.
+
+**F7 — the sample at an event instant is the PRE-event one**, on this engine as on
+every other in the repo. Three checks read `findfirst(≥ t_event)` and got the old
+network's voltage; the fix was `findfirst(>)`, and the check they became is stronger
+— the algebraic relation `|V| = (E′q·Xe + X′d·E_inf)/(Xe + X′d)` is asserted at every
+post-trip sample rather than at the jump alone.
 
 ## Step 6 — voltage-dependent load
 
