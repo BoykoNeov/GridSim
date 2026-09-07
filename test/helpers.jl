@@ -675,3 +675,22 @@ end
 # The channels the fast machine and its `T′ → 0` limit may be compared on. The two
 # flux channels are absent DELIBERATELY — see `flux_limit_model`.
 const FLUX_LIMIT_CHANNELS = (:δ_G1, :δ_G2, :ω_G1, :ω_G2, :V_B1, :V_B2, :f_coi)
+
+# --- M5 step 7: the fixture whose post-trip equilibrium is its pre-trip one ------
+#
+# Every machine at zero injection with the SAME internal voltage puts every bus at
+# the same complex voltage, so every branch carries EXACTLY zero current and
+# removing one changes nothing at all. That is what makes the flat run ACROSS an
+# event (D8) a check with a known answer rather than a plausible-looking trace: any
+# departure is re-initialisation artefact and nothing else.
+#
+# It is deliberately NOT enough on its own — a re-initialisation that did nothing
+# would also come out flat — so the test pairs it with a loaded ring as the positive
+# control. See the testset for that argument.
+quiet_ring() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+    [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0),
+     Branch(:L31, :B3, :B1, 0.25, 500.0)],
+    [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.0, 0.0),
+     Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.0, 0.0),
+     Machine(:G3, :B3, 500.0, 5.0, 2.0, 0.50, 1.0, 0.0)])

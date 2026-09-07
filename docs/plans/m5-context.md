@@ -879,3 +879,97 @@ constant-impedance load and the dynamic path draws constant power. Same 0.046 pu
 direction, **−0.15616 Hz**. What is asserted is the SIGN, because the sign is the only
 thing that separates the two bugs. Both are kept and both are labelled — the
 indistinguishable one because saying so is the finding.
+
+## D25 — The two tiers cannot be handed one model, and that is the boundary working (step 7)
+
+`m5-plan.md`'s step-7 construction was to hand ONE `NetworkModel` to both engines,
+on the argument that `SwingEngine` reads none of the detailed fields. The argument
+is half right and the conclusion is wrong: it does not read them, and it
+**refuses** them — `_assert_frozen_flux` (step 2) and `_assert_no_regulator`
+(step 5), both added deliberately, because a classical engine handed a real `Xd`
+would run a machine its own data does not describe and would do it silently.
+
+So the criterion compares two models, and the replacement claim is stronger
+because it is checkable field by field rather than by intent: the two agree **bit
+for bit** in every quantity the classical tier reads — `bus`, `H`, `D`, `X′d`,
+`E′`, `Pm`, `1/R`, `headroom`, `Tg`, `Ra`, and the branch `X` and `K` — and differ
+in exactly the set that tier refuses. **The difference between the two runs is the
+tier boundary itself**, which is a better thing to be able to say than "the same
+model, honest".
+
+The mechanical consequence is that `two_area_model` grew a `detailed::NamedTuple`
+keyword splatted into both `Machine` constructors. An empty NamedTuple is the
+classical machine to the bit, so every number M3 published is untouched — asserted,
+not assumed.
+
+## D26 — The transfer is DERIVED from the solver's samples, not recorded as a channel (step 7)
+
+The criterion's own quantity — the tie transfer — is **not in the state read-out**.
+`current_state`/`state_series` carry bus voltage magnitudes; computing
+`|V₁||V₂|sin(θ₁−θ₂)/X` needs the angles.
+
+The obvious fix is a `P_<branch>` channel beside `V_<bus>`, and it was rejected for
+a reason outside this engine: `reference/`'s external oracle asserts
+`keys(o) == keys(t)` against `state_series` at four comparison sites, so a channel
+added here is a channel the PowerDynamics side must grow too, with bands of its
+own. Step 7 would then depend on an oracle change it has no business making — the
+milestone's own rule that a step must not widen someone else's gate to fit.
+
+So `branch_power_series` walks the integrator's own saved samples (`sol.t`/`sol.u`),
+which are exactly the instants the caller asked for through `saveat` and exactly
+what `_playback!` itself reads. **Never through the interpolant**: the playback
+driver already measures that as wrong across a step a callback ended. It refuses a
+branch any logged event touched, rather than reporting pre-event samples with the
+post-event coupling.
+
+`branch_power` gives **one name** to `K·sin(δ_from − δ_to)` and `Re(V·conj(I))`, so
+the quantity the two tiers are compared on has one implementation rather than two
+call sites with a sign and an orientation each to get right.
+
+## D27 — What beats the constant-voltage ceiling is the REGULATOR, and the flux alone points the other way (measured, step 7)
+
+The plan's reasoning was that a tier with voltage in it beats a ceiling that
+assumes voltage is constant. Measured on the two-area case at the classical slip
+boundary, peak export as a fraction of `P_max`:
+
+    flux frozen (the control)   0.9614      |V| 0.935 – 1.000
+    flux live, no regulator     0.8865      |V| 0.809 – 0.999
+    flux live + regulator       1.0295      |V| 0.948 – 1.037
+
+**Letting the flux move alone makes it worse.** The demagnetising current pulls
+`E′q` down, the terminal voltage falls, and the peak lands ~7 % below even the
+frozen-flux bound. A voltage that can fall is a mechanism for falling *short* of
+the constant-voltage ceiling, not for exceeding it. What exceeds it is field
+forcing — and the exciter can only act **through** the flux equation, so the two
+mechanisms are not separable even though one of them on its own points the wrong
+way.
+
+This is why the published table carries three detailed rows rather than two: with
+only "frozen" and "flux + regulator" the finding is invisible, and the natural
+story ("voltage dynamics beat the ceiling") would have gone in unchallenged.
+
+## D28 — `abstol` decides completion at isolated points, and a retried cell is MARKED (step 7)
+
+Step 5 measured a stiff solver failing at one isolated field ceiling AND one
+isolated tolerance, and recorded it as a property of pairing an adaptive solver
+with a discontinuous right-hand side. Step 7 hit the same thing from the other
+axis, on cells with **no regulator at all** — the governor headroom is a hard
+saturation too. Swept on the flux-only cell at `reltol = 1e-5`:
+
+    abstol   1e-5    1e-6    1e-7            1e-8    1e-9     1e-10
+    result   ok      ok      FAILS (t=12.9)  ok      ok       ok
+    steps    2,050   2,870   —               3,400   15,049   3,491
+
+and every completing cell agrees on the answer to **2 parts in 10,000**. So the
+failure is conditioning at a kink, not a boundary of the model.
+
+Three decisions follow. `init!` exposes the **integrator's own `maxiters`** — a
+different counter from `solve!`'s playback cap, reached first, defaulted by the
+library to 1e5, and too small for a 20 s pole slip at any tolerance worth quoting;
+without it the standing "run it again tighter" rule is unavailable at this tier.
+A sweep cell that does not complete is **retried once at a ten-times looser
+`abstol` and marked in the table**, which is defensible precisely because the sweep
+above shows the retry moves the conditioning and not the answer. And the quoted
+tolerance pair is `1e-5 / 1e-8`, with `1e-3 / 1e-6` as the second point of the
+two-tolerance rule; `reltol = 1e-7` is reported as not completing on the regulated
+cells rather than omitted.

@@ -6,12 +6,15 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3 and M4 was every round's most
 valuable line.
 
-Status: **steps 0b, 1, 2, 3 and 4 done, steps 5-8 open.** Entered at `86651ab` with
+Status: **steps 0b, 1, 2, 3, 4, 5, 6 and 7 done; step 8 open.** Entered at `86651ab` with
 **1873 core / 172 UI / 82 reference**; the suite split left the core count
 unchanged, step 1 brought it to **2083 core**, step 2 to
 **2253 core / 172 UI / 82 reference**, step 3 to
 **2253 core / 172 UI / 298 reference**, and step 4 to
-**2342 core / 172 UI / 421 reference**. The detailed tier now carries the
+**2342 core / 172 UI / 421 reference**, step 5 to **2503 core**, step 6 to
+**2696 core / 281 UI / 986 reference**, and step 7 to
+**2835 core / 281 UI / 986 reference** (+139 for the criterion and M3's protection
+re-validated one tier up). The detailed tier now carries the
 two-axis machine, reproduces `SwingEngine` at the frozen-flux degeneration,
 initialises from a power flow whose machine model is the steady state of that
 machine, is checked against PowerDynamics' `SauerPaiMachine` at both fidelities,
@@ -954,28 +957,153 @@ the workaround it describes is no longer necessary.
 
 ## Step 7 — the criterion (the milestone's purpose)
 
-- [ ] Locate the classical tier's slip boundary on the two-area case — **scan the
+- [x] Locate the classical tier's slip boundary on the two-area case — **scan the
       boundary, do not bisect it** (M3 step 6's rule), rebuilding per cell rather
-      than mutating a live coupling (the fixpoint depends on it).
-- [ ] At that same tie strength, run the detailed tier and measure both: does it
+      than mutating a live coupling (the fixpoint depends on it). Unchanged from
+      M3: `slip_boundary()` is reused as it stands, and the boundary at the derived
+      cascade is **5,500 MW**.
+- [x] At that same tie strength, run the detailed tier and measure both: does it
       lose synchronism, and does the export swing peak **exceed** the classical
-      tier's `P_max`?
-- [ ] **The anti-vacuity control is specific and must be run**: freeze the
-      voltages (step 2's degeneration) and the criterion must **fail** — the
-      classical tier provably cannot satisfy it. If it passes with voltages
-      frozen, the criterion is not measuring what it claims.
-- [ ] Positive control: the criterion's two halves are checked separately, so a
+      tier's `P_max`? **Yes and yes** — it slips, and the peak export is
+      **1.0295 × P_max** (5,662.4 against 5,500 MW) at `reltol = 1e-5`, 1.0317 at
+      `1e-3`. The classical tier's own peak in the same run is `P_max` exactly, to
+      four decimals: the bound is attained, not merely respected.
+- [x] **The anti-vacuity control is specific and must be run**: freeze the
+      voltages (step 2's degeneration) and the criterion must **fail**. It does —
+      **0.9614 × P_max**, and it fails against a **derived** prediction rather than
+      a tolerance (F4). It is not "the classical tier", and F4 says why that makes
+      it sharper rather than weaker.
+- [x] Positive control: the criterion's two halves are checked separately, so a
       run that slips but does not swing (or the reverse) is distinguishable from a
-      pass.
-- [ ] M3's protection wired at this tier and **re-validated**, not assumed to
+      pass. The frozen control **is** the first of those — it slips and does not
+      exceed — so the distinction is exercised rather than only asserted.
+- [x] M3's protection wired at this tier and **re-validated**, not assumed to
       carry: the shed ladder, the out-of-step tie relay and the generation ramp,
-      each against the M3 closed form that still applies (D8).
-- [ ] `inject!`'s consistent re-initialisation (D8) exercised: **the flat run
+      each against the M3 closed form that still applies (D8). All three go through
+      `engines/swing.jl`'s own binders rather than copies, so every guard is the
+      shipped guard with the shipped message. Measured: the ramp's settled speed
+      `ω_ss = ΔP/(Σ1/R + ΣD)` to **9.5e-11** relative; the ladder root-found inside
+      its one-`dt` bracket and off the grid, stepping its machine's `Pm` by exactly
+      the block, with the settled speed landing on the closed form **that includes
+      the block** (2.2e-9); the relay firing with `|δ|` at the reported instant
+      equal to its threshold to **1e-10**, opening the branch through the engine's
+      own `inject!(::TripLine)` and surviving the re-initialisation. **One piece
+      does NOT carry and is refused by name** — see F7.
+- [x] `inject!`'s consistent re-initialisation (D8) exercised: **the flat run
       across an event**, on a system whose post-trip equilibrium is known.
-- [ ] Every number lands in `entsoe-iberia-reproduction.md` under §7.3's
+      `quiet_ring()` — every machine at zero injection with the same internal
+      voltage, so every branch carries exactly zero current and removing one
+      changes nothing — comes through a line trip with a **departure of exactly
+      0.0** on every channel. Paired with a loaded-ring positive control (0.286 rad
+      on `δ_G2`), because the quiet fixture alone cannot discriminate (F8).
+- [x] Every number lands in `entsoe-iberia-reproduction.md` under §7.3's
       discipline — `[GUESS]` inputs marked, and a tuned parameter is not a result.
-      **Write the prose after reading the table**: two M3 claims went in ahead of
-      the numbers and both were wrong.
+      New §7.7. Every detailed machine parameter is a [CHOICE] on an aggregated
+      area and every one is **swept**: 14 of 14 cells satisfy both halves, over a
+      3× range of `T′do`, 47 % of `Xd`, 8× of `K_A` and 3.2× of the field ceiling.
+      **The prose was written after the table**, and it had to be: two paragraphs
+      drafted from the reasoning were wrong (F3, F5).
+
+### What this step found that the plan did not anticipate
+
+**F1 — "one model, two tiers" is not available, and the reason is a guard M5
+itself added.** The plan's construction was to hand ONE `NetworkModel` to both
+engines, on the grounds that `SwingEngine` reads none of the detailed fields. It
+does not read them — and it **refuses** them, by name, in `_assert_frozen_flux`
+(step 2) and `_assert_no_regulator` (step 5), because a classical engine handed a
+real `Xd` would run a machine its own data does not describe, silently. So the
+comparison is between two models, and the claim that replaces it is stronger
+because it can be checked field by field: the two agree **bit for bit** in every
+quantity the classical tier reads (`bus`, `H`, `D`, `X′d`, `E′`, `Pm`, `1/R`,
+`headroom`, `Tg`, `Ra`, and the branch `X` and `K`) and differ in exactly the set
+that tier refuses. The difference between the two runs **is** the tier boundary.
+
+**F2 — the quantity the criterion measures is not in the state read-out at all,
+and the obvious fix was refused.** `current_state`/`state_series` carry bus
+voltage MAGNITUDES; the tie transfer needs the angles. The obvious answer is a
+`P_<branch>` channel next to `V_<bus>` — and `reference/`'s external oracle
+asserts `keys(o) == keys(t)` at four comparison sites, so a channel added here is
+a channel PowerDynamics must grow too, with bands of its own. Step 7 would then
+depend on an oracle change it has no business making. So the transfer is
+**derived** from the integrator's own saved samples (`branch_power_series`), read
+the way `_playback!` itself reads them and never through the interpolant — which
+the playback driver's own comment measures as wrong across a step a callback
+ended. `branch_power` gives ONE name to `K·sin(δ_from − δ_to)` and
+`Re(V·conj(I))`, so the two tiers' transfer has one implementation rather than two
+call sites with a sign and an orientation each.
+
+**F3 — letting the flux move ALONE moves the answer the wrong way, and the first
+draft of the prose said the opposite.** The expectation was that voltage dynamics
+are what beat the constant-voltage ceiling. Measured: with the flux live and no
+regulator the peak export is **0.886** of `P_max` against **0.961** with it
+frozen, and the bus voltage falls to **0.809** as the demagnetising current pulls
+`E′q` down. A voltage that can fall is a mechanism for falling **short** of the
+ceiling. What exceeds it is the REGULATOR — which can only act through the flux
+equation, so the two mechanisms are not separable even though one of them on its
+own points the wrong way. This is why the table has three detailed rows and not
+two: with only "frozen" and "flux + AVR" the finding is invisible.
+
+**F4 — the anti-vacuity control has a DERIVED prediction, and the first number
+disagreed with it until the tolerance moved.** At the frozen-flux degeneration
+`X′d = X′q`, so each machine is a constant source behind one reactance and the
+transfer is bounded by `|E′₁||E′₂| / (X_tie + X′d₁ + X′d₂)` — a formula, not a
+measurement. The first run came out **0.03 % above** it, which is the kind of small
+excess that gets rationalised. It was solver error: at `reltol = 1e-5` the ratio is
+0.999999 and at `1e-7` it is 1.000000. Two consequences. The control's failure is
+quantitative rather than merely negative — it fails by hitting a bound that is
+**strictly tighter than `P_max`**, because the classical tier puts `E′` at the bus
+and this one puts it behind `X′d`. And so the control is **not "the classical
+tier"**; it is the classical MECHANISM inside the detailed engine, which is the
+comparison the tier boundary in F1 actually allows.
+
+**F5 — `abstol`, not `reltol`, decides whether these runs complete, and it does so
+at ISOLATED points.** Swept on the flux-only cell at `reltol = 1e-5`:
+
+    1e-5  ok (2,050 steps)   1e-6  ok (2,870)   1e-7  FAILS (step size collapses
+    1e-8  ok (3,400)         1e-9  ok (15,049)  1e-10 ok (3,491)   at t = 12.92 s)
+
+with every completing cell agreeing to **2 parts in 10,000**. So the failure is
+conditioning at a kink and not a boundary of the model — M5 step 5's finding
+arriving on a second case, where it was isolated in both the ceiling and the
+tolerance. The governor headroom is a hard saturation and is live even in the
+cells with no regulator, so this is not the exciter's doing alone. Two things
+came out of it: `init!` now exposes the **integrator's own `maxiters`** (library
+default 1e5, and a 20 s pole slip does not fit inside it at any tolerance worth
+quoting — this is a different counter from `solve!`'s playback cap and is reached
+first), and a sweep cell that does not complete is **retried once at a looser
+`abstol` and MARKED**, rather than dropped or silently re-tolerated.
+
+**F6 — the field voltage overshoots its own stated ceiling by ~2 %**, 5.18 pu at
+`reltol = 1e-3` and 5.11 at `1e-5` against 5.0. This is step 5's measurement, on a
+state fast enough to make it visible: the derivative saturation zeroes the
+derivative *at* the limit, so the only excursion possible is the single step that
+crosses, and its size is set by how fast the state is. It shrinks with the
+tolerance. It is also why the `Efd_max` axis is swept rather than fixed — at
+`Efd_max = 2.5`, half the centre value, the criterion still holds at 1.0164, which
+is what rules out the overshoot as the thing carrying the result.
+
+**F7 — the one piece of M3's protection that does NOT carry, refused rather than
+documented.** A shed ladder steps its machine's `Pm`. At the classical tier `Pm`
+is a NET injection, so disconnecting load raises it by exactly the block; at this
+tier `Pm` is MECHANICAL power and the load is a separate element with its own
+voltage dependence. On a model carrying a `Load` the same operation would add
+generation instead of removing load, and the two differ by exactly the mechanism
+step 6 built. Documenting that is too weak — it is refused by name, on a model
+with a `Load`, with the step that lifts it named in the message. On the models
+where the load is folded into a machine's net injection (the two areas, and every
+M2/M3 fixture) the convention carries unchanged, and the test asserts both halves.
+
+**F8 — the flat run across an event needs a fixture whose post-trip equilibrium is
+its pre-trip one, and even then it cannot discriminate on its own.** `quiet_ring()`
+puts every machine at zero injection with the same internal voltage, so every bus
+sits at the same complex voltage, every branch carries exactly zero current, and
+removing one changes nothing at all — the departure across a line trip is
+**exactly 0.0** on every channel, `==` and not a tolerance. But a re-initialisation
+that did nothing would also come out flat there: the re-solve starts at the answer
+and lands on it. So the check ships in two halves and the test says which carries
+what — the quiet fixture proves no artefact is **injected**, and the loaded-ring
+positive control (0.286 rad on `δ_G2` through the same trip) proves the event is
+reaching the system at all.
 
 ## Step 8 — the voltage-visible window (D12, first to be cut)
 

@@ -186,6 +186,13 @@ export system_inertia, is_online
 # the read `ui/` needs to label traces without touching engine fields. Both names
 # checked clear against GLMakie's exports before being added.
 export SwingEngine, machine_ids
+# The active power on one branch, `from → to`, in pu — ONE name for both tiers
+# (M5 step 7). `K·sin(δ)` at the classical tier and `Re(V·conj(I))` at the detailed
+# one are the same physical quantity, and the milestone's criterion compares them
+# across the two, so writing them out twice at two call sites is exactly the
+# orientation/sign mistake this export exists to make impossible. Checked clear
+# against GLMakie's exports before being added — the standing check since M1.
+export branch_power, branch_power_series
 # The detailed (DAE) tier (M5 step 1). `DetailedEngine` and `load_bus_system` both
 # checked clear against GLMakie's exports before being added — the standing check
 # since M1. Everything else it answers to (`init!`, `solve!`, `state_series`,

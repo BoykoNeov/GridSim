@@ -222,6 +222,16 @@ missing or inverted per-unit conversion behind a weight of 1. The check that thi
 conversion is right is that `machine_arrays(net).H` comes out as `KE/S_base`
 exactly, which section 3 prints.
 
+**`detailed` is the M5 machine, and its default is EXACTLY the machine this script
+always built.** It is splatted into both `Machine` constructors, so an empty
+NamedTuple leaves every field at the classical degeneration (`Xd = Xq = X′q = X′d`,
+`T′do = T′qo = Inf`, `K_A = 0`, `T_E = Inf`) and every number section 4 publishes is
+unchanged, bit for bit. What it buys is that **one model serves both tiers**: the
+fields it sets — the synchronous reactances, the flux time constants, the exciter —
+are read by `DetailedEngine` and by nothing in `SwingEngine`, which section 5a asserts
+rather than assumes. That is what makes the two-tier comparison there a comparison of
+TIERS and not of two hand-written cases.
+
 **What is folded into `P0` rather than modelled.** `P0` here is the pre-event AC
 exchange with Continental Europe and nothing else. The 2 × 500 MW HVDC was in
 constant-power mode, so it is a fixed, **angle-independent** injection: −1,000 MW
@@ -238,7 +248,8 @@ function two_area_model(; P_max_mw::Real = P_MAX_NOMINAL,
                           reserve_ib::Real = RESERVE_IB,
                           reserve_ce::Real = RESERVE_CE,
                           R::Real = R_DROOP, Tg::Real = TG, D::Real = D_MACH,
-                          h_ib::Real = H_IB, h_ce::Real = H_CE)
+                          h_ib::Real = H_IB, h_ce::Real = H_CE,
+                          detailed::NamedTuple = NamedTuple())
     S_ib = KE_IB / h_ib          # MVA — the machine's own base follows from its KE
     S_ce = KE_ce / h_ce
     X    = S_BASE / P_max_mw     # pu on S_base, with E′ = 1.0 at both ends (D9)
@@ -247,9 +258,9 @@ function two_area_model(; P_max_mw::Real = P_MAX_NOMINAL,
         # `Xd′` is carried and unused by this tier (see network_model.jl); 0.30 pu
         # is a plausible machine value and changes nothing here.
         Machine(:IB, :ES, S_ib, h_ib, D, 0.30, 1.0,  P_tie0_mw,
-                R,  P_tie0_mw + reserve_ib, Tg),
+                R,  P_tie0_mw + reserve_ib, Tg; detailed...),
         Machine(:CE, :FR, S_ce, h_ce, D, 0.30, 1.0, -P_tie0_mw,
-                R, -P_tie0_mw + reserve_ce, Tg),
+                R, -P_tie0_mw + reserve_ce, Tg; detailed...),
     ]
     branches = [Branch(:TIE, :ES, :FR, X, P_max_mw)]
     return NetworkModel(S_BASE, F0, buses, branches, machines)
@@ -481,7 +492,198 @@ const KE_CE_CELLS  = [600_000.0, 800_000.0, 1_000_000.0, 1_200_000.0]
 const P_TIE0_CELLS = [-2_000.0, -1_500.0, -1_000.0, -500.0, 0.0, 500.0, 1_000.0]
 
 # ---------------------------------------------------------------------------
-# 7. Output.
+# 7. THE DETAILED TIER — M5 step 7's criterion (docs/plans/m5-plan.md §Goal)
+# ---------------------------------------------------------------------------
+#
+# WHAT IS BEING MEASURED, AND WHY IT IS RELATIVE. Section 4 records a ceiling the
+# classical tier cannot pass: with `E′` a constant of the model at both ends the
+# transfer is `K·sin δ` with `K = E′₁E′₂/X`, so the export can never exceed `P_max`
+# however violently the areas separate. That is not a tuning limitation, it is the
+# shape of the equation. The detailed tier makes the two bus voltages algebraic
+# unknowns and the internal voltages STATES, so the same product stops being a
+# constant — and the milestone's exit criterion is exactly that difference, made to
+# show up as a number:
+#
+#   at the tie strength where the CLASSICAL tier loses synchronism at the report's
+#   cascade, the DETAILED tier must (a) also lose synchronism and (b) carry a peak
+#   export ABOVE that tier's `P_max`.
+#
+# Relative, deliberately: the absolute 5,000 MW depends on inputs the report never
+# states (§2 above, and `entsoe-iberia-reproduction.md` §2), while the statement
+# above depends only on the mechanism.
+#
+# TWO MODELS, AND THE DIFFERENCE IS THE TIER BOUNDARY. The plan asked for one model
+# handed to both engines; that is NOT available, because `SwingEngine` refuses
+# detailed machine data and a regulator by name (`_assert_frozen_flux`,
+# `_assert_no_regulator` — M5 steps 2 and 5, and deliberately: a classical engine
+# handed a real `Xd` would silently run a different machine). What holds instead is
+# stronger and is asserted field by field in `test/`: the two models agree BIT FOR
+# BIT in every quantity `SwingEngine` reads, and differ in exactly the set it
+# declares it cannot represent.
+#
+# THE PARAMETERS ARE [CHOICE] AND THEY ARE SWEPT (§7.3's discipline: a tuned
+# parameter is not a result). An aggregated area has no measured `Xd`, `T′do`, `K_A`
+# or field ceiling; the centre values below are the textbook large-machine ones
+# `detailed_pair()` already uses, and section 5d walks each axis on its own.
+
+# Machine, on its own base. The classical degeneration is `Xd = Xq = X′q = X′d`
+# with `T′ = Inf`, which is what an empty NamedTuple gives.
+const MACH_DETAILED = (; Xd = 1.8, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4)
+# Static exciter: gain, lag, and a field ceiling. `Efd_min` is left unlimited —
+# nothing in this event drives the field DOWN against a floor.
+const AVR_DETAILED  = (; K_A = 200.0, T_E = 0.05, Efd_max = 5.0)
+const DETAILED_FULL = merge(MACH_DETAILED, AVR_DETAILED)
+
+# The tolerance the detailed runs are quoted at, and the one they are re-run at.
+# Neither is the engine's default (`reltol = 1e-3`), which is too loose to resolve
+# a few per cent of margin — measured, and reported in section 5c.
+# `abstol`, not `reltol`, is what decides whether these runs COMPLETE, and it does so
+# at ISOLATED points rather than across a threshold. Measured on the flux-only cell
+# at the boundary, reltol 1e-5, abstol swept over five orders:
+#
+#   1e-5  ok (2,050 steps)   1e-6  ok (2,870)   1e-7  FAILS (step size collapses at
+#   t = 12.92 s)             1e-8  ok (3,400)   1e-9  ok (15,049)   1e-10 ok (3,491)
+#
+# and every completing cell agrees on the answer to 2 parts in 10,000 (0.88625 …
+# 0.88647 of P_max). So the failure is conditioning at a kink and not a boundary of
+# the model — M5 step 5's finding arriving on a second case, where it was isolated in
+# BOTH the ceiling and the tolerance. A hard saturation makes the right-hand side
+# discontinuous, and the governor headroom is one even in the cells with no
+# regulator. Both tolerance pairs quoted below are on the completing side; the
+# failures are reported in section 5c rather than hidden by the choice.
+const DET_RELTOL, DET_ABSTOL = 1.0e-5, 1.0e-8
+# The INTEGRATOR's own step cap. Its library default is 1e5 and a 20 s pole slip on
+# this tier does not fit inside that at any tolerance worth quoting.
+const DET_MAXITERS = 20_000_000
+
+"""
+    detailed_cell(; P_max_mw, detailed, …) -> NamedTuple
+
+One cell of section 5, on the detailed tier. Playback (`solve!`), not stepping:
+`step!` is not implemented at this tier by decision (`m5-context.md` D2).
+
+`peak_export` is read through `branch_power_series`, i.e. `Re(V·conj(I))` on the
+tie — the SAME function name the classical tier answers to, where it evaluates
+`K·sin δ`. Writing the two transfers out separately at two call sites is exactly
+the orientation-and-sign mistake that would make the comparison meaningless.
+
+`ceiling_mw` is the transfer bound this case would have with the flux FROZEN,
+`|E′₁||E′₂| / (X_tie + X′d₁ + X′d₂)` — derived rather than measured, and valid
+because at that degeneration `X′d = X′q` makes each machine a constant source
+behind one reactance. It is the anti-vacuity control's prediction, reported for
+every cell so the live ones can be seen passing it.
+"""
+function detailed_cell(; P_max_mw::Real = P_MAX_NOMINAL,
+                         detailed::NamedTuple = DETAILED_FULL,
+                         magnitude_mw::Real = cascade_magnitude(),
+                         duration_s::Real = cascade_duration(),
+                         shed::Bool = false, tend::Real = TEND, dt::Real = DT,
+                         reltol::Real = DET_RELTOL, abstol::Real = DET_ABSTOL,
+                         kwargs...)
+    net = two_area_model(; P_max_mw = P_max_mw, detailed = detailed, kwargs...)
+    stages = shed ? [:IB => defence_plan()] : Pair{Symbol,Vector{LoadShedStage}}[]
+    # `slack = :CE` — Continental Europe supplies the angle reference, which is the
+    # physically natural choice and, on a model with no voltage-dependent load,
+    # provably free (`engines/detailed.jl`'s header measures it at 2.2e-16).
+    eng = init!(DetailedEngine, net; dt = dt, slack = :CE,
+                reltol = reltol, abstol = abstol, maxiters = DET_MAXITERS,
+                ramp = [:IB => cascade_ramp(; magnitude_mw = magnitude_mw,
+                                              duration_s = duration_s)],
+                shed = stages)
+    s0 = current_state(eng)
+    ma, ba = machine_arrays(net), branch_arrays(net)
+    ceiling = hypot(s0.E′q[1], s0.E′d[1]) * hypot(s0.E′q[2], s0.E′d[2]) /
+              (ba.X[1] + ma.Xd′[1] + ma.Xd′[2]) * S_BASE
+
+    ser = solve!(eng, (0.0, tend))
+    tie = branch_power_series(eng, :ES, :FR)
+
+    d = abs.(ser.δ_IB .- ser.δ_CE)
+    dmax = maximum(d)
+    t90 = NaN
+    for k in 2:length(d)
+        if isnan(t90) && d[k] >= pi/2 && d[k] > d[k-1]
+            t90 = ser.t[k] - (ser.t[k] - ser.t[k-1]) * (d[k] - pi/2) / (d[k] - d[k-1])
+        end
+    end
+    peak = maximum(tie.P) * S_BASE
+    efdmax = get(detailed, :Efd_max, Inf)
+    return (; eng, net, slipped = dmax >= pi, dmax, t90,
+            n_pole_slips = floor(Int, dmax / 2pi),
+            peak_export = peak, P_max = Float64(P_max_mw),
+            over = peak / P_max_mw, exceeds = peak > P_max_mw,
+            ceiling_mw = ceiling, swing = peak - first(tie.P) * S_BASE,
+            V_min = minimum(min.(ser.V_ES, ser.V_FR)),
+            V_max = maximum(max.(ser.V_ES, ser.V_FR)),
+            E′q_peak = maximum(ser.E′q_IB), E′q_0 = s0.E′q[1],
+            Efd_peak = maximum(ser.Efd_IB), Efd_over = maximum(ser.Efd_IB) - efdmax,
+            f_ib_min = minimum(net.f0 .* (1 .+ ser.ω_IB)),
+            f_ce_min = minimum(net.f0 .* (1 .+ ser.ω_CE)),
+            n_steps = eng.integrator.stats.naccept)
+end
+
+"""
+    detailed_cell_retry(; …) -> (; cell, retried)
+
+`detailed_cell`, with ONE documented retry at a ten-times looser `abstol` if the
+step size collapses — and the fact of the retry returned, so the table can mark it.
+
+This is not "run it again until it works", and the difference is a measurement. The
+abstol sweep quoted above finds the failure at an ISOLATED point, with five other
+values completing and all agreeing to 2 parts in 10,000. So the retry moves the
+conditioning at a kink and demonstrably not the answer. Hiding a non-completing
+cell, or quietly picking whichever tolerance made the grid look tidy, is the failure
+`entsoe-iberia-reproduction.md` §7.3 exists to document; marking it is not.
+"""
+function detailed_cell_retry(; abstol::Real = DET_ABSTOL, kwargs...)
+    try
+        return (cell = detailed_cell(; abstol = abstol, kwargs...), retried = false)
+    catch e
+        e isa ErrorException || rethrow()
+        return (cell = detailed_cell(; abstol = 10 * abstol, kwargs...), retried = true)
+    end
+end
+
+"""
+    classical_cell(; …) -> NamedTuple
+
+The classical tier's half of section 5, run through **`solve!` rather than
+`step!`** so that both tiers walk the same driver and the same output grid. That is
+not how section 4 runs (it steps), and the two agree — asserted in `test/` — but a
+comparison whose two sides took two different execution paths would have a second
+reason to differ, which is the one thing this section cannot afford.
+"""
+function classical_cell(; P_max_mw::Real = P_MAX_NOMINAL,
+                          magnitude_mw::Real = cascade_magnitude(),
+                          duration_s::Real = cascade_duration(),
+                          shed::Bool = false, tend::Real = TEND, dt::Real = DT,
+                          kwargs...)
+    net = two_area_model(; P_max_mw = P_max_mw, kwargs...)
+    stages = shed ? [:IB => defence_plan()] : Pair{Symbol,Vector{LoadShedStage}}[]
+    eng = SwingEngine(net; dt = dt, shed = stages,
+                      ramp = [:IB => cascade_ramp(; magnitude_mw = magnitude_mw,
+                                                    duration_s = duration_s)])
+    ser = solve!(eng, (0.0, tend))
+    tie = branch_power_series(eng, :ES, :FR)
+    d = abs.(ser.δ_IB .- ser.δ_CE)
+    peak = maximum(tie.P) * S_BASE
+    return (; eng, net, slipped = maximum(d) >= pi, dmax = maximum(d),
+            peak_export = peak, P_max = Float64(P_max_mw), over = peak / P_max_mw)
+end
+
+# The axes section 5d walks, ONE AT A TIME around `DETAILED_FULL`. A full cross
+# product is over a hundred runs for a claim that is about each mechanism
+# separately; the question here is "which of these choices does the answer turn
+# on", and a one-at-a-time walk answers exactly that.
+const DET_AXES = [
+    ("T'do (s)",   :Td0′,    [4.0, 8.0, 12.0]),
+    ("Xd (pu)",    :Xd,      [1.5, 1.8, 2.2]),
+    ("K_A (pu)",   :K_A,     [50.0, 100.0, 200.0, 400.0]),
+    ("Efd_max",    :Efd_max, [2.5, 3.5, 5.0, 8.0]),
+]
+
+# ---------------------------------------------------------------------------
+# 8. Output.
 # ---------------------------------------------------------------------------
 
 function note(lines...)
@@ -671,6 +873,155 @@ function report_sweep()
          "holding. That band is the whole of the effect.")
 end
 
+function report_detailed_criterion()
+    println("\n5. THE DETAILED TIER — the criterion M5 exists for (m5-plan.md §Goal)\n")
+
+    println("  5a. TWO MODELS, AND THE DIFFERENCE IS THE TIER BOUNDARY ITSELF.
+")
+    plain = two_area_model()
+    det   = two_area_model(; detailed = DETAILED_FULL)
+    mp, md = machine_arrays(plain), machine_arrays(det)
+    println("  Identical in every field the CLASSICAL tier reads:")
+    same = true
+    for f in (:bus, :H, :D, :Xd′, :E, :Pm, :invR, :headroom, :Tg, :Ra)
+        eq = getfield(mp, f) == getfield(md, f)
+        same &= eq
+        @printf("    %-10s %-34s %s
+", f,
+                string(round.(getfield(mp, f), digits = 6)), eq ? "==" : "DIFFERS")
+    end
+    @printf("    branches   X = %s, K = %s   %s
+",
+            branch_arrays(plain).X, branch_arrays(plain).K,
+            branch_arrays(plain).X == branch_arrays(det).X ? "==" : "DIFFERS")
+    println("
+  Different in exactly the fields it REFUSES BY NAME:")
+    for f in (:Xd, :Xq, :Xq′, :Td0′, :Tq0′, :K_A, :T_E, :Efd_max)
+        @printf("    %-10s classical %-24s detailed %s
+", f,
+                string(round.(getfield(mp, f), digits = 4)),
+                string(round.(getfield(md, f), digits = 4)))
+    end
+    refused = try
+        init!(SwingEngine, det); "NOT REFUSED — that would be a bug"
+    catch e
+        first(sprint(showerror, e), 150)
+    end
+    println("
+  init!(SwingEngine, detailed_model) => ", refused, " …")
+    note("",
+         "THE PLAN ASKED FOR ONE MODEL HANDED TO BOTH ENGINES AND THAT IS NOT AVAILABLE,",
+         "because `SwingEngine` REFUSES detailed machine data — `_assert_frozen_flux` and",
+         "`_assert_no_regulator`, both added on purpose in M5 steps 2 and 5. A classical",
+         "engine handed a machine with a real Xd would run it as a different machine than",
+         "its own data describes, and silently.",
+         "",
+         "So the honest claim is the one printed above, and it is stronger than the one",
+         "intended: the two models agree BIT FOR BIT in every quantity the classical tier",
+         "reads, and differ in exactly the set that tier declares it cannot represent.",
+         "The comparison in 5b is therefore between two TIERS on one case, with the",
+         "difference between the cases being precisely the tier boundary.")
+
+    b = slip_boundary()
+    P = b.boundary
+    println("\n  5b. At the CLASSICAL tier's own slip boundary, P_max = ",
+            @sprintf("%.0f MW", P), " (section 4a)\n")
+    println("  ", rpad("run", 24), rpad("slip", 7), rpad("peak export", 14),
+            rpad("/ P_max", 10), rpad("frozen-flux ceiling", 21), "min |V|")
+    cl = classical_cell(; P_max_mw = P)
+    @printf("  %-24s %-7s %-14s %-10s %-21s %s\n", "classical (SwingEngine)",
+            cl.slipped, @sprintf("%.1f MW", cl.peak_export),
+            @sprintf("%.4f", cl.over), "—", "not a state")
+    cells = Pair{String,NamedTuple}[]
+    for (lab, d) in (("detailed, flux FROZEN", NamedTuple()),
+                     ("detailed, flux live", MACH_DETAILED),
+                     ("detailed, flux + AVR", DETAILED_FULL))
+        r = detailed_cell_retry(; P_max_mw = P, detailed = d).cell
+        push!(cells, lab => r)
+        @printf("  %-24s %-7s %-14s %-10s %-21s %.3f\n", lab, r.slipped,
+                @sprintf("%.1f MW", r.peak_export), @sprintf("%.4f", r.over),
+                @sprintf("%.1f MW (x%.6f)", r.ceiling_mw, r.peak_export / r.ceiling_mw),
+                r.V_min)
+    end
+    frozen, live, avr = last.(cells)
+    note("",
+         "THE ANTI-VACUITY CONTROL IS THE SECOND ROW, and it is the one with a DERIVED",
+         "prediction rather than a tolerance. Freeze the flux (T'do = T'qo = Inf, no",
+         "regulator) and each machine is again a constant source behind one reactance, so",
+         "the transfer cannot exceed |E'_1||E'_2| / (X_tie + X'd_1 + X'd_2). Measured, it",
+         "reaches that bound to six digits and stays about 4 % BELOW P_max — the criterion",
+         "fails, which is what it has to do. Note the bound is strictly TIGHTER than the",
+         "classical tier's own P_max, because the classical tier puts E' at the bus and",
+         "this one puts it behind X'd. So this control is not 'the classical tier'; it is",
+         "the classical MECHANISM inside this engine, which is the sharper comparison.",
+         "",
+         "THE THIRD ROW MOVES THE ANSWER THE WRONG WAY, and that is the finding nobody",
+         "predicted. Letting the flux move ALONE makes the export WORSE, not better: the",
+         "demagnetising current pulls E'q down, the bus voltage falls to about 0.81, and",
+         "the peak lands ~7 % below even the frozen-flux ceiling. Voltage dynamics are not",
+         "a mechanism for exceeding the ceiling; they are a mechanism for falling short of",
+         "it. What exceeds the ceiling is the REGULATOR — and the regulator can only act",
+         "through the flux equation, so the fourth row needs the third row's mechanism to",
+         "exist even though the third row on its own points the other way.")
+
+    println("\n  5c. The same three rows at a tighter tolerance (the standing rule)\n")
+    println("  ", rpad("run", 24), rpad("reltol 1e-3", 16), rpad("reltol 1e-5", 16), "move")
+    loose = NamedTuple[]
+    for (lab, d) in (("detailed, flux FROZEN", NamedTuple()),
+                     ("detailed, flux live", MACH_DETAILED),
+                     ("detailed, flux + AVR", DETAILED_FULL))
+        a = detailed_cell_retry(; P_max_mw = P, detailed = d,
+                                  reltol = 1e-3, abstol = 1e-6).cell
+        c = detailed_cell_retry(; P_max_mw = P, detailed = d).cell
+        push!(loose, a)
+        @printf("  %-24s %-16s %-16s %.2e\n", lab,
+                @sprintf("%.4f", a.over), @sprintf("%.4f", c.over),
+                abs(c.over - a.over))
+    end
+    note("",
+         "The margin the criterion turns on is ~3 % and the tolerance moves the number by",
+         "a few parts in ten thousand, so the answer is not a solver artefact.",
+         "",
+         "reltol 1e-7 is NOT quoted, and the reason is measured rather than omitted: the",
+         "two regulated cells do not complete there. The field ceiling is a hard",
+         "saturation and therefore a DISCONTINUOUS right-hand side, and a stiff adaptive",
+         "solver can fail at an isolated tolerance on one — which M5 step 5 already",
+         "measured on a different fixture and recorded as a property of the construction,",
+         "not of this case. The frozen and flux-only rows do complete at 1e-7.",
+         "",
+         "The field voltage OVERSHOOTS its own ceiling, and by more than a rounding:",
+         @sprintf("%.4f pu at reltol 1e-3 and %.4f at 1e-5, against a stated ceiling of %.1f.",
+                  last(loose).Efd_peak, avr.Efd_peak, AVR_DETAILED.Efd_max),
+         "That is the single step that lands on the limit (M5 step 5's measurement, on a",
+         "state fast enough to make it visible), and it shrinks with the tolerance. It is",
+         "why section 5d sweeps the ceiling: if the criterion turned on the overshoot it",
+         "would not survive a 30 % change in the ceiling itself.")
+
+    println("\n  5d. One axis at a time around the centre cell — [CHOICE] inputs, swept\n")
+    println("  ", rpad("parameter", 14), rpad("value", 10), rpad("slip", 7),
+            rpad("peak / P_max", 14), rpad("E'q peak", 10), "max |V|")
+    nover = 0; ncell = 0; nretry = 0
+    for (nm, key, vals) in DET_AXES
+        for v in vals
+            d = merge(DETAILED_FULL, NamedTuple{(key,)}((v,)))
+            rr = detailed_cell_retry(; P_max_mw = P, detailed = d)
+            r = rr.cell
+            ncell += 1; r.exceeds && r.slipped && (nover += 1)
+            rr.retried && (nretry += 1)
+            @printf("  %-14s %-10s %-7s %-14s %-10s %.3f%s\n", nm,
+                    @sprintf("%.4g", v), r.slipped, @sprintf("%.4f", r.over),
+                    @sprintf("%.4f", r.E′q_peak), r.V_max, rr.retried ? "  *" : "")
+        end
+    end
+    @printf("\n  %d of %d swept cells satisfy BOTH halves of the criterion.", nover, ncell)
+    @printf("  %d needed the documented abstol retry (marked *).\n", nretry)
+    note("",
+         "Every number on this axis list is a [CHOICE] on an AGGREGATED area: there is no",
+         "measured Xd or T'do for 'Iberia'. So the claim is the column, not a cell — the",
+         "same discipline section 4 applies to the tie strength, and the reason §7.3 of the",
+         "plan doc records a tuned parameter as a failure rather than a result.")
+end
+
 """
     timing_band(; tol_s = 1.0) -> (; lo, hi)
 
@@ -690,7 +1041,7 @@ end
 function report_conclusions()
     b    = slip_boundary()
     band = timing_band()
-    println("\n5. What survives the grid, and what does not\n")
+    println("\n6. What survives the grid, and what does not\n")
     note("SURVIVES — the separation is reproduced across the whole plausible corridor.",
          "  Every tie strength from the weakest cell scanned ($(round(Int,first(P_MAX_SCAN))) MW) up to about",
          "  $(round(Int,b.boundary)) MW loses synchronism, at the derived cascade, at every remote inertia",
@@ -731,10 +1082,44 @@ function report_conclusions()
          "  That is a weaker claim than the old doc made and a better one, because it",
          "  names the single observation that would settle it.",
          "",
+         "SURVIVES — THE DETAILED TIER DOES WHAT THE CLASSICAL ONE PROVABLY CANNOT, and",
+         "  this is the measurement M5 exists for. At the classical tier's own slip",
+         "  boundary the detailed tier both loses synchronism AND carries a peak export",
+         "  ABOVE that tier's P_max — 1.03x it at the centre cell, and above it in all 14",
+         "  cells of the parameter walk in section 5d, over a 3x range of T'do, 47 % of",
+         "  Xd, 8x of exciter gain and 3.2x of field ceiling. The classical tier's own",
+         "  export in the same run reaches exactly P_max and stops there, because with",
+         "  E' a constant of the model the transfer is K.sin(delta) and K is a constant.",
+         "",
+         "SURVIVES — AND THE MECHANISM IS THE REGULATOR, NOT 'VOLTAGE DYNAMICS'. Letting",
+         "  the flux move with no regulator makes the export WORSE, not better: 0.886 of",
+         "  P_max against 0.961 with the flux frozen, with the bus voltage falling to",
+         "  0.809 as the demagnetising current pulls E'q down. A voltage that can fall is",
+         "  a mechanism for falling SHORT of the constant-voltage ceiling. What exceeds",
+         "  it is field forcing — which needs the flux equation to act through, so the",
+         "  two mechanisms are not separable even though one of them alone points the",
+         "  wrong way. That was not predicted anywhere in the plan.",
+         "",
+         "SURVIVES — the anti-vacuity control has a DERIVED prediction and meets it. With",
+         "  the flux frozen each machine is a constant source behind one reactance, so",
+         "  the transfer cannot exceed |E'_1||E'_2|/(X_tie + X'd_1 + X'd_2); measured, it",
+         "  reaches that bound to one part in a million and stays ~4 % below P_max. Note",
+         "  that bound is strictly TIGHTER than P_max, so the control is not 'the",
+         "  classical tier' — it is the classical MECHANISM inside the detailed engine,",
+         "  which is the sharper comparison and the one the tier boundary allows.",
+         "",
+         "DOES NOT SURVIVE — the plan's 'hand one model to both engines'. SwingEngine",
+         "  REFUSES detailed machine data and a regulator, by name, because running them",
+         "  there would silently be a different machine (M5 steps 2 and 5). Section 5a",
+         "  replaces the claim with a stronger one that can be checked field by field.",
+         "",
          "STILL OUT OF SCOPE, unchanged (§7.6). Voltage magnitude is constant behind a",
          "  reactance, so angle instability is in and voltage instability is not: the",
          "  final phase, 12:33:21.5 to the 12:33:27 blackout, is a voltage collapse this",
-         "  tier cannot represent at any point of the grid above.",
+         "  tier cannot represent at any point of the grid above. Section 5 does not lift",
+         "  that: the detailed tier has bus voltages, and the run above reaches 0.81 pu",
+         "  on the flux-only cell, but reproducing the collapse itself needs load that",
+         "  falls off and protection that trips on voltage, and neither is modelled.",
          "",
          "BIAS, stated in the direction it points. This run starts at cascade onset with",
          "  the peninsula at exactly 50.000 Hz and zero governor deployment, where reality",
@@ -759,6 +1144,7 @@ function main()
     print_derivation()
     report_nominal_cell()
     report_sweep()
+    report_detailed_criterion()
     report_conclusions()
     return nothing
 end

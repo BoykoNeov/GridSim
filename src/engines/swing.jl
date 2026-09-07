@@ -404,9 +404,15 @@ end
 # leave two ways to open a branch where the milestone's whole point is that there is
 # one.
 _swing_δdiff(i::Int, j::Int) = u -> @inbounds(u[i] - u[j])
-function _swing_trip_branch!(box::Base.RefValue{Any}, from::Symbol, to::Symbol)
+# `E` is the engine type the box will hold, so the annotation that recovers type
+# stability at the call is written once and each tier supplies its own. M5 step 7
+# added the second caller (`DetailedEngine`); the alternative was a copy of this
+# function differing in one word, on a milestone whose own rule is that a branch
+# must have exactly one way to open.
+function _swing_trip_branch!(::Type{E}, box::Base.RefValue{Any},
+                             from::Symbol, to::Symbol) where {E}
     ev = TripLine(from, to)                 # built once, not per fire
-    return integrator -> (inject!(box[]::SwingEngine, ev); nothing)
+    return integrator -> (inject!(box[]::E, ev); nothing)
 end
 
 # The relays a `SwingEngine` is built with, validated and bound. Kept out of the
@@ -421,9 +427,10 @@ end
 # It takes the engine's own `branch_of_buses` rather than building a second bus-pair
 # lookup: "which line is this?" must not have two implementations, which is the
 # reason `_find_branch` exists at all (see its comment).
-function _bind_out_of_step(out_of_step, net::NetworkModel, ba, δ_idx::Vector{Int},
+function _bind_out_of_step(::Type{E}, out_of_step, net::NetworkModel, ba,
+                           δ_idx::Vector{Int},
                            branch_of::Dict{Tuple{Symbol,Symbol},Int},
-                           box::Base.RefValue{Any})
+                           box::Base.RefValue{Any}) where {E}
     relays = OutOfStepRelay[]
     bound = Any[]
     pairs_seen = Set{Tuple{Symbol,Symbol}}()
@@ -445,7 +452,7 @@ function _bind_out_of_step(out_of_step, net::NetworkModel, ba, δ_idx::Vector{In
         r = OutOfStepRelay(br.from, br.to, s)
         push!(relays, r)
         push!(bound, (r, _swing_δdiff(δ_idx[ba.src[b]], δ_idx[ba.dst[b]]),
-                      _swing_trip_branch!(box, br.from, br.to)))
+                      _swing_trip_branch!(E, box, br.from, br.to)))
     end
     return relays, bound
 end
@@ -804,7 +811,8 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
         _bus_pair(br.from, br.to) => b for (b, br) in pairs(net.branches))
     relays, bound_oos =
-        _bind_out_of_step(out_of_step, net, ba, δ_idx, branch_of_buses, eng_box)
+        _bind_out_of_step(SwingEngine, out_of_step, net, ba, δ_idx,
+                          branch_of_buses, eng_box)
 
     # --- steady state, then the integrator -------------------------------------
     t0f = Float64(t0)
@@ -1169,9 +1177,28 @@ sets for machine ids.
 
 Deliberately per machine and not pooled: see `shed_log`.
 """
-function shed_ladder(eng::SwingEngine, machine::Symbol)
-    for l in eng.ladders
+shed_ladder(eng::SwingEngine, machine::Symbol) = _ladder_of(eng.ladders, machine)
+
+# The three accessor bodies below are shared with `DetailedEngine` (M5 step 7).
+# They are lookups over a vector the engine owns, with the `KeyError` contract as
+# the only thing there is to get wrong, so a second copy of each in `detailed.jl`
+# would be three chances for the two tiers to answer "never armed" differently.
+function _ladder_of(ladders::Vector{ShedLadder}, machine::Symbol)
+    for l in ladders
         l.machine === machine && return l
+    end
+    throw(KeyError(machine))
+end
+function _relay_of(relays::Vector{OutOfStepRelay}, from::Symbol, to::Symbol)
+    key = _bus_pair(from, to)
+    for r in relays
+        _bus_pair(r.from, r.to) === key && return r
+    end
+    throw(KeyError((from, to)))
+end
+function _ramp_of(ramps::Vector{Pair{Symbol,GenerationRamp}}, machine::Symbol)
+    for (m, r) in ramps
+        m === machine && return r
     end
     throw(KeyError(machine))
 end
@@ -1184,12 +1211,121 @@ order, for `out_of_step_log` and for step 7's annotated panel. Throws `KeyError`
 that branch has no relay — asking about one that was never armed is a caller bug,
 the same contract `shed_ladder` sets for machines.
 """
-function out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol)
-    key = _bus_pair(from, to)
-    for r in eng.relays
-        _bus_pair(r.from, r.to) === key && return r
+out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol) =
+    _relay_of(eng.relays, from, to)
+
+"""
+    branch_power(eng::SwingEngine, from::Symbol, to::Symbol) -> Float64
+
+Active power flowing **from** bus `from` **into** the branch, per unit on
+`model.S_base`, right now. Negative is flow the other way; the branch is lossless,
+so the far end receives the same number. **The argument order decides the sign** —
+`branch_power(eng, :A, :B) == -branch_power(eng, :B, :A)` — while the branch itself
+is looked up on the unordered pair, `TripLine`'s contract.
+
+At this tier that is `K·sin(δ_from − δ_to)` with the LIVE coupling — the parameter
+in the running system, which a line trip and a generator trip both zero — so a
+branch that is out of service reports `0.0` rather than the flow it would have
+carried. Reading `branch_arrays(net).K` instead would report a dead line as loaded.
+
+**It exists so that both tiers' transfer is read by one function** (M5 step 7). The
+criterion that milestone is built for compares a tie flow across the two tiers, and
+`K·sin δ` and `Re(V·conj(I))` are the same quantity only if nobody makes a sign or
+an orientation mistake writing them out twice at two call sites.
+"""
+function branch_power(eng::SwingEngine, from::Symbol, to::Symbol)
+    b = _find_branch(eng, from, to)
+    ba = branch_arrays(eng.model)
+    K = eng.params[eng.K_pidx[eng.branch_to_edge[b]]]
+    u = eng.integrator.u
+    # The branch's OWN orientation (`ba.src`/`ba.dst`), never the graph edge's:
+    # `Graphs` iterates edges in sorted `(src, dst)` order and may hold the ends the
+    # other way round, which would silently negate the answer. Same argument, and
+    # the same fix, as the out-of-step relay's `δdiff`.
+    p = K * sin(u[eng.δ_idx[ba.src[b]]] - u[eng.δ_idx[ba.dst[b]]])
+    # …and then the CALLER's order decides the sign, because `from` is a word in
+    # the signature and not decoration. `_find_branch` resolves the UNORDERED pair
+    # (`TripLine`'s "either order" contract), so without this line the answer would
+    # be the branch's direction whatever was asked for — which reads correct on
+    # every branch that happens to be stored the way the caller wrote it, and
+    # silently negates on the ones that are not.
+    return _oriented(eng.model.branches[b], from) ? p : -p
+end
+
+# Is `from` the branch's own `from`? Both ends are checked rather than one, so a
+# bus that belongs to neither end is a `KeyError` from `_find_branch` above and
+# never a silently-wrong sign here.
+@inline _oriented(br::Branch, from::Symbol) = br.from === from
+
+"""
+    branch_power(eng::SwingEngine) -> Vector{Float64}
+
+Every branch's active power in **model branch order**, `from → to`, pu.
+"""
+branch_power(eng::SwingEngine) =
+    Float64[branch_power(eng, br.from, br.to) for br in eng.model.branches]
+
+# --- the transfer over a whole PLAYBACK run (M5 step 7) -------------------------
+#
+# WHY THIS IS NOT A RECORDED CHANNEL, WHICH IS THE INTERESTING PART. The obvious
+# implementation is a `P_<branch>` channel next to `δ_<id>` and `V_<bus>`. It was
+# rejected, and not on grounds of taste: `reference/`'s external oracle asserts
+# `keys(o) == keys(t)` against `state_series`, so a channel added here is a channel
+# the PowerDynamics side must grow too, at four comparison sites with bands of their
+# own. Step 7's criterion would then depend on an oracle change it has no business
+# making — the milestone's own rule that a step must not weaken or widen someone
+# else's gate to fit.
+#
+# So the transfer is DERIVED, from the integrator's own saved samples: the exact
+# instants the caller asked for through `saveat`, read the way `_playback!` itself
+# reads them (`sol.t[i]` / `sol.u[i]`), never through the interpolant — which the
+# playback driver's own comment measures as wrong across a step a callback ended.
+#
+# It is deliberately **playback-only**. A real-time run keeps its history in the
+# decimated `TrajectoryRecorder` and not in `sol`, so there is nothing here to walk.
+_branch_series_guard(log::Vector{EngineEvent}, model::NetworkModel,
+                     b::Int, from::Symbol, to::Symbol) = begin
+    br = model.branches[b]
+    key = _bus_pair(br.from, br.to)
+    for ev in log
+        # A `:trip_generator` logs the MACHINE id, not its bus, and it zeroes `K`
+        # on every branch incident to that bus — so resolving which ones would mean
+        # a machine→bus lookup here for no gain. Any generator trip refuses every
+        # branch, conservatively and on purpose: a wrong series is worse than a
+        # refused one, and this whole function exists for a run with no trip in it.
+        bad = (ev.kind === :trip_line && _bus_pair(ev.a, ev.b) === key) ||
+              ev.kind === :trip_generator
+        bad && throw(ArgumentError(
+            "branch_power_series: branch $(br.id) (:$(br.from)–:$(br.to)) was " *
+            "affected by a $(ev.kind) at t = $(ev.t) s. The per-sample power below " *
+            "is computed with the coupling the engine has NOW, so every sample from " *
+            "before that event would be reported with the wrong one. Refused rather " *
+            "than reported wrong; carrying the coupling per sample is the step that " *
+            "lifts this."))
     end
-    throw(KeyError((from, to)))
+    return nothing
+end
+
+"""
+    branch_power_series(eng::SwingEngine, from::Symbol, to::Symbol) -> (; t, P)
+
+The active power `from → to` (pu on `model.S_base`) at every sample the integrator
+has saved on this engine — i.e. over a `solve!` horizon, the initial point plus the
+output grid.
+
+Refused if any logged event changed that branch's coupling during the run (see
+`_branch_series_guard`): the alternative is a series that silently reports the
+post-event coupling for pre-event samples.
+"""
+function branch_power_series(eng::SwingEngine, from::Symbol, to::Symbol)
+    b = _find_branch(eng, from, to)
+    _branch_series_guard(eng.log, eng.model, b, from, to)
+    ba = branch_arrays(eng.model)
+    K = eng.params[eng.K_pidx[eng.branch_to_edge[b]]]
+    i, j = eng.δ_idx[ba.src[b]], eng.δ_idx[ba.dst[b]]
+    sol = eng.integrator.sol
+    return (t = copy(sol.t),
+            P = Float64[K * sin(u[i] - u[j]) for u in sol.u])
 end
 
 """
@@ -1205,12 +1341,7 @@ the machine goes offline. This accessor does not track that, deliberately: two
 different questions ("what did this scenario schedule?" and "what is the system
 doing now?") must not share one answer.
 """
-function generation_ramp(eng::SwingEngine, machine::Symbol)
-    for (m, r) in eng.ramps
-        m === machine && return r
-    end
-    throw(KeyError(machine))
-end
+generation_ramp(eng::SwingEngine, machine::Symbol) = _ramp_of(eng.ramps, machine)
 
 """
     is_online(eng::SwingEngine, id::Symbol) -> Bool

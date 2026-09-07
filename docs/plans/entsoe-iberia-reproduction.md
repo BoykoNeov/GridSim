@@ -607,3 +607,92 @@ rest of it). A two-area Iberia/CE reduction will not reproduce it, and nobody
 should tune `P_max` trying to hit 0.21 Hz — that would wreck the swing
 behaviour, which is the one thing this tier exists to capture. Three areas, if
 that mode is ever a target.
+
+### 7.7 Past the ceiling: what the DETAILED tier does with the same case (M5 step 7)
+
+§7.6 states the ceiling as a property of the equations: with `E′` a constant of
+the model at both ends the tie transfer is `K·sin δ` with `K = E′₁E′₂/X`, so the
+export cannot exceed `P_max` however violently the areas separate. M5 built the
+tier that removes that constant — bus voltages as algebraic unknowns, machine
+flux as states, a voltage regulator behind them — and this section is the
+measurement, run by `scripts/iberia_two_area.jl` section 5 and asserted in
+`test/m5_detailed.jl`.
+
+**The criterion, and it is deliberately relative.** At the tie strength where the
+classical tier loses synchronism at the derived cascade, the detailed tier must
+*both* lose synchronism *and* carry a peak export above that tier's `P_max`. The
+absolute ~5,000 MW depends on inputs the report never states (§2); the relative
+statement depends only on the mechanism.
+
+At the classical tier's own slip boundary, **5,500 MW** (§4a's scan, derived
+cascade, `KE_CE` = 800 GWs, `P_tie,0` = −1,000 MW):
+
+| run | slips | peak export | / `P_max` | vs frozen-flux ceiling | min–max \|V\| |
+|---|---|---|---|---|---|
+| classical (`SwingEngine`) | yes | 5,500 MW | 1.0000 | — | not a state at that tier |
+| detailed, flux **frozen** | yes | 5,287.6 MW | **0.9614** | ×0.999999 | 0.935 – 1.000 |
+| detailed, flux live, no AVR | yes | 4,875.5 MW | 0.8865 | ×0.9254 | **0.809** – 0.999 |
+| detailed, flux + AVR | yes | 5,662.4 MW | **1.0295** | ×1.0747 | 0.948 – **1.037** |
+
+Quoted at `reltol = 1e-5`; at `1e-3` the same three rows read 0.9617 / 0.8860 /
+1.0317, i.e. the tolerance moves the number by 3e-4 to 2e-3 against a margin of
+about 3 %.
+
+**The anti-vacuity control is row 2 and it has a DERIVED prediction, not a
+tolerance.** Freeze the flux and each machine is again a constant source behind
+one reactance, so the transfer cannot exceed
+`|E′₁||E′₂| / (X_tie + X′d₁ + X′d₂)`. Measured, it reaches that bound to one part
+in a million and stays ~4 % *below* `P_max` — the criterion fails, which is what
+it has to do. Two things follow that are worth stating rather than assuming.
+The bound is strictly *tighter* than `P_max`, because the classical tier puts `E′`
+at the bus and this one puts it behind `X′d`, so the control is **not "the
+classical tier"** — it is the classical *mechanism* inside the detailed engine,
+which is the sharper comparison. And the first version of this number came out
+0.03 % *above* the derived bound; that excess was solver error and vanished when
+the tolerance tightened, which is the standing "a number below the solver's own
+tolerance is not a result" rule paying for itself.
+
+**The mechanism is the regulator, not "voltage dynamics" — and that was not
+predicted anywhere.** Row 3 lets the flux move with no regulator and the export
+gets *worse*: 0.886 of `P_max` against 0.961 frozen, with the bus voltage falling
+to 0.809 as the demagnetising current pulls `E′q` down. A voltage that can fall is
+a mechanism for falling **short** of the constant-voltage ceiling. What exceeds it
+is field forcing — which can only act *through* the flux equation, so the two are
+not separable even though one of them alone points the wrong way.
+
+**Every detailed parameter is a [CHOICE] on an aggregated area, so they are swept
+(§7.3's discipline).** One axis at a time around the centre cell
+(`Xd` 1.8, `Xq` 1.7, `X′q` 0.55, `T′do` 8 s, `T′qo` 0.4 s, `K_A` 200, `T_E` 0.05 s,
+`Efd_max` 5.0): **14 of 14 cells satisfy both halves**, with peak/`P_max` from
+1.0158 to 1.0416, over a 3× range of `T′do`, 47 % of `Xd`, 8× of `K_A` and 3.2× of
+the field ceiling. At `Efd_max = 2.5` — half the centre value — it still holds at
+1.0164, which is what rules out the field-voltage overshoot below as the thing
+carrying the result.
+
+**Three caveats, stated rather than discovered later.**
+
+1. *The field voltage overshoots its own ceiling*: 5.18 pu at `reltol = 1e-3` and
+   5.11 at `1e-5` against a stated 5.0. That is the single step that lands on the
+   limit — the derivative saturation zeroes the derivative *at* the limit, so the
+   only excursion possible is the step that crosses, and on a state this fast it
+   is visible. It shrinks with the tolerance and the `Efd_max` axis shows the
+   answer does not turn on it.
+2. *`abstol`, not `reltol`, decides whether a run completes, and at isolated
+   points.* On the flux-only cell at `reltol = 1e-5`: 1e-5 ✓ (2,050 steps), 1e-6 ✓
+   (2,870), **1e-7 ✗** (step size collapses at t = 12.92 s), 1e-8 ✓ (3,400), 1e-9 ✓
+   (15,049), 1e-10 ✓ (3,491) — with every completing cell agreeing to 2 parts in
+   10,000. That is conditioning at a kink, not a boundary of the model, and it is
+   M5 step 5's finding arriving on a second case. One sweep cell needs a
+   documented single retry at a looser `abstol`; the table marks it.
+3. *The plan's "hand one model to both engines" is not available.* `SwingEngine`
+   refuses detailed machine data and a regulator by name, because running them
+   there would silently be a different machine. What is asserted instead is
+   stronger and field-checkable: the two models agree **bit for bit** in every
+   quantity the classical tier reads (`H`, `D`, `X′d`, `E′`, `Pm`, `1/R`, headroom,
+   `Tg`, and the branch `X`/`K`) and differ in exactly the set it refuses.
+
+**What this still does not do.** The final phase — 12:33:21.5 to the 12:33:27
+blackout — is a voltage *collapse*, and this does not reproduce it. The tier now
+has bus voltages and the flux-only cell does reach 0.81 pu, but a collapse needs
+load that falls away and protection that trips on voltage, and neither is
+modelled. §7.6's boundary moves; it does not disappear.

@@ -1780,3 +1780,367 @@ end
 end
 
 end # M5 step 6
+
+# =========== M5 step 7 — the criterion, and M3's protection at this tier ==========
+#
+# The milestone's purpose (m5-plan.md §Goal). Everything before this step exists to
+# make ONE measurement attributable: at the tie strength where the classical tier
+# loses synchronism at the report's cascade, the detailed tier must both lose
+# synchronism AND carry a peak export above that tier's `P_max`.
+#
+# The anti-vacuity control is named in the plan and is the sharpest thing here: with
+# the flux frozen, the same engine on the same topology has a DERIVED transfer
+# ceiling, and the criterion must fail against it.
+@testset "M5 step 7 — the criterion, and M3's protection at this tier" begin
+
+@testset "the ramp at this tier: zero rate is the un-ramped machine, to the bit" begin
+    # M3 step 5's first test, re-run one tier up. `Pm_eff = Pm + rate·clamp(…)` with
+    # `rate = 0` is `Pm + 0.0`, so this is an EQUALITY and not a tolerance — which is
+    # what makes it able to catch an armed ramp that changes the run when it should
+    # not, at any size.
+    net = governed_ring()
+    a = solve!(init!(DetailedEngine, net; dt = 0.05), (0.0, 10.0))
+    b = solve!(init!(DetailedEngine, net; dt = 0.05,
+                     ramp = [:G1 => GenerationRamp(0.0, 1.0, 5.0)]), (0.0, 10.0))
+    @test keys(a) == keys(b)
+    for k in keys(a)
+        @test a[k] == b[k]                      # `==`, not `≈`
+    end
+    # …and the ramp really was armed, so the equality above is about `rate = 0` and
+    # not about an argument that was silently dropped on the way in.
+    armed = init!(DetailedEngine, net; dt = 0.05,
+                  ramp = [:G1 => GenerationRamp(0.0, 1.0, 5.0)])
+    @test generation_ramp(armed, :G1).duration == 5.0
+end
+
+@testset "the ramp at this tier: read back, guarded, and inert at the fixpoint" begin
+    net = governed_ring()
+    r = GenerationRamp(-0.06, 1.0, 5.0)
+    eng = init!(DetailedEngine, net; dt = 0.05, ramp = [:G1 => r])
+    @test generation_ramp(eng, :G1) === r
+    @test_throws KeyError generation_ramp(eng, :G2)
+
+    # THE GUARDS ARE `SwingEngine`'s OWN (`_bind_ramps`), reached from this tier —
+    # not a copy. One message each, the M2/M3 discipline.
+    @test occursin("no machine named", argerr_msg(() ->
+        init!(DetailedEngine, net; ramp = [:NOPE => r])))
+    @test occursin("two ramps on machine", argerr_msg(() ->
+        init!(DetailedEngine, net; ramp = [:G1 => r, :G1 => r])))
+    @test occursin("before the run's own t0", argerr_msg(() ->
+        init!(DetailedEngine, net; t0 = 2.0, ramp = [:G1 => GenerationRamp(-0.06, 1.0, 5.0)])))
+
+    # INERT AT THE STEADY-STATE SOLVE. `t_start ≥ t0` makes the ramp term exactly
+    # zero at `t0`, so the engine is placed on the equilibrium of the UN-ramped
+    # system and starts flat. A mis-signed `t_start` would fold the ramp into the
+    # initial condition and the run would ring from its first step with pure
+    # artefact. Asserted on the state, not on the parameter.
+    s = current_state(eng)
+    @test all(iszero, s.ω) && all(iszero, s.ΔPm)
+    @test s.f_coi ≈ net.f0 atol = 1e-12
+end
+
+@testset "the ramp's closed form holds at the detailed tier" begin
+    # THE M3 CLOSED FORM THAT STILL APPLIES (D8). Summing the swing equations over a
+    # lossless network kills `ΣPe`, so at rest
+    #     ω_ss = ΔP / (Σ 1/R + Σ D)
+    # — a statement about a POWER BALANCE and about nothing the tier changed. It is
+    # therefore the right thing to re-check here: if it failed, the new tier's
+    # governor, its per-unit conversion or its ramp would be wrong, and the number
+    # says which because it is exact.
+    net = governed_ring()                        # 50 pu of reserve: nothing saturates
+    ma = machine_arrays(net)
+    ΔP = -0.30
+    r = GenerationRamp(ΔP / 5.0, 1.0, 5.0)
+    ω_ss = ΔP / (sum(ma.invR) + sum(ma.D))
+    eng = init!(DetailedEngine, net; dt = 0.05, ramp = [:G1 => r],
+                reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000)
+    solve!(eng, (0.0, 300.0))
+    s = current_state(eng)
+    @test s.ω[2] ≈ ω_ss rtol = 1e-8              # measured 9.5e-11
+    @test s.ω[1] ≈ ω_ss rtol = 1e-8              # every machine at the SAME speed
+    @test s.ω[3] ≈ ω_ss rtol = 1e-8
+    # The half that pins the GAIN conversion all the way to a trajectory.
+    @test s.ΔPm[2] ≈ -ω_ss * ma.invR[2] atol = 1e-9
+    @test s.ΔPm[3] ≈ -ω_ss * ma.invR[3] atol = 1e-9
+    # THE PRECONDITION, ASSERTED: no machine touched its ceiling, or the closed form
+    # would have been asserted straight through a saturated transient.
+    @test s.ΔPm[2] < 0.5 * ma.headroom[2]
+    @test s.ΔPm[3] < 0.5 * ma.headroom[3]
+
+    # POSITIVE CONTROL: with no ramp the same run settles at ω = 0 exactly, so the
+    # number above is the ramp and not the fixture.
+    bare = init!(DetailedEngine, net; dt = 0.05, reltol = 1e-8, abstol = 1e-10)
+    solve!(bare, (0.0, 300.0))
+    @test maximum(abs, current_state(bare).ω) < 1e-12
+
+    # ANTI-VACUITY, RUN: scale the ramp by 1.5 and the settled speed must scale by
+    # 1.5. A closed form asserted at one magnitude can be satisfied by a formula
+    # that is wrong by a constant factor; this is what rules that out.
+    eng15 = init!(DetailedEngine, net; dt = 0.05,
+                  ramp = [:G1 => GenerationRamp(1.5 * ΔP / 5.0, 1.0, 5.0)],
+                  reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000)
+    solve!(eng15, (0.0, 300.0))
+    @test current_state(eng15).ω[2] ≈ 1.5 * ω_ss rtol = 1e-8
+end
+
+@testset "the shed ladder at the detailed tier: instant, block, and settled speed" begin
+    net = governed_ring()
+    ma = machine_arrays(net)
+    ΔP, thr, blk = -0.60, 49.7, 0.20
+    r = GenerationRamp(ΔP / 4.0, 1.0, 4.0)
+    de(; kw...) = init!(DetailedEngine, net; dt = 0.01, ramp = [:G1 => r],
+                        reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000, kw...)
+
+    # The bare run brackets G2's own crossing of the threshold to one `dt`.
+    sb = solve!(de(), (0.0, 60.0))
+    fG2 = net.f0 .* (1 .+ sb.ω_G2)
+    k = findfirst(i -> fG2[i-1] >= thr > fG2[i], 2:length(fG2)) + 1
+    tcross = sb.t[k]
+    @test minimum(fG2) < thr - 0.05              # it really goes through, with margin
+
+    eng = de(; shed = [:G2 => [LoadShedStage(thr, blk; label = :s1)]])
+    Pm0 = eng.params[eng.Pm_pidx[2]]
+    solve!(eng, (0.0, 300.0))
+    lg = shed_log(shed_ladder(eng, :G2))
+    @test length(lg.t) == 1 && lg.label == [:s1]
+    @test shed_ladder(eng, :G2).armed == [false]        # latched
+    # ROOT-FOUND, not stepped onto: inside the bare run's one-`dt` bracket, and off
+    # the `dt` grid.
+    @test tcross - 0.01 < lg.t[1] <= tcross
+    @test !isapprox(lg.t[1] / 0.01, round(lg.t[1] / 0.01); atol = 1e-6)
+    # …and it stepped THAT machine's power by exactly the block.
+    @test eng.params[eng.Pm_pidx[2]] - Pm0 ≈ blk atol = 1e-14
+    @test eng.params[eng.Pm_pidx[1]] == eng.params[eng.Pm_pidx[1]]   # untouched (NaN-free)
+
+    # THE CLOSED FORM AGAIN, WITH THE BLOCK IN IT. This is the check that the shed
+    # reaches the physics rather than only the log: the settled speed must be the
+    # one the balance gives for `ΔP + blk`, and it is a different number from the
+    # un-shed one by a factor of three.
+    ω_shed = (ΔP + blk) / (sum(ma.invR) + sum(ma.D))
+    ω_bare = ΔP / (sum(ma.invR) + sum(ma.D))
+    @test current_state(eng).ω[2] ≈ ω_shed rtol = 1e-7
+    @test !isapprox(ω_shed, ω_bare; rtol = 0.1)         # the two are far apart
+end
+
+@testset "the out-of-step relay at the detailed tier: root, trip, re-initialisation" begin
+    net = governed_ring()
+    r = GenerationRamp(-2.0 / 3.0, 1.0, 3.0)
+    thr = 0.20
+    de(; kw...) = init!(DetailedEngine, net; dt = 0.01, ramp = [:G1 => r],
+                        reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000, kw...)
+
+    sb = solve!(de(), (0.0, 30.0))
+    db = abs.(sb.δ_G1 .- sb.δ_G2)
+    @test db[1] < thr                                    # armed on a healthy tie
+    @test maximum(db) > thr                              # …that the swing carries out
+    k = findfirst(i -> db[i] >= thr > db[i-1], 2:length(db)) + 1
+    tcross = sb.t[k]
+
+    eng = de(; out_of_step = [(:B1, :B2) => OutOfStepTrip(thr; label = :oos)])
+    solve!(eng, (0.0, 30.0))
+    lg = out_of_step_log(out_of_step_relay(eng, :B1, :B2))
+    @test lg.tripped
+    @test tcross - 0.01 < lg.t <= tcross
+    @test !isapprox(lg.t / 0.01, round(lg.t / 0.01); atol = 1e-6)
+    # THE ROOT WAS FOUND ON THE INTENDED QUANTITY, and this is the direct check:
+    # `|δ|` at the reported instant equals the threshold, not merely near it.
+    @test abs(lg.δ) ≈ thr atol = 1e-9
+    # It fired through the engine's OWN `inject!(::TripLine)` — the branch is out,
+    # the event is logged once, and `_reinitialise_algebraic!` accepted the
+    # post-trip algebraic solve (it throws with a number if it does not).
+    @test !is_online(eng, :B1, :B2)
+    @test n_events(eng) == 1
+    @test event_log(eng)[1].kind === :trip_line
+
+    # THE START GUARD IS REACHED FROM THIS TIER TOO, and it is `SwingEngine`'s own
+    # (`_guard_out_of_step_start`), not a copy.
+    @test occursin("protects nothing", argerr_msg(() ->
+        de(; out_of_step = [(:B1, :B2) => OutOfStepTrip(0.01)])))
+    @test occursin("no branch joins", argerr_msg(() ->
+        de(; out_of_step = [(:B1, :NOPE) => OutOfStepTrip(thr)])))
+end
+
+@testset "a shed ladder is REFUSED on a model carrying a Load" begin
+    # The one place M3's protection does NOT carry unchanged, refused by name rather
+    # than documented. A ladder steps its machine's `Pm`, which at the classical
+    # tier is a NET injection (so shedding load raises it by the block) and at this
+    # tier is MECHANICAL power — so on a model with a real `Load` it would add
+    # generation instead of disconnecting load, and the two differ by exactly the
+    # voltage-dependence step 6 built.
+    msg = argerr_msg(() -> init!(DetailedEngine, load_bus_system();
+                                 shed = [:G1 => [LoadShedStage(49.5, 0.1)]]))
+    @test occursin("refused on a model carrying a Load", msg)
+    @test occursin("MECHANICAL power", msg)
+    # …and it is the LOAD that is refused, not the ladder: the same ladder on a
+    # load-free model builds.
+    @test init!(DetailedEngine, governed_ring();
+                shed = [:G1 => [LoadShedStage(49.5, 0.1)]]) isa DetailedEngine
+end
+
+@testset "the flat run ACROSS an event (D8's check, and nothing else does it)" begin
+    # `inject!` ends in a consistent re-initialisation, and step 1's flat run cannot
+    # see it: that run has no event in it. This one does.
+    #
+    # THE FIXTURE IS THE POINT. Every machine at zero injection with the SAME
+    # internal voltage puts every bus at the same complex voltage, so every branch
+    # carries EXACTLY zero current and removing one changes nothing at all. The
+    # post-trip equilibrium is therefore known in closed form — it is the pre-trip
+    # one — and any departure is re-initialisation artefact and nothing else.
+    net = quiet_ring()
+    eng = init!(DetailedEngine, net; dt = 0.05, reltol = 1e-8, abstol = 1e-10)
+    @test maximum(abs, branch_power(eng)) < 1e-14         # the precondition, asserted
+    ser = solve!(eng, (0.0, 10.0); perturbations = [3.0 => TripLine(:B2, :B3)])
+    @test n_events(eng) == 1
+    for ch in keys(ser)
+        ch === :t && continue
+        v = ser[ch]
+        @test all(x -> x == v[1], v)                      # `==`, across the event
+    end
+
+    # THE FIXTURE CANNOT DISCRIMINATE ON ITS OWN, and saying so is the point: a
+    # re-initialisation that did nothing at all would also come out flat here. What
+    # it proves is that no artefact is INJECTED. The positive control below is the
+    # other half — the same trip on a ring that is actually carrying power moves the
+    # states by 0.29 rad, so the event is reaching the system.
+    eng2 = init!(DetailedEngine, governed_ring(); dt = 0.05,
+                 reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000)
+    @test maximum(abs, branch_power(eng2)) > 0.1
+    s2 = solve!(eng2, (0.0, 10.0); perturbations = [3.0 => TripLine(:B2, :B3)])
+    @test maximum(abs, s2.δ_G2 .- s2.δ_G2[1]) > 0.1
+end
+
+@testset "branch_power reads one quantity on both tiers" begin
+    # `K·sin(δ_from − δ_to)` and `Re(V·conj(I))` are the same physical quantity, and
+    # the criterion below compares them across the two tiers — so they must be one
+    # function and not two call sites.
+    net = three_machine_ring()
+    sw = SwingEngine(net)
+    @test branch_power(sw, :B1, :B2) ≈ -branch_power(sw, :B2, :B1) atol = 1e-15
+    ba = branch_arrays(net)
+    s = current_state(sw)
+    @test branch_power(sw, :B1, :B2) ≈
+          ba.K[1] * sin(s.δ[ba.src[1]] - s.δ[ba.dst[1]]) atol = 1e-12
+    # Kirchhoff at a bus with one machine and no load: everything the machine
+    # injects leaves on the incident branches.
+    @test branch_power(sw, :B1, :B2) + branch_power(sw, :B1, :B3) ≈
+          machine_arrays(net).Pm[1] atol = 1e-9
+
+    de = init!(DetailedEngine, net)
+    @test branch_power(de, :B1, :B2) ≈ -branch_power(de, :B2, :B1) atol = 1e-15
+    @test branch_power(de, :B1, :B2) + branch_power(de, :B1, :B3) ≈
+          machine_arrays(net).Pm[1] atol = 1e-9
+    # The two tiers agree on this quantity where they agree at all — the detailed
+    # tier at the frozen-flux degeneration is the classical machine behind X′d, so
+    # the flows differ by the reactance the classical tier folds away, not by a
+    # convention.
+    @test sign(branch_power(de, :B1, :B2)) == sign(branch_power(sw, :B1, :B2))
+
+    # THE SERIES, and its refusal. Reading it needs the bus voltage ANGLES, which
+    # `state_series` does not carry — that is why it exists at all.
+    solve!(de, (0.0, 1.0); saveat = 0.1)
+    ps = branch_power_series(de, :B1, :B2)
+    @test length(ps.t) == length(ps.P) >= 11
+    @test ps.P[end] ≈ branch_power(de, :B1, :B2) rtol = 1e-6
+    de2 = init!(DetailedEngine, net)
+    inject!(de2, TripLine(:B2, :B3))
+    @test occursin("was affected by a trip_line", argerr_msg(() ->
+        branch_power_series(de2, :B2, :B3)))
+end
+
+@testset "TWO MODELS, and the difference is exactly the tier boundary" begin
+    # The plan asked for one model handed to both engines. It is NOT available, and
+    # the reason is a guard M5 added on purpose: `SwingEngine` refuses detailed
+    # machine data (`_assert_frozen_flux`) and a regulator (`_assert_no_regulator`),
+    # because a classical engine handed a real `Xd` would silently run a machine its
+    # own data does not describe.
+    #
+    # What holds instead is stronger, and it is what makes the criterion a
+    # comparison of TIERS: the two models agree bit for bit in every quantity the
+    # classical tier reads, and differ in exactly the set it refuses.
+    IB = IberiaTwoArea
+    plain = IB.two_area_model()
+    det   = IB.two_area_model(; detailed = IB.DETAILED_FULL)
+    mp, md = machine_arrays(plain), machine_arrays(det)
+    for f in (:bus, :H, :D, :Xd′, :E, :Pm, :invR, :headroom, :Tg)
+        @test getfield(mp, f) == getfield(md, f)          # `==`, not `≈`
+    end
+    @test branch_arrays(plain).X == branch_arrays(det).X
+    @test branch_arrays(plain).K == branch_arrays(det).K
+    # …and the fields that differ are the refused ones, all of them.
+    for f in (:Xd, :Xq, :Xq′, :Td0′, :Tq0′, :K_A, :T_E, :Efd_max)
+        @test getfield(mp, f) != getfield(md, f)
+    end
+    @test occursin("voltage regulator", argerr_msg(() -> init!(SwingEngine, det)))
+    # The machine half is refused on its own too, with the regulator left off — so
+    # the refusal is not only about `K_A`.
+    mach_only = IB.two_area_model(; detailed = IB.MACH_DETAILED)
+    @test occursin("Xd", argerr_msg(() -> init!(SwingEngine, mach_only)))
+
+    # And the empty NamedTuple really is the classical machine: the DEFAULT model is
+    # what it always was, so section 4's published numbers are untouched.
+    @test IB.two_area_model(; detailed = NamedTuple()).machines ==
+          IB.two_area_model().machines
+end
+
+@testset "THE CRITERION: the detailed tier passes it and the frozen-flux control fails" begin
+    # The measurement M5 exists for (m5-plan.md §Goal). Coarse scan for the
+    # boundary, as V7e uses: this is a claim about an ordering of tiers, and
+    # resolving the boundary five times finer costs suite time and buys nothing.
+    IB = IberiaTwoArea
+    scan = 2_500.0:500.0:9_000.0
+    b = IB.slip_boundary(; scan = scan)
+    @test b.monotone && !b.saturated
+    P = b.boundary
+
+    # --- the classical tier at its own boundary: it slips, and its export is
+    #     bounded by P_max because E′ is a constant of the model at both ends.
+    cl = IB.classical_cell(; P_max_mw = P)
+    @test cl.slipped
+    @test cl.over <= 1.0 + 1e-9
+    @test cl.over > 0.99                       # …and the bound is ATTAINED, not slack
+
+    # --- the anti-vacuity control, and it is the sharp one. Freeze the flux and the
+    #     same engine on the same topology has a DERIVED ceiling,
+    #     |E′₁||E′₂| / (X_tie + X′d₁ + X′d₂), because each machine is again a
+    #     constant source behind one reactance. The criterion must FAIL.
+    fr = IB.detailed_cell(; P_max_mw = P, detailed = NamedTuple())
+    @test fr.slipped                            # the first half still holds…
+    @test !fr.exceeds                           # …and the second one does not
+    @test fr.over < 0.98                        # measured 0.961
+    # The ceiling is a PREDICTION, met to a part in a million at this tolerance —
+    # not a tolerance fitted after the fact.
+    @test fr.peak_export ≈ fr.ceiling_mw rtol = 1e-5
+    @test fr.ceiling_mw < P                     # strictly tighter than P_max itself
+
+    # --- the flux alone moves the answer the WRONG way, which nothing predicted.
+    fl = IB.detailed_cell(; P_max_mw = P, detailed = IB.MACH_DETAILED)
+    @test fl.slipped && !fl.exceeds
+    @test fl.over < fr.over                     # worse than frozen, not better
+    @test fl.V_min < 0.9                        # because the voltage actually falls
+
+    # --- and the criterion itself.
+    av = IB.detailed_cell(; P_max_mw = P, detailed = IB.DETAILED_FULL)
+    @test av.slipped                            # half one, checked separately…
+    @test av.exceeds                            # …and half two
+    @test av.over > 1.02
+    @test av.peak_export > av.ceiling_mw        # it passes the frozen bound too
+    @test av.V_max > 1.0                        # the mechanism: the voltage RISES
+    @test av.E′q_peak > av.E′q_0 * 1.03         # …because the field flux is driven up
+
+    # THE TWO HALVES ARE CHECKED SEPARATELY, so "slips but does not swing" and
+    # "swings but does not slip" are distinguishable from a pass. The frozen control
+    # above is exactly the first of those, which is why it is not merely a failure.
+    @test fr.slipped && !fr.exceeds
+    @test av.slipped && av.exceeds
+
+    # AT A TIGHTER TOLERANCE, because a margin of 3 % quoted at reltol 1e-3 is not a
+    # result until the tolerance moves. `reltol = 1e-7` is NOT used and the reason
+    # is measured, not omitted: the regulated cells do not complete there, because a
+    # hard field ceiling is a discontinuous right-hand side (M5 step 5's finding).
+    av5 = IB.detailed_cell(; P_max_mw = P, detailed = IB.DETAILED_FULL,
+                            reltol = 1e-3, abstol = 1e-6)
+    @test av5.exceeds && av5.slipped
+    @test abs(av5.over - av.over) < 0.01
+end
+
+end # M5 step 7

@@ -399,12 +399,21 @@ function _detailed_machine_bus!(dv, v, esum, p, t)
     mstat               = p[19]
     K_A, T_E            = p[20], p[21]
     Efd_min, Efd_max, Vref = p[22], p[23], p[24]
+    rate, t_start, duration = p[25], p[26], p[27]
     Id, Iq, Ire, Iim, Pe = _stator(Vre, Vim, δ, E′q, E′d, Ra, Xd′, Xq′, mstat)
     Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]                 # KCL, real
     dv[2] = Iim - Lim + esum[2]                 # KCL, imaginary
     dv[3] = ω₀ * ω
-    dv[4] = (Pm + ΔPm - Pe - D * ω) / (2 * H)
+    # The scheduled generation ramp (M5 step 7), and it is `swing_vertex!`'s line
+    # unchanged — same expression, same three parameters, same reason for being a
+    # continuous ramp rather than a staircase of discrete trips (a staircase's edges
+    # are jump discontinuities in exactly the signal the shed ladder and the
+    # out-of-step relay root-find on). `rate == 0` is the un-ramped machine and is
+    # `Pm + 0.0`, bit for bit, which is what lets every run recorded before this step
+    # keep its numbers.
+    Pm_eff = Pm + rate * clamp(t - t_start, 0.0, duration)
+    dv[4] = (Pm_eff + ΔPm - Pe - D * ω) / (2 * H)
     dΔPm = (-ω * invR - ΔPm) / Tg
     if ΔPm >= headroom && dΔPm > 0
         dΔPm = zero(dΔPm)                       # saturate the DERIVATIVE (see above)
@@ -520,6 +529,38 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
+    _assert_shed_denomination(net, shed)
+
+**A shed ladder steps a machine's `Pm`, and at this tier `Pm` is MECHANICAL power,
+not a net injection.** That is the whole difference the tier bought, and it makes
+the classical tier's shed convention wrong here the moment a `Load` exists.
+
+At the classical tier `Pm` is generation minus load at that bus, so disconnecting a
+block of load raises it by exactly the block (`engines/swing.jl`, `_swing_shed!`).
+Here the load is a separate element with its own voltage dependence — step 6's
+mechanism — so raising `Pm` adds *generation* instead of removing *load*, and the
+two differ by exactly the `|V|`-dependence that step built. On a model whose load is
+folded into the machines' net injections (`iberia_two_area.jl`'s two areas, and every
+M2/M3 fixture) the two are the same operation and the ladder carries over unchanged.
+
+So the rule is the boundary and not a caveat: a ladder is refused, by name, on a
+model that carries a `Load`. The step that lifts it is the one that gives
+`LoadShedStage` a load to bind to rather than a machine.
+"""
+function _assert_shed_denomination(net::NetworkModel, shed)
+    (isempty(shed) || isempty(net.loads)) && return nothing
+    throw(ArgumentError(
+        "DetailedEngine: `shed` is refused on a model carrying a Load " *
+        "($(join([l.id for l in net.loads], ", "))). A ladder steps its machine's " *
+        "`Pm`, which at this tier is MECHANICAL power — so it would add generation " *
+        "rather than disconnect load, and the two differ by exactly the " *
+        "voltage-dependence of the ZIP model (M5 step 6). The convention carries " *
+        "only where the load is folded into a machine's net injection, which is " *
+        "what every model without a `Load` does. A ladder bound to a Load is the " *
+        "step that lifts this."))
+end
+
+"""
     _assert_detailed_tier(net::NetworkModel)
 
 What this engine can represent, refused at build time by name — the same shape
@@ -602,7 +643,8 @@ function _dynamic_network(net::NetworkModel, g)
         sym = [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d, :Efd],
         psym = [:Pm, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
                 :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :a_i, :a_p, :mstat,
-                :K_A, :T_E, :Efd_min, :Efd_max, :Vref],
+                :K_A, :T_E, :Efd_min, :Efd_max, :Vref,
+                :rate, :t_start, :duration],
         mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
         name = :machine_bus)
     vpassive = NetworkDynamics.VertexModel(
@@ -838,6 +880,14 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     log::Vector{EngineEvent}
     n_dropped::Int
     nadir::Float64
+    # M3's protection, wired at this tier (M5 step 7, D8). Owned by the engine for
+    # `SwingEngine`'s reason: a ladder and a relay are LIVE — they latch what has
+    # fired — so the caller must not be able to hold a second reference to one and
+    # arm two engines from it. `ramps` is inert data and is kept only so
+    # `generation_ramp` can report what was scheduled.
+    ladders::Vector{ShedLadder}
+    relays::Vector{OutOfStepRelay}
+    ramps::Vector{Pair{Symbol,GenerationRamp}}
 end
 
 # Run the static network to convergence from the seeds in `u`, and read the answer
@@ -895,6 +945,9 @@ property of the network — but it is **not** merely a gauge choice, and the hea
 carries the measurement that says so: with a voltage-dependent load anywhere in
 the model, two slacks give two different (both correct) dispatches.
 
+`maxiters` is the **integrator's** step cap, not `solve!`'s: the two are separate
+counters and this one is reached first (its library default is 1e5).
+
 `Vref` never appears in this signature, and that is the point: the exciter's
 setpoint is **derived** from the solved equilibrium (`Vref = |V| + Efd/K_A`), so a
 machine with a regulator starts at rest exactly as one without does. The field
@@ -914,8 +967,19 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                reltol::Real = _ENGINE_RELTOL,
                abstol::Real = _ENGINE_ABSTOL,
                dtmax::Real = Inf,
+               # The INTEGRATOR's own step cap, distinct from `solve!`'s playback
+               # cap and reached first: OrdinaryDiffEq defaults it to 1e5, and a
+               # 20 s pole slip on this tier at reltol 1e-8 does not fit inside
+               # that. Exposed because the standing "run it again tighter" rule
+               # cannot be applied to a tier whose ceiling is unreachable — the
+               # same argument that put `reltol`/`abstol` in this signature at M4.
+               maxiters::Integer = 1_000_000,
+               shed = Pair{Symbol,Vector{LoadShedStage}}[],
+               out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
+               ramp = Pair{Symbol,GenerationRamp}[],
                capacity::Integer = _TRAJ_CAPACITY)
     _assert_detailed_tier(net)
+    _assert_shed_denomination(net, shed)
     isempty(net.machines) && throw(ArgumentError(
         "DetailedEngine: the model has no machines, so there is no angle reference " *
         "and no differential state at all."))
@@ -1078,7 +1142,11 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                            (:invR, ma.invR[k]), (:headroom, ma.headroom[k]),
                            (:Tg, ma.Tg[k]), (:mstat, 1.0),
                            (:K_A, ma.K_A[k]), (:T_E, ma.T_E[k]),
-                           (:Efd_min, ma.Efd_min[k]), (:Efd_max, ma.Efd_max[k]))
+                           (:Efd_min, ma.Efd_min[k]), (:Efd_max, ma.Efd_max[k]),
+                           # No ramp is the default, and it is `rate = 0` — the
+                           # machine every model before M5 step 7 described, to the
+                           # bit. The armed ramps overwrite these below.
+                           (:rate, 0.0), (:t_start, 0.0), (:duration, 0.0))
             p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, sym))] = val
         end
         # THE DISPATCH MUST LIE INSIDE THE MACHINE'S OWN LIMITS, checked here with a
@@ -1120,10 +1188,57 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         "Checked here, at build time and with a number, rather than left to " *
         "surface later as a flat run that is not flat."))
 
+    # --- M3's protection, wired here (M5 step 7, D8) --------------------------
+    #
+    # All three arming arguments go through `engines/swing.jl`'s OWN binders —
+    # `_bind_ramps`, `_bind_shed`, `_bind_out_of_step` — rather than through copies
+    # of them. Every guard those functions carry (an unknown machine, two ladders on
+    # one machine, a ramp starting before `t0`, a relay on a branch that does not
+    # exist, two relays on one branch) is therefore the shipped guard with the
+    # shipped message, and a rule cannot come to differ between the two tiers. The
+    # seam is index-based and knows nothing about a tier: a ladder needs "where does
+    # this machine's speed live" and "how do I step its power", and both indices
+    # exist here with the same meaning.
+    #
+    # THE RAMP IS ARMED AFTER THE RESIDUAL CHECK ABOVE, and that ordering is the
+    # point rather than an accident. `_bind_ramps` refuses `t_start < t0`, so
+    # `clamp(t0 − t_start, 0, duration)` is exactly zero at the start of the run and
+    # the fixpoint check above sees the UN-ramped system — which is the system the
+    # power flow solved. A ramp already under way at `t0` would put the engine on the
+    # equilibrium of a different system and the run would ring from its first step
+    # with pure initialisation artefact.
+    ramps = _bind_ramps(ramp, ids, t0f)
+    for (machine, r) in ramps
+        k = findfirst(==(machine), ids)
+        vb = ma.bus[k]
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, :rate))]     = r.rate
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, :t_start))]  = r.t_start
+        p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, :duration))] = r.duration
+    end
+
+    ladders, bound_shed = _bind_shed(shed, ids, ω_idx, Pm_pidx)
+
+    # The relay's affect calls this engine's own `inject!(::TripLine)`, which does
+    # not exist yet — the box is filled on the constructor's last line. Same device,
+    # same cost and same justification as `SwingEngine`'s.
+    eng_box = Base.RefValue{Any}(nothing)
+    branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
+        _bus_pair(br.from, br.to) => e for (e, br) in pairs(net.branches))
+    # `bt` and not `branch_arrays(net)`: only `src`/`dst` are wanted, and `K` is
+    # UNCOMPUTABLE on this tier's own models (there is no `E′` at a machine-free
+    # bus — `network_model.jl`'s note on the guard that moved).
+    relays, bound_oos =
+        _bind_out_of_step(DetailedEngine, out_of_step, net, bt, δ_idx,
+                          branch_of_buses, eng_box)
+    _guard_out_of_step_start(bound_oos, u0)
+
     prob = OrdinaryDiffEq.ODEProblem(nw, u0, (t0f, t0f + 1.0e6), p0)
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      reltol = Float64(reltol), abstol = Float64(abstol),
-                                     dtmax = Float64(dtmax),
+                                     dtmax = Float64(dtmax), maxiters = maxiters,
+                                     callback = SciMLBase.CallbackSet(
+                                         shed_callbacks(bound_shed, net.f0),
+                                         out_of_step_callbacks(bound_oos)),
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 
@@ -1134,8 +1249,6 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     [Symbol("Efd_", id) for id in ids],
                     [Symbol("V_", b.id) for b in net.buses], [:δ_coi, :f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
-    branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
-        _bus_pair(br.from, br.to) => e for (e, br) in pairs(net.branches))
 
     eng = DetailedEngine(net, nw, nws, slack_id, Set(1:ne), integrator.p, sp, su,
                          Float64(dt), integrator, net.f0, ω₀, ids, copy(ma.bus),
@@ -1146,8 +1259,12 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          branch_to_edge, branch_of_buses,
                          copy(ma.H), copy(ma.H), sum(ma.H), traj,
                          Vector{Float64}(undef, length(channels)),
-                         EngineEvent[], 0, net.f0)
+                         EngineEvent[], 0, net.f0, ladders, relays, ramps)
     _record!(eng)                                 # seed the pre-disturbance point
+    # The last line, and it has to be: an out-of-step relay's affect calls this
+    # engine's own `inject!(::TripLine)`, and until now there was no engine to call
+    # it on. Nothing can have fired before this point — `init` does not step.
+    eng_box[] = eng
     return eng
 end
 
@@ -1295,6 +1412,98 @@ rather than inferred from a parameter, the same discipline `SwingEngine` uses.
 """
 is_online(eng::DetailedEngine, from::Symbol, to::Symbol) =
     _detailed_branch_index(eng, from, to) in eng.lines_online
+
+"""
+    shed_ladder(eng::DetailedEngine, machine::Symbol) -> ShedLadder
+    out_of_step_relay(eng::DetailedEngine, from::Symbol, to::Symbol) -> OutOfStepRelay
+    generation_ramp(eng::DetailedEngine, machine::Symbol) -> GenerationRamp
+
+M3's three armed mechanisms, read back off this tier's engine. Same contract as
+`SwingEngine`'s — `KeyError` for one that was never armed — and the same *bodies*,
+shared through `_ladder_of` / `_relay_of` / `_ramp_of` rather than copied, so the
+two tiers cannot come to disagree about what "never armed" means.
+
+`generation_ramp` reports **what was scheduled, not what is left**, exactly as at
+the classical tier.
+"""
+shed_ladder(eng::DetailedEngine, machine::Symbol) = _ladder_of(eng.ladders, machine)
+out_of_step_relay(eng::DetailedEngine, from::Symbol, to::Symbol) =
+    _relay_of(eng.relays, from, to)
+generation_ramp(eng::DetailedEngine, machine::Symbol) = _ramp_of(eng.ramps, machine)
+
+"""
+    branch_power(eng::DetailedEngine, from::Symbol, to::Symbol) -> Float64
+
+Active power flowing **from** bus `from` **into** the branch, per unit on
+`model.S_base`, right now: `Re(V_from · conj(I))` with
+`I = status·(V_from − V_to)/(jX)` — the same current expression the edge model
+integrates, so the read-out and the physics cannot hold different conventions
+(`_branch_flows` makes the same argument about the power flow's own check).
+
+**This is the quantity the classical tier reports as `K·sin(δ_from − δ_to)`, and
+that is the whole point of the shared name** (M5 step 7). There it is bounded by
+`K = E′_from·E′_to/X`, because the voltages at the two ends are constants of the
+model. Here the two ends are algebraic unknowns and there is no such bound —
+which is the mechanism the milestone's criterion measures.
+
+Reading it needs the bus voltage ANGLES, and `current_state` reports magnitudes
+only. That is why this is a function on the engine rather than an arithmetic the
+caller can do from the state: the information is not in the state read-out.
+"""
+function branch_power(eng::DetailedEngine, from::Symbol, to::Symbol)
+    e = _detailed_branch_index(eng, from, to)
+    bt = branch_topology(eng.model)
+    u = eng.integrator.u
+    # The branch's OWN orientation, for `SwingEngine`'s reason — `bt.src`/`bt.dst`
+    # are the model's, not the graph's.
+    Vf = complex(u[eng.Vre_idx[bt.src[e]]], u[eng.Vim_idx[bt.src[e]]])
+    Vt = complex(u[eng.Vre_idx[bt.dst[e]]], u[eng.Vim_idx[bt.dst[e]]])
+    status = eng.params[eng.status_pidx[e]]
+    I = status * (Vf - Vt) / (im * bt.X[e])
+    # The CALLER's order decides the sign — see `branch_power(::SwingEngine, …)`.
+    return _oriented(eng.model.branches[e], from) ? real(Vf * conj(I)) :
+                                                    -real(Vf * conj(I))
+end
+
+"""
+    branch_power(eng::DetailedEngine) -> Vector{Float64}
+
+Every branch's active power in **model branch order**, `from → to`, pu.
+"""
+branch_power(eng::DetailedEngine) =
+    Float64[branch_power(eng, br.from, br.to) for br in eng.model.branches]
+
+"""
+    branch_power_series(eng::DetailedEngine, from::Symbol, to::Symbol) -> (; t, P)
+
+The active power `from → to` (pu on `model.S_base`) at every sample the integrator
+has saved — the classical tier's method of the same name, on this tier's algebra.
+See `engines/swing.jl` for why the transfer is derived here rather than recorded as
+a channel, and for the guard that refuses a branch an event has touched.
+
+**This tier needs it more than the classical one does.** There, `δ` is a recorded
+channel and the transfer can be reconstructed after the fact from `state_series`
+alone. Here it cannot: the transfer needs the bus voltage ANGLES and
+`current_state`/`state_series` report magnitudes.
+"""
+function branch_power_series(eng::DetailedEngine, from::Symbol, to::Symbol)
+    e = _detailed_branch_index(eng, from, to)
+    _branch_series_guard(eng.log, eng.model, e, from, to)
+    bt = branch_topology(eng.model)
+    ir, ii = eng.Vre_idx[bt.src[e]], eng.Vim_idx[bt.src[e]]
+    jr, ji = eng.Vre_idx[bt.dst[e]], eng.Vim_idx[bt.dst[e]]
+    status, X = eng.params[eng.status_pidx[e]], bt.X[e]
+    sgn = _oriented(eng.model.branches[e], from) ? 1.0 : -1.0
+    sol = eng.integrator.sol
+    P = Vector{Float64}(undef, length(sol.u))
+    @inbounds for k in eachindex(sol.u)
+        u = sol.u[k]
+        Vf = complex(u[ir], u[ii])
+        Vt = complex(u[jr], u[ji])
+        P[k] = sgn * real(Vf * conj(status * (Vf - Vt) / (im * X)))
+    end
+    return (t = copy(sol.t), P = P)
+end
 
 """
     _reinitialise_algebraic!(eng)
