@@ -255,15 +255,25 @@ finding:
 | two-bus closed form | — | **red** | — | — | — |
 | three-bus split | **red** | **red** | **red** | **red** | **red** |
 | positive control (reactance moved) | **red** | **red** | **red** | **red** | **red** |
-| radial, conservation + interior slack | * | * | * | * | **red** |
+| radial, conservation + interior slack | **red** | **red** | **red** | **red** | **red** |
 | slack moved, flows unchanged | **red** | — | **red** | **red** | **red** |
 | **superposition** | — | — | — | — | — |
 | `R` ignored / one bus | — | — | — | — | — |
 
-`*` — the radial case did not exist when M1–M4 were run; M5 was run against the
-suite both without it (caught by three other checks) and with it (caught by four).
-It was added anyway, because "something else happens to catch it" is not the same
-claim as "a check covers it", and the reduction had no check of its own.
+The radial row is **measured, not assumed**: the case was added after M1–M4 had
+already been run, so all four were re-run against the suite containing it rather
+than left as an abstention in the table. It is red under every one — which is a
+statement about the fixture's strength and not a reason it was added. It was added
+because the *reduction* had no check of its own, and M5 (the reversed scatter) was
+run both without it — caught by three other checks — and with it, caught by four.
+"Something else happens to catch it" is not the same claim as "a check covers it".
+
+**A limit of this mutation set, recorded so step 3 does not inherit it.** M4 scales
+one diagonal term by 0.9, which leaves `B` structurally identical and is therefore
+caught by the cheapest check present (`max|B·1| < 1e-12`). The realistic assembly
+bug is a *dropped* contribution or a diagonal summing the wrong branches, and no
+mutation here is of that class. Step 3's mutations should include one that changes
+the sparsity pattern, not only the values in it.
 
 **Superposition catches nothing.** The plan called it "a property only a linear
 model has, so it is a real discriminator rather than a restatement" — and that is
