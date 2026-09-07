@@ -472,6 +472,188 @@ function efd_step_run(net::NetworkModel; ΔEfd::Real = 0.05, reltol::Real = 1.0e
     return solve!(eng, (0.0, Float64(T)); saveat = saveat)
 end
 
+# ──────────────────────────────────────────────────────────────────────────────
+# M5 step 5 — the voltage regulator
+#
+# FOUR CLOSED FORMS FOR ONE FIXTURE, and they are four readings of the same three
+# reactances rather than four fitted constants. On `regulator_bus_system()` the
+# rotor is immobile (zero real loading), so `Iq ≡ 0`, `E′d ≡ 0`, and the machine
+# reduces exactly to a q-axis flux `E′q` behind `X′d` feeding an infinite bus
+# `E_inf` through a network reactance `Xe`:
+#
+#   Id      = (E′q − E_inf)/(Xe + X′d)                          [the stator, at δ = 0]
+#   |V|     = (E′q·Xe + X′d·E_inf)/(Xe + X′d)                     `reg_V`
+#   T′d     = T′do·(Xe + X′d)/(Xe + Xd)                           `reg_tau`  (Heffron-Phillips)
+#   E′q(∞)  = [(Xd − X′d)·E_inf + Efd·(Xe + X′d)]/(Xe + Xd)       `reg_Eq_inf`
+#
+# substituting the first into `T′do·dE′q/dt = −E′q − (Xd − X′d)·Id + Efd`, which is
+# linear in `E′q` and therefore a plain first-order approach. `T′d` is step 4's
+# constant unchanged; what step 5 adds is that `Efd` in the last line may be the
+# machine's CEILING rather than its dispatch, and the same algebra then predicts
+# what a saturated exciter does.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# The three parallel paths from the machine's bus to the infinite bus, by branch
+# id. Written once here rather than at each call site: a test that hard-codes
+# "0.02 in parallel with 0.4 and 0.5" is a second copy of the fixture.
+const REG_PATHS = ((:L12,), (:L13, :L32), (:L14, :L42))
+
+"""
+    reg_Xe(net; out = ()) -> Float64
+
+The reactance between `regulator_bus_system()`'s machine terminal and the infinite
+bus, with the branches named in `out` tripped: the three paths in parallel, plus
+`G_inf`'s own transient reactance, because the infinite bus is that machine's
+INTERNAL node and not its terminal.
+
+Every number comes from the model — branch reactances from `net.branches` and
+`X′d` from `machine_arrays`, i.e. the SYSTEM base. `G_inf` is rated at `S_base`
+here so its conversion is the identity, which is exactly the case where reading
+the `Machine` field instead would go unnoticed.
+"""
+function reg_Xe(net::NetworkModel; out = ())
+    X = Dict(br.id => br.X for br in net.branches)
+    g = 0.0
+    for pth in REG_PATHS
+        any(id -> id in out, pth) && continue
+        g += 1 / sum(X[id] for id in pth)
+    end
+    g > 0 || error("reg_Xe: every path is out — the machine would be islanded.")
+    return 1 / g + machine_arrays(net).Xd′[2]
+end
+
+# The three closed forms above, each reading `machine_arrays` and nothing else.
+function reg_tau(net::NetworkModel, Xe::Real)
+    ma = machine_arrays(net)
+    return ma.Td0′[1] * (ma.Xd′[1] + Xe) / (ma.Xd[1] + Xe)
+end
+function reg_Eq_inf(net::NetworkModel, Xe::Real, Efd::Real)
+    ma = machine_arrays(net)
+    return ((ma.Xd[1] - ma.Xd′[1]) * ma.E[2] + Efd * (Xe + ma.Xd′[1])) / (Xe + ma.Xd[1])
+end
+function reg_V(net::NetworkModel, Xe::Real, E′q::Real)
+    ma = machine_arrays(net)
+    return (E′q * Xe + ma.Xd′[1] * ma.E[2]) / (Xe + ma.Xd′[1])
+end
+
+"""
+    reg_loop_gain(net, Xe) -> Float64
+
+The exciter loop's DC gain, `K_A·dV/dEfd`, and it is the composition of the two
+closed forms above rather than a fifth constant:
+
+    dE′q/dEfd = (Xe + X′d)/(Xe + Xd)      from `reg_Eq_inf`
+    dV/dE′q   = Xe/(Xe + X′d)             from `reg_V`
+    ⇒ dV/dEfd = Xe/(Xe + Xd)
+
+**This is what makes a raised setpoint move the field voltage by far less than the
+obvious guess.** Command `ΔVref` and the open-loop reading is `K_A·ΔVref` of extra
+field; the closed-loop answer is `K_A·ΔVref/(1 + G)`, because the extra field raises
+the terminal voltage and cancels most of the error that produced it. On
+`regulator_bus_system()` `G = 10.11`, so the two differ by 11x — and the second one
+is right to nine digits.
+"""
+function reg_loop_gain(net::NetworkModel, Xe::Real)
+    ma = machine_arrays(net)
+    return ma.K_A[1] * Xe / (Xe + ma.Xd[1])
+end
+
+"""
+    reg_run(net; trips, reltol, abstol, T, saveat) -> (eng, series)
+
+Run `regulator_bus_system()` through a list of `time => TripLine` perturbations,
+scheduled through `solve!`'s own driver rather than by hand-splitting the horizon
+— which is what puts the event at the instant it names instead of at a sample
+boundary.
+
+The engine is returned alongside the series because every check here reads
+something off it that no channel carries — the derived `Vref`, the machine's own
+limits, the integrator's return code.
+
+`slack = :G_inf` is not a default worth taking: the infinite bus is the angle
+reference by construction here, and pinning the regulated machine instead would
+make its rotor angle the fixed thing and its power the free one, which is the
+opposite of the case.
+"""
+function reg_run(net::NetworkModel; trips = (1.0 => TripLine(:B1, :B2),),
+                 reltol::Real = 1.0e-9, abstol::Real = 1.0e-12,
+                 T::Real = 25.0, saveat::Real = 0.01)
+    eng = init!(DetailedEngine, net; slack = :G_inf, reltol = reltol, abstol = abstol)
+    ser = solve!(eng, (0.0, Float64(T)); saveat = saveat, perturbations = trips)
+    return eng, ser
+end
+
+"""
+    rescale_machine(net, id, f) -> NetworkModel
+
+The same PHYSICAL machine on a rating `f` times larger: `S_rated`, every
+machine-base reactance and the inverse of every machine-base power quantity all
+scale together, so `machine_arrays` returns the identical system-base numbers and
+the trajectory must not move.
+
+This is the positive control for "the regulator's four parameters do not convert".
+A `K_A` divided by the rating ratio would look entirely plausible in
+`machine_arrays` and would change the answer here by exactly that factor.
+"""
+rescale_machine(net::NetworkModel, id::Symbol, f::Real) = NetworkModel(net.S_base,
+    net.f0, net.buses, net.branches,
+    [m.id === id ?
+     Machine(m.id, m.bus, f * m.S_rated, m.H / f, m.D / f, f * m.Xd′, m.E′, m.P0,
+             m.R * f, m.Pmax, m.Tg;
+             Xd = f * m.Xd, Xq = f * m.Xq, Xq′ = f * m.Xq′,
+             Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = f * m.Ra,
+             K_A = m.K_A, T_E = m.T_E, Efd_min = m.Efd_min, Efd_max = m.Efd_max) : m
+     for m in net.machines], net.loads)
+
+"""
+    clamped_run(net, Efd_cap; h, T, trip_at, reltol, abstol) -> NamedTuple
+
+**THE M1 BUG, REPRODUCED DELIBERATELY** — the anti-vacuity control for the field
+limit. The engine is built with NO limits at all (`Efd_max = Inf`), and the field
+voltage is clamped to `Efd_cap` from outside every `h` seconds: a post-hoc clamp on
+the STATE, which is precisely what M1's carried-forward rule forbids and what the
+derivative saturation replaces.
+
+It is done from the test rather than through a switch in the engine, because a
+deliberate-bug mode in production code is a mode someone can reach by accident.
+`u_modified!` is what makes the clamp actually take (a state written into the
+integrator is otherwise discarded by the next step), so the reproduction is
+faithful rather than accidentally inert.
+
+`h` is the interval between clamps, and it is a PARAMETER because the size of the
+resulting error is the signature: a correct method's answer does not depend on it.
+"""
+function clamped_run(net::NetworkModel, Efd_cap::Real; h::Real = 0.005,
+                     T::Real = 25.0, trip_at::Real = 1.0, saveat::Real = 0.005,
+                     reltol::Real = 1.0e-9, abstol::Real = 1.0e-12)
+    eng = init!(DetailedEngine, net; slack = :G_inf, reltol = reltol, abstol = abstol)
+    solve!(eng, (0.0, Float64(trip_at)); saveat = saveat)
+    inject!(eng, TripLine(:B1, :B2))
+    t = Float64(trip_at)
+    post = -Inf                     # the field voltage seen JUST AFTER each clamp
+    while t < T - 1.0e-12
+        t2 = min(t + h, Float64(T))
+        # `saveat = t2 - t`, ONE sample per chunk, and not the caller's cadence: a
+        # `saveat` coarser than the clamp interval makes `_playback_grid` empty and
+        # the chunk records nothing at all, which reads downstream as a run that
+        # stopped at the trip. Found the hard way.
+        solve!(eng, (t, t2); saveat = t2 - t)
+        u = eng.integrator.u
+        if u[eng.Efd_idx[1]] > Efd_cap
+            u[eng.Efd_idx[1]] = Float64(Efd_cap)
+            SciMLBase.u_modified!(eng.integrator, true)
+        end
+        post = max(post, u[eng.Efd_idx[1]])
+        t = t2
+    end
+    # `post` is the third return value BECAUSE THE TWO MAXIMA DISAGREE, and the
+    # disagreement is the finding: sampled at the clamp instants the state never
+    # exceeds its cap at all, and sampled anywhere else it exceeds it by an amount
+    # set by `h`. Which of those a check sees is decided by where the check looks,
+    # which is exactly the property a correct saturation does not have.
+    return eng, state_series(eng), post
+end
+
 """
     pm_step_run(net; ΔPm, reltol, abstol, T, saveat) -> NamedTuple
 

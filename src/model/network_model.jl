@@ -914,20 +914,13 @@ the failure; whether the drop is large is a separate question this guard does no
 ask.
 """
 function _assert_frozen_flux(net::NetworkModel, who::AbstractString)
+    # M5 step 5's half of the same question, in its own function because the
+    # detailed tier's own external oracle asks it WITHOUT asking about the flux:
+    # `build_oracle(tier = :sauer_pai)` holds the field voltage at its dispatch and
+    # is perfectly happy with a live flux, so it needs this guard and not the one
+    # below it.
+    _assert_no_regulator(net, who)
     for m in net.machines
-        # M5 step 5, and it is the SAME failure one mechanism along: a machine
-        # carrying a regulator, run at a tier that has no field voltage at all,
-        # would hold `E′` fixed where its data says an exciter is holding *terminal*
-        # voltage instead. Refused by name, in this function rather than a second
-        # one, because the caller's question is "is this classical-tier data".
-        (m.K_A == 0.0 && m.T_E == Inf &&
-         m.Efd_min == -Inf && m.Efd_max == Inf) || throw(ArgumentError(
-            "$who: machine $(m.id) carries a voltage regulator — (K_A, T_E, " *
-            "Efd_min, Efd_max) = ($(m.K_A), $(m.T_E), $(m.Efd_min), $(m.Efd_max)). " *
-            "The classical tier has no field voltage to regulate and no terminal " *
-            "voltage to regulate it against: it holds |E′| at the bus constant, " *
-            "which is the regulator-OFF limit. Running it here would silently drop " *
-            "the exciter. Use DetailedEngine, or leave K_A/T_E at their defaults."))
         ok = m.Xd == m.Xd′ && m.Xq == m.Xd′ && m.Xq′ == m.Xd′ &&
              m.Td0′ == Inf && m.Tq0′ == Inf && m.Ra == 0.0
         ok || throw(ArgumentError(
@@ -938,6 +931,36 @@ function _assert_frozen_flux(net::NetworkModel, who::AbstractString)
             "Ra = 0) and reads none of those numbers, so running it here would " *
             "silently simulate a different machine than the data describes. Use " *
             "DetailedEngine, or leave the detailed keywords at their defaults."))
+    end
+    return nothing
+end
+
+"""
+    _assert_no_regulator(net::NetworkModel, who::AbstractString)
+
+Refuse a machine carrying a voltage regulator, by name.
+
+Any tier that holds a machine's excitation — the classical tier's constant `|E′|`
+at the bus, or the detailed tier's own external oracle with the field voltage held
+at its dispatch — reads none of `K_A`, `T_E`, `Efd_min`, `Efd_max`. A machine
+carrying them and run there is a *different machine* than its data describes,
+silently and with a plausible answer, which is the failure this whole family of
+guards exists to stop.
+
+Separate from `_assert_frozen_flux` because the two questions come apart: a
+frozen-flux tier always wants both, but `build_oracle(tier = :sauer_pai)` runs the
+flux and holds only the field.
+"""
+function _assert_no_regulator(net::NetworkModel, who::AbstractString)
+    for m in net.machines
+        (m.K_A == 0.0 && m.T_E == Inf &&
+         m.Efd_min == -Inf && m.Efd_max == Inf) || throw(ArgumentError(
+            "$who: machine $(m.id) carries a voltage regulator — (K_A, T_E, " *
+            "Efd_min, Efd_max) = ($(m.K_A), $(m.T_E), $(m.Efd_min), $(m.Efd_max)) — " *
+            "and this tier holds the excitation rather than regulating it. Running " *
+            "it here would silently drop the exciter and simulate a machine whose " *
+            "field voltage never moves. Use DetailedEngine, or leave K_A/T_E at " *
+            "their defaults."))
     end
     return nothing
 end
@@ -1215,7 +1238,8 @@ detailed_pair() = NetworkModel(100.0, 50.0,
      Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -40.0)])
 
 """
-    infinite_bus_system(; P0 = 0.0, Xd = 1.8, H = 200.0, H_inf = 100.0) -> NetworkModel
+    infinite_bus_system(; P0 = 0.0, Xd = 1.8, H = 200.0, H_inf = 100.0,
+                        K_A = 0.0, T_E = Inf) -> NetworkModel
 
 One salient machine on an **infinite bus** through a tie — the fixture for M5 step
 4's closed form, the Heffron–Phillips field-flux time constant
@@ -1249,14 +1273,26 @@ time constant must move by the predicted amount", which a fixture that cannot va
 `G1` is rated 250 MVA on a 100 MVA base, so every reactance in the prediction must
 come from `machine_arrays` and not from the `Machine` fields — mixing the two bases
 would give a plausible-looking time constant that is wrong by 2.5×.
+
+**`K_A`/`T_E` arm a voltage regulator on `G1` (M5 step 5), and the defaults leave it
+off**, so every step-4 check runs on exactly the fixture it always did. They are here
+rather than on `regulator_bus_system()` for one reason: this fixture is TWO BUSES,
+each with a machine and no load, which is what `build_oracle(tier = :sauer_pai_avr)`
+can accept. The three-path fixture cannot be an oracle case at all — its bare
+junctions are machine-free buses and PowerDynamics' side has no vertex for them here.
+
+At zero loading the external comparison is unusually clean: `ω ≡ 1` exactly on both
+sides, so the stator-`ω` residual that held M5 step 4's external oracle to ~10 %
+vanishes identically and the only difference left is the exciter itself.
 """
 function infinite_bus_system(; P0::Real = 0.0, Xd::Real = 1.8, H::Real = 200.0,
-                             H_inf::Real = 100.0)
+                             H_inf::Real = 100.0, K_A::Real = 0.0, T_E::Real = Inf)
     NetworkModel(100.0, 50.0,
         [Bus(:B1, 400.0), Bus(:B2, 400.0)],
         [Branch(:L12, :B1, :B2, 0.20, 500.0)],
         [Machine(:G1, :B1, 250.0, H, 0.0, 0.25, 1.05,  Float64(P0);
-                 Xd = Xd, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
+                 Xd = Xd, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4,
+                 K_A = K_A, T_E = T_E),
          Machine(:G_inf, :B2, 100.0, H_inf, 0.0, 0.05, 1.00, -Float64(P0))])
 end
 

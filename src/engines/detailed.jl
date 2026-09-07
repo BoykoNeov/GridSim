@@ -166,8 +166,9 @@
 # DERIVED at initialisation from the solved `(|V|, Efd)` rather than taken as model
 # data, for the same reason `Pm` is (see below): a supplied setpoint that does not
 # match the dispatch turns the flat run into a startup transient. The limits are
-# saturations in the DERIVATIVE, backed by an `isoutofdomain` guard which this tier
-# had none of at all before step 5.
+# saturations in the DERIVATIVE and by nothing else — the `isoutofdomain` guard this
+# tier was supposed to grow was written, measured to make the ceiling unreachable,
+# and removed. That measurement is the block above `_check_power_flow`.
 #
 # WHAT IS DELIBERATELY NOT HERE YET, each named rather than discovered later:
 #   - `inject!(::TripGenerator)` — a tripped machine turns its bus into a passive
@@ -592,40 +593,82 @@ function _static_network(net::NetworkModel, g)
     return NetworkDynamics.Network(g, verts, [_detailed_edge() for _ in 1:Graphs.ne(g)])
 end
 
-# `isoutofdomain` predicate, built per engine because it has to close over the
-# resolved flat indices — `SwingEngine`'s construction, and for its reasons.
+# WHY THIS TIER HAS NO `isoutofdomain` PREDICATE, MEASURED RATHER THAN ASSUMED
+# (M5 step 5). One was written here first, on the plan's instruction and by analogy
+# with `SwingEngine`'s `ΔPm` guard. It does not work, and the reason is not specific
+# to this tier — it is a property of pairing a step-rejecting domain guard with a
+# saturation in the derivative.
 #
-# THIS TIER HAD NO PREDICATE AT ALL UNTIL M5 STEP 5, and that is a gap being closed
-# rather than a feature being extended. `ΔPm`'s headroom has had its derivative
-# saturation here since step 1, but nothing absorbed an adaptive step that overshot
-# the ceiling between two derivative evaluations — the guard `SwingEngine` grew in
-# M3 was simply never copied across. The regulator is what made it worth writing (a
-# limit that BINDS is the case where overshoot happens), so the predicate arrives
-# with three indices per machine rather than the plan's two.
+# THE MEASUREMENT. `regulator_bus_system(; Efd_max = 0.95)`, line trip at t = 1 s,
+# `Rodas5P` at reltol 1e-9:
 #
-# It touches only `ΔPm` and `Efd`. `δ` and `ω` are deliberately unbounded — post-trip
-# the angles drift forever by design — and so are the flux states and every bus
-# voltage: an algebraic unknown has no box to be outside of, and a predicate that
-# rejected a proposed voltage would reject every step of a correct run and collapse
-# `dt` to an abort.
+#   guard on,  K_A = 200, T_E = 0.05  -> MaxIters at t = 1.0021, dt = 9.1e-11
+#   guard on,  K_A =  50, T_E = 0.2   -> MaxIters at t = 1.0361, dt = 1.7e-09
+#   guard on,  K_A =  20, T_E = 0.5   -> MaxIters at t = 1.2560, dt = 1.5e-08
+#   guard off, same case              -> Success, and Efd exceeds its ceiling by
+#                                        3.4e-8 pu, once, and never more
 #
-# Rejecting a step is not the forbidden post-hoc clamp: the step is retried, never
-# written. The derivative saturations in `_detailed_machine_bus!` do the physical
-# work; this only absorbs overshoot on top of them, and it cannot stall, because at
-# a limit the saturated derivative already puts the solution *at* the limit rather
-# than beyond it. The `1e-10` slack is roundoff tolerance for exactly that landing.
-function _detailed_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int},
-                               Efd_idx::Vector{Int}, lo_pidx::Vector{Int},
-                               hi_pidx::Vector{Int})
-    return function (u, p, t)
-        @inbounds for k in eachindex(ΔPm_idx)
-            u[ΔPm_idx[k]] > p[hr_pidx[k]] + 1e-10 && return true
-            u[Efd_idx[k]]  > p[hi_pidx[k]]  + 1e-10 && return true
-            u[Efd_idx[k]]  < p[lo_pidx[k]]  - 1e-10 && return true
-        end
-        return false
-    end
-end
+# In every failing run `Efd = 0.94999999…`: the state is approaching the ceiling
+# from BELOW and cannot arrive. On a raw solve of the same right-hand side the guard
+# accepted 199,944 steps without reaching it.
+#
+# WHY. Above the limit the saturated derivative is zero, so the ceiling is not an
+# attractor the solution crosses — it is a point the solution has to LAND on. The
+# guard accepts a step only if it lands at or below `limit + 1e-10`. As the state
+# closes on the limit, the derivative there is still finite (here 83 pu/s), so any
+# step of size `h` overshoots by `≈ 83h`; to satisfy the guard, `h` must be under
+# `1.2e-12`. Do that and the state is closer still, and the next `h` must be smaller
+# again. The acceptance window is narrower than the precision with which a step can
+# be aimed, so it shrinks geometrically and the run dies. Nothing about the exciter
+# causes this; a fast state is only what makes it happen inside a test's horizon.
+#
+# THE CLAIM THIS FALSIFIES IS WRITTEN IN THIS REPO. `engines/swing.jl` says of its
+# own guard: "During continuous integration it cannot stall, because the derivative
+# is already zero at the ceiling, which puts the solution *at* headroom, not above
+# it." The derivative IS zero at the ceiling; what does not follow is that the
+# solution gets there. `SwingEngine`'s and `FrequencyResponseEngine`'s guards have
+# the same construction — and they are NOT stalling, which was worth measuring
+# rather than assuming in either direction. Driven onto its headroom and run for
+# 20,000 s, a `SwingEngine` governor LANDS: `ΔPm` settles 3.1e-11 pu ABOVE its
+# ceiling and stays there, `dt` stays around 0.09 s, nothing is rejected in a loop.
+#
+# THE REASON IS THE ONE NUMBER, AND NOBODY CHOSE IT. The guard's window is an
+# absolute `1e-10`, and the overshoot a state produces on the step that lands is
+# set by how fast that state is. A governor with a 1 s lag overshoots by 3.1e-11
+# and fits inside the window with a factor of three to spare; this exciter with a
+# 0.05 s lag needs about 5e-8 and does not fit at all. So `SwingEngine`'s guard is
+# not broken — it is inside its margin by 3x, on a constant that was written for
+# round-off rather than for this. Measured in `test/m5_detailed.jl` and left alone
+# here: changing it would move M2, M3 and M4 numbers, which is not this step's to
+# decide.
+#
+# WHAT BOUNDS THE STATE INSTEAD, and it is the thing that was always doing the work:
+# the saturation in the derivative. Above the limit the derivative is zero, so the
+# state cannot continue to rise; the only excursion possible is the overshoot of the
+# single step that crosses, and that is what the 3.4e-8 above is. It is asserted as a
+# NUMBER in `test/`, at two tolerances, rather than enforced by a guard that costs
+# the run.
+#
+# WHAT IS LEFT OVER AFTER THE GUARD IS GONE, ALSO MEASURED. A hard saturation makes
+# the right-hand side DISCONTINUOUS in the state it saturates, and a stiff adaptive
+# solver is entitled to find that hard. Swept over the ceiling on the same fixture
+# (`Efd_max` = 1.05, 1.1, 1.15, 1.2, 1.3, 1.5, 2.0, 3.0, Rodas5P at reltol 1e-9),
+# seven of the eight complete and ONE does not: at `Efd_max = 1.2` the step size
+# collapses to 1.3e-10 at the crossing and the run gives up. It is an isolated point,
+# not a threshold — 1.15 and 1.3 both run — and it is isolated in the TOLERANCE too:
+# the same case completes at reltol 1e-6 (overshoot 8.3e-6) and at 1e-11 (6.1e-10)
+# and fails only at the 1e-9 in between. Non-monotone in two parameters at once is
+# conditioning at the kink, not a boundary of the model. `FBDF` completes it with an
+# overshoot of 1.7e-9, and `init!` already takes a `solver` keyword, so the
+# workaround is a parameter rather than a change. Recorded here with the sweep because a default that
+# fails at one isolated value is exactly the kind of thing that gets rediscovered as
+# a physics finding.
+#
+# WHAT A DOMAIN GUARD IS STILL RIGHT FOR is the case M1 built it for: a limit that
+# MOVES, leaving the state stranded far outside it. That is not a landing problem, it
+# is a data problem, and it is fixed where M1 fixed it — at the event boundary, by
+# re-initialising the state into the new limit. Our limits are constant model data
+# and cannot move, and `init!` refuses a dispatch outside them.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -869,9 +912,6 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     Efd_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :Efd)) for k in 1:nm]
     Pm_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Pm)) for k in 1:nm]
     Vref_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Vref)) for k in 1:nm]
-    hr_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :headroom)) for k in 1:nm]
-    lo_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Efd_min)) for k in 1:nm]
-    hi_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Efd_max)) for k in 1:nm]
 
     sVre_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
     sVim_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
@@ -1041,8 +1081,6 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      reltol = Float64(reltol), abstol = Float64(abstol),
                                      dtmax = Float64(dtmax),
-                                     isoutofdomain = _detailed_outofdomain(
-                                         ΔPm_idx, hr_pidx, Efd_idx, lo_pidx, hi_pidx),
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 

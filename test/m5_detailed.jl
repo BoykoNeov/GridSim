@@ -1024,3 +1024,489 @@ end
 end
 
 end # M5 step 4
+
+# ═══════════════════════════════════════════════════════════════════════════
+# M5 step 5 — the voltage regulator.
+#
+# Steps 1-4 ran with the field voltage HELD: `Efd` was whatever the power flow
+# dispatched, constant for the whole horizon. That is the case every closed form
+# in step 4 is written for, and it is still what the defaults are. This step gives
+# the field voltage an exciter that moves it, and hard limits that stop it.
+#
+# THE ONE RULE THIS STEP EXISTS TO GET RIGHT is M1's, carried forward twice now:
+# a limit is a saturation in the DERIVATIVE, never a clamp on the state. The
+# checks below are arranged around what can and cannot see the difference, because
+# most of them cannot — see the anti-vacuity testset at the end, which reproduces
+# the clamp deliberately and finds that three of the four claims stay green under
+# it, one of them MORE green than the correct run. Only the closed form is
+# load-bearing.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@testset "M5 step 5 — the voltage regulator" begin
+
+@testset "the setpoint is DERIVED, so a regulated machine still starts at rest" begin
+    # The exciter's own equation has one unknown left once the power flow has run:
+    # at a steady state `0 = −Efd + K_A(Vref − |V|)`, so `Vref = |V| + Efd/K_A`.
+    # Nothing else can be chosen — a setpoint taken as model data would put the
+    # machine off its own equilibrium at t = 0, and every check downstream would be
+    # reading a startup transient.
+    net = regulator_bus_system()
+    eng = init!(DetailedEngine, net; slack = :G_inf)
+    st  = current_state(eng)
+    K_A = machine_arrays(net).K_A[1]
+    @test K_A == 200.0                                    # base-free, not converted
+    @test eng.params[eng.Vref_pidx[1]] ≈ st.V[1] + st.Efd[1] / K_A atol = 1.0e-14
+    # G_inf carries no regulator, so its setpoint is the fallback |V| and is inert.
+    @test eng.params[eng.Vref_pidx[2]] == st.V[2]
+
+    # THE EQUILIBRIUM IS THE CLOSED FORM'S, which is what makes `reg_V` an oracle
+    # for the run rather than a restatement of it: the power flow solved a
+    # five-branch network from a flat start and landed on the two-reactance
+    # expression to 13 digits.
+    Xe = reg_Xe(net)
+    @test Xe ≈ 0.0383486 rtol = 1.0e-5                     # 0.02 ∥ 0.40 ∥ 0.50, + 0.02
+    @test st.V[1] ≈ reg_V(net, Xe, st.E′q[1]) atol = 1.0e-13
+
+    # THE FLAT RUN, per state and at two tolerances — step 1's discipline, extended
+    # to the one state step 5 added.
+    for (rt, at) in ((1.0e-6, 1.0e-9), (1.0e-9, 1.0e-12))
+        e2 = init!(DetailedEngine, net; slack = :G_inf, reltol = rt, abstol = at)
+        u0 = copy(e2.integrator.u)
+        s  = solve!(e2, (0.0, 10.0); saveat = 0.5)
+        @test maximum(abs, s.Efd_G1 .- s.Efd_G1[1]) < 1.0e-9
+        @test maximum(abs, s.E′q_G1 .- s.E′q_G1[1]) < 1.0e-9
+        @test maximum(abs, s.V_B1 .- s.V_B1[1]) < 1.0e-9
+        @test maximum(abs, e2.integrator.u .- u0) < 1.0e-8
+    end
+
+    # ── THE POSITIVE CONTROL, AND THE PREDICTION IT CORRECTED. A `Vref` off by
+    # 0.01 pu is the bug this derivation exists to prevent, and the obvious guess
+    # at its size — `K_A·ΔVref = 2 pu` of extra field voltage — is WRONG BY 11x,
+    # because the loop closes through the network: more field raises the terminal
+    # voltage, which cancels most of the error that produced it. The DC loop gain
+    # is `G = K_A·dV/dEfd`, and `dV/dEfd = Xe/(Xe + Xd)` falls out of the two
+    # closed forms already here (`reg_Eq_inf` composed with `reg_V`), so
+    #
+    #     ΔEfd = K_A·ΔVref / (1 + G)
+    #
+    # This is the only check in the milestone that reads `K_A` INSIDE an equation
+    # rather than as a label, and it lands to nine digits: 0.9660369472 predicted
+    # against 0.9660369472 measured, where the open-loop guess would have said
+    # 2.786.
+    e3 = init!(DetailedEngine, net; slack = :G_inf)
+    Efd0 = current_state(e3).Efd[1]
+    G = reg_loop_gain(net, Xe)
+    @test G ≈ 10.1138 rtol = 1.0e-4
+    e3.params[e3.Vref_pidx[1]] += 0.01
+    s3 = solve!(e3, (0.0, 30.0); saveat = 0.1)
+    @test s3.Efd_G1[end] ≈ Efd0 + K_A * 0.01 / (1 + G) rtol = 1.0e-8
+    @test !isapprox(s3.Efd_G1[end], Efd0 + K_A * 0.01; rtol = 0.5)   # …and NOT the open-loop guess
+    @test s3.Efd_G1[end] - Efd0 > 0.1                                # not a null control
+end
+
+# ---------------------------------------------------------------------------
+@testset "the ceiling HOLDS under sustained demand, and the flux decays under it" begin
+    # THE SHARPEST CHECK IN THIS STEP, and it is step 4's closed form with one
+    # constant changed. While the exciter sits on its ceiling `Efd` is a CONSTANT,
+    # so the machine is exactly the constant-field machine already validated to
+    # 3e-9 — same `T′d = T′do·(X′d + Xe)/(Xd + Xe)`, new asymptote.
+    #
+    # `Efd_max = 0.95` is below the post-trip UNLIMITED equilibrium field voltage
+    # (0.99288 pu, measured), which is the criterion for the demand never falling
+    # back: the terminal voltage a 0.95 pu field can produce is short of the one
+    # that would relieve the regulator, so the limit binds for the whole horizon.
+    net = regulator_bus_system(; Efd_max = 0.95)
+    Xe1 = reg_Xe(net; out = (:L12,))
+    τ1  = reg_tau(net, Xe1)
+    Eq∞ = reg_Eq_inf(net, Xe1, 0.95)
+    @test Xe1 ≈ 0.2422222 rtol = 1.0e-6                    # 0.40 ∥ 0.50, + 0.02
+    @test τ1 ≈ 2.845266 rtol = 1.0e-5
+    @test Eq∞ ≈ 1.014431 rtol = 1.0e-5
+
+    overs = Float64[]
+    for (rt, at, obound, ebound) in ((1.0e-6, 1.0e-9, 1.0e-4, 1.0e-4),
+                                     (1.0e-9, 1.0e-12, 1.0e-6, 1.0e-6))
+        eng, s = reg_run(net; reltol = rt, abstol = at, T = 25.0, saveat = 0.01)
+        # THE SAMPLE AT THE EVENT INSTANT IS THE PRE-EVENT ONE, on this engine as on
+        # every other in the repo (the playback driver records a step's samples
+        # before applying the event that ends it). So `ipre` carries the flux the
+        # decay starts from — which is the same number either side of the trip,
+        # because the flux is a differential state — and `ipost` is the first sample
+        # of the new network.
+        ipre  = findlast(≤(1.0), s.t)
+        ipost = findfirst(>(1.0), s.t)
+        Eq0 = s.E′q_G1[ipre]
+
+        # THE ALGEBRAIC RELATION, CHECKED AT EVERY POST-TRIP SAMPLE rather than at
+        # the jump alone. `reg_V` is not a statement about one instant: with the
+        # rotor pinned, the terminal voltage is that function of the flux and the
+        # network reactance for the whole run, so asserting it 2,400 times is
+        # strictly more than asserting the jump.
+        @test all(abs(s.V_B1[i] - reg_V(net, Xe1, s.E′q_G1[i])) < 1.0e-9
+                  for i in ipost:length(s.t))
+        @test s.V_B1[ipost] < s.V_B1[ipre] - 0.01        # the trip really lowered it
+
+        # THE LIMIT BINDS. It binds at `Efd_max + ε`, not at `Efd_max` — and that
+        # `ε` is the whole of what bounds this state, so it is asserted as a number
+        # rather than hidden inside a tolerance. Above the ceiling the saturated
+        # derivative is zero, so the only excursion possible is the overshoot of the
+        # single step that crosses; measured at 5.0e-8 pu, and it does not grow over
+        # 24 s of sitting there. This is what replaces the `isoutofdomain` guard
+        # that was written first and measured to make the ceiling unreachable
+        # (`src/engines/detailed.jl`, above `_check_power_flow`).
+        j0 = findfirst(t -> t ≥ 1.5, s.t)                  # past the exciter's own lag
+        @test all(x -> x > 0.95 - 1.0e-9, @view s.Efd_G1[j0:end])
+        over = maximum(s.Efd_G1) - 0.95
+        @test 0 < over < obound
+        push!(overs, over)
+
+        # THE DECAY, fitted the way step 4 fits it: differenced against itself, so
+        # the asymptote is never estimated and cannot absorb the error.
+        i1 = findlast(t -> t ≤ 1.0 + 3τ1, s.t) - 20
+        τm, n = flux_tau_fit(s.t[ipost:end], s.E′q_G1[ipost:end]; h = 20, i1 = i1 - ipost)
+        @test n > 100
+        @test τm ≈ τ1 rtol = 2.0e-3
+
+        # …and the ASYMPTOTE, read a second and independent way off the endpoint,
+        # with the finite horizon carried in the PREDICTION rather than in the
+        # tolerance (step 4's lesson, and it was a failure there before it was a
+        # comment). 24 s is 8.4 time constants.
+        pred = Eq∞ + (Eq0 - Eq∞) * exp(-(s.t[end] - s.t[ipre]) / τ1)
+        @test s.E′q_G1[end] ≈ pred rtol = ebound
+
+        # The rotor never moved, so none of the above is an approximation.
+        @test maximum(abs, s.δ_G1 .- s.δ_G1[1]) < 1.0e-12
+        @test maximum(abs, s.E′d_G1) < 1.0e-12
+    end
+    # THE OVERSHOOT IS A LOCAL-ERROR EFFECT, WHICH IS WHY ITS BOUND IS NOT ONE
+    # NUMBER. It is the excursion of the single step that lands on the ceiling, so
+    # it shrinks with the solver's own tolerance: 5.3e-5 at reltol 1e-6 and 5.0e-8
+    # at 1e-9. That ordering is the claim — a bound that held at both tolerances
+    # without moving would mean the number is something other than local error.
+    @test overs[2] < overs[1] / 100
+
+    # ANTI-VACUITY on the prediction itself: `Xd` is what distinguishes `τ` from
+    # `T′do`, and moving it must put the measured constant on the NEW prediction
+    # rather than merely somewhere else. 1.8 → 1.0 pu (machine base).
+    slow = regulator_bus_system(; Efd_max = 0.95, Xd = 1.0)
+    τ2 = reg_tau(slow, reg_Xe(slow; out = (:L12,)))
+    @test τ2 / τ1 > 1.4                                    # 4.31 s against 2.85 s
+    _, s2 = reg_run(slow; T = 25.0, saveat = 0.01)
+    i0 = findfirst(>(1.0), s2.t)
+    i1 = findlast(t -> t ≤ 1.0 + 3τ2, s2.t) - 20
+    τm2, _ = flux_tau_fit(s2.t[i0:end], s2.E′q_G1[i0:end]; h = 20, i1 = i1 - i0)
+    @test τm2 ≈ τ2 rtol = 2.0e-3
+end
+
+# ---------------------------------------------------------------------------
+@testset "…and it comes off the ceiling UNAIDED, when the same closed form says" begin
+    # No event, no state surgery: the terminal voltage recovers under the ceiling
+    # field until the regulator's own demand `K_A(Vref − |V|)` falls back through
+    # `Efd_max`, and the saturation branch stops firing. A ceiling above the
+    # post-trip unlimited equilibrium (0.99288) is what makes the recovery reach
+    # the release point at all — and the three below bracket it, so the release
+    # time is a FUNCTION of the ceiling rather than one number that happened to
+    # come out right.
+    #
+    #   Efd_max   predicted   measured
+    #     1.00      7.0106 s    7.010 s
+    #     1.02      3.8056 s    3.805 s
+    #     1.05      2.3982 s    2.398 s
+    #
+    # The prediction is the interval from the sample where the limit STARTS binding,
+    # not from the trip: the exciter needs a few ms of its own lag to climb from the
+    # dispatch to the ceiling, and putting that in the tolerance instead of taking
+    # it out of the prediction is what step 4's endpoint check got wrong first.
+    for (cap, tpred) in ((1.00, 7.0106), (1.02, 3.8056), (1.05, 2.3982))
+        net = regulator_bus_system(; Efd_max = cap)
+        Xe1 = reg_Xe(net; out = (:L12,))
+        τ1  = reg_tau(net, Xe1)
+        eng, s = reg_run(net; T = 25.0, saveat = 0.001)
+        K_A = machine_arrays(net).K_A[1]
+        Vref = eng.params[eng.Vref_pidx[1]]
+
+        sat = findall(i -> s.Efd_G1[i] > cap - 1.0e-9, eachindex(s.t))
+        @test s.t[findfirst(>(1.0), s.t)] > 1.0            # the post-event grid exists
+        @test !isempty(sat)
+        j0, j1 = first(sat), last(sat)
+        # ONE binding window, entered once and left once — not chatter around the
+        # limit, which is what a badly conditioned saturation would look like.
+        @test j1 - j0 + 1 == length(sat)
+        @test s.Efd_G1[end] < cap - 1.0e-3                 # it came off, and stayed off
+        @test 0 < maximum(s.Efd_G1) - cap < 1.0e-6
+
+        V∞   = reg_V(net, Xe1, reg_Eq_inf(net, Xe1, cap))
+        Vrel = Vref - cap / K_A
+        @test s.V_B1[j0] < Vrel < V∞                       # the release is reachable at all
+        t_pred = -τ1 * log((Vrel - V∞) / (s.V_B1[j0] - V∞))
+        @test t_pred ≈ tpred rtol = 1.0e-3                 # the prediction, before the run
+        @test s.t[j1] - s.t[j0] ≈ t_pred atol = 2.0e-3     # …and the run, to the sample grid
+
+        # THE RELEASE CONDITION ITSELF, asserted and labelled as the near-tautology
+        # it is: at the release sample the demand equals the ceiling, because that
+        # IS the branch condition. It is here because it pins `Vref`, `K_A` and the
+        # terminal voltage into one identity, not because it is independent
+        # evidence.
+        @test s.V_B1[j1] ≈ Vrel atol = 1.0e-5
+
+        # And afterwards the loop settles exactly where the UNLIMITED exciter
+        # would: the limit left no trace once it stopped binding. All three caps
+        # land on the same number, which is what "no trace" means.
+        @test s.Efd_G1[end] ≈ 0.9928754 rtol = 1.0e-5
+    end
+    _, sf = reg_run(regulator_bus_system(); T = 25.0, saveat = 0.01)
+    @test sf.Efd_G1[end] ≈ 0.9928754 rtol = 1.0e-5
+end
+
+# ---------------------------------------------------------------------------
+@testset "a second disturbance while saturated does not freeze the integrator" begin
+    # M1's test at this tier. There the bug was a ceiling that MOVED under a pinned
+    # state; here the limits are constant model data and cannot move, so what is
+    # checked is the weaker and still worth-checking claim: an engine sitting on a
+    # saturated derivative keeps integrating across a further discontinuity.
+    #
+    # It is checked with a PREDICTION and not only with a retcode, because "still
+    # running" is compatible with running wrong. The second trip changes the
+    # network reactance, so the flux's time constant changes from 2.845 s to
+    # exactly 4.0 s and its target REVERSES: `E′q` was climbing towards 1.01443 and
+    # now falls towards 1.00000.
+    net = regulator_bus_system(; Efd_max = 0.95)
+    Xe2 = reg_Xe(net; out = (:L12, :L13))
+    τ2  = reg_tau(net, Xe2)
+    @test Xe2 ≈ 0.52 atol = 1.0e-12                        # only the 0.25+0.25 path, + 0.02
+    @test τ2 ≈ 4.0 atol = 1.0e-12
+    @test reg_Eq_inf(net, Xe2, 0.95) ≈ 1.0 atol = 1.0e-12
+
+    eng, s = reg_run(net; trips = (1.0 => TripLine(:B1, :B2),
+                                   6.0 => TripLine(:B1, :B3)),
+                     T = 40.0, saveat = 0.01)
+    @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+    @test eng.integrator.t ≈ 40.0
+    @test s.t[end] ≈ 40.0                                  # real progress, not a flatline
+    @test n_events(eng) == 2
+
+    i0 = findfirst(>(1.0), s.t)
+    i1 = findfirst(>(6.0), s.t)
+    @test s.E′q_G1[i1] > s.E′q_G1[i0]                      # it was climbing…
+    @test s.E′q_G1[end] < s.E′q_G1[i1]                     # …and now falls
+    @test 0 < maximum(s.Efd_G1) - 0.95 < 1.0e-6            # the ceiling held throughout
+    @test all(x -> x > 0.95 - 1.0e-9, @view s.Efd_G1[i1:end])
+
+    # The new time constant, fitted over the second window only.
+    τm, n = flux_tau_fit(s.t[i1:end], s.E′q_G1[i1:end]; h = 20,
+                         i1 = findlast(t -> t ≤ 6.0 + 3τ2, s.t) - i1 - 20)
+    @test s.t[i1] > 6.0                                    # the post-event grid, again
+    @test n > 100
+    @test τm ≈ τ2 rtol = 3.0e-3
+    @test s.E′q_G1[end] ≈ 1.0 + (s.E′q_G1[i1] - 1.0) * exp(-(40.0 - 6.0) / τ2) rtol = 1.0e-3
+end
+
+# ---------------------------------------------------------------------------
+@testset "the regulator's four parameters do not convert with the machine base" begin
+    # `Efd` is a VOLTAGE, built as `E′q + (Xd − X′d)·Id`, and a reactance times a
+    # current is invariant under a change of power base. So `K_A`, `T_E` and the two
+    # limits are base-free — and a row in `machine_arrays` dividing `K_A` by the
+    # rating ratio, symmetric with the `Xd` rows above it, would look entirely
+    # plausible and be wrong by 2.5x on this fixture.
+    #
+    # The control is the same PHYSICAL machine on a doubled rating: `S_rated`, every
+    # machine-base reactance and the inverse of every machine-base power quantity
+    # move together, so the system-base numbers are identical and the trajectory may
+    # not move. It runs through the CEILING case, because a flat run would agree
+    # whether or not the gain converted.
+    net = regulator_bus_system(; Efd_max = 0.95)
+    big = rescale_machine(net, :G1, 2.0)
+    ma, mb = machine_arrays(net), machine_arrays(big)
+    @test big.machines[1].S_rated == 500.0
+    @test mb.Xd[1] ≈ ma.Xd[1] atol = 1.0e-14               # the conversions cancel…
+    @test mb.H[1] ≈ ma.H[1] atol = 1.0e-14
+    @test mb.K_A[1] == ma.K_A[1] == 200.0                  # …and this one is not a conversion
+    @test mb.Efd_max[1] == ma.Efd_max[1] == 0.95
+
+    _, sa = reg_run(net; T = 20.0, saveat = 0.05)
+    _, sb = reg_run(big; T = 20.0, saveat = 0.05)
+    @test maximum(abs, sb.Efd_G1 .- sa.Efd_G1) < 1.0e-9
+    @test maximum(abs, sb.E′q_G1 .- sa.E′q_G1) < 1.0e-9
+    @test maximum(abs, sb.V_B1 .- sa.V_B1) < 1.0e-9
+    # Not a vacuous comparison: the run has real motion in it.
+    @test maximum(sa.Efd_G1) - minimum(sa.Efd_G1) > 0.1
+end
+
+# ---------------------------------------------------------------------------
+@testset "Machine and DetailedEngine refuse regulator data they cannot honour" begin
+    base = (:G, :B1, 100.0, 4.0, 1.0, 0.2, 1.05, 50.0)
+    @test_throws ArgumentError Machine(base...; K_A = -1.0)
+    @test_throws ArgumentError Machine(base...; K_A = 10.0, T_E = 0.0)
+    @test_throws ArgumentError Machine(base...; K_A = 10.0, T_E = -0.1)
+    @test_throws ArgumentError Machine(base...; K_A = 1.0, Efd_min = 2.0, Efd_max = 1.0)
+    # The ill-posed combination: zero gain with a live exciter has its only
+    # equilibrium at Efd = 0, i.e. no field at all.
+    @test_throws ArgumentError Machine(base...; K_A = 0.0, T_E = 0.5)
+    @test Machine(base...; K_A = 0.0, T_E = Inf) isa Machine   # the default, spelled out
+
+    # A tier that HOLDS the excitation reads none of the four numbers, so a machine
+    # carrying them is refused there by name rather than run as a different machine.
+    reg = regulator_bus_system()
+    @test_throws ArgumentError GridSim._assert_no_regulator(reg, "who")
+    @test_throws ArgumentError GridSim._assert_frozen_flux(reg, "who")
+    plain = NetworkModel(100.0, 50.0, [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+        [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 50.0; K_A = 50.0, T_E = 0.05),
+         Machine(:G2, :B2, 250.0, 4.0, 2.0, 0.25, 1.05, -50.0)])
+    @test_throws ArgumentError SwingEngine(plain)
+
+    # And a dispatch outside the machine's own ceiling is refused at build time,
+    # with the number, rather than left to become a run that cannot move.
+    tight = regulator_bus_system(; Efd_max = 0.5)              # the dispatch is 0.786
+    @test_throws ArgumentError init!(DetailedEngine, tight; slack = :G_inf)
+end
+
+# ---------------------------------------------------------------------------
+@testset "ANTI-VACUITY: clamping the state instead of saturating the derivative" begin
+    # M1'S BUG, REPRODUCED DELIBERATELY AND RUN. The engine is built with no limit
+    # at all and the field voltage is clamped from outside every `h` seconds — a
+    # post-hoc clamp on the state, which is exactly what the carried-forward rule
+    # forbids.
+    #
+    # THE FINDING IS NOT THE ONE THIS TESTSET WAS WRITTEN TO MAKE. The prediction
+    # was "three of the four claims stay green and one goes red", with the
+    # inversion that a clamped state never exceeds its ceiling where the correct
+    # one overshoots by 5e-8. Run, it turned out sharper than that: THE HEADLINE
+    # CHECK READS RED OR GREEN DEPENDING ON WHERE IT LOOKS. Sampled at the clamp
+    # instants the state is exactly at its cap and never above it — 0.0 excess, at
+    # every step size tried. Sampled anywhere else it is 0.378 pu above the cap at
+    # h = 0.005, seven million times the correct engine's 5e-8.
+    #
+    # That is the property a post-hoc clamp has and a saturation in the derivative
+    # does not: the answer depends on the observation cadence. "The field voltage
+    # never goes above its limit" is not a false statement about the clamped run
+    # and not a true one — it is a statement about the recorder.
+    net = regulator_bus_system(; Efd_max = 0.95)
+    Xe1 = reg_Xe(net; out = (:L12,))
+    τ1  = reg_tau(net, Xe1)
+    _, good = reg_run(net; T = 25.0, saveat = 0.01)
+    free = regulator_bus_system()                             # no limits: the clamp is all there is
+    _, bad, post = clamped_run(free, 0.95; h = 0.005, T = 25.0)
+
+    # ── THE SPLIT: one run, one state variable, two maxima that disagree by 0.378.
+    #    `post` is the field voltage sampled just AFTER each clamp; `bad.Efd_G1` is
+    #    the recorded trajectory, whose samples land just BEFORE the next one.
+    @test post ≤ 0.95 + 1.0e-14                                # obedient, if you look here
+    @test maximum(bad.Efd_G1) - 0.95 > 0.3                     # and 0.378 over, if you look here
+    @test maximum(bad.Efd_G1) - 0.95 ≈ 0.3777 rtol = 0.05
+    # …against which the correct engine's own excursion is a rounding error: it does
+    # exceed the ceiling, by the local error of the one step that lands on it.
+    @test maximum(good.Efd_G1) > 0.95
+    @test maximum(good.Efd_G1) - 0.95 < 1.0e-6
+    @test (maximum(bad.Efd_G1) - 0.95) > 1.0e6 * (maximum(good.Efd_G1) - 0.95)
+    # ── STAYS GREEN 2: "it sits on the ceiling while the demand binds."
+    j0 = findfirst(t -> t ≥ 1.5, bad.t)
+    @test all(x -> x > 0.95 - 1.0e-9, @view bad.Efd_G1[j0:end])
+    # ── STAYS GREEN 3: "a further disturbance does not freeze the integrator" —
+    #    nothing about a clamp stops the solver advancing.
+    @test bad.t[end] ≈ 25.0
+
+    # ── GOES RED: the closed form. Between clamps the flux integrates against a
+    #    field voltage that has run away above the ceiling, so `E′q` climbs past
+    #    where a 0.95 pu field could take it. The correct run lands on the predicted
+    #    asymptote; the clamped one overshoots it.
+    i0 = findlast(≤(1.0), good.t)
+    Eq∞ = reg_Eq_inf(net, Xe1, 0.95)
+    pred = Eq∞ + (good.E′q_G1[i0] - Eq∞) * exp(-(good.t[end] - good.t[i0]) / τ1)
+    @test good.E′q_G1[end] ≈ pred rtol = 1.0e-6
+    err_good = abs(good.E′q_G1[end] - pred)
+    err_bad  = abs(bad.E′q_G1[end] - pred)
+    @test err_bad > 100 * err_good
+    @test bad.E′q_G1[end] > good.E′q_G1[end]                  # it overshoots, not undershoots
+
+    # ── AND THE SIGNATURE, which is what makes this a bug rather than a different
+    #    model: the answer depends on how often the clamp is applied, and a correct
+    #    method's answer does not move at all. IT IS READ ON THE EXCESS FIELD, NOT
+    #    ON THE ENDPOINT FLUX, and which of the two carries the rate was measured
+    #    rather than assumed. Over h = 0.02, 0.01, 0.005, 0.0025, 0.001, 0.0005:
+    #
+    #      excess field   1.2128  0.7089  0.3777  0.1942  0.0789  0.0396  → linear in h
+    #      endpoint flux  0.0140  0.0128  0.0110  0.0086  0.0052  0.0031  → only monotone
+    #
+    #    The flux endpoint decays by a factor 0.78 per halving, not 0.5, because by
+    #    24 s the voltage loop has closed around the clamped run and it has settled
+    #    on an equilibrium of its own. A SETTLED OBSERVABLE CANNOT CARRY A RATE —
+    #    the first version of this check asked the endpoint to halve, and it was the
+    #    check that was wrong, not the engine.
+    _, bad2, post2 = clamped_run(free, 0.95; h = 0.0025, T = 25.0)
+    @test post2 ≤ 0.95 + 1.0e-14                               # the split is not an artefact of h
+    exc1, exc2 = maximum(bad.Efd_G1) - 0.95, maximum(bad2.Efd_G1) - 0.95
+    @test exc2 / exc1 ≈ 0.5 rtol = 0.1
+    err2 = abs(bad2.E′q_G1[end] - pred)
+    @test err2 < err_bad                                       # monotone, and only monotone
+    @test err2 > 10 * err_good
+end
+
+# ---------------------------------------------------------------------------
+@testset "the guard that was removed, and the one that stays — both measured" begin
+    # M5 STEP 5'S SHARPEST FINDING, AND IT IS ABOUT CODE THAT SHIPPED THREE
+    # MILESTONES AGO. `engines/swing.jl` says of its `ΔPm` domain guard: "During
+    # continuous integration it cannot stall, because the derivative is already zero
+    # at the ceiling, which puts the solution *at* headroom, not above it." The
+    # derivative IS zero at the ceiling. What does not follow is that the solution
+    # gets there: the guard accepts a step only if it lands at or below
+    # `limit + 1e-10`, and a state approaching from below with a finite derivative
+    # needs an ever-smaller step to land inside that window.
+    #
+    # Written first for this tier, it killed the run — the measurement is in
+    # `src/engines/detailed.jl` above `_check_power_flow`. What THIS testset is for
+    # is the other half: whether the engines that still carry the guard are stalling
+    # too. They are not, and the reason is a single number nobody chose.
+    gov = NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+        [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  60.0, 0.05, 65.0, 1.0),
+         Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -60.0)])
+    eng = SwingEngine(gov; reltol = 1.0e-9, abstol = 1.0e-12)
+    hr  = machine_arrays(gov).headroom[1]
+    @test hr == 0.05
+    eng.params[eng.Pm_pidx[2]] -= 0.30            # a deficit far beyond G1's reserve
+    SciMLBase.auto_dt_reset!(eng.integrator)
+    solve!(eng, (0.0, 2000.0); saveat = 1.0)
+    over = current_state(eng).ΔPm[1] - hr
+    @test SciMLBase.successful_retcode(eng.integrator.sol.retcode)
+    @test eng.integrator.t ≈ 2000.0
+    @test eng.integrator.dt > 1.0e-3              # no step-size collapse: measured ~0.09 s
+
+    # THE GOVERNOR LANDS *ABOVE* ITS CEILING, by 3.1e-11 — which is inside the
+    # guard's 1e-10 window, and that is the entire reason it does not stall. The
+    # sign matters: a state that stopped strictly below the limit would be the
+    # stalling case.
+    @test over > 0
+    @test over < 1.0e-10                          # the window — measured 3.1e-11, 3x inside it
+    @test over > 1.0e-13                          # …and a real excursion, not a zero
+    # The exact 3.1e-11 is NOT asserted: it depends on the solver's step-size
+    # history, and a number that a `Pkg` re-resolve can move is a number a test
+    # should not pin. The claim is the sign, the order and the margin.
+
+    # AND THE MARGIN IS A PROPERTY OF THE STATE'S SPEED, not of the guard. The
+    # overshoot on the step that lands scales with how fast the state moves: this
+    # governor's lag is 1 s and it overshoots by 3e-11; the exciter's is 0.05 s and
+    # it needs 5e-8, which is 500x the window. Same construction, opposite outcome,
+    # decided by a constant written for round-off.
+    _, s = reg_run(regulator_bus_system(; Efd_max = 0.95); T = 25.0, saveat = 0.05)
+    exciter_over = maximum(s.Efd_G1) - 0.95
+    @test exciter_over > 100 * over
+    @test exciter_over > 1.0e-9                   # …and larger than the window it would face
+
+    # The other half of the sweep, kept because it is the reason `init!` takes a
+    # `solver`: a hard saturation is a DISCONTINUOUS right-hand side, and Rodas5P
+    # fails on this fixture at one isolated ceiling (1.2) and one isolated tolerance
+    # (1e-9) while completing 1.15, 1.3 and the same 1.2 at 1e-6 and 1e-11. FBDF
+    # completes it. Only the positive half is asserted — which solver version fails
+    # where is not something a test should pin.
+    net = regulator_bus_system(; Efd_max = 1.2)
+    e2  = init!(DetailedEngine, net; slack = :G_inf, solver = OrdinaryDiffEq.FBDF(),
+                reltol = 1.0e-9, abstol = 1.0e-12)
+    s2  = solve!(e2, (0.0, 12.0); saveat = 0.005,
+                 perturbations = (1.0 => TripLine(:B1, :B2),))
+    @test SciMLBase.successful_retcode(e2.integrator.sol.retcode)
+    @test 0 < maximum(s2.Efd_G1) - 1.2 < 1.0e-6
+end
+
+end # M5 step 5
