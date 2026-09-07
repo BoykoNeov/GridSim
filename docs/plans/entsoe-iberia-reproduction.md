@@ -683,7 +683,10 @@ carrying the result.
    (15,049), 1e-10 ✓ (3,491) — with every completing cell agreeing to 2 parts in
    10,000. That is conditioning at a kink, not a boundary of the model, and it is
    M5 step 5's finding arriving on a second case. One sweep cell needs a
-   documented single retry at a looser `abstol`; the table marks it.
+   documented single retry at a looser `abstol`; the table marks it. That sweep was
+   measured on the flux-only cell and the cell that needs the retry is `K_A = 100`,
+   so the corroboration on the cell itself is that its retried value, 1.0247, lands
+   monotonically between `K_A = 50`'s 1.0158 and `K_A = 200`'s 1.0295.
 3. *The plan's "hand one model to both engines" is not available.* `SwingEngine`
    refuses detailed machine data and a regulator by name, because running them
    there would silently be a different machine. What is asserted instead is

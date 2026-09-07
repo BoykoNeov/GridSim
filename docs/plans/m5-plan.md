@@ -226,11 +226,30 @@ The measurement in §Goal, on the two-area case, run as a sweep over tie strengt
 in the shape M3 step 6 established: the classical tier's slip boundary located
 first, then the detailed tier run at that same tie strength.
 
+> **Superseded — see `m5-tasks.md` step 7 F1.** This step's construction assumed
+> ONE `NetworkModel` handed to both engines, since `SwingEngine` reads none of the
+> detailed fields. It does not read them and it **refuses** them, by name
+> (`_assert_frozen_flux`, `_assert_no_regulator` — guards M5 itself added in steps
+> 2 and 5). So there are two models, and the claim that replaced "same model" is
+> stronger because it is checkable field by field: they agree **bit for bit** in
+> every quantity the classical tier reads and differ in exactly the set it refuses.
+> The difference between the two runs **is** the tier boundary.
+
 **It ships a positive control and an anti-vacuity control like everything else**,
 and the anti-vacuity one is specific: freeze the voltages (constant-`E′`
 degeneration, step 2's configuration) and the criterion must **fail** — because
 that is the classical tier, and the classical tier provably cannot satisfy it.
 If it passes with voltages frozen, the criterion is not measuring what it claims.
+
+> **Superseded in the reason, not the result — see `m5-tasks.md` step 7 F4.** The
+> control does fail, and it fails harder than this paragraph expected. But it is
+> **not "the classical tier"**: with the flux frozen each machine is a constant
+> source behind `X′d`, so its bound is `|E′₁||E′₂|/(X_tie + X′d₁ + X′d₂)`, which is
+> strictly *tighter* than the classical tier's own `P_max` (that tier puts `E′` at
+> the bus). It is the classical *mechanism* inside the detailed engine — a sharper
+> comparison, and the only one the tier boundary in F1 allows. The bound is also a
+> **derived prediction** rather than a pass/fail, and is met to one part in a
+> million.
 
 Every number lands in `entsoe-iberia-reproduction.md` under §7.3's discipline: a
 tuned parameter is not a result (§7.3's own recorded failure), and the report's

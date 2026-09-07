@@ -1900,6 +1900,7 @@ end
 
     eng = de(; shed = [:G2 => [LoadShedStage(thr, blk; label = :s1)]])
     Pm0 = eng.params[eng.Pm_pidx[2]]
+    Pm_others = [eng.params[eng.Pm_pidx[k]] for k in (1, 3)]
     solve!(eng, (0.0, 300.0))
     lg = shed_log(shed_ladder(eng, :G2))
     @test length(lg.t) == 1 && lg.label == [:s1]
@@ -1910,7 +1911,11 @@ end
     @test !isapprox(lg.t[1] / 0.01, round(lg.t[1] / 0.01); atol = 1e-6)
     # …and it stepped THAT machine's power by exactly the block.
     @test eng.params[eng.Pm_pidx[2]] - Pm0 ≈ blk atol = 1e-14
-    @test eng.params[eng.Pm_pidx[1]] == eng.params[eng.Pm_pidx[1]]   # untouched (NaN-free)
+    # …and NO OTHER machine's, which is the half that discriminates — M3 step 3's
+    # "the bound machine's power moves, and no other's", one tier up. Captured
+    # before the run and compared against, because `x == x` would assert nothing
+    # but the absence of a NaN.
+    @test [eng.params[eng.Pm_pidx[k]] for k in (1, 3)] == Pm_others
 
     # THE CLOSED FORM AGAIN, WITH THE BLOCK IN IT. This is the check that the shed
     # reaches the physics rather than only the log: the settled speed must be the

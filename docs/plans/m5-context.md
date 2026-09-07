@@ -969,7 +969,10 @@ library to 1e5, and too small for a 20 s pole slip at any tolerance worth quotin
 without it the standing "run it again tighter" rule is unavailable at this tier.
 A sweep cell that does not complete is **retried once at a ten-times looser
 `abstol` and marked in the table**, which is defensible precisely because the sweep
-above shows the retry moves the conditioning and not the answer. And the quoted
+above shows the retry moves the conditioning and not the answer. That sweep is on
+the flux-only cell and the cell that needs the retry is `K_A = 100`, so the
+corroboration on the cell itself is stated separately: its retried value, 1.0247,
+lands monotonically between `K_A = 50`'s 1.0158 and `K_A = 200`'s 1.0295. And the quoted
 tolerance pair is `1e-5 / 1e-8`, with `1e-3 / 1e-6` as the second point of the
 two-tolerance rule; `reltol = 1e-7` is reported as not completing on the regulated
 cells rather than omitted.

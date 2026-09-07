@@ -631,7 +631,13 @@ step size collapses — and the fact of the retry returned, so the table can mar
 This is not "run it again until it works", and the difference is a measurement. The
 abstol sweep quoted above finds the failure at an ISOLATED point, with five other
 values completing and all agreeing to 2 parts in 10,000. So the retry moves the
-conditioning at a kink and demonstrably not the answer. Hiding a non-completing
+conditioning at a kink and demonstrably not the answer.
+
+The sweep was measured on the flux-only cell and the cell that actually needs the
+retry is `K_A = 100`, so the evidence and the use sit on different cells. The
+corroboration on the cell itself is in the table: the retried value, 1.0247, lands
+monotonically between `K_A = 50`'s 1.0158 and `K_A = 200`'s 1.0295. A retry that
+had moved the answer would have to have moved it into exactly the right place. Hiding a non-completing
 cell, or quietly picking whichever tolerance made the grid look tidy, is the failure
 `entsoe-iberia-reproduction.md` §7.3 exists to document; marking it is not.
 """
