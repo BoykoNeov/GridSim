@@ -661,3 +661,209 @@ function branch_loss(sol::ACPowerFlow, from::Symbol, to::Symbol)
 end
 
 branch_loss(sol::ACPowerFlow) = copy(sol.loss)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Oracle A — the solved power flow as the detailed tier's initial condition
+# ─────────────────────────────────────────────────────────────────────────────
+
+# How far a held quantity may sit from the schedule it was held at. The solve's own
+# residual gate is `_PF_RESIDUAL` = 1e-10 and a held `P` is reconstructed from the
+# solved voltages rather than copied, so the two agree to about that; 1e-8 is two
+# orders looser than the gate and many orders tighter than any real dispatch error.
+const _SEED_SCHEDULE_TOL = 1.0e-8
+
+function _seed_agree(got::Float64, want::Float64, bus::Symbol, what::AbstractString)
+    abs(got - want) <= _SEED_SCHEDULE_TOL || throw(ArgumentError(
+        "DetailedEngine: the ACPowerFlow passed as `powerflow` was not solved for " *
+        "this model's dispatch — at bus $bus $what is $want in the model and $got " *
+        "in the solution (gap $(abs(got - want)), tolerance $_SEED_SCHEDULE_TOL). " *
+        "This check exists because the seeded path DERIVES the machine's mechanical " *
+        "power from the solved voltages: a solution for the wrong schedule " *
+        "back-substitutes into a state that is a perfectly good fixpoint at the " *
+        "WRONG operating point, and the flat run would be flat. Nothing downstream " *
+        "can see that, so it is seen here."))
+    return nothing
+end
+
+"""
+    _assert_seed_is_this_dispatch(net, sol, ma)
+
+The solution was solved for **this model's schedule** — checked, because oracle A
+cannot check it any other way.
+
+This is M6 step 4's own finding, and the reason the check is here rather than in a
+test. The seeded path derives `Pm` (and `Vref`) from the solved voltages, so a bug
+in what the solve was *told* produces a state that is a genuine fixpoint of the
+dynamic network at an operating point nobody asked for: `init!`'s residual check
+passes, the run is flat, and the flat run is measuring the wrong case. Every check
+downstream of the solve is structurally blind to it. Measured: scaling the scheduled
+`P` by 1.1 left the run flat to 8.6e-14, and misreading `V_set` by 2 % to 5.1e-13.
+
+What is compared, and against what:
+
+  - the **held real power** at every non-slack bus, against `machine_arrays` read
+    here rather than through `_ac_schedule` — so a bug inside the schedule is a
+    disagreement rather than a shared assumption. The slack is skipped because its
+    `P` is the pickup: free by definition, and not an input to the solve at all.
+  - the **held magnitude** at every bus still holding its setpoint, against
+    `Machine.V_set`. A bus switched to a reactive limit is skipped — its magnitude
+    is an unknown there, which is what the switch means.
+  - the **load's P and Q** at every bus, against `load_arrays` through the same
+    `_zip_scale` the solve used.
+  - `Qgen ≈ 0` wherever there is no machine, which is what makes
+    `complex(Pgen, Qgen)` legitimately "the machine's" at the buses where there is.
+
+**What it still cannot see, stated rather than discovered:** a misread reactive
+*limit*. A bus wrongly switched to a limit holds a `Q` nobody scheduled and its
+magnitude is then an unknown, so neither comparison above applies — the answer is
+self-consistent, the run is flat, and only an external solve on the same case can
+say the wrong bus was limited. That is oracle B's, and it is the second thing oracle
+B is for after the lossy branch.
+"""
+function _assert_seed_is_this_dispatch(net::NetworkModel, sol::ACPowerFlow, ma)
+    nb = length(net.buses)
+    Pg = zeros(Float64, nb)
+    Vset = fill(NaN, nb)
+    for k in eachindex(ma.bus)
+        v = ma.bus[k]
+        Pg[v] += ma.Pm[k]
+        # One machine per bus is guaranteed by `_assert_detailed_tier`, which refuses
+        # a second one outright — see `_seed_from_powerflow`'s docstring.
+        Vset[v] = net.machines[k].V_set
+    end
+    Pl = zeros(Float64, nb); Ql = zeros(Float64, nb)
+    ai = zeros(Float64, nb); ap = zeros(Float64, nb)
+    la = load_arrays(net)
+    for k in eachindex(la.bus)
+        v = la.bus[k]
+        Pl[v], Ql[v] = la.P[k], la.Q[k]
+        ai[v], ap[v] = la.a_i[k], la.a_p[k]
+    end
+    v_slack = net.bus_index[net.slack]
+    for v in 1:nb
+        id = net.buses[v].id
+        z = _zip_scale(sol.Vm[v], ai[v], ap[v])
+        _seed_agree(sol.Pload[v], Pl[v] * z, id, "the load's P draw")
+        _seed_agree(sol.Qload[v], Ql[v] * z, id, "the load's Q draw")
+        isnan(Vset[v]) && _seed_agree(sol.Qgen[v], 0.0, id, "the reactive generation")
+        v == v_slack && continue
+        _seed_agree(sol.Pgen[v], Pg[v], id, "the scheduled P")
+        sol.roles[v] === :generator &&
+            _seed_agree(sol.Vm[v], Vset[v], id, "the terminal voltage setpoint")
+    end
+    return nothing
+end
+
+"""
+    _seed_from_powerflow(net, sol::ACPowerFlow, ma) -> (V, δ, Pe, Iinj, residual)
+
+Everything `init!(DetailedEngine, …)` reads out of a steady state, supplied from an
+[`ac_powerflow`](@ref) solution instead of from the engine's own fixpoint solve.
+
+This is M6 step 4's oracle A (`m6-context.md` D5, hurdle 8). The two solves answer
+two different questions — the fixpoint fixes the machine's internal state and solves
+for terminal conditions, the power flow fixes terminal conditions and solves for the
+machine's reactive output — so feeding one into the other and demanding the run be
+**flat** makes them agree without either being declared correct by fiat.
+
+**The current comes from the power flow's own `S`, never from `ma.E`.** That is the
+point of the whole exercise: `I = conj(S/V)`, then `Ẽ = V + (Ra + jXq)·I` and
+`δ = arg Ẽ`. Routing it through `_machine_injection(…, ma.E[k], …)` instead would
+compute the current of the *fixpoint path's* machine, and the flat run would
+degenerate into re-testing the solve it exists to cross-examine. The magnitude `|Ẽ|`
+that falls out is the dispatch's own internal voltage and is in general **not**
+`Machine.E′` — measured at 2.7e-2 pu away on `load_bus_system` and 5.0e-2 on
+`detailed_pair`, which is M5 step 8's "the pre-event offset is larger than the
+disturbance" one tier along.
+
+`Pe = Re(Ẽ·conj(I))` is the air-gap power, the same expression `_read_static`
+returns, so `init!`'s two-axis cross-check (`worst_pm`) stays live on this path.
+
+## What it does NOT refuse, and why that was the surprise
+
+Two refusals were written here first and both turned out to be **unreachable**, the
+way M5 step 8's mapping mutation found its own check's premise wrong.
+`_assert_detailed_tier` already refuses, before `init!` reaches this function:
+
+  - **a branch with `R ≠ 0`** — "nothing in `src/engines/` reads it … both lossless",
+    a guard written for this tier's own reasons, whose message already points here
+    ("use the M6 power flow, which does read it");
+  - **two machines on one bus** — a vertex model's state count is fixed at compile
+    time, so the tier cannot express it at all.
+
+So the two preconditions this function needs — a lossless network, and one machine
+per bus so that a bus's solved `Q` is unambiguously that machine's — are guaranteed
+by a guard that predates it, and a second copy of either would have been decoration.
+The multi-machine one would also have been **wrong**: its message said the fixpoint
+path handles such a model, and the fixpoint path refuses it too.
+
+The consequence is worth stating rather than leaving implicit: **oracle A can never
+see a lossy branch.** With `R = 0` the loss channel is zero to round-off and
+`flow + flow_rev` vanishes, so the resistive half of `ac_powerflow` — the one thing
+`Branch.R` was added for — is outside this oracle's reach. That is oracle B's to
+check; `PowerFlows.jl` does model resistance.
+
+## What it does refuse
+
+  - **A solution from a different model**, by bus ids, branch ids and the slack. That
+    check is **weak in this repo**, where fixtures share ids: `two_machine_system`
+    and `detailed_pair` agree on all three. What actually catches a foreign solution
+    is `_assert_seed_is_this_dispatch`, on the schedule.
+
+**The gauge differs from the fixpoint path's and that is not a defect.** The fixpoint
+pins the slack MACHINE's rotor angle at zero; the power flow pins the slack BUS's
+voltage angle at zero, so here the slack machine's `δ` is `arg Ẽ ≠ 0`. Every equation
+in both networks depends on angle *differences* only, so the two states are the same
+operating point in two frames — the same distinction M6 step 1 had to make between
+the engine's slack (a machine) and the model's (a bus).
+"""
+function _seed_from_powerflow(net::NetworkModel, sol::ACPowerFlow, ma)
+    nb, nm = length(net.buses), length(net.machines)
+
+    sol.slack === net.slack && sol.buses == Symbol[b.id for b in net.buses] &&
+        sol.branches == Symbol[b.id for b in net.branches] || throw(ArgumentError(
+            "DetailedEngine: the ACPowerFlow passed as `powerflow` was not solved " *
+            "for this model — it has slack :$(sol.slack) over buses " *
+            "$(join(sol.buses, ", ")) and branches $(join(sol.branches, ", ")), " *
+            "against this model's slack :$(net.slack), buses " *
+            "$(join((b.id for b in net.buses), ", ")) and branches " *
+            "$(join((b.id for b in net.branches), ", ")). Solve the flow for the " *
+            "model you are about to integrate."))
+
+    # NO `R == 0` CHECK AND NO ONE-MACHINE-PER-BUS CHECK, deliberately: both were
+    # written here first and both are unreachable — `_assert_detailed_tier` refuses
+    # such a model before `init!` reaches this function, and the second message would
+    # have been false besides. The docstring carries the finding.
+    _assert_seed_is_this_dispatch(net, sol, ma)
+
+    V = ComplexF64[sol.Vm[v] * cis(sol.θ[v]) for v in 1:nb]
+    δ    = Vector{Float64}(undef, nm)
+    Pe   = Vector{Float64}(undef, nm)
+    Iinj = Vector{ComplexF64}(undef, nm)
+    for k in 1:nm
+        v = ma.bus[k]
+        # One machine on the bus (see above), so the bus's solved injection IS this
+        # machine's. `Pgen`/`Qgen` are the SOLVED values — at the slack that is the
+        # pickup, losses included, not the schedule it was handed.
+        S = complex(sol.Pgen[v], sol.Qgen[v])
+        I = conj(S / V[v])
+        Ẽ = V[v] + complex(ma.Ra[k], ma.Xq[k]) * I
+        δ[k]    = angle(Ẽ)
+        Pe[k]   = real(Ẽ * conj(I))
+        Iinj[k] = I
+    end
+    return V, δ, Pe, Iinj, sol.residual
+end
+
+# The `powerflow` keyword is untyped in `init!`'s signature (see the comment there:
+# this file is included after the engines by design). This is where the type check
+# lives, so a wrong argument is named rather than reaching `sol.Vm` and producing a
+# `type has no field` from three frames down.
+function _seed_from_powerflow(::NetworkModel, sol, _)
+    throw(ArgumentError(
+        "DetailedEngine: `powerflow` must be an ACPowerFlow — the object returned " *
+        "by `ac_powerflow(net)` — or `nothing` to use the engine's own fixpoint " *
+        "solve. Got a $(typeof(sol)). A DCPowerFlow will not do: it has no voltage " *
+        "magnitudes and no reactive power, so there is no machine state to " *
+        "back-substitute from it."))
+end

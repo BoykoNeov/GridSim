@@ -979,27 +979,44 @@ function _read_static(net::NetworkModel, bt, u::Vector{Float64}, p::Vector{Float
     nm = length(net.machines)
     δ  = Vector{Float64}(undef, nm)
     Pe = Vector{Float64}(undef, nm)
+    Iinj = Vector{ComplexF64}(undef, nm)
     for k in 1:nm
         v = ma.bus[k]
         δ[k] = u[sδ[k]]
         # Meaningful in the two STEADY modes only: it evaluates the steady-state
         # source, whose magnitude `ma.E[k]` is a statement about a machine at rest.
         # `_reinitialise_algebraic!` (mode `_PF_HOLD`) discards it for that reason.
-        _, _, pe = _machine_injection(real(V[v]), imag(V[v]), δ[k],
-                                      ma.E[k], ma.Ra[k], ma.Xq[k], 1.0)
+        ire, iim, pe = _machine_injection(real(V[v]), imag(V[v]), δ[k],
+                                          ma.E[k], ma.Ra[k], ma.Xq[k], 1.0)
         Pe[k] = pe
+        # THE TERMINAL CURRENT, RETURNED RATHER THAN RECOMPUTED (M6 step 4). `init!`
+        # used to call `_machine_injection` a second time with these exact arguments
+        # to get it. Returning it is what lets the AC-seeded path hand the SAME
+        # quantity in from a different source — the power flow's own `S` — without
+        # the back-substitution underneath it forking into two copies, which is the
+        # thing that would eventually let the two paths come to disagree.
+        Iinj[k] = complex(ire, iim)
     end
     status = Float64[p[sstatus[e]] for e in eachindex(net.branches)]
     flows = _branch_flows(net, bt, V, status)
-    return V, δ, Pe, flows
+    return V, δ, Pe, Iinj, flows
 end
 
 """
     init!(DetailedEngine, net::NetworkModel; t0=0.0, dt=0.02, slack=the model's slack bus,
-          solver=Rodas5P(), reltol, abstol, capacity)
+          solver=Rodas5P(), reltol, abstol, powerflow=nothing, capacity)
 
 Build the detailed tier's engine: compile both networks, solve the power flow,
 back-substitute every machine state, and place a stiff integrator on the result.
+
+`powerflow` replaces the *first* of those with M6's other steady-state solve: pass
+an [`ac_powerflow`](@ref) solution and the engine starts from it instead of from its
+own fixpoint. Everything after the solve — the back-substitution, the `Vref`
+derivation, the `Efd` limit check and both residual checks — is the same code on
+either path. This is M6 step 4's oracle A: the two solves fix different unknowns
+(`m6-context.md` D5), so a run from one that is flat under the other's equations is
+the two agreeing without either being declared correct. `_seed_from_powerflow`
+carries what it refuses and why (a lossy branch, and two machines on one bus).
 
 `slack` names the machine whose rotor angle is the reference, and whose mechanical
 power is therefore free while every other machine holds its schedule. It is a
@@ -1040,6 +1057,15 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                shed = Pair{Symbol,Vector{LoadShedStage}}[],
                out_of_step = Pair{Tuple{Symbol,Symbol},OutOfStepTrip}[],
                ramp = Pair{Symbol,GenerationRamp}[],
+               # M6 step 4's oracle A. `nothing` is the default and every pre-M6
+               # call therefore builds the identical engine. DELIBERATELY UNTYPED
+               # in the signature: `ACPowerFlow` is defined in `steadystate/`,
+               # which `GridSim.jl` includes AFTER the engines on purpose (so that
+               # `branch_power`'s primary method stays the classical tier's), and a
+               # type annotation here is evaluated when this method is DEFINED —
+               # which would invert that ordering. The check is made below, by
+               # name, at the one place it can be.
+               powerflow = nothing,
                capacity::Integer = _TRAJ_CAPACITY)
     _assert_detailed_tier(net)
     _assert_shed_denomination(net, shed)
@@ -1146,10 +1172,36 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         sp[sstatus_pidx[e]] = 1.0
     end
 
-    res = _run_static!(nws, su, sp)
-    V, δ0, Pe, flows = _read_static(net, bt, su, sp, sVre_idx, sVim_idx, sδ_idx,
-                                    sstatus_pidx, ma)
-    _check_power_flow(net, V, flows, res, "DetailedEngine power flow")
+    if powerflow === nothing
+        res = _run_static!(nws, su, sp)
+        V, δ0, Pe, Iinj, flows =
+            _read_static(net, bt, su, sp, sVre_idx, sVim_idx, sδ_idx, sstatus_pidx, ma)
+        what = "DetailedEngine power flow"
+    else
+        # M6 STEP 4, ORACLE A. The steady state comes from the OTHER solve — the one
+        # whose unknowns and givens are swapped (`m6-context.md` D5) — and everything
+        # below this branch is unchanged. That is the whole design: two solves answer
+        # two questions, the back-substitution is written once, and the run that
+        # follows is flat or one of the two is wrong.
+        V, δ0, Pe, Iinj, res = _seed_from_powerflow(net, powerflow, ma)
+        flows = _branch_flows(net, bt, V, ones(Float64, ne))
+        # The static state is seeded from the AC answer rather than left flat, for
+        # `_reinitialise_algebraic!`'s reason and not as an optimisation: an event
+        # later in the run re-solves the static network from `u_static`, and the
+        # collapsed basin reaches to within 2.5 rad of the true solution. `δ0` here
+        # is the AC-derived rotor angle, which is a SEED and not a claim — the
+        # re-solve runs in `_PF_HOLD`, where the machine's held flux, not `ma.E`,
+        # sets the source.
+        for v in 1:nb
+            su[sVre_idx[v]] = real(V[v])
+            su[sVim_idx[v]] = imag(V[v])
+        end
+        for k in 1:nm
+            su[sδ_idx[k]] = δ0[k]
+        end
+        what = "DetailedEngine power flow (seeded from ac_powerflow)"
+    end
+    _check_power_flow(net, V, flows, res, what)
 
     # --- back-substitution ----------------------------------------------------
     # `Pm` from the POWER FLOW, not from `Machine.P0` — see the header. On a model
@@ -1173,7 +1225,11 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         vb = ma.bus[k]
         Vre, Vim = real(V[vb]), imag(V[vb])
         δ = δ0[k]
-        Ire, Iim, _ = _machine_injection(Vre, Vim, δ, ma.E[k], ma.Ra[k], ma.Xq[k], 1.0)
+        # From the solve, whichever solve it was. The fixpoint path computes this
+        # from `ma.E` and the seeded path from the power flow's own `S`; both are
+        # the machine's terminal current at the same operating point, and taking
+        # it from the caller is what keeps ONE back-substitution here.
+        Ire, Iim = real(Iinj[k]), imag(Iinj[k])
         Id, Iq = _dq(Ire, Iim, δ)
         Vd, Vq = _dq(Vre, Vim, δ)
         E′q = Vq + ma.Ra[k] * Iq + ma.Xd′[k] * Id
@@ -1629,9 +1685,9 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
     res = _run_static!(eng.nw_static, eng.u_static, eng.p_static)
     bt = branch_topology(eng.model)
     ma = machine_arrays(eng.model)
-    V, _, _, flows = _read_static(eng.model, bt, eng.u_static, eng.p_static,
-                                  eng.sVre_idx, eng.sVim_idx, eng.sδ_idx,
-                                  eng.sstatus_pidx, ma)
+    V, _, _, _, flows = _read_static(eng.model, bt, eng.u_static, eng.p_static,
+                                     eng.sVre_idx, eng.sVim_idx, eng.sδ_idx,
+                                     eng.sstatus_pidx, ma)
     _check_power_flow(eng.model, V, flows, res,
                       "DetailedEngine re-initialisation at t = $(eng.integrator.t)")
     for v in eachindex(eng.Vre_idx)

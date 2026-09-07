@@ -590,3 +590,132 @@ schedule only to the residual (measured 4e-16). Copying the schedule in would ha
 made "the machine produces its schedule" a vacuous test; reading it back makes it
 a check on the solve, and the price is that two assertions are `≈` rather than
 `==`.
+
+---
+
+## D13 — Oracle A is blind to the schedule, so the seeded path checks it itself
+
+The flat run is the strongest check in this milestone and it has a hole, found by
+mutation rather than by argument, and the hole is structural rather than
+incidental.
+
+`init!(DetailedEngine, net; powerflow = sol)` **derives** the machine's mechanical
+power and its regulator setpoint from the solved voltages — that is the whole
+design, and it is what makes the seeded state a fixpoint of equations nobody tuned
+it to. The consequence is that a solve for the **wrong schedule** back-substitutes
+into a perfectly good fixpoint at an operating point nobody asked for. Every check
+downstream is blind to it: `_check_power_flow` passes, the dynamic-network residual
+passes at machine precision, and the run is flat.
+
+Measured, on `load_bus_system` and `detailed_pair`:
+
+| what was broken | result |
+| --- | --- |
+| the reactive-power equation's sign | refused, residual 0.61 / 0.040 |
+| the admittance's off-diagonal sign | refused, \|V\| band / residual 8.0 |
+| the scheduled `P`, scaled by 1.1 | **flat to 8.6e-14 / 2.0e-14** |
+| `V_set`, misread by 2 % | **flat to 5.1e-13 / 2.1e-14** |
+
+A **load** schedule bug was always caught (a wrong load makes the seeded voltages
+fail Kirchhoff, because loads appear in the dynamic network's own algebraic
+equations). A **generation** schedule bug never was, because generation does not
+appear in those equations at all — `Pm` is a derived parameter. The asymmetry is the
+mechanism, not a coincidence, and it is the reason a fifth and sixth check were not
+enough: no check written *downstream of the solve* can close it.
+
+**So `_assert_seed_is_this_dispatch` closes it upstream**, in `src/` rather than in a
+test, because every seeded `init!` needs it. It compares the solution's held
+quantities against the model read through `machine_arrays` / `load_arrays`
+**directly** — not through `_ac_schedule`, which is the thing under test. With it,
+all four mutations above are refused by name, at the right bus, naming the right
+quantity.
+
+**What it still cannot see, stated now rather than discovered later:** a misread
+reactive *limit*. A bus wrongly switched to its limit holds a `Q` nobody scheduled
+and its magnitude becomes an unknown, so neither comparison applies; the answer is
+self-consistent and the run is flat. That is oracle B's, and it is the second thing
+oracle B is for after the lossy branch.
+
+---
+
+## D14 — Both refusals oracle A was designed around were already there
+
+Two guards were written into `_seed_from_powerflow` on the reasoning that the seeded
+path needs a lossless network (the AC flow's admittance is `1/(R + jX)`; this tier's
+edge is `ΔV/(jX)`) and one machine per bus (the flow solves one reactive output per
+bus, and nothing says how two machines split it). Both were **dead code**.
+`_assert_detailed_tier` — written at M6 step 1, for this tier's own reasons — refuses
+both models outright, before `init!` reaches the seeding, and its lossy message
+already points here ("use the M6 power flow, which does read it").
+
+This is M5 step 8's finding in a new place: *the mutation found its own check's
+premise wrong*. Worse, one of the two messages was **false** — it told the reader
+that the engine's fixpoint solve handles a multi-machine bus, and the fixpoint solve
+refuses it too. A guard that cannot fire is decoration; a guard that cannot fire and
+misdescribes the alternative is a trap. Both are deleted, the preconditions are
+documented as *guaranteed by a guard that predates this one*, and the test that
+found it is kept — it asserts the tier's guards fire on **both** paths, which is the
+fact the seeding now rests on.
+
+**The cost is recorded rather than hidden: oracle A can never see a lossy branch.**
+With `R = 0` the loss channel is zero to round-off and `flow + flow_rev` vanishes, so
+the resistive half of `ac_powerflow` — the one thing `Branch.R` was added for — is
+outside this oracle's reach entirely. `PowerFlows.jl` models resistance; that half is
+oracle B's, and it is now a *requirement* on oracle B rather than a nice-to-have.
+
+---
+
+### What step 4 measured (2026-09-07)
+
+**The two steady states are genuinely different, which is what makes the flat run a
+cross-check rather than a self-check.** On `load_bus_system` the power flow and the
+engine's own fixpoint put the bus voltage magnitudes **2.35e-2 to 2.52e-2 pu apart**,
+the rotor-angle differences **6.3e-3 rad apart**, and the slack machine's dispatch
+**5.0e-2 pu apart** (0.604 against 0.654) — the last because the two operating points
+draw different power through a voltage-dependent load. Both are flat to 1e-13. The
+flow holds `|V| = V_set` at the generators; the fixpoint holds `|E| = Machine.E′`;
+those pin different things and land in different places.
+
+**The internal voltage the flow implies is not `Machine.E′`, by 2.7e-2 to 5.0e-2 pu.**
+`|Ẽ| = |V + (Ra + jXq)·I|` at the flow's operating point is 1.023 against a declared
+1.05 on `load_bus_system`'s `G1`, and 1.049 against 1.00 on `detailed_pair`'s. The
+seeded path uses the derived one and ignores the declared one, which is correct and
+is worth having written down: it is M5 step 8's "the pre-event offset is larger than
+the disturbance" one tier along.
+
+**Flat to 1.5e-13 over 50 s, on the first attempt, on all five fixtures tried.** The
+window is 50 s rather than M5's 10 because `detailed_pair`'s slowest mode is
+`Td0′ = 8 s`. Left to itself the solver crosses that horizon in **five accepted
+steps**, so the third pass of the sweep forces `dtmax = 0.1` — M5 step 1's rule,
+reused rather than re-argued.
+
+**No single fixture catches the mutation set, and two of the ten mutations were
+no-ops on the fixture they were first run against.** `load_bus_system` is the only
+fixture with a `Load`, so the load-schedule mutations do nothing on `detailed_pair`;
+its machines are at the frozen-flux defaults (`Tq0′ = Inf`, `Xq = Xd′ = Xq′`), so
+*taking the rotor angle from the bus voltage instead of from the internal phasor*
+left it flat to 2.5e-13 — with the flux equations frozen, a wrong rotor frame costs
+nothing — and swapping `Xq` for `Xd′` was arithmetically the identity. `detailed_pair`
+catches both (residuals 0.68 and 0.58). The sweep therefore runs both fixtures, and
+the first run of the set was **misread as a finding** until the no-op was spotted:
+a mutation that does not mutate looks exactly like a check that does not check.
+
+**The branch flows agree exactly.** `ac_powerflow`'s own `V·conj(y·ΔV)` and the
+engine's `_branch_flows` dividing by `im*X` give bit-identical `|S|` on every R = 0
+fixture (difference 0.0e+00). Asserted at 1e-14 rather than as `==`, because
+bit-equality of two different complex divisions is not a promise Julia makes — step
+3 already measured `inv(complex(0.0, X))` landing one ulp off for some reactances.
+The `loss` channel is **not** exactly zero either: −5.6e-17 on one branch, because it
+is the sum of two separately-rounded products rather than a structurally absent term.
+
+**The plan's anti-vacuity instruction does not survive contact and was split in
+two.** "Perturb the solved solution and confirm the run is not flat" cannot be done:
+a perturbed voltage violates the algebraic block, so `init!` throws and there is no
+run to be non-flat. The two halves are (a) bend the solution → refused at build time,
+and (b) overwrite `Pm` with the schedule → the run moves by 6.6 rad. Only (b) is the
+anti-vacuity check; (a) is a guard test that happens to be worth having.
+
+**And the identity check on the solution is weak in this repo.** `two_machine_system`
+and `detailed_pair` share every bus id, every branch id and the same slack, so
+"is this solution for this model" written on ids alone passes on a solution for a
+completely different case. It is the *dispatch* comparison (D13) that refuses it.

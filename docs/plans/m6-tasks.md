@@ -6,10 +6,11 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–3 done; steps 4–6 open.** Entered at `181fe4e` with
+Status: **steps 0–3 done, step 4's oracle A done; oracle B and steps 5–6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
-**3175 core**, UI and `reference/` unchanged throughout.
+**3175 core**; at oracle A's close **3255 core**, UI and `reference/` unchanged
+throughout.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -549,18 +550,54 @@ rather than asserted with `==`.
 
 ## Step 4 — the two oracles (D5, hurdle 8)
 
-### Oracle A — the flat run (ours, no dependency)
+### Oracle A — the flat run (ours, no dependency) — **DONE (2026-09-07)**
 
-- [ ] A solved power flow back-substituted into machine states and fed to
-      `DetailedEngine` as its initial condition.
-- [ ] **The run is flat** — every state within the solver's tolerance of its start,
-      over a run long enough that a slow mode would show (M5's `T′do = 8 s` lesson:
-      too short a window turns "no movement" into "the last sample").
-- [ ] **Anti-vacuity:** perturb the solved solution slightly and confirm the same
-      run is *not* flat. A flat-run test passes trivially against a model that
-      cannot move.
-- [ ] The failure mode named in the test: this check is what makes the repo's two
-      steady-state sources agree without either being declared correct (D5).
+- [x] A solved power flow back-substituted into machine states and fed to
+      `DetailedEngine` as its initial condition. `init!` gains one keyword,
+      `powerflow = nothing`; everything after the solve — the back-substitution, the
+      `Vref` derivation, the `Efd` limit check and both residual checks — is the
+      **same code on either path**, and `_read_static` now returns the terminal
+      current so that the two paths cannot come to hold two back-substitutions.
+      The current comes from the flow's own `S` (`I = conj(S/V)`, `Ẽ = V + (Ra+jXq)I`,
+      `δ = arg Ẽ`) and **never** from `Machine.E′` — routing it through
+      `_machine_injection` would have made the flat run re-test the solve it exists
+      to cross-examine.
+- [x] **The run is flat** — 1.5e-13 worst over **50 s** on five fixtures, at two
+      tolerances, plus a third pass at `dtmax = 0.1` because the solver crosses the
+      horizon in **five accepted steps** if left alone (M5 step 1's rule). 50 s and
+      not 10 because `detailed_pair`'s slowest mode is `Td0′ = 8 s`.
+- [x] **Anti-vacuity — and the plan's single sentence does not survive contact.**
+      "Perturb the solved solution and confirm the run is not flat" cannot be done: a
+      perturbed voltage violates the algebraic block, so `init!` throws and there is
+      no run. Split into (a) a bent solution is refused at build time, and (b) `Pm`
+      overwritten with the schedule moves the run by 6.6 rad. Only (b) is the
+      anti-vacuity check.
+- [x] The failure mode named in the test: this check is what makes the repo's two
+      steady-state sources agree without either being declared correct (D5) — and
+      **they really are two sources**: measured 2.4e-2 to 2.5e-2 pu apart in voltage,
+      6.3e-3 rad apart in angle, 5.0e-2 pu apart in the slack's dispatch.
+- [x] **The mutation set was run, and it found the hole (D13).** Ten mutations across
+      two fixtures. Every bug in the flow's *equations* is caught by the
+      dynamic-network residual or the `|V|` band. Every bug in the flow's
+      *generation schedule* was **blind** — flat to 8.6e-14 with the scheduled `P`
+      scaled by 1.1, flat to 5.1e-13 with `V_set` misread by 2 % — because `Pm` and
+      `Vref` are derived from the solved voltages, so a wrong schedule is still a
+      fixpoint. Closed by `_assert_seed_is_this_dispatch`, in `src/` and not in a
+      test; all four then refuse by name, at the right bus.
+- [x] **Two of the ten mutations were no-ops on the fixture they were first run
+      against, and the first reading of the table was wrong because of it.**
+      `load_bus_system`'s machines have `Xq = Xd′ = Xq′` and `Tq0′ = Inf`, so
+      "swap `Xq` for `Xd′`" is arithmetically the identity and "take `δ` from the bus
+      angle" costs nothing with the flux equations frozen. A mutation that does not
+      mutate looks exactly like a check that does not check. Both fixtures now run.
+- [x] **Both refusals this oracle was designed around were already there (D14).** The
+      lossy-branch and multi-machine guards written into `_seed_from_powerflow` are
+      dead code — `_assert_detailed_tier` refuses both models first — and one of the
+      two messages was *false*. Deleted; the test that found it is kept, asserting
+      the tier's guards fire on both paths.
+- [x] The cost recorded rather than hidden: **oracle A can never see a lossy branch**,
+      so the resistive half of `ac_powerflow` is now a *requirement* on oracle B
+      rather than a nice-to-have.
 
 ### Oracle B — `PowerFlows.jl` in `reference/`
 

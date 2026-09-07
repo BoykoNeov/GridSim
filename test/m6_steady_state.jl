@@ -1211,3 +1211,364 @@ end
 end
 
 end   # M6 step 3
+
+# ════════════════════════════════════════════════════════════════════════════════
+# M6 step 4, ORACLE A — the power flow back-substituted, and the run that follows
+# (docs/plans/m6-plan.md step 4, m6-context.md D5, hurdle 8)
+# ════════════════════════════════════════════════════════════════════════════════
+#
+# THE CHECK. `ac_powerflow` and `DetailedEngine`'s own fixpoint solve answer two
+# different questions: the flow fixes terminal conditions (P and |V| at a generator)
+# and solves for reactive output; the fixpoint fixes the machine's internal state
+# and solves for terminal conditions. The unknowns and the givens swap places (D5).
+# Feed the flow's answer into the engine and the run must do NOTHING. Neither solve
+# is declared correct — they are made to agree, or one of them is wrong.
+#
+# AND THEY REALLY ARE DIFFERENT ANSWERS, which is what stops this being a check of a
+# thing against itself: on `load_bus_system` the two solves put the bus voltages
+# 2.4e-2 to 2.5e-2 pu apart and the rotor-angle differences 6.3e-3 rad apart
+# (asserted below). Both are flat.
+#
+# WHAT THE FLAT RUN IS WORTH, measured by mutation rather than asserted. The full
+# table is in `m6-tasks.md` step 4; the two structural facts it establishes are:
+#
+#   1. A bug in the flow's EQUATIONS is caught — the back-substituted state then
+#      fails Kirchhoff on the network the engine integrates, and `init!` refuses at
+#      build time with a number.
+#   2. A bug in the flow's GENERATION SCHEDULE was BLIND. `Pm` and `Vref` are
+#      DERIVED from the solved voltages, so a solution for a schedule nobody asked
+#      for back-substitutes into a perfectly good fixpoint and the run is flat at
+#      the wrong operating point. Scaling the scheduled P by 1.1 left the run flat
+#      to 8.6e-14; misreading `V_set` by 2 % left it flat to 5.1e-13.
+#
+#      That is what `_assert_seed_is_this_dispatch` exists for, and it is the reason
+#      the guard lives in `src/` and not in this file: every seeded `init!` needs
+#      it, not only the ones a test writes.
+#
+#   A LOAD schedule bug, by contrast, was always caught — loads appear in the
+#   dynamic network's own algebraic equations, so a wrong load makes the seeded
+#   voltages fail Kirchhoff. Generation does not appear there at all. The asymmetry
+#   is the mechanism, not a coincidence.
+#
+# AND NO SINGLE FIXTURE CATCHES THE SET, which is why the sweep below runs four.
+# `load_bus_system` is the only one with a `Load`, so it is the only one where the
+# load-schedule mutations bite at all; its machines are at the frozen-flux defaults
+# (Tq0' = Inf, Xq = Xd'), so a mutation that takes the rotor angle from the bus
+# voltage instead of from the internal phasor left it flat to 2.5e-13 — with the
+# flux equations frozen, a wrong rotor frame costs nothing. `detailed_pair` catches
+# that one (residual 0.68) and has no load at all.
+
+# `load_bus_system` with resistance on one branch. The detailed tier's edge model is
+# I = ΔV/(jX) and carries none — and the tier's OWN guard refuses such a model before
+# the seeding is reached, which is the finding this fixture ended up recording.
+function _seed_lossy_case(; R = 0.02)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    machines = [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 70.0),
+                Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.04, 40.0)]
+    loads = [Load(:L3, :B3, 110.0, 30.0, 1.0, 0.0, 0.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.25, 500.0; R = R),
+                Branch(:L23, :B2, :B3, 0.25, 500.0),
+                Branch(:L31, :B3, :B1, 0.25, 500.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads)
+end
+
+# Two machines on one bus: legal in the model, solvable by the power flow (which sums
+# the schedules per bus), unusable by the seeding (one reactive output, and nothing
+# says how two machines split it) — and refused by the detailed tier outright, on
+# BOTH paths, which is what makes the seeding's assumption safe without a guard.
+function _seed_two_on_one_bus()
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0)]
+    machines = [Machine(:G1a, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  40.0),
+                Machine(:G1b, :B1, 250.0, 4.0, 2.0, 0.25, 1.05,  20.0),
+                Machine(:G2,  :B2, 400.0, 5.0, 2.0, 0.30, 1.04, -60.0)]
+    return NetworkModel(100.0, 50.0, buses, [Branch(:L12, :B1, :B2, 0.25, 500.0)],
+                        machines)
+end
+
+# A solved answer with one field moved — the only way to hand `init!` a state that
+# is not a steady state, since every legitimate route to an `ACPowerFlow` produces
+# one that is. Every field is carried through explicitly rather than by a copy-with,
+# so a field added to the struct later makes this fail loudly instead of silently
+# carrying a stale value (`scenario_file.jl`'s rule, one tier along).
+function _seed_bend(sol; Vm = sol.Vm, θ = sol.θ, Pgen = sol.Pgen, Qgen = sol.Qgen,
+                    Pload = sol.Pload, Qload = sol.Qload)
+    return GridSim.ACPowerFlow(sol.slack, sol.buses, Vm, θ, Pgen, Qgen, Pload, Qload,
+                               sol.roles, sol.limited, sol.branches, sol.from, sol.to,
+                               sol.flow, sol.flow_rev, sol.qflow, sol.qflow_rev,
+                               sol.loss, sol.residual)
+end
+
+# Worst drift of any recorded channel from its own first sample.
+function _worst_drift(ser)
+    worst, chan = 0.0, :none
+    for ch in keys(ser)
+        ch === :t && continue
+        v = getproperty(ser, ch)
+        d = maximum(abs, v .- v[1])
+        d > worst && ((worst, chan) = (d, ch))
+    end
+    return worst, chan
+end
+
+@testset "M6 step 4 — oracle A: the power flow as the initial condition" begin
+
+# ── the flat run ────────────────────────────────────────────────────────────────
+@testset "the seeded run is flat, per state, at two tolerances and forced to step" begin
+    # 50 s, not M5's 10: the slowest mode in `detailed_pair` is Td0' = 8 s, and M5's
+    # own lesson is that too short a window turns "no movement" into "the last
+    # sample". 50 s is six of them.
+    #
+    # THE THIRD PASS IS NOT A THIRD TOLERANCE. Left to choose its own steps, Rodas5P
+    # crosses this horizon in FIVE accepted steps (measured), so 1001 samples are
+    # almost all interpolation inside a handful of enormous ones — and what is really
+    # being asserted is that an implicit solver parks on an equilibrium, which it
+    # does even for equations that are wrong in ways that cancel there. `dtmax`
+    # forces real steps. M5 step 1 established this shape; it is reused, not
+    # re-argued.
+    for (name, net) in (("load_bus",      load_bus_system()),
+                        ("load_bus ZIP",  load_bus_system(a_z = 0.4, a_i = 0.35, a_p = 0.25)),
+                        ("detailed_pair", detailed_pair()),
+                        ("three_ring",    three_machine_ring()))
+        sol = ac_powerflow(net)
+        for (rtol, atol, T, dtmax, min_steps) in ((1e-3, 1e-6,  50.0, Inf, 0),
+                                                  (1e-8, 1e-11, 50.0, Inf, 0),
+                                                  (1e-3, 1e-6,  20.0, 0.1, 150))
+            eng = init!(DetailedEngine, net; powerflow = sol,
+                        reltol = rtol, abstol = atol, dtmax = dtmax)
+            ser = solve!(eng, (0.0, T); saveat = 0.05)
+            @test length(ser.t) > 100
+            @test eng.integrator.stats.naccept >= min_steps
+            # 1e-10 is far below every measured value (worst seen: 7.7e-13, on the
+            # ZIP case) and far above machine precision — a real gate rather than
+            # either a rubber stamp or a flake. Asserted PER STATE and never on
+            # `f_coi` alone: a wrong internal state can leave frequency flat while a
+            # voltage rings, which is why M5 wrote this channel by channel.
+            worst, chan = _worst_drift(ser)
+            @test worst < 1e-10
+            worst < 1e-10 || @info "seeded flat run drifted" name rtol worst chan
+        end
+    end
+    # …and the lazy pass really is lazy, which is what the comment above rests on.
+    let net = three_machine_ring()
+        eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net))
+        solve!(eng, (0.0, 50.0); saveat = 0.05)
+        @test eng.integrator.stats.naccept < 20
+    end
+end
+
+@testset "the two solves land in DIFFERENT places — this is not a self-comparison" begin
+    # If the seeded state and the fixpoint state were the same point, the flat run
+    # would be re-testing the fixpoint against itself and every mutation above would
+    # be blind for an uninteresting reason. They are not the same point: the flow
+    # holds |V| = V_set at the generators and the fixpoint holds |E| = Machine.E',
+    # and those pin different things.
+    net = load_bus_system()
+    a = init!(DetailedEngine, net; powerflow = ac_powerflow(net))   # seeded
+    b = init!(DetailedEngine, net)                                  # fixpoint
+    ua, ub = a.integrator.u, b.integrator.u
+    gapV = maximum(abs(hypot(ua[a.Vre_idx[v]], ua[a.Vim_idx[v]]) -
+                       hypot(ub[b.Vre_idx[v]], ub[b.Vim_idx[v]]))
+                   for v in eachindex(net.buses))
+    @test gapV > 1e-2                       # measured: 2.35e-2 … 2.52e-2
+    # Rotor angles compared as DIFFERENCES from the first machine — an individual δ
+    # is gauge-arbitrary, and the two paths do not even share a gauge (the fixpoint
+    # pins the slack MACHINE's angle at zero, the flow pins the slack BUS's).
+    gapδ = maximum(abs((ua[a.δ_idx[k]] - ua[a.δ_idx[1]]) -
+                       (ub[b.δ_idx[k]] - ub[b.δ_idx[1]]))
+                   for k in eachindex(a.ids))
+    @test gapδ > 1e-3                       # measured: 6.29e-3
+    # And the slack machine's dispatch differs, because the two operating points
+    # draw different power through a voltage-dependent load.
+    @test abs(a.params[a.Pm_pidx[1]] - b.params[b.Pm_pidx[1]]) > 1e-3   # measured 5.0e-2
+end
+
+@testset "the internal voltage the flow implies is NOT Machine.E' — recorded" begin
+    # The companion number to the flat run, and M5 step 8's shape one tier along:
+    # `Machine.E'` is the magnitude of the q-axis source at the FIXPOINT's operating
+    # point. The flow's operating point has its own, |Ẽ| = |V + (Ra + jXq)·I|, and
+    # the seeded path uses that. The gap is real and is not an error.
+    for (net, want) in ((load_bus_system(), 2e-2), (detailed_pair(), 1e-2))
+        sol = ac_powerflow(net)
+        ma = machine_arrays(net)
+        V, _, _, I, _ = GridSim._seed_from_powerflow(net, sol, ma)
+        gap = maximum(abs(abs(V[ma.bus[k]] + complex(ma.Ra[k], ma.Xq[k]) * I[k]) - ma.E[k])
+                      for k in eachindex(ma.bus))
+        @test gap > want          # measured: 2.66e-2 (load_bus), 4.95e-2 (detailed_pair)
+    end
+end
+
+@testset "the flow's own branch power and the engine's agree at R = 0" begin
+    # Two code paths over the same solved voltages: `ac_powerflow` builds
+    # y = inv(complex(R, X)) and forms V·conj(y·ΔV); `_branch_flows` divides by im*X
+    # directly. Narrow — both read the same V and the same X — but it is the one
+    # place the two files' orientation and the 1/(jX) rotation are compared.
+    # Measured: EXACTLY zero on this build, asserted at 1e-14 because bit-equality of
+    # two different complex divisions is not a promise Julia makes.
+    for net in (load_bus_system(), three_machine_ring(), detailed_pair())
+        sol = ac_powerflow(net)
+        ma, bt = machine_arrays(net), branch_topology(net)
+        V, _, _, _, _ = GridSim._seed_from_powerflow(net, sol, ma)
+        fl = GridSim._branch_flows(net, bt, V, ones(Float64, length(net.branches)))
+        for e in eachindex(net.branches)
+            @test abs(hypot(sol.flow[e], sol.qflow[e]) - fl[e]) < 1e-14
+        end
+        # …and the cost of the R = 0 restriction, stated as an assertion rather than
+        # left in a comment: on every fixture oracle A can run, the loss channel is
+        # zero. NOT `iszero` — measured at −5.6e-17 on one branch, because it is
+        # `real(Sf) + real(St)` of two separately-rounded products and not a term
+        # that is structurally absent. The lossy case is oracle B's.
+        @test maximum(abs, sol.loss) < 1e-15
+    end
+end
+
+# ── anti-vacuity, in the two halves the plan's single sentence does not survive ──
+@testset "anti-vacuity 1: a bent solution is REFUSED at build time, not run" begin
+    # The plan says "perturb the solved solution and confirm the run is not flat".
+    # It cannot: a perturbed voltage violates the ALGEBRAIC block, so there is no run
+    # to be non-flat — `init!` throws. That is a guard test and worth having, and the
+    # non-flat run needs a different perturbation (the next testset).
+    net = load_bus_system()
+    sol = ac_powerflow(net)
+    θ = copy(sol.θ); θ[2] += 1e-3          # a non-slack bus, so no schedule moves
+    msg = try
+        init!(DetailedEngine, net; powerflow = _seed_bend(sol; θ = θ))
+        "NO ERROR THROWN"
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("not a fixpoint of the", msg)
+    @test occursin("BACK-SUBSTITUTION", msg)
+end
+
+@testset "anti-vacuity 2: the run CAN move — the flat assertion is not free" begin
+    # M5's own positive control, on the seeded path: take `Pm` from the schedule
+    # instead of from the solve. This is the real failure the back-substitution
+    # exists to prevent, and here it is sharper than at M5 — the flow's slack pickup
+    # is 0.604 pu against a schedule of 0.700, so the gap is the whole point of
+    # deriving `Pm` rather than reading it.
+    net = load_bus_system()
+    eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net))
+    ma = machine_arrays(net)
+    for k in eachindex(eng.Pm_pidx)
+        eng.params[eng.Pm_pidx[k]] = ma.Pm[k]
+    end
+    ser = solve!(eng, (0.0, 20.0); saveat = 0.05)
+    worst, _ = _worst_drift(ser)
+    @test worst > 1.0
+    @test maximum(abs, ser.f_coi .- ser.f_coi[1]) > 1e-2
+end
+
+# ── the refusals ────────────────────────────────────────────────────────────────
+@testset "the two refusals oracle A thought it needed are UNREACHABLE" begin
+    # BOTH guards were written into `_seed_from_powerflow` first, and both turned out
+    # to be dead code: `_assert_detailed_tier` refuses these models outright, before
+    # `init!` ever reaches the seeding. Recorded as a testset rather than deleted,
+    # because the fact that this tier cannot express either model is what makes the
+    # seeded path's assumptions safe — and because one of the two messages that was
+    # written here was FALSE (it said the fixpoint path handles a multi-machine bus;
+    # the fixpoint path refuses it too, which the assertion below pins).
+
+    # A resistive branch. The AC flow's admittance is 1/(R + jX) and this tier's edge
+    # is ΔV/(jX), so a seeded state on such a model genuinely would not be a fixpoint
+    # — but the tier's own guard fires first, and its message already points at M6.
+    msg = argerr_msg(() -> init!(DetailedEngine, _seed_lossy_case();
+                                 powerflow = ac_powerflow(_seed_lossy_case())))
+    @test occursin("L12", msg)
+    @test occursin("series resistance R = 0.02", msg)
+    @test occursin("use the M6 power flow, which does read it", msg)
+    # It fires on the FIXPOINT path too, which is what makes it the tier's guard and
+    # not the seeded path's — the seeded path never sees such a model at all.
+    @test occursin("series resistance", argerr_msg(() -> init!(DetailedEngine, _seed_lossy_case())))
+    # …and the same model with R = 0 goes through both ways, so the refusal is about
+    # the resistance and not about the fixture.
+    let ok = _seed_lossy_case(R = 0.0)
+        @test init!(DetailedEngine, ok; powerflow = ac_powerflow(ok)) isa DetailedEngine
+    end
+
+    # Two machines on one bus. `ac_powerflow` solves such a model happily — it sums
+    # the schedules per bus — and the seeded path could not use the answer, because
+    # the bus's one reactive output does not say how two machines split it. Moot: the
+    # tier refuses the model, on both paths.
+    let two = _seed_two_on_one_bus()
+        @test ac_powerflow(two) isa ACPowerFlow          # the flow is fine with it
+        m2 = argerr_msg(() -> init!(DetailedEngine, two; powerflow = ac_powerflow(two)))
+        @test occursin("bus B1 carries 2 machines", m2)
+        @test occursin("state count is fixed at compile time", m2)
+        # THE CLAIM THAT WOULD HAVE BEEN FALSE, pinned: the fixpoint path does NOT
+        # handle this model either.
+        @test occursin("bus B1 carries 2 machines", argerr_msg(() -> init!(DetailedEngine, two)))
+    end
+end
+
+@testset "a DCPowerFlow, or anything else, is named rather than reaching a field" begin
+    net = load_bus_system()
+    msg = argerr_msg(() -> init!(DetailedEngine, net; powerflow = dc_powerflow(net)))
+    @test occursin("must be an ACPowerFlow", msg)
+    @test occursin("DCPowerFlow", msg)         # the specific wrong argument, named
+    @test occursin("must be an ACPowerFlow",
+                   argerr_msg(() -> init!(DetailedEngine, net; powerflow = 1.0)))
+end
+
+# ── the dispatch guard: what closed the two blind mutations ─────────────────────
+@testset "the solution must be THIS model's dispatch, and all four comparisons fire" begin
+    net = load_bus_system()
+    sol = ac_powerflow(net)
+    seed(s) = argerr_msg(() -> init!(DetailedEngine, net; powerflow = s))
+
+    Pg = copy(sol.Pgen);  Pg[2] += 0.1         # B2 is a non-slack generator bus
+    @test occursin("the scheduled P", seed(_seed_bend(sol; Pgen = Pg)))
+
+    Vm = copy(sol.Vm);    Vm[2] += 0.01
+    @test occursin("the terminal voltage setpoint", seed(_seed_bend(sol; Vm = Vm)))
+
+    Pl = copy(sol.Pload); Pl[3] *= 1.1         # B3 carries the load
+    @test occursin("the load's P draw", seed(_seed_bend(sol; Pload = Pl)))
+
+    Qg = copy(sol.Qgen);  Qg[3] += 0.05        # B3 carries no machine
+    @test occursin("the reactive generation", seed(_seed_bend(sol; Qgen = Qg)))
+
+    # Every message says WHY the check exists, because the failure it prevents is
+    # invisible: the run would have been flat.
+    @test occursin("would be flat", seed(_seed_bend(sol; Pgen = Pg)))
+
+    # The slack's own P is NOT compared — it is the pickup, free by definition and
+    # not an input to the solve at all. Pinned so that a later "tighten this" does
+    # not add a comparison that must fail. It is not silently accepted either: the
+    # bent value reaches the back-substitution and the fixpoint check refuses it.
+    Ps = copy(sol.Pgen); Ps[1] += 0.1
+    bent = try
+        init!(DetailedEngine, net; powerflow = _seed_bend(sol; Pgen = Ps))
+        ErrorException("NO ERROR THROWN")
+    catch e
+        e
+    end
+    @test occursin("not a fixpoint of the", sprint(showerror, bent))
+end
+
+@testset "the id check is WEAK in this repo, and the dispatch check is what catches it" begin
+    # `two_machine_system` and `detailed_pair` have the same bus ids, the same branch
+    # id and the same slack — so a "is this solution for this model" check written on
+    # ids alone passes on a solution for a completely different case. Recorded
+    # because it is the sort of thing a reader would assume works.
+    a, b = two_machine_system(), detailed_pair()
+    @test [x.id for x in a.buses] == [x.id for x in b.buses]
+    @test [x.id for x in a.branches] == [x.id for x in b.branches]
+    @test a.slack === b.slack
+    # It is the DISPATCH comparison that refuses it: G2 is scheduled at −0.6 pu in
+    # one and −0.4 in the other.
+    msg = argerr_msg(() -> init!(DetailedEngine, b; powerflow = ac_powerflow(a)))
+    @test occursin("was not solved for this model's dispatch", msg)
+    @test occursin("the scheduled P", msg)
+end
+
+@testset "`powerflow = nothing` is the old path, untouched" begin
+    # Step 4 changed `_read_static`'s return and moved one `_machine_injection` call.
+    # The fixpoint path must be the same engine it was — asserted here as the flat
+    # run it has always passed, and by the whole of `m5_detailed.jl` besides.
+    eng = init!(DetailedEngine, load_bus_system())
+    ser = solve!(eng, (0.0, 10.0); saveat = 0.05)
+    worst, _ = _worst_drift(ser)
+    @test worst < 1e-10
+end
+
+end   # M6 step 4 — oracle A
