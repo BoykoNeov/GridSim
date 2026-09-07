@@ -70,9 +70,16 @@ There is a single source of truth for the grid. Reduced/surrogate models are
 **derived from it** (projected/compiled down), never forked into parallel
 hand-maintained data.
 
-- Canonical model: `PowerSystems.jl` (NREL-Sienna) is the long-term home — it is
-  a mature, serializable, well-maintained data model with PSS/E import and the
-  rest of the Sienna stack built on it.
+- Canonical model: `PowerSystems.jl` (NREL-Sienna) was written here as the
+  long-term home — a mature, serializable data model with PSS/E import and the
+  Sienna stack on top. **Superseded by measurement in M6** (`m6-context.md` D1):
+  the canonical model is our own `NetworkModel` (`src/model/network_model.jl`), and
+  PowerSystems is adopted in `reference/` as an external oracle instead. The
+  *invariant* in this section's title — one canonical model, reduced models
+  compiled from it — is unchanged and is precisely what the M6 decision protects;
+  what changed is which type plays the role. What that costs is stated in D1: no
+  free PSS/E or MATPOWER import, and an importer would most cheaply be written
+  through M6's adapter.
 - **For Milestone 1 only**, do *not* adopt the full PowerSystems data model. A
   single-frequency aggregate model needs ~5 fields per unit. Use a minimal domain
   struct now (§7.3) and design the seam so it can later be populated *from* a
@@ -122,6 +129,15 @@ inject!(engine::SimulationEngine, event::PerturbationEvent)  # queued, applied a
 The orchestration band is the project's core IP — the bespoke part. Everything
 else is built on existing packages.
 
+**The diagram's bottom two bands have moved since it was drawn**, in both cases by
+measurement rather than preference, and in both cases outward rather than in: the
+data model is our own `NetworkModel` (§3.2, `m6-context.md` D1) and the dynamics
+and steady-state *equations* are ours while the *solvers* stay the ecosystem's
+(§8, `m6-context.md` D2). `PowerSystems.jl`, `PowerFlows.jl` and `PowerDynamics.jl`
+are all still in the project — in `reference/`, as the outside implementations that
+check ours. The band that has not moved at all is the orchestration one, which is
+the claim this section was making.
+
 ### 3.5 Render state ≠ simulation state
 
 The physics model is the source of truth. UI/render state (positions, selection,
@@ -133,8 +149,8 @@ entity and a simulation entity the same object.
 | Concern | Choice | Notes |
 |---|---|---|
 | Language | Julia (≥ 1.10) | Native numerics; no FFI tax. |
-| Canonical data | `PowerSystems.jl` | Adopt at network-aware tiers, not M1. |
-| Steady-state | `PowerFlows.jl` | DC / AC power flow. |
+| Canonical data | ~~`PowerSystems.jl`~~ → our own `NetworkModel` | **Not adopted as the canonical model, and the refusal is informed rather than blocked.** M6 step 0 measured it: `PowerSystems` 5.12.3 + `PowerFlows` 0.25.2 resolve on top of our exact stack (258 packages against 184), move nothing of ours, and are usable — so unlike PSID (row below) this one *could* have been taken. It is not, because §3.2 ("one canonical model") is an invariant and §9 is a roadmap, and because their component library does not line up with ours field-for-field (M4 D13/D14 found exactly that with PowerDynamics). It is adopted **in `reference/`, as the second oracle** — see `docs/plans/m6-context.md` D1. |
+| Steady-state | our own DC + AC Newton, on `NonlinearSolve.jl` | The **equations** are ours (`src/steadystate/`, M6) and the **solver** is the ecosystem's, the same split every engine here already makes — §8's rule read precisely, `docs/plans/m6-context.md` D2. `PowerFlows.jl` is the outside implementation that checks them, in `reference/`, exactly as PowerDynamics checks the swing tier. |
 | Markets / OPF | `PowerSimulations.jl`, `JuMP` + HiGHS/Ipopt | Later tiers. |
 | Dynamics (real-time tier) | `NetworkDynamics.jl` | Modular, equation-based; thin over DiffEq → integrator is steppable for live injection. **`PowerDynamics.jl` was paired with it on this line until M4 step 4 and is NOT a core dependency**: our vertex and edge equations are our own (`src/engines/swing.jl`), and PowerDynamics is the outside implementation that checks them — see the row below and the core closure test. |
 | Dynamics (playback tier) | ~~`PowerSimulationsDynamics.jl` (PSID)~~ → our own `solve!` | PSID proved **unusable in this repo, by measurement** — five dependency probes, `docs/plans/m4-context.md` §The dependency probes. Playback is M4's own `src/engines/playback.jl`. |
@@ -395,6 +411,16 @@ end
 - **No full PowerSystems.jl data model for M1.** Use the minimal `SystemModel` (§7.3).
 - **No hand-rolled solvers where the ecosystem has them.** Build the *loop and
   router*, not the integrators or power-flow/dynamics math.
+  **What this rule does and does not cover** (settled in M6, `m6-context.md` D2):
+  it names the *solver*, not the *equations*. Newton with a sparse Jacobian, its
+  line search and its convergence control are `NonlinearSolve.jl`'s job, the way
+  time integration is `OrdinaryDiffEq`'s. What power balance *means* at a bus, what
+  a generator bus holds fixed, and when a reactive limit binds are **model**, and
+  they are ours — the same split every ODE right-hand side in `src/engines/`
+  already makes. The alternative reading (translate our case into someone else's
+  types, call their solver, map the answer back) was considered and rejected: it
+  puts 74 packages in the core package and leaves nothing to validate, because a
+  translator checked against its own translation is not a check.
 - **No conflating render and simulation state.**
 - **No dense matrices** anywhere a network solve appears (use sparse).
 - **Don't over-build the engine zoo now.** Implement only `FrequencyResponseEngine`
@@ -425,7 +451,14 @@ end
    `ui/src/playback_window.jl`, and the external reference is `PowerDynamics.jl`
    in `reference/` rather than PSID — see §7.6 above and `m4-context.md` D1.
 5. **Steady-state** ladder: DC power flow → AC power flow (Newton) → AC-OPF
-   (adopt `PowerFlows.jl`; introduce `PowerSystems.jl` as canonical model here).
+   (adopt `PowerFlows.jl`; ~~introduce `PowerSystems.jl` as canonical model here~~).
+   **M6 keeps the first half and refuses the second** — `PowerFlows.jl` is adopted
+   in `reference/` as the second oracle, and the canonical model stays
+   `NetworkModel`, extended. The refusal was taken *after* measuring that the
+   adoption would have worked (258 packages, nothing of ours moved, both solvers
+   usable), so it is a design choice with the constraint lifted rather than a
+   constraint reported as a choice: `docs/plans/m6-context.md` D1. The AC-OPF rung
+   is a **gate with four written criteria** (D7), not a commitment.
 6. Wider protection (M3 builds the first two schemes: per-area load shedding and
    out-of-step tripping), then **markets/OPF** (`PowerSimulations.jl`, `JuMP`).
 7. Renewables / low-inertia studies (the M1 lesson, scaled up).
