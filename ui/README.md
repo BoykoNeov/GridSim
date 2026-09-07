@@ -6,9 +6,11 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **three**: two real-time windows,
-one per fidelity tier, chosen by the model you hand `launch` — and a third for the
-other *execution mode*, the playback overlay, which has its own verb (see below).
+Built on `GLMakie` (native window). There are **four**: two real-time windows,
+one per fidelity tier, chosen by the model you hand `launch` — a third for the
+other *execution mode*, the playback overlay, which has its own verb — and the
+scenario editor, which has no engine in it at all and produces the model the
+other three start from (both below).
 
 The two real-time windows:
 
@@ -311,13 +313,54 @@ header before quoting anything off the picture**: the defence plan arrests the
 frequency fall and does not save the tie, the tie in this cell is unprotected, and
 voltage collapse is out of scope on this tier at any point of the figure.
 
+## The scenario editor — place and edit grid elements on a map
+
+```
+julia --project=ui -e "using GridSimUI, GridSim; wait_for_close(editor(three_machine_ring()))"
+```
+
+A canvas on the left, tools and the selected element's properties on the right,
+the scenario's name, bases and file along the bottom. Pick a tool and click the
+canvas: **bus** places one where you click; **machine** and **load** attach to
+the bus you click; **branch** connects the two buses you click in turn; **delete**
+removes what you click (a bus takes its machines, load and lines with it);
+**select** picks an element for the panel and drags a bus to move it. Right-drag
+pans, the wheel zooms, **fit view** frames everything.
+
+The panel edits an element's numbers and its id through the core's own
+constructors, so a value the model refuses (`H = 0`, a self-loop) is refused at
+**apply** with the constructor's message, and nothing is half-applied. The
+status line under the bar always says whether the drawing is currently a valid
+model and what Σ P is.
+
+**save file** writes a TOML scenario — model and map positions, the latter in
+their own `[layout]` table and never in a `Bus` (`docs/SPEC.md` §3.5) — through
+`write_scenario` in the core; **open file** reads one back. A file is a valid
+model or it is not written, so balance the drawing first. **run ▶** builds the
+model and opens the multi-machine window on it, exactly as `launch(net)` would.
+
+Start from a file, or over a map image whose coordinates the positions will use:
+
+```julia
+editor(; file = "docs/scenarios/three-machine-ring.toml")
+editor(; background = "iberia.png", extent = (-10.0, 4.5, 35.5, 44.0))   # lon/lat
+```
+
+Every editing operation is also a function — `add_bus!`, `add_machine!`,
+`add_load!`, `add_branch!`, `move_bus!`, `remove!`, `rename!`, `set_field!`,
+`build_model`, `validation`, `save!`, `load!` on a `ScenarioEditor` — because
+those are what the mouse handlers call, and a script should not need a figure to
+build a scenario. `editor_render(; path)` draws the window offscreen to a PNG.
+Design notes, what the build found, and the known Makie text-box glitch:
+`docs/plans/scenario-editor.md`.
+
 ## Tests
 
 ```
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-172 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+281 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do
@@ -333,6 +376,12 @@ against it (adjacent samples differ by ~1e-6 Hz). For the same reason, checks th
 a caption or a read-out is *in the picture* go through the figure's layout, not
 through the observable that feeds it: a `Label` with the right text that was never
 added to the window passes every text assertion you can write about it.
+
+The editor's tests (`test/editor_tests.jl`) drive its widgets the same way and its
+canvas through the data-coordinate handlers the mouse callbacks call — plus one
+real `MouseButtonEvent` pushed through the scene to prove the callbacks reach
+them. What a hand-built scenario is asserted against is the core's own fixture,
+record for record.
 
 One thing to know when adding a test to either real-time window: greying a button
 out happens on the

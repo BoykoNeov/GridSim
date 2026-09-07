@@ -141,7 +141,7 @@ entity and a simulation entity the same object.
 | External reference (validation only) | `PowerDynamics.jl` | The outside implementation the engines are checked against, in `reference/` — never a tier the UI can run. Resolves against the pinned stack moving nothing (probe 5). |
 | Integration | `DifferentialEquations.jl` | Use the **integrator interface** (`init`, `step!`, callbacks) for real-time engines. |
 | Live state | `Observables.jl` | Standalone; safe in core. |
-| UI / viz | `GLMakie` (native), `WGLMakie` (web later), `GeoMakie`/`Tyler.jl` (maps, national scale) | Great for plots + simple controls; the node-graph editor is built on a Makie canvas later. |
+| UI / viz | `GLMakie` (native), `WGLMakie` (web later), `GeoMakie`/`Tyler.jl` (maps, national scale) | Great for plots + simple controls. The scenario editor IS a Makie canvas (`ui/src/editor_window.jl`, 2026-09-07): buses placed by click, optionally over a PNG map, positions kept in a `Layout` beside the model per §3.5, saved as TOML by `src/model/scenario_file.jl`. Tiles are still item 8 of §9. |
 | Test systems | `PowerSystemCaseBuilder.jl` | IEEE 14/30/118/300-bus, etc. |
 
 ### Forward-looking constraints (cheap now, expensive to retrofit)

@@ -86,6 +86,11 @@ using GridSim: solve!, state_series, coi_model,
 # The precompile workload (`precompile.jl`) drives the armed network window on
 # the two-machine fixture; nothing in the windows themselves needs this name.
 using GridSim: two_machine_system
+# The scenario editor (`editor.jl`, `editor_window.jl`). It builds the model the
+# other windows are handed, so it needs the four record types and the model's own
+# constructor, plus the file pair and the `Layout` alias for the map positions.
+# All checked clear against GLMakie's exports (the standing check, 2026-09-07).
+using GridSim: Bus, Branch, Machine, Load, Layout, write_scenario, read_scenario
 
 # The shared look (fonts, colours, widget shapes, the two-label read-out) — one
 # file, applied by every builder through `themed`. Included first because the
@@ -94,6 +99,8 @@ include("theme.jl")
 include("window.jl")
 include("network_window.jl")
 include("playback_window.jl")
+include("editor.jl")
+include("editor_window.jl")
 
 export launch, smoke_render, wait_for_close
 # M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
@@ -101,6 +108,13 @@ export launch, smoke_render, wait_for_close
 # them. The core draws the same line the same way — `run_realtime!` against
 # `solve!` — so the UI mirrors it instead of inventing a type to dispatch on.
 export playback, playback_render
+# The scenario editor — a window with no engine in it, whose product is the model
+# the others start from. Its editing operations are exported too, because they are
+# the same functions the mouse handlers call, and a script (or a test) building a
+# scenario should not have to reach through a figure to do it.
+export editor, editor_render, ScenarioEditor,
+       add_bus!, add_machine!, add_load!, add_branch!, move_bus!, remove!, rename!,
+       set_field!, build_model, validation, power_balance, save!, load!
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

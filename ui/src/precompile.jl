@@ -46,6 +46,10 @@ using PrecompileTools
                 # Playback overlay, default scenario, short horizon.
                 playback_render(; path = tmp, horizon = 2.0)
 
+                # The scenario editor, with the property panel open on a machine
+                # (the branch of the builder with the most widgets in it).
+                editor_render(; path = tmp, select = (:machine, :G1))
+
                 rm(tmp; force = true)
             catch err
                 @warn "GridSimUI precompile workload skipped" exception = (err, catch_backtrace())

@@ -26,6 +26,9 @@ using GridSim: LoadShedStage, GenerationRamp, shed_ladder, shed_log
 # the arithmetic living here.
 using GridSim: FrequencyResponseEngine, solve!, coi_model,
                divergence, system_frequency, tolerance_band
+# The scenario editor's tests compare what it builds against the core's own
+# fixtures and read back the file it writes.
+using GridSim: NetworkModel, Layout, read_scenario, load_bus_system
 
 GLMakie.activate!(visible = false)
 
@@ -729,5 +732,8 @@ end
         @test isfile(path)
         @test filesize(path) > 10_000                   # a real rendered frame
     end
+
+    # --- the scenario editor (its own file; see the header there) --------------
+    include(joinpath(@__DIR__, "editor_tests.jl"))
 
 end

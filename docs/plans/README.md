@@ -27,6 +27,11 @@ Cross-cutting:
   repaint), what the first batch fixed (precompile workload, shared theme,
   two-label read-outs), and the remaining items written for a less capable
   model to execute one at a time.
+- `scenario-editor.md` — the fourth window: place buses on a map, attach
+  machines and loads, draw lines, edit every number through the constructors,
+  save/open a TOML scenario (positions in their own table, never in a `Bus`), and
+  run. Nine decisions, what the first render got wrong, and a Makie text-box
+  glitch reproduced without GridSim.
 
 ## The scientific hurdles, in dependency order
 
