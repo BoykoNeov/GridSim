@@ -187,6 +187,36 @@ parallel set of "detailed" constructors:
                    `T·ẋ ~ rhs` and does not inherit it (`m5-prestudy.md` §2a).
   - `Ra`         — pu on the machine's own base, stator resistance. Default `0`.
 
+Regulator data (M5 step 5), keyword-only and defaulting to **no regulator at
+all**, which is the constant-`Efd` case every check before step 5 was written for:
+
+  - `K_A`        — pu/pu, static exciter gain. Default `0`.
+  - `T_E`        — s, the exciter's single lag. Default `Inf`, which is the
+                   sanctioned "regulator off": the time constant is a *divisor* in
+                   our formulation, so `finite/Inf` is `0.0` exactly and the field
+                   voltage holds at whatever the initialisation gave it. Same
+                   argument, same idiom, as `Td0′ = Inf` above.
+  - `Efd_min`,
+    `Efd_max`    — pu, hard limits on the field voltage. Defaults `-Inf`/`Inf`,
+                   i.e. unlimited. They are enforced as **saturations in the
+                   derivative**, never as a clamp on the state (the M1 rule; see
+                   `_detailed_machine_bus!`).
+
+**`Vref` is deliberately NOT here.** The setpoint is *derived* at initialisation
+from the solved equilibrium (`Vref = |V| + Efd/K_A`), for the same reason the
+detailed tier takes `Pm` from the power flow rather than from `Machine.P0`: a
+setpoint supplied as data is a setpoint that does not match the dispatch, and the
+flat run then measures a startup transient instead of the initialisation. See
+`init!(DetailedEngine, …)`.
+
+**None of the four converts, and that is a fact rather than an omission.** `Efd`
+is a per-unit *voltage*, built as `E′q + (Xd − X′d)·Id`, and a reactance times a
+current is invariant under a change of power base — the reactance scales by
+`S_base/S_rated` and the current by `S_rated/S_base`. So a gain mapping a per-unit
+voltage error to a per-unit field voltage is base-free, and so are the limits.
+Pinned in `test/` by scaling `S_rated` on a fixed physical machine and demanding
+the trajectory not move.
+
 **What `E′` means depends on the tier reading it, and the two meanings coincide
 exactly at the defaults.** At the classical tier `E′` is the constant internal
 voltage *at the bus*. At the detailed tier it is the magnitude of the q-axis
@@ -221,6 +251,11 @@ struct Machine
     Td0′::Float64      # s     — d-axis open-circuit transient time constant (Inf = frozen)
     Tq0′::Float64      # s     — q-axis open-circuit transient time constant (Inf = frozen)
     Ra::Float64        # pu    — stator resistance, machine base
+    # M5 step 5 — the voltage regulator. Defaults ARE "no regulator".
+    K_A::Float64       # pu/pu — static exciter gain (0 = no regulator)
+    T_E::Float64       # s     — exciter lag (Inf = field voltage frozen)
+    Efd_min::Float64   # pu    — field-voltage floor (-Inf = unlimited)
+    Efd_max::Float64   # pu    — field-voltage ceiling (Inf = unlimited)
 
     # Reject a machine that is wrong on its face rather than letting it poison a
     # solve — the spirit of `GeneratingUnit`'s headroom guard. `H > 0` is strict
@@ -249,7 +284,9 @@ struct Machine
                      Xd′::Real, E′::Real, P0::Real,
                      R::Real = Inf, Pmax::Real = P0, Tg::Real = 1.0;
                      Xd::Real = Xd′, Xq::Real = Xd′, Xq′::Real = Xd′,
-                     Td0′::Real = Inf, Tq0′::Real = Inf, Ra::Real = 0.0)
+                     Td0′::Real = Inf, Tq0′::Real = Inf, Ra::Real = 0.0,
+                     K_A::Real = 0.0, T_E::Real = Inf,
+                     Efd_min::Real = -Inf, Efd_max::Real = Inf)
         S_rated > 0 || throw(ArgumentError(
             "Machine $id: S_rated ($S_rated) must be > 0 MVA."))
         H > 0 || throw(ArgumentError(
@@ -306,11 +343,37 @@ struct Machine
         Ra ≥ 0 || throw(ArgumentError(
             "Machine $id: Ra ($Ra) must be ≥ 0 pu — a negative stator resistance " *
             "generates power out of the winding."))
+        # M5 step 5. `T_E` is the exciter derivative's denominator, so `Inf` is the
+        # sanctioned "off" and zero is a division by zero — the `Td0′` argument
+        # again. A negative gain is positive feedback on terminal voltage.
+        K_A ≥ 0 || throw(ArgumentError(
+            "Machine $id: K_A ($K_A) must be ≥ 0 pu/pu — a negative exciter gain " *
+            "makes the terminal-voltage loop positive feedback. Use K_A = 0 (the " *
+            "default) for no regulator."))
+        T_E > 0 || throw(ArgumentError(
+            "Machine $id: T_E ($T_E) must be > 0 s — it is the exciter derivative's " *
+            "denominator. Use T_E = Inf to hold the field voltage (the default)."))
+        Efd_max ≥ Efd_min || throw(ArgumentError(
+            "Machine $id: Efd_max ($Efd_max) must be ≥ Efd_min ($Efd_min) pu."))
+        # THE ONE COMBINATION THAT IS ILL-POSED RATHER THAN MERELY UNUSUAL. The
+        # exciter is `T_E·dEfd/dt = −Efd + K_A(Vref − |V|)`, whose only equilibrium
+        # with `K_A = 0` is `Efd = 0` — no field, no machine. With `T_E = Inf` that
+        # is harmless (nothing moves); with a finite `T_E` the field decays to zero
+        # from whatever the power flow dispatched, so the model has no steady state
+        # at all and `init!` would refuse it later with a residual instead of here
+        # with a reason.
+        (K_A > 0 || T_E == Inf) || throw(ArgumentError(
+            "Machine $id: K_A = 0 with a finite T_E ($T_E s) is not a regulator " *
+            "that is switched off, it is a regulator commanding zero field: the " *
+            "only equilibrium of T_E·dEfd/dt = −Efd + K_A(Vref − |V|) at K_A = 0 " *
+            "is Efd = 0, so the field decays away from the dispatched value. Use " *
+            "T_E = Inf to hold the field voltage, or K_A > 0 to regulate it."))
         return new(id, bus, Float64(S_rated), Float64(H), Float64(D),
                    Float64(Xd′), Float64(E′), Float64(P0),
                    Float64(R), Float64(Pmax), Float64(Tg),
                    Float64(Xd), Float64(Xq), Float64(Xq′),
-                   Float64(Td0′), Float64(Tq0′), Float64(Ra))
+                   Float64(Td0′), Float64(Tq0′), Float64(Ra),
+                   Float64(K_A), Float64(T_E), Float64(Efd_min), Float64(Efd_max))
     end
 end
 
@@ -644,7 +707,8 @@ through here, so none of them can hold a different convention.
 
 """
     machine_arrays(net::NetworkModel)
-        -> (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra)
+        -> (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra,
+              K_A, T_E, Efd_min, Efd_max)
 
 The machine parameters as contiguous `Vector{Float64}`s **indexed by machine**
 (entry `k` belongs to `net.machines[k]`), all converted to the **system base** —
@@ -711,6 +775,20 @@ Detailed-tier data (M5 step 2), converted here and nowhere else:
                   which is the frozen-flux limit the detailed tier's defaults sit
                   at (D4).
 
+Regulator data (M5 step 5), passed straight through — **none of it converts**:
+
+  - `K_A`      — pu/pu. It maps a per-unit voltage error to a per-unit field
+                 voltage, and both are voltages on the bus's voltage base, which
+                 no change of *power* base touches. The reason `Efd` itself is
+                 base-free is that it is built as `E′q + (Xd − X′d)·Id`, and a
+                 reactance times a current is invariant: the reactance carries
+                 `S_base/S_rated` and the current carries its inverse. So the row
+                 that would look symmetric with `Xd` above — dividing by `w` — is
+                 the mistake here, and it is the mirror image of the `Xd′` trap.
+  - `T_E`      — s, base-free like `Tg`, `Td0′` and `Tq0′`.
+  - `Efd_min`,
+    `Efd_max`  — pu voltage, base-free for `K_A`'s reason. `±Inf` passes through.
+
 Derived on call, never stored: one canonical model, compiled views (SPEC §3.2).
 """
 function machine_arrays(net::NetworkModel)
@@ -731,6 +809,10 @@ function machine_arrays(net::NetworkModel)
     Td0′ = Vector{Float64}(undef, n)
     Tq0′ = Vector{Float64}(undef, n)
     Ra   = Vector{Float64}(undef, n)
+    K_A     = Vector{Float64}(undef, n)
+    T_E     = Vector{Float64}(undef, n)
+    Efd_min = Vector{Float64}(undef, n)
+    Efd_max = Vector{Float64}(undef, n)
     for (v, m) in pairs(net.machines)
         bus[v] = net.bus_index[m.bus]
         w = m.S_rated / S_base          # machine base -> system base, for powers
@@ -753,8 +835,15 @@ function machine_arrays(net::NetworkModel)
         Ra[v]   = m.Ra  / w
         Td0′[v] = m.Td0′
         Tq0′[v] = m.Tq0′
+        # M5 step 5. NOT divided by `w`, and see the docstring for why that is the
+        # answer rather than an oversight: a field voltage is a voltage.
+        K_A[v]     = m.K_A
+        T_E[v]     = m.T_E
+        Efd_min[v] = m.Efd_min
+        Efd_max[v] = m.Efd_max
     end
-    return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra)
+    return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra,
+              K_A, T_E, Efd_min, Efd_max)
 end
 
 """
@@ -803,8 +892,10 @@ end
 The **classical tier's data precondition**, M5 step 2's counterpart to
 `_assert_one_machine_per_bus`'s structural one.
 
-A `Machine` can now carry synchronous reactances, transient time constants and a
-stator resistance (`Machine`'s docstring). Nothing at the classical tier reads any
+A `Machine` can now carry synchronous reactances, transient time constants, a
+stator resistance and — since M5 step 5 — a voltage regulator (`Machine`'s
+docstring). Both groups are checked here; the name says "frozen flux" because
+that was the first of them. Nothing at the classical tier reads any
 of them: it represents a machine as a constant-magnitude `E′` at the bus, which is
 the two-axis machine's frozen-flux limit and nothing more. So a machine with real
 detailed data handed to `SwingEngine` or `coi_model` would run as a *different
@@ -824,6 +915,19 @@ ask.
 """
 function _assert_frozen_flux(net::NetworkModel, who::AbstractString)
     for m in net.machines
+        # M5 step 5, and it is the SAME failure one mechanism along: a machine
+        # carrying a regulator, run at a tier that has no field voltage at all,
+        # would hold `E′` fixed where its data says an exciter is holding *terminal*
+        # voltage instead. Refused by name, in this function rather than a second
+        # one, because the caller's question is "is this classical-tier data".
+        (m.K_A == 0.0 && m.T_E == Inf &&
+         m.Efd_min == -Inf && m.Efd_max == Inf) || throw(ArgumentError(
+            "$who: machine $(m.id) carries a voltage regulator — (K_A, T_E, " *
+            "Efd_min, Efd_max) = ($(m.K_A), $(m.T_E), $(m.Efd_min), $(m.Efd_max)). " *
+            "The classical tier has no field voltage to regulate and no terminal " *
+            "voltage to regulate it against: it holds |E′| at the bus constant, " *
+            "which is the regulator-OFF limit. Running it here would silently drop " *
+            "the exciter. Use DetailedEngine, or leave K_A/T_E at their defaults."))
         ok = m.Xd == m.Xd′ && m.Xq == m.Xd′ && m.Xq′ == m.Xd′ &&
              m.Td0′ == Inf && m.Tq0′ == Inf && m.Ra == 0.0
         ok || throw(ArgumentError(
@@ -1154,6 +1258,69 @@ function infinite_bus_system(; P0::Real = 0.0, Xd::Real = 1.8, H::Real = 200.0,
         [Machine(:G1, :B1, 250.0, H, 0.0, 0.25, 1.05,  Float64(P0);
                  Xd = Xd, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4),
          Machine(:G_inf, :B2, 100.0, H_inf, 0.0, 0.05, 1.00, -Float64(P0))])
+end
+
+"""
+    regulator_bus_system(; K_A = 200.0, T_E = 0.05, Efd_min = -Inf, Efd_max = Inf,
+                         E1 = 0.80, Xd = 1.8) -> NetworkModel
+
+One regulated machine against an infinite bus over **three parallel paths** — the
+fixture M5 step 5's ceiling checks run on, and every one of its unusual choices is
+load-bearing.
+
+**Zero real loading everywhere, which is what makes the closed form exact.** As in
+`infinite_bus_system()`, `P0 = 0` puts the whole solution on the real axis: `Iq ≡ 0`,
+`E′d ≡ 0`, `Pe ≡ 0`, so the swing equation has nothing to integrate and the rotor
+is IMMOBILE rather than merely heavy. The machine still exchanges *reactive* power
+— that is what moves its terminal voltage — and reactive current is pure `Id`,
+which produces no air-gap power at all. So the exciter can be driven hard while the
+rotor does not move, and the field-flux decay stays the exact first-order law of
+`m5-prestudy.md` §3 rather than an approximation with a swing in it.
+
+**`E′` is deliberately BELOW the infinite bus's, and the direction matters.** The
+terminal voltage is a weighted average of the machine's own transient EMF and the
+infinite-bus voltage, with the weights set by the network reactance: so weakening
+the network moves the terminal voltage *towards* `E′q`. Under-exciting the machine
+(`E1 = 0.80` against `1.05`) is therefore what makes a line trip lower its terminal
+voltage and drive the exciter **up** into a ceiling. With `E′` above the infinite
+bus the same trip raises the voltage and drives the exciter into its floor instead
+— the mirror-image case, which is why `Efd_min` is a keyword too.
+
+**Three parallel paths, because the milestone needs a SECOND disturbance.** M1's
+"a second trip after saturation does not freeze the integrator" needs two trips
+that both leave the machine connected; a two-bus fixture islands on the first. The
+direct tie is short (0.02 pu) and the two detours are long, so tripping the direct
+tie is a large, well-defined weakening (`X` from 0.018 to 0.222 pu) and tripping a
+detour afterwards weakens it again (to 0.5 pu) without disconnecting anything. `B3`
+and `B4` carry no machine and no load — bare junctions, the vertex the classical
+tier cannot represent at all.
+
+**The regulator keywords are the case, not the model.** `Efd_max` low enough and
+the demand never falls back below it, so the ceiling holds for the whole horizon
+and the field flux decays under a constant `Efd = Efd_max` — step 4's closed form
+with a different constant in it. `Efd_max` high enough and the terminal voltage
+recovers past the release point, so the limit comes off **unaided**, at a time the
+same closed form predicts. Both are one keyword apart, which is the point: nothing
+distinguishes the two runs except the number under test.
+
+`G1` is rated 250 MVA on a 100 MVA base and `G_inf` 100 MVA, so every reactance in
+a prediction must come from `machine_arrays` — the system base — and not from the
+`Machine` fields.
+"""
+function regulator_bus_system(; K_A::Real = 200.0, T_E::Real = 0.05,
+                              Efd_min::Real = -Inf, Efd_max::Real = Inf,
+                              E1::Real = 0.80, Xd::Real = 1.8)
+    NetworkModel(100.0, 50.0,
+        [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0), Bus(:B4, 400.0)],
+        [Branch(:L12, :B1, :B2, 0.02, 500.0),      # the direct tie: first to trip
+         Branch(:L13, :B1, :B3, 0.20, 500.0),      # detour A, second to trip
+         Branch(:L32, :B3, :B2, 0.20, 500.0),
+         Branch(:L14, :B1, :B4, 0.25, 500.0),      # detour B: the survivor
+         Branch(:L42, :B4, :B2, 0.25, 500.0)],
+        [Machine(:G1, :B1, 250.0, 200.0, 0.0, 0.25, Float64(E1), 0.0;
+                 Xd = Xd, Xq = 1.7, Xq′ = 0.55, Td0′ = 8.0, Tq0′ = 0.4,
+                 K_A = K_A, T_E = T_E, Efd_min = Efd_min, Efd_max = Efd_max),
+         Machine(:G_inf, :B2, 100.0, 100.0, 0.0, 0.02, 1.05, 0.0)])
 end
 
 """

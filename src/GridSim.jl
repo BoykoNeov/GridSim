@@ -190,6 +190,9 @@ export load_bus_system
 # maintained in two places is the forked-data hazard SPEC §3.2 forbids —
 # `detailed_pair` in particular was a `reference/test` local until step 4.
 export detailed_pair, infinite_bus_system
+# M5 step 5's fixture, here for the same reason: `reference/` runs the unlimited
+# exciter against PowerDynamics on it, and the core suite runs the limited one.
+export regulator_bus_system
 # The applied-event record the trajectory deliberately does not carry (a line trip
 # leaves no channel behind, and a one-sample marker is what decimation deletes —
 # see the head of `engines/swing.jl`). `describe_event` gives a window and a

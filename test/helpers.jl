@@ -416,7 +416,8 @@ caller lists channels instead of looping over `keys`.
 flux_limit_model(net::NetworkModel) = NetworkModel(net.S_base, net.f0, net.buses,
     net.branches,
     [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd, m.E′, m.P0, m.R, m.Pmax, m.Tg;
-             Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq, Td0′ = Inf, Tq0′ = Inf, Ra = m.Ra)
+             Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq, Td0′ = Inf, Tq0′ = Inf, Ra = m.Ra,
+             K_A = m.K_A, T_E = m.T_E, Efd_min = m.Efd_min, Efd_max = m.Efd_max)
      for m in net.machines])
 
 # `net` with every finite flux time constant scaled by `λ`. `Inf·λ` is `Inf`, so a
@@ -425,7 +426,8 @@ scale_flux_time(net::NetworkModel, λ::Real) = NetworkModel(net.S_base, net.f0,
     net.buses, net.branches,
     [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax, m.Tg;
              Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = λ * m.Td0′,
-             Tq0′ = λ * m.Tq0′, Ra = m.Ra) for m in net.machines])
+             Tq0′ = λ * m.Tq0′, Ra = m.Ra, K_A = m.K_A, T_E = m.T_E,
+             Efd_min = m.Efd_min, Efd_max = m.Efd_max) for m in net.machines])
 
 # `net` with one machine's `Xd` scaled — the anti-vacuity mutation for both the
 # closed form (the predicted τ moves) and the `T′ → 0` limit (the fast side
@@ -434,24 +436,38 @@ scale_Xd(net::NetworkModel, id::Symbol, f::Real) = NetworkModel(net.S_base, net.
     net.buses, net.branches,
     [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax, m.Tg;
              Xd = m.id === id ? f * m.Xd : m.Xd, Xq = m.Xq, Xq′ = m.Xq′,
-             Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra) for m in net.machines])
+             Td0′ = m.Td0′, Tq0′ = m.Tq0′, Ra = m.Ra, K_A = m.K_A, T_E = m.T_E,
+             Efd_min = m.Efd_min, Efd_max = m.Efd_max) for m in net.machines])
 
 """
     efd_step_run(net; ΔEfd, reltol, abstol, T, saveat, slack) -> NamedTuple
 
 A step on machine 1's field voltage, and the trajectory it produces.
 
-`Efd` is a PARAMETER at this tier until the plan's step 5 gives it a regulator, so
-this is the sanctioned perturbation channel (SPEC §6 — `inject!` writes exactly
-this vector) and needs no new event type. `auto_dt_reset!` follows the write for
-the reason `tier_pair` does it: the integrator's cached step size was chosen for
-the pre-step problem.
+`Efd` WAS a parameter when this helper was written and is a STATE since M5 step 5,
+so the step is now written into `integrator.u` — and the two calls that follow it
+are not decoration. A state written into the integrator is silently discarded by
+the next step unless `u_modified!` invalidates the cached derivative (the M3
+finding, asserted in its own testset), and `auto_dt_reset!` stops the controller
+carrying a step size chosen for the pre-step problem.
+
+**The step still holds exactly**, which is what keeps step 4's closed form intact:
+these runs leave the regulator at its default `T_E = Inf`, so `dEfd/dt` is `0.0`
+by arithmetic and the raised field voltage is constant thereafter — the same
+"excitation held at its pre-disturbance value" case the Heffron-Phillips law is
+written for. With a regulator armed this helper would be measuring the loop, not
+the flux.
 """
 function efd_step_run(net::NetworkModel; ΔEfd::Real = 0.05, reltol::Real = 1.0e-9,
                       abstol::Real = 1.0e-12, T::Real = 25.0, saveat::Real = 0.05,
                       slack::Symbol = :G_inf)
     eng = init!(DetailedEngine, net; slack = slack, reltol = reltol, abstol = abstol)
-    eng.params[eng.Efd_pidx[1]] += ΔEfd
+    all(m.T_E == Inf for m in net.machines) || error(
+        "efd_step_run: a machine carries a regulator (T_E < Inf), so a step written " *
+        "into Efd is not held — the exciter integrates it away and the closed form " *
+        "this helper feeds is no longer the one being measured.")
+    eng.integrator.u[eng.Efd_idx[1]] += ΔEfd
+    SciMLBase.u_modified!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return solve!(eng, (0.0, Float64(T)); saveat = saveat)
 end

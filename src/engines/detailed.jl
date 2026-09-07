@@ -157,9 +157,19 @@
 # substitution were right. `load_bus_system()` exists for that reason: it is the
 # fixture on which this check has content.
 #
+# THE VOLTAGE REGULATOR (M5 step 5) is a static exciter with one lag and hard
+# limits, `T_E·dEfd/dt = −Efd + K_A(Vref − |V|)`, and `Efd` is a STATE. The
+# defaults are the regulator OFF — `K_A = 0`, `T_E = Inf` — which by the same
+# `finite/Inf` arithmetic the flux uses makes `dEfd/dt` exactly zero and holds the
+# field voltage at whatever the power flow dispatched. That is the case every check
+# written before step 5 runs on, so those checks did not have to move. `Vref` is
+# DERIVED at initialisation from the solved `(|V|, Efd)` rather than taken as model
+# data, for the same reason `Pm` is (see below): a supplied setpoint that does not
+# match the dispatch turns the flat run into a startup transient. The limits are
+# saturations in the DERIVATIVE, backed by an `isoutofdomain` guard which this tier
+# had none of at all before step 5.
+#
 # WHAT IS DELIBERATELY NOT HERE YET, each named rather than discovered later:
-#   - the voltage regulator (plan step 5). `Efd` is a PARAMETER, computed once at
-#     initialisation and constant thereafter, which is the "regulator off" case;
 #   - `inject!(::TripGenerator)` — a tripped machine turns its bus into a passive
 #     node, which changes that vertex's EQUATIONS, and a vertex model cannot
 #     change shape at run time. It needs a machine status that zeroes the injected
@@ -323,10 +333,11 @@ with `|V₀| = 1`, i.e. `G = P₀` and `B = −Q₀` (per unit). A bus with no l
 """
     _detailed_machine_bus!(dv, v, esum, p, t)
 
-A bus carrying one machine. State `v = (V_re, V_im, δ, ω, ΔPm, E′q, E′d)` with mass
-matrix `Diagonal(0, 0, 1, 1, 1, 1, 1)`: the first two rows are the algebraic
-constraint, the next three are the same differential equations `swing_vertex!`
-integrates, and the last two are the field- and damper-axis transient flux.
+A bus carrying one machine. State `v = (V_re, V_im, δ, ω, ΔPm, E′q, E′d, Efd)` with
+mass matrix `Diagonal(0, 0, 1, 1, 1, 1, 1, 1)`: the first two rows are the
+algebraic constraint, the next three are the same differential equations
+`swing_vertex!` integrates, the next two are the field- and damper-axis transient
+flux, and the last is the exciter (M5 step 5).
 
 The two algebraic rows are Kirchhoff's current law at the bus:
 
@@ -343,13 +354,15 @@ The governor block is `swing_vertex!`'s, unchanged and deliberately so: `ΔPm` i
 never a clamp on the state — the M1 landmine, still live here.
 """
 function _detailed_machine_bus!(dv, v, esum, p, t)
-    Vre, Vim, δ, ω, ΔPm, E′q, E′d = v[1], v[2], v[3], v[4], v[5], v[6], v[7]
-    Pm, Efd             = p[1], p[2]
-    Xd, Xq, Xd′, Xq′    = p[3], p[4], p[5], p[6]
-    Td0′, Tq0′, Ra      = p[7], p[8], p[9]
-    H, D, ω₀            = p[10], p[11], p[12]
-    invR, headroom, Tg  = p[13], p[14], p[15]
-    G, B, mstat         = p[16], p[17], p[18]
+    Vre, Vim, δ, ω, ΔPm, E′q, E′d, Efd = v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]
+    Pm                  = p[1]
+    Xd, Xq, Xd′, Xq′    = p[2], p[3], p[4], p[5]
+    Td0′, Tq0′, Ra      = p[6], p[7], p[8]
+    H, D, ω₀            = p[9], p[10], p[11]
+    invR, headroom, Tg  = p[12], p[13], p[14]
+    G, B, mstat         = p[15], p[16], p[17]
+    K_A, T_E            = p[18], p[19]
+    Efd_min, Efd_max, Vref = p[20], p[21], p[22]
     Id, Iq, Ire, Iim, Pe = _stator(Vre, Vim, δ, E′q, E′d, Ra, Xd′, Xq′, mstat)
     Lre, Lim = _load_current(Vre, Vim, G, B)
     dv[1] = Ire - Lre + esum[1]                 # KCL, real
@@ -361,10 +374,7 @@ function _detailed_machine_bus!(dv, v, esum, p, t)
         dΔPm = zero(dΔPm)                       # saturate the DERIVATIVE (see above)
     end
     dv[5] = dΔPm
-    # The transient flux. `Efd` is a PARAMETER until plan step 5 gives it a
-    # regulator; computed once at initialisation, it is the "excitation held at its
-    # pre-disturbance value" case, which is the one the flux-decay closed form in
-    # `m5-prestudy.md` §3 is written for.
+    # The transient flux.
     #
     # `T = Inf` is the frozen limit and is arithmetic, not a branch: `finite/Inf` is
     # `0.0` exactly, so the derivative is zero and the state holds. That is the
@@ -372,6 +382,39 @@ function _detailed_machine_bus!(dv, v, esum, p, t)
     # PowerDynamics writes `T·ẋ ~ rhs` and cannot do this (`m5-prestudy.md` §2a).
     dv[6] = (-E′q - (Xd - Xd′) * Id + Efd) / Td0′
     dv[7] = (-E′d + (Xq - Xq′) * Iq) / Tq0′
+    # THE EXCITER (M5 step 5, `m5-prestudy.md` §2). Static, one lag, hard limits:
+    #
+    #     T_E·dEfd/dt = −Efd + K_A·(Vref − |V|)
+    #
+    # `Efd` is a STATE rather than a parameter, and unconditionally so. A vertex
+    # model's state count is fixed when the network compiles, so "a parameter when
+    # the regulator is off and a state when it is on" is not available; instead
+    # `T_E = Inf` — the default — makes `dEfd/dt` exactly `0.0` by the same
+    # `finite/Inf` arithmetic the flux uses two lines up, and the field voltage
+    # holds at whatever the initialisation dispatched. That IS the regulator-off
+    # case, and it is what every check written before step 5 runs on.
+    #
+    # `Vref` is a parameter DERIVED at initialisation, never model data — see
+    # `init!`. Here it is simply read.
+    #
+    # THE LIMITS ARE SATURATIONS IN THE DERIVATIVE, NEVER A CLAMP ON THE STATE.
+    # This is M1's carried-forward rule (CLAUDE.md, SPEC §7) applied to a second
+    # quantity: clamping `Efd` after the fact would corrupt the integration, and an
+    # adaptive solver would keep proposing steps that walk back out. At a limit with
+    # the derivative pointing outward the derivative is zeroed, so the solution sits
+    # *at* the limit and stays there while the demand persists — and comes off it
+    # unaided, with no event and no state surgery, the moment the demand reverses.
+    # PowerDynamics' `AVRTypeI` writes its own anti-windup the same way
+    # (`ifelse(at the limit and pushing outward, 0, …)` inside the derivative),
+    # which is agreement reached independently rather than a convention copied.
+    #
+    # `±Inf` limits are the unlimited case and cost no branch of their own:
+    # `Efd >= Inf` and `Efd <= -Inf` are both false.
+    dEfd = (-Efd + K_A * (Vref - hypot(Vre, Vim))) / T_E
+    if (Efd >= Efd_max && dEfd > 0) || (Efd <= Efd_min && dEfd < 0)
+        dEfd = zero(dEfd)
+    end
+    dv[8] = dEfd
     return nothing
 end
 
@@ -516,10 +559,11 @@ end
 function _dynamic_network(net::NetworkModel, g)
     vmachine = NetworkDynamics.VertexModel(
         f = _detailed_machine_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d],
-        psym = [:Pm, :Efd, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
-                :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :mstat],
-        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+        sym = [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d, :Efd],
+        psym = [:Pm, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
+                :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :mstat,
+                :K_A, :T_E, :Efd_min, :Efd_max, :Vref],
+        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
         name = :machine_bus)
     vpassive = NetworkDynamics.VertexModel(
         f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
@@ -547,6 +591,42 @@ function _static_network(net::NetworkModel, g)
              for v in 1:length(net.buses)]
     return NetworkDynamics.Network(g, verts, [_detailed_edge() for _ in 1:Graphs.ne(g)])
 end
+
+# `isoutofdomain` predicate, built per engine because it has to close over the
+# resolved flat indices — `SwingEngine`'s construction, and for its reasons.
+#
+# THIS TIER HAD NO PREDICATE AT ALL UNTIL M5 STEP 5, and that is a gap being closed
+# rather than a feature being extended. `ΔPm`'s headroom has had its derivative
+# saturation here since step 1, but nothing absorbed an adaptive step that overshot
+# the ceiling between two derivative evaluations — the guard `SwingEngine` grew in
+# M3 was simply never copied across. The regulator is what made it worth writing (a
+# limit that BINDS is the case where overshoot happens), so the predicate arrives
+# with three indices per machine rather than the plan's two.
+#
+# It touches only `ΔPm` and `Efd`. `δ` and `ω` are deliberately unbounded — post-trip
+# the angles drift forever by design — and so are the flux states and every bus
+# voltage: an algebraic unknown has no box to be outside of, and a predicate that
+# rejected a proposed voltage would reject every step of a correct run and collapse
+# `dt` to an abort.
+#
+# Rejecting a step is not the forbidden post-hoc clamp: the step is retried, never
+# written. The derivative saturations in `_detailed_machine_bus!` do the physical
+# work; this only absorbs overshoot on top of them, and it cannot stall, because at
+# a limit the saturated derivative already puts the solution *at* the limit rather
+# than beyond it. The `1e-10` slack is roundoff tolerance for exactly that landing.
+function _detailed_outofdomain(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int},
+                               Efd_idx::Vector{Int}, lo_pidx::Vector{Int},
+                               hi_pidx::Vector{Int})
+    return function (u, p, t)
+        @inbounds for k in eachindex(ΔPm_idx)
+            u[ΔPm_idx[k]] > p[hr_pidx[k]] + 1e-10 && return true
+            u[Efd_idx[k]]  > p[hi_pidx[k]]  + 1e-10 && return true
+            u[Efd_idx[k]]  < p[lo_pidx[k]]  - 1e-10 && return true
+        end
+        return false
+    end
+end
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # The power flow, and the checks that make it a result rather than a fixpoint
@@ -651,10 +731,11 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     ΔPm_idx::Vector{Int}
     E′q_idx::Vector{Int}
     E′d_idx::Vector{Int}
+    Efd_idx::Vector{Int}
     Vre_idx::Vector{Int}
     Vim_idx::Vector{Int}
     Pm_pidx::Vector{Int}
-    Efd_pidx::Vector{Int}
+    Vref_pidx::Vector{Int}
     status_pidx::Vector{Int}
     sVre_idx::Vector{Int}
     sVim_idx::Vector{Int}
@@ -732,6 +813,12 @@ property of the network — but it is **not** merely a gauge choice, and the hea
 carries the measurement that says so: with a voltage-dependent load anywhere in
 the model, two slacks give two different (both correct) dispatches.
 
+`Vref` never appears in this signature, and that is the point: the exciter's
+setpoint is **derived** from the solved equilibrium (`Vref = |V| + Efd/K_A`), so a
+machine with a regulator starts at rest exactly as one without does. The field
+voltage itself comes from the power flow too (`Efd = E′q + (Xd − X′d)·Id`), and is
+refused here if it falls outside the machine's own limits.
+
 The steady state is **checked** (`_check_power_flow`) and then checked again a
 different way: the dynamic network's own residual at the back-substituted point
 must be at machine precision. That second check is what proves the
@@ -779,8 +866,12 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     ΔPm_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :ΔPm)) for k in 1:nm]
     E′q_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′q)) for k in 1:nm]
     E′d_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′d)) for k in 1:nm]
+    Efd_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :Efd)) for k in 1:nm]
     Pm_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Pm)) for k in 1:nm]
-    Efd_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Efd)) for k in 1:nm]
+    Vref_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Vref)) for k in 1:nm]
+    hr_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :headroom)) for k in 1:nm]
+    lo_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Efd_min)) for k in 1:nm]
+    hi_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Efd_max)) for k in 1:nm]
 
     sVre_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
     sVim_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
@@ -881,15 +972,45 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         u0[ΔPm_idx[k]] = 0.0
         u0[E′q_idx[k]] = E′q
         u0[E′d_idx[k]] = E′d
+        u0[Efd_idx[k]] = Efd
         p0[Pm_pidx[k]]  = Pm
-        p0[Efd_pidx[k]] = Efd
+        # THE SETPOINT IS DERIVED, NOT SUPPLIED (M5 step 5). At a steady state the
+        # exciter's own equation `T_E·dEfd/dt = −Efd + K_A(Vref − |V|)` has one
+        # unknown left once `Efd` and `|V|` come out of the power flow, and that is
+        # `Vref`. Taking it as model data instead would be exactly the `Pm = P0`
+        # mistake the header describes, one mechanism along: a setpoint that does not
+        # match the dispatch, a flat run that is not flat, and every downstream check
+        # then measuring a startup transient rather than the thing it names.
+        #
+        # `K_A = 0` is the regulator-off default, where the whole term is multiplied
+        # by zero and any finite `Vref` is as good as any other; `|V|` is the one
+        # that keeps the arithmetic free of `0/0`. `Machine` has already refused the
+        # one combination where that would hide something (`K_A = 0` with a finite
+        # `T_E`, which has no steady state at all).
+        Vmag = hypot(Vre, Vim)
+        p0[Vref_pidx[k]] = ma.K_A[k] > 0 ? Vmag + Efd / ma.K_A[k] : Vmag
         for (sym, val) in ((:Xd, ma.Xd[k]), (:Xq, ma.Xq[k]), (:Xd′, ma.Xd′[k]),
                            (:Xq′, ma.Xq′[k]), (:Td0′, ma.Td0′[k]), (:Tq0′, ma.Tq0′[k]),
                            (:Ra, ma.Ra[k]), (:H, ma.H[k]), (:D, ma.D[k]), (:ω₀, ω₀),
                            (:invR, ma.invR[k]), (:headroom, ma.headroom[k]),
-                           (:Tg, ma.Tg[k]), (:mstat, 1.0))
+                           (:Tg, ma.Tg[k]), (:mstat, 1.0),
+                           (:K_A, ma.K_A[k]), (:T_E, ma.T_E[k]),
+                           (:Efd_min, ma.Efd_min[k]), (:Efd_max, ma.Efd_max[k]))
             p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(vb, sym))] = val
         end
+        # THE DISPATCH MUST LIE INSIDE THE MACHINE'S OWN LIMITS, checked here with a
+        # number rather than left to the solver. A field voltage that starts outside
+        # its ceiling is not a transient that decays: the derivative saturation holds
+        # it wherever it starts if the demand points outward, and the domain guard
+        # rejects every step if it does not. Either way the run is meaningless, and
+        # the cause is data, not integration.
+        (ma.Efd_min[k] <= Efd <= ma.Efd_max[k]) || throw(ArgumentError(
+            "DetailedEngine: machine $(net.machines[k].id) is dispatched at a field " *
+            "voltage Efd = $Efd pu, outside its own limits " *
+            "[$(ma.Efd_min[k]), $(ma.Efd_max[k])]. The power flow, not the exciter, " *
+            "sets the initial field voltage — it is E′q + (Xd − X′d)·Id at the solved " *
+            "operating point — so a limit tighter than the dispatch describes a " *
+            "machine that cannot hold its own schedule."))
     end
     worst_pm < _PF_RESIDUAL || throw(ErrorException(
         "DetailedEngine: the back-substituted air-gap power disagrees with the " *
@@ -920,6 +1041,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     integrator = OrdinaryDiffEq.init(prob, solver; dt = Float64(dt),
                                      reltol = Float64(reltol), abstol = Float64(abstol),
                                      dtmax = Float64(dtmax),
+                                     isoutofdomain = _detailed_outofdomain(
+                                         ΔPm_idx, hr_pidx, Efd_idx, lo_pidx, hi_pidx),
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 
@@ -927,6 +1050,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     [Symbol("ω_", id) for id in ids],
                     [Symbol("E′q_", id) for id in ids],
                     [Symbol("E′d_", id) for id in ids],
+                    [Symbol("Efd_", id) for id in ids],
                     [Symbol("V_", b.id) for b in net.buses], [:δ_coi, :f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
     branch_of_buses = Dict{Tuple{Symbol,Symbol},Int}(
@@ -934,8 +1058,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
 
     eng = DetailedEngine(net, nw, nws, slack_id, Set(1:ne), integrator.p, sp, su,
                          Float64(dt), integrator, net.f0, ω₀, ids, copy(ma.bus),
-                         δ_idx, ω_idx, ΔPm_idx, E′q_idx, E′d_idx,
-                         Vre_idx, Vim_idx, Pm_pidx, Efd_pidx, status_pidx,
+                         δ_idx, ω_idx, ΔPm_idx, E′q_idx, E′d_idx, Efd_idx,
+                         Vre_idx, Vim_idx, Pm_pidx, Vref_pidx, status_pidx,
                          sVre_idx, sVim_idx, sδ_idx, sPset_pidx, smode_pidx,
                          sδtarget_pidx, sstatus_pidx, sE′q_pidx, sE′d_pidx,
                          branch_to_edge, branch_of_buses,
@@ -966,7 +1090,7 @@ end
 """
     current_state(eng::DetailedEngine) -> NamedTuple
 
-`(; t, δ, ω, ΔPm, E′q, E′d, V, δ_coi, ω_coi, f_coi)`. `V` is the vector of bus
+`(; t, δ, ω, ΔPm, E′q, E′d, Efd, V, δ_coi, ω_coi, f_coi)`. `V` is the vector of bus
 voltage MAGNITUDES in per unit, indexed by vertex — the quantity this whole tier
 exists to produce, and the one `SwingEngine` cannot report at all because it does
 not carry a bus voltage as an unknown.
@@ -980,7 +1104,8 @@ function current_state(eng::DetailedEngine)
     ω_coi = _ω_coi(eng, u)
     V = Float64[hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]]) for v in eachindex(eng.Vre_idx)]
     return (t = eng.integrator.t, δ = u[eng.δ_idx], ω = u[eng.ω_idx],
-            ΔPm = u[eng.ΔPm_idx], E′q = u[eng.E′q_idx], E′d = u[eng.E′d_idx], V = V,
+            ΔPm = u[eng.ΔPm_idx], E′q = u[eng.E′q_idx], E′d = u[eng.E′d_idx],
+            Efd = u[eng.Efd_idx], V = V,
             δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
 
@@ -1003,13 +1128,14 @@ function _record_at!(eng::DetailedEngine, t::Real, u::AbstractVector{<:Real})
         eng.sample[n + k]  = u[eng.ω_idx[k]]
         eng.sample[2n + k] = u[eng.E′q_idx[k]]
         eng.sample[3n + k] = u[eng.E′d_idx[k]]
+        eng.sample[4n + k] = u[eng.Efd_idx[k]]
     end
     @inbounds for v in 1:nb
-        eng.sample[4n + v] = hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
+        eng.sample[5n + v] = hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
     end
     f_coi = eng.f0 * (1 + _ω_coi(eng, u))
-    eng.sample[4n + nb + 1] = _δ_coi(eng, u)
-    eng.sample[4n + nb + 2] = f_coi
+    eng.sample[5n + nb + 1] = _δ_coi(eng, u)
+    eng.sample[5n + nb + 2] = f_coi
     record!(eng.traj, t, eng.sample)
     f_coi < eng.nadir && (eng.nadir = f_coi)
     return nothing
@@ -1020,8 +1146,8 @@ _record!(eng::DetailedEngine) = _record_at!(eng, eng.integrator.t, eng.integrato
 """
     state_series(eng::DetailedEngine) -> NamedTuple
 
-`(; t, δ_<id>..., ω_<id>..., E′q_<id>..., E′d_<id>..., V_<bus>..., δ_coi, f_coi)`.
-Bounded and decimating, like every recorder in the repo.
+`(; t, δ_<id>..., ω_<id>..., E′q_<id>..., E′d_<id>..., Efd_<id>..., V_<bus>...,
+δ_coi, f_coi)`. Bounded and decimating, like every recorder in the repo.
 
 **One channel per BUS, not per machine**, for the voltage: a machine-free bus is
 exactly the thing this tier added, and it is often the one whose voltage matters.
@@ -1031,6 +1157,11 @@ state and `f_coi` cannot stand in for them — a wrong `E′d` rings a voltage a
 leaves frequency flat. At the classical degeneration those two channels are
 constant by construction (the flux is frozen), so a flat run proves nothing about
 them there; that vacuity is asserted in `test/` rather than left to be inferred.
+
+**`Efd` is a channel for the same reason and with the same caveat** (M5 step 5):
+it is what a regulator moves, and the ceiling checks read its trajectory to see
+that it holds at a limit and comes off unaided. With the regulator off — the
+default — it is a constant, and a run proves nothing about it there either.
 """
 state_series(eng::DetailedEngine) = series(eng.traj)
 

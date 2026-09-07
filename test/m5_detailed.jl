@@ -312,11 +312,12 @@ end
     # the positive half: the engine's own dimension is states, not buses squared
     eng = init!(DetailedEngine, load_bus_system())
     nb = length(eng.model.buses)
-    @test length(eng.integrator.u) == 2 * nb + 5 * length(eng.ids)
+    @test length(eng.integrator.u) == 2 * nb + 6 * length(eng.ids)
     # THE `nb²` FORM OF THIS CHECK FAILED IN STEP 2, AND IT DESERVED TO. It read
     # `length(u) < nb^2 + 2nb`, which on this 3-bus fixture became `16 < 15` the
     # moment a machine carried five states instead of three. The state count was
-    # never the quantity in question: it is `2·nb + 5·nm`, LINEAR in both, and
+    # never the quantity in question: it is `2·nb + 6·nm` (step 5's exciter made it
+    # six), LINEAR in both, and
     # bounding a linear count by a quadratic one only holds while the linear
     # constant is small — on a small system it says nothing, and on a large one it
     # would pass against a genuinely dense engine.
@@ -700,21 +701,25 @@ end
 end
 
 # --- read-out and structure --------------------------------------------------
-@testset "the tier's state and channels grew by exactly two per machine" begin
+@testset "the tier's state and channels grew by exactly three per machine" begin
+    # Two in step 2 (the flux pair) and one more in step 5 (the exciter), so the
+    # count is `2·nb + 6·nm`. The testset title carries the running total rather
+    # than the increment of whichever step last touched it.
     eng = init!(DetailedEngine, load_bus_system())
     nb = length(eng.model.buses)
     nm = length(eng.ids)
-    @test length(eng.integrator.u) == 2 * nb + 5 * nm
+    @test length(eng.integrator.u) == 2 * nb + 6 * nm
     ser = solve!(eng, (0.0, 1.0); saveat = 0.05)
     ks = keys(ser)
-    for ch in (:E′q_G1, :E′q_G2, :E′d_G1, :E′d_G2)
+    for ch in (:E′q_G1, :E′q_G2, :E′d_G1, :E′d_G2, :Efd_G1, :Efd_G2)
         @test ch in ks
     end
     st = current_state(eng)
     @test length(st.E′q) == nm && length(st.E′d) == nm
-    # `Efd` is a PARAMETER at this step — the regulator is plan step 5 — and it is
-    # the machine's initial `E′q` exactly, because `Xd − X′d = 0` here.
-    @test all(eng.params[eng.Efd_pidx[k]] ≈ st.E′q[k] for k in 1:nm)
+    # `Efd` is the machine's initial `E′q` exactly, because `Xd − X′d = 0` here. It
+    # became a STATE in step 5 (the regulator) and is read as one; with `T_E = Inf`
+    # — the default this fixture sits at — it is still a constant.
+    @test all(st.Efd[k] ≈ st.E′q[k] for k in 1:nm)
 end
 
 @testset "the re-initialisation holds the FLUX too, in a third static mode" begin
@@ -787,7 +792,7 @@ end
     # …and the d-axis one, which holds BY CONSTRUCTION (`Efd` is defined from it)
     # and is asserted anyway, because a definition living in one place is exactly
     # what makes a later second definition invisible.
-    @test eng.params[eng.Efd_pidx[1]] ≈ st.E′q[1] + (ma.Xd[1] - ma.Xd′[1]) * Id atol = 1.0e-12
+    @test st.Efd[1] ≈ st.E′q[1] + (ma.Xd[1] - ma.Xd′[1]) * Id atol = 1.0e-12
     # The fixture is not vacuous: the saliency and the q-axis flux are live in it.
     @test abs(st.E′d[1]) > 0.15                      # measured 0.184
     @test !isapprox(st.E′q[1], net.machines[1].E′; atol = 1.0e-3)   # 0.9639 vs 1.00
@@ -903,7 +908,8 @@ end
     qmut = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
         [Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, m.P0, m.R, m.Pmax,
                  m.Tg; Xd = m.Xd, Xq = m.Xq, Xq′ = m.Xq′, Td0′ = m.Td0′,
-                 Tq0′ = 10.0 * m.Tq0′, Ra = m.Ra) for m in net.machines])
+                 Tq0′ = 10.0 * m.Tq0′, Ra = m.Ra, K_A = m.K_A, T_E = m.T_E,
+                 Efd_min = m.Efd_min, Efd_max = m.Efd_max) for m in net.machines])
     sq = efd_step_run(qmut)
     @test maximum(abs, sq.E′q_G1 .- s1.E′q_G1) < 1.0e-12
 end

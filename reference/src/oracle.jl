@@ -463,7 +463,7 @@ function _seed_sauer_pai!(s0, net::NetworkModel, ma, mach_bus::Vector{Int},
         # cannot come to disagree about what "held at its pre-disturbance value"
         # means — and `Pm` in particular is the POWER FLOW's dispatch, which is not
         # `Machine.P0` on any model carrying a load.
-        s0.p.v[v, :mach₊vf_set]  = eng.params[eng.Efd_pidx[k]]
+        s0.p.v[v, :mach₊vf_set]  = eng.integrator.u[eng.Efd_idx[k]]
         s0.p.v[v, :mach₊τ_m_set] = eng.params[eng.Pm_pidx[k]]
     end
     # The bus voltages are STATES on their side too (`busbar₊u_r`/`u_i`, with a
