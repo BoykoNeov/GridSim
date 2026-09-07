@@ -1356,6 +1356,70 @@ end
     end
 end
 
+@testset "the seeded path with a BINDING reactive limit" begin
+    # Every fixture in the sweep above has Q_min = -Inf, Q_max = Inf, so the guard's
+    # `roles[v] === :generator` skip and the held-Q route through
+    # `S = complex(Pgen, Qgen)` had never run at all. Step 3 already built the case
+    # where a limit is known from algebra to bind; this is that case, seeded.
+    net = _ac_two_bus(Q_max = 0.25)
+    sol = ac_powerflow(net)
+    @test sol.limited == [:B2]                  # the premise, re-asserted here
+    @test sol.roles == [:slack, :load]          # …so B2's magnitude is NOT V_set
+    @test bus_voltage(sol, :B2) < 1.05
+    # The limited machine's injection is the held one, which is what the seeding
+    # reads. If the guard skipped the magnitude check for the wrong reason, or the
+    # seeding took `V_set` instead of the solved magnitude, the state would not be a
+    # fixpoint and `init!` would refuse.
+    eng = init!(DetailedEngine, net; powerflow = sol, reltol = 1e-8, abstol = 1e-11)
+    ser = solve!(eng, (0.0, 50.0); saveat = 0.05)
+    worst, _ = _worst_drift(ser)
+    @test worst < 1e-10
+    # …and the guard still refuses a bent dispatch on this case, so its limited
+    # branch is not simply skipping everything.
+    Pg = copy(sol.Pgen); Pg[2] += 0.1
+    @test occursin("the scheduled P",
+                   argerr_msg(() -> init!(DetailedEngine, net;
+                                          powerflow = _seed_bend(sol; Pgen = Pg))))
+end
+
+@testset "the seeded run ACROSS an event — the static state left behind is inert" begin
+    # A NEW `init!` PATH SHIPPED INTO AN ENGINE THAT TAKES EVENTS, so the thing it
+    # leaves un-set has to be measured rather than argued. On this path `_run_static!`
+    # never runs, so `u_static` stays flat and `p_static[sPset]` stays at the model's
+    # schedule — stale at the slack by 0.096 pu against the derived 0.604. Both are
+    # claimed inert in `init!`'s comment because `_reinitialise_algebraic!` overwrites
+    # every entry of `u_static` it reads and re-solves in `_PF_HOLD`, where
+    # `_static_machine_bus!` takes `dv[3] = δ − δ_target` and never reads `Pset`.
+    # This is the measurement behind that claim.
+    #
+    # M5's fixture and M5's argument: every machine at zero injection with the same
+    # internal voltage puts every bus at the same voltage, so every branch carries
+    # exactly zero current and removing one changes nothing. The post-trip
+    # equilibrium is the pre-trip one in closed form, and any departure is
+    # re-initialisation artefact.
+    net = quiet_ring()
+    eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net),
+                dt = 0.05, reltol = 1e-8, abstol = 1e-10)
+    @test maximum(abs, branch_power(eng)) < 1e-14          # the precondition
+    ser = solve!(eng, (0.0, 10.0); perturbations = [3.0 => TripLine(:B2, :B3)])
+    @test n_events(eng) == 1
+    for ch in keys(ser)
+        ch === :t && continue
+        v = ser[ch]
+        @test all(x -> x == v[1], v)                       # `==`, across the event
+    end
+    # AND THE OTHER HALF, for M5's reason: a re-initialisation that did nothing would
+    # also come out flat here. The same trip on a ring that carries power moves the
+    # states, so the event is reaching a seeded engine too.
+    let ring = governed_ring()
+        eng2 = init!(DetailedEngine, ring; powerflow = ac_powerflow(ring), dt = 0.05,
+                     reltol = 1e-8, abstol = 1e-10, maxiters = 10_000_000)
+        @test maximum(abs, branch_power(eng2)) > 0.1
+        s2 = solve!(eng2, (0.0, 10.0); perturbations = [3.0 => TripLine(:B2, :B3)])
+        @test maximum(abs, s2.δ_G2 .- s2.δ_G2[1]) > 0.1
+    end
+end
+
 @testset "the two solves land in DIFFERENT places — this is not a self-comparison" begin
     # If the seeded state and the fixpoint state were the same point, the flat run
     # would be re-testing the fixpoint against itself and every mutation above would

@@ -9,7 +9,7 @@ valuable line.
 Status: **steps 0–3 done, step 4's oracle A done; oracle B and steps 5–6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
-**3175 core**; at oracle A's close **3255 core**, UI and `reference/` unchanged
+**3175 core**; at oracle A's close **3284 core**, UI and `reference/` unchanged
 throughout.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
@@ -595,9 +595,20 @@ rather than asserted with `==`.
       dead code — `_assert_detailed_tier` refuses both models first — and one of the
       two messages was *false*. Deleted; the test that found it is kept, asserting
       the tier's guards fire on both paths.
+- [x] **A third piece of dead code, in the same batch**: the seeded branch also wrote
+      the AC answer into `u_static` with a comment claiming an event re-seeds from it.
+      `_reinitialise_algebraic!` overwrites every entry it reads. Deleted, and the
+      stale `p_static[sPset]` left with the *true* reason (`_PF_HOLD` never reads
+      `Pset`) — now a measurement, because a **seeded engine runs across a line trip**
+      in the suite.
+- [x] **The binding reactive limit is exercised on the seeded path** — step 3's
+      `_ac_two_bus(Q_max = 0.25)`, the one branch of the new dispatch guard that no
+      sweep fixture could reach.
 - [x] The cost recorded rather than hidden: **oracle A can never see a lossy branch**,
       so the resistive half of `ac_powerflow` is now a *requirement* on oracle B
-      rather than a nice-to-have.
+      rather than a nice-to-have — written as **boxes** in oracle B's list, not as
+      prose here (M3 step 7's rule: an item carried without a criterion is the one
+      that gets dropped).
 
 ### Oracle B — `PowerFlows.jl` in `reference/`
 
@@ -611,6 +622,17 @@ rather than asserted with `==`.
       with its justification, then the comparison runs.
 - [ ] Bus voltage magnitudes, angles and branch flows compared on at least two
       cases: one radial, one meshed.
+- [ ] **A LOSSY case (`R > 0`), which oracle A structurally cannot reach** (D14).
+      With `R = 0` our loss channel is zero and `flow + flow_rev` vanishes, so the
+      resistive half of `ac_powerflow` — the only thing `Branch.R` was added for —
+      has no internal check at all. Written as a box rather than left in oracle A's
+      prose, because an item carried without a criterion is the one that gets
+      dropped (M3 step 7, learned on Figure 3-67).
+- [ ] **A case with a BINDING reactive limit**, which oracle A is blind to for the
+      reason D13 names: a bus wrongly switched to a limit holds a `Q` nobody
+      scheduled and its magnitude becomes an unknown, so neither of the seeded
+      path's dispatch comparisons applies and the run is flat anyway. Only an
+      external solve on the same case can say the wrong bus was limited.
 - [ ] Their DC solve compared against ours as a separate channel with its own band
       — a per-channel band, not the aggregate's (M4's lesson).
 - [ ] Anti-vacuity: sabotage a value on **our** side and confirm the comparison

@@ -657,6 +657,20 @@ documented as *guaranteed by a guard that predates this one*, and the test that
 found it is kept — it asserts the tier's guards fire on **both** paths, which is the
 fact the seeding now rests on.
 
+**And it happened a third time, inside the same batch.** The seeded branch of `init!`
+also wrote the AC answer into `u_static`, with a comment saying an event later
+re-solves the static network from it and the collapsed basin is within 2.5 rad. Dead
+code again: `u_static` has exactly one consumer, `_reinitialise_algebraic!`, and it
+overwrites **every entry it reads** — each bus's `V_re`/`V_im` and each machine's
+`δ`, which is the whole static state vector — from the live dynamic state before
+re-solving. The same applies to `p_static[sPset]`, which on this path stays at the
+model's schedule and is stale at the slack by 0.096 pu: the re-solve runs in
+`_PF_HOLD`, where `_static_machine_bus!` takes `dv[3] = δ − δ_target` and never reads
+`Pset`. Both deleted / left alone with the *true* reason written down, and a seeded
+engine now runs **across a line trip** in the suite so "inert" is a measurement
+rather than a reading of the source. **The recurring failure is writing a guard, or a
+comment, without reading what already runs on that path.**
+
 **The cost is recorded rather than hidden: oracle A can never see a lossy branch.**
 With `R = 0` the loss channel is zero to round-off and `flow + flow_rev` vanishes, so
 the resistive half of `ac_powerflow` — the one thing `Branch.R` was added for — is
@@ -714,6 +728,13 @@ a perturbed voltage violates the algebraic block, so `init!` throws and there is
 run to be non-flat. The two halves are (a) bend the solution → refused at build time,
 and (b) overwrite `Pm` with the schedule → the run moves by 6.6 rad. Only (b) is the
 anti-vacuity check; (a) is a guard test that happens to be worth having.
+
+**The binding reactive limit had never run on the seeded path**, so the dispatch
+guard's `roles[v] === :generator` skip and the held-`Q` route through
+`S = complex(Pgen, Qgen)` were unexercised — every sweep fixture has `Q_max = Inf`.
+Step 3's two-bus case with `Q_max = 0.25` (where the limit is known from algebra to
+bind) is now seeded and asserted flat, and the guard is asserted still to refuse a
+bent dispatch on it, so the limited branch is not simply skipping everything.
 
 **And the identity check on the solution is weak in this repo.** `two_machine_system`
 and `detailed_pair` share every bus id, every branch id and the same slack, so

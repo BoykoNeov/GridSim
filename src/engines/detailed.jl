@@ -1185,20 +1185,17 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         # follows is flat or one of the two is wrong.
         V, δ0, Pe, Iinj, res = _seed_from_powerflow(net, powerflow, ma)
         flows = _branch_flows(net, bt, V, ones(Float64, ne))
-        # The static state is seeded from the AC answer rather than left flat, for
-        # `_reinitialise_algebraic!`'s reason and not as an optimisation: an event
-        # later in the run re-solves the static network from `u_static`, and the
-        # collapsed basin reaches to within 2.5 rad of the true solution. `δ0` here
-        # is the AC-derived rotor angle, which is a SEED and not a claim — the
-        # re-solve runs in `_PF_HOLD`, where the machine's held flux, not `ma.E`,
-        # sets the source.
-        for v in 1:nb
-            su[sVre_idx[v]] = real(V[v])
-            su[sVim_idx[v]] = imag(V[v])
-        end
-        for k in 1:nm
-            su[sδ_idx[k]] = δ0[k]
-        end
+        # `su` AND `sp` ARE LEFT AS BUILT, and that is checked rather than assumed —
+        # the AC answer was written into them here first, with a comment about
+        # re-seeding after an event, and it was dead code. `u_static`'s only consumer
+        # is `_reinitialise_algebraic!`, which overwrites EVERY entry it then reads
+        # (each bus's V_re/V_im and each machine's δ — that is the whole static state
+        # vector) from the live dynamic state before re-solving. Same for the stale
+        # `sp[sPset_pidx]`, which still holds `ma.Pm[k]` while this path's derived
+        # `Pm` differs at the slack: the re-solve runs in `_PF_HOLD`, where
+        # `_static_machine_bus!` takes `dv[3] = δ − δ_target` and never reads `Pset`
+        # at all. Both are inert, and the M6 step 4 sweep runs a seeded engine across
+        # a line trip so that stays a measurement.
         what = "DetailedEngine power flow (seeded from ac_powerflow)"
     end
     _check_power_flow(net, V, flows, res, what)
