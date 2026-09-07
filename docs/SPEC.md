@@ -324,8 +324,8 @@ end
   Two things the M4 work changed about what this bullet promises:
 
   - The overlay the UI draws is **ours against ours** — the centre-of-inertia
-    tier against the network swing tier (M4 step 3), and against the detailed
-    tier when M5 lands. PowerDynamics is a **validation run, not a tier**: it is
+    tier against the network swing tier (M4 step 3), and the classical tier
+    against the detailed one (M5 step 8). PowerDynamics is a **validation run, not a tier**: it is
     the checker, and promoting it to something the mode router offers would put a
     component library in the hot path for no current payoff (`m4-context.md` D3).
   - The external comparison is made **at matched fidelity first**, so that a
@@ -333,6 +333,24 @@ end
     outside one leaves "the simple model drops swings" and "our model has a bug"
     indistinguishable — which is the exact failure this reference exists to
     remove (D2).
+
+  **Amended again in M5 step 8, on the three lessons this bullet names.** Two of
+  the three now have a picture and the third does not, and the difference is
+  stated here rather than left to be inferred from the existence of a voltage
+  window:
+
+  - *Inter-machine swings* — drawn by `ui/src/playback_window.jl` (M4 step 3),
+    the aggregate tier against the network swing tier.
+  - *Voltage coupling* — drawn by `ui/src/voltage_window.jl` (M5 step 8), the
+    classical tier against the detailed one, with bus voltage magnitude as an
+    algebraic state the detailed tier solves for and the classical tier's
+    constant beside it. The pre-event offset between the two is a **denomination
+    difference** rather than a result, and the window says so on its own face.
+  - *IBR behaviour* — **no tier, and UN-SCHEDULED.** An inverter is a third
+    fidelity: it has no swing equation, so it is not a machine with different
+    numbers. Nothing in M5 delivers it, and standing a voltage window next to
+    this line does not deliver it either. It is named here as owed and
+    unplanned, not as implied by the voltage work (`m5-context.md` D12).
 
 ### 7.7 UI (separate `ui/` package, `using GLMakie`)
 

@@ -18,6 +18,14 @@ compiled down from the same model — with a slider that scrubs a cursor through
 the run and the cross-tier divergence read beside it. It has no event queue, no
 control block and no repaint throttle, because nothing in it is running.
 
+A **fourth** (`voltage_window.jl`, M5 step 8) is the same execution mode one tier
+up: the classical tier against the detailed (DAE) one, with **bus voltage
+magnitude** drawn beside the frequency both tiers report. It exists to keep the
+voltage half of a promise `docs/plans/m4-plan.md` wrote on M5's behalf — the third
+window's own caption says its pair can never show voltage, because neither of its
+tiers carries one as an unknown. The inverter half of that promise is *not* kept
+and does not become kept by proximity (`m5-context.md` D12).
+
 The first two are siblings rather than one window with a runtime switch, because
 the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
@@ -83,6 +91,17 @@ using GridSim: GenerationRamp, OutOfStepTrip, shed_ladder, shed_log
 # `intersect(names(GridSim), names(GLMakie))` test before being named here.
 using GridSim: solve!, state_series, coi_model,
                divergence, system_frequency, tolerance_band, three_machine_ring
+# M5 step 8's voltage-visible window (`voltage_window.jl`). `DetailedEngine` is the
+# tier that carries bus voltage as an algebraic unknown; `governed_ring` is the ONE
+# core definition that produces both this window's models (its `detailed` keyword
+# sets exactly the fields `SwingEngine` refuses); `machine_at` is how the bus a
+# voltage channel names is tied to the machine whose constant is drawn beside it —
+# by lookup and never by position, because a transposed mapping on this fixture
+# draws a nearly identical picture. `GenerationRamp` is the disturbance, armed at
+# construction on both tiers because it is the only strong one they both accept.
+# All four checked clear against GLMakie's exports before being named here — the
+# standing check, empty on Julia 1.12.6 / GLMakie 0.13.13.
+using GridSim: DetailedEngine, governed_ring, machine_at
 # The precompile workload (`precompile.jl`) drives the armed network window on
 # the two-machine fixture; nothing in the windows themselves needs this name.
 using GridSim: two_machine_system
@@ -99,6 +118,7 @@ include("theme.jl")
 include("window.jl")
 include("network_window.jl")
 include("playback_window.jl")
+include("voltage_window.jl")
 include("editor.jl")
 include("editor_window.jl")
 
@@ -108,6 +128,11 @@ export launch, smoke_render, wait_for_close
 # them. The core draws the same line the same way — `run_realtime!` against
 # `solve!` — so the UI mirrors it instead of inventing a type to dispatch on.
 export playback, playback_render
+# M5 step 8, the fourth window and the second in playback mode: the classical tier
+# against the detailed one with BUS VOLTAGE drawn, which is the half of M4's written
+# promise this milestone owed. Its own verb pair again, for M4's reason — the model
+# type cannot say which execution mode, or which tier pair, was wanted.
+export voltage_playback, voltage_playback_render
 # The scenario editor — a window with no engine in it, whose product is the model
 # the others start from. Its editing operations are exported too, because they are
 # the same functions the mouse handlers call, and a script (or a test) building a

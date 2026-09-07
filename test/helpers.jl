@@ -64,21 +64,12 @@ end
 P0_of(sys, id) = first(u.P0 for u in sys.units if u.id === id)
 
 # --- M3 steps 1, 2, 5: the governed ring (test/m3_governors_protection.jl) ---
-# The M2 ring with real droop on the two machines that survive a G1 trip.
-# `hr2` is G2's up-reserve in MW, so the same shape serves both the
-# "reserve is ample" and the "reserve runs out" cases.
-function governed_ring(; hr2 = 200.0, hr3 = 60.0, Tg = 5.0)
-    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
-    machines = [
-        Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05,   80.0),               # no governor
-        Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.03,   30.0, 0.05,   30.0 + hr2, Tg),
-        Machine(:G3, :B3, 500.0, 5.0, 2.0, 0.50, 1.04, -110.0, 0.05, -110.0 + hr3, Tg),
-    ]
-    branches = [Branch(:L12, :B1, :B2, 0.25, 500.0),
-                Branch(:L23, :B2, :B3, 0.25, 500.0),
-                Branch(:L31, :B3, :B1, 0.25, 500.0)]
-    return NetworkModel(100.0, 50.0, buses, branches, machines)
-end
+# NOT DEFINED HERE ANY MORE. It moved to `src/model/network_model.jl` in M5 step 8,
+# when a third consumer appeared (the UI's voltage window draws the classical and
+# detailed models this one definition produces, and `ui/test/` checks it). The
+# construction is unchanged and `governed_ring()` with no keyword is bit for bit
+# what this file built, so every M3 and M5 number taken on it stands. Re-exported
+# by `GridSim`; `test/runtests.jl` already brings it into scope.
 
 # --- M3 step 3: the split-speed fixture (test/m3_governors_protection.jl) ---
 #

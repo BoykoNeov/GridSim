@@ -208,6 +208,12 @@ export detailed_pair, infinite_bus_system
 # M5 step 5's fixture, here for the same reason: `reference/` runs the unlimited
 # exciter against PowerDynamics on it, and the core suite runs the limited one.
 export regulator_bus_system
+# M5 step 8's fixture — the M3 governed ring, promoted out of `test/helpers.jl`
+# when a THIRD consumer appeared (the UI's voltage window and its tests). Its
+# `detailed` keyword makes one definition produce both models the cross-tier
+# comparison needs. Checked clear against GLMakie's exports before being added —
+# the standing check.
+export governed_ring
 # The applied-event record the trajectory deliberately does not carry (a line trip
 # leaves no channel behind, and a one-sample marker is what decimation deletes —
 # see the head of `engines/swing.jl`). `describe_event` gives a window and a

@@ -46,6 +46,16 @@ using PrecompileTools
                 # Playback overlay, default scenario, short horizon.
                 playback_render(; path = tmp, horizon = 2.0)
 
+                # The voltage-visible overlay (M5 step 8). SHORT horizon and the
+                # engines' loose default tolerances, unlike the shipped window's
+                # 60 s at reltol 1e-5: this workload exists to compile the third
+                # axis, the per-bus traces and the two extra read-out blocks, and
+                # none of that depends on how long or how finely the DAE ran. The
+                # shipped defaults here would put a full stiff solve inside every
+                # precompilation.
+                voltage_playback_render(; path = tmp, horizon = 2.0,
+                                        reltol = 1.0e-3, abstol = 1.0e-6)
+
                 # The scenario editor, with the property panel open on a machine
                 # (the branch of the builder with the most widgets in it).
                 editor_render(; path = tmp, select = (:machine, :G1))

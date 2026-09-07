@@ -1258,6 +1258,68 @@ detailed_pair() = NetworkModel(100.0, 50.0,
      Machine(:G2, :B2, 400.0, 5.0, 2.0, 0.30, 1.02, -40.0)])
 
 """
+    governed_ring(; detailed = NamedTuple(), hr2 = 200.0, hr3 = 60.0, Tg = 5.0)
+        -> NetworkModel
+
+`three_machine_ring()` with real droop on the two machines that survive a `G1`
+trip — and, since M5 step 8, **one definition that produces both of the models a
+cross-tier comparison needs**. `hr2` is `G2`'s up-reserve in MW, so the same shape
+serves both the "reserve is ample" and the "reserve runs out" cases.
+
+It lived in `test/helpers.jl` from M3 until M5 step 8, and moved here for the
+reason `detailed_pair()`'s note gives: three suites need it now (the core tests,
+the UI's voltage window, and the window's own tests), and a fixture maintained
+twice is the forked-data hazard SPEC §3.2 exists to forbid. The construction is
+unchanged, so every M3 and M5 number taken on it stands.
+
+**`detailed` is splatted into all three `Machine` constructors, and its default is
+EXACTLY the machine this fixture always built.** An empty NamedTuple leaves every
+field at the classical degeneration (`Xd = Xq = X′q = X′d`, `T′do = T′qo = Inf`,
+`K_A = 0`, `T_E = Inf`), so `governed_ring()` is bit for bit what it was. What the
+keyword buys is the pair M5 step 8's window draws: the fields it sets are read by
+`DetailedEngine` and by **nothing** in `SwingEngine`, so
+
+    governed_ring()                        # the classical tier's model
+    governed_ring(; detailed = (; Xd = 1.8, Xq = 1.7, Xq′ = 0.55,
+                                  Td0′ = 8.0, Tq0′ = 0.4))
+
+agree in every quantity `SwingEngine` reads and differ in exactly the set it
+refuses by name (`_assert_frozen_flux`). That is what makes a comparison across
+them a comparison of TIERS rather than of two hand-written cases — the same
+structure `scripts/iberia_two_area.jl`'s `two_area_model` uses, and asserted
+field by field in `test/`.
+
+**The two models do NOT start at the same operating point, and that is a property
+of the data rather than of the tiers.** `Machine.E′` denominates a different
+physical quantity at each tier (`Machine`'s docstring): the constant internal
+voltage *at the bus* classically, and the magnitude of the q-axis source *behind*
+`(Ra + jXq)` in detail. Holding the number at 1.05 while moving what it sits
+behind from `X′d = 0.30` to `Xq = 1.7` puts the source 5.7× further back, so the
+detailed power flow solves these buses to `|V| = (0.915, 0.923, 0.920)` against
+the classical tier's `(1.05, 1.03, 1.04)`. Both land inside the power flow's own
+`|V| ∈ [0.9, 1.1]` band, which is why the textbook reactances can be used here
+with no scan at all — but the 0.13 pu offset is an artefact of one number serving
+two denominations, and anything drawing the two side by side has to say so
+(`ui/src/voltage_window.jl` does).
+"""
+function governed_ring(; detailed::NamedTuple = NamedTuple(),
+                         hr2::Real = 200.0, hr3::Real = 60.0, Tg::Real = 5.0)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    machines = [
+        #       id    bus   S_rated    H    D    Xd′    E′      P0      R        Pmax   Tg
+        Machine(:G1, :B1,    300.0,  4.0, 2.0,  0.30,  1.05,   80.0; detailed...),  # no governor
+        Machine(:G2, :B2,    200.0,  3.0, 2.0,  0.20,  1.03,   30.0, 0.05,
+                30.0 + hr2, Tg; detailed...),
+        Machine(:G3, :B3,    500.0,  5.0, 2.0,  0.50,  1.04, -110.0, 0.05,
+                -110.0 + hr3, Tg; detailed...),
+    ]
+    branches = [Branch(:L12, :B1, :B2, 0.25, 500.0),
+                Branch(:L23, :B2, :B3, 0.25, 500.0),
+                Branch(:L31, :B3, :B1, 0.25, 500.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines)
+end
+
+"""
     infinite_bus_system(; P0 = 0.0, Xd = 1.8, H = 200.0, H_inf = 100.0,
                         K_A = 0.0, T_E = Inf) -> NetworkModel
 

@@ -307,17 +307,34 @@ D25-D28; the script is `scripts/iberia_two_area.jl` section 5.
 | The field ceiling's overshoot | **Reported, not hidden**: 5.18 pu at reltol 1e-3 and 5.11 at 1e-5 against a stated 5.0 — the single step that lands on the limit (step 5's measurement, on a fast state). The `Efd_max` axis is swept for exactly this reason, and at 2.5 — half the centre value — the criterion still holds at 1.0164 | **measurement, with the sweep that rules it out as the cause** |
 | The voltage COLLAPSE (12:33:21.5 → 27) | **Still nothing, and still said out loud.** The tier has bus voltages and the flux-only cell reaches 0.81 pu, but reproducing the collapse needs load that falls away and protection that trips on voltage. §7.6's boundary moves; it does not disappear | **un-oracled — out of scope, named** |
 
+## The voltage-visible window — M5 step 8, `ui/src/voltage_window.jl`
+
+The fourth window and the second in playback mode: the classical tier against the
+detailed one, with bus voltage drawn. It **displays** what the core computes and
+computes nothing itself, so the rows below are about what the picture can and
+cannot be read as — which is the only thing a window can get wrong.
+
+| What | Check | Kind |
+|---|---|---|
+| The two models are one definition | `_assert_tier_pair` checks all eleven fields `SwingEngine` reads, plus branches and both bases, at **build time** — `==`, not `≈`. A pair differing in a classical field is refused by name, so the two runs cannot differ for two reasons at once. Step 7's invariant, made structural at the seam that can break it | **guard, with its refusal asserted** |
+| The pre-event offset is denomination, not physics | The two runs start 0.135 / 0.107 / 0.120 pu apart, which is **larger** than the 0.090 / 0.096 / 0.094 pu the disturbance then moves the voltage by. `Machine.E′` is the bus voltage at one tier and the source behind `(Ra + jXq)` at the other, so one number sits 5.7× further back in one model. Drawn, named on the caption, and given as a number in the read-out beside `Δ from t0` | **measurement, with the hazard named on the picture** |
+| …and the ANTI-VACUITY control for it | The same window with the frozen-flux model on **both** sides: the offsets collapse to 0.013 / 0.0003 / 0.010 pu — a factor of ten on every bus, leaving only the `X′d` the classical tier folds away. Without it, "the panel draws a real offset" cannot be told from "the panel always draws one". Both figures are checked in, on **one voltage scale**, because the contrast is the finding | **positive + anti-vacuity control, rendered** |
+| No band on the voltage panel | `tolerance_band` is a **solver-noise** band; a cross-tier voltage difference is a modelling difference, so there is no band and no `t_depart` on that panel at all, and the window returns no `voltage_band` a caller could be handed by accident. The frequency block names its own channel in its own text (`channel f_COI ONLY`), not only in a heading | **named boundary, asserted in the figure** |
+| The bus a machine stands on | `_assumed_constants` looks up through `machine_at`, never by position. **Measured: the transposition is unreachable** — `NetworkModel` stores machines sorted by bus and the classical tier refuses a bus without exactly one machine, so machine index equals vertex index and the positional form returns the identical vector. A mutation to it changed no answer in the suite. The lookup stays because the equivalence is a property of two *other* invariants | **mutation-tested; found the check's own premise wrong** |
+| The scenario's direction | A ramp on the ring's **load**, so the voltage sags 0.920 → 0.826. A ramp on a generator unloads it and the voltage **rises toward** the classical constants, which reads as the tiers converging — rejected for that reason, and the rejected run is the anti-vacuity control that the direction claim is not vacuous | **measurement, with the rejected alternative asserted** |
+| Why a ramp at all | Forced: `DetailedEngine` refuses `TripGenerator` by name, so `TripLine` is the only *event* both tiers take — and a line trip on this ring moves the frequency 1.5 mHz and the voltage 0.004 pu. A ramp is armed at construction, so both tiers get it identically | **named boundary** |
+| The regulator, and why it is not the default | With the AVR armed the terminal voltage barely moves (0.0005 pu, 190× less) and the **field** moves instead, `Efd` swinging 6.3e-2. The held field is constant to **4.4e-16** — two ulps, round-off and not bitwise, so the check is stated as that signature rather than as `==` | **measurement (signature, not tolerance)** |
+| Every number shown is a recorded sample | The cursor indexes samples, and the read-outs are checked with `===` against the series — including each bus's `|V|` and its `Δ` from `t = 0`. An `atol` check passes against the off-by-one this window can actually have | **exactness, available because nothing is interpolated** |
+| The caption is in the picture | Every Label the window claims is asserted **in the figure's layout**, with a control proving the helper can say no. A Label with the right text that was never added passes every text assertion anyone can write about it | **structural (M3 step 7's lesson)** |
+| The passive bus | Structurally **absent**: the classical tier refuses a machine-free bus, so every model this window can draw has one machine per bus — and `state_series` says a machine-free bus "is often the one whose voltage matters". Named on the caption | **un-oracled — out of reach, named** |
+
 ## Owed rows
 
-Rows M5 will need before it ships:
-
-- The M5 rows: flux equations, exciter, power-flow initialisation, algebraic
-  network, **voltage-dependent load** — all delivered, steps 1-6 — and the **D8
-  flat run across an event**, **M3's protection re-validated at this tier** and
-  **the Iberian criterion itself**, all delivered by step 7 in the block above.
-  Still owed: the voltage-visible window (plan step 8), and SPEC §7.6's third
-  lesson (IBR behaviour), which has no tier and is **un-scheduled** rather than
-  implied by M5's voltage work.
+- SPEC §7.6's third lesson, **IBR behaviour**: no tier, and **un-scheduled**
+  rather than implied by M5's voltage work. An inverter has no swing equation, so
+  it is a third fidelity and not a machine with different numbers. Step 8's window
+  says so on its own caption, and SPEC §7.6 now says it too
+  (`m5-context.md` D12).
 - M5 also inherited one **choice** from step 4: the detailed tier's external check
   wants `SauerPaiMachine`, which is above `ClassicalMachine`, so the torque
   convention (D14) had to be re-read from *that* component's source rather than

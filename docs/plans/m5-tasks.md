@@ -1105,29 +1105,71 @@ what — the quiet fixture proves no artefact is **injected**, and the loaded-ri
 positive control (0.286 rad on `δ_G2` through the same trip) proves the event is
 reaching the system at all.
 
-## Step 8 — the voltage-visible window (D12, first to be cut)
+## Step 8 — the voltage-visible window (D12, first to be cut — NOT cut, delivered)
 
-- [ ] Playback overlay on M4's scrubbable window: bus voltage magnitude alongside
-      frequency, classical against detailed.
-- [ ] `smoke_render` offscreen **first**, then the live window. Render before
-      claiming.
-- [ ] A `Label` with the right text that was never added to the figure passes
+- [x] Playback overlay on M4's scrubbable window: bus voltage magnitude alongside
+      frequency, classical against detailed. `ui/src/voltage_window.jl`, the
+      fourth window — a separate builder rather than a mode on M4's, because that
+      file's header is eighty lines arguing why ITS pair can show one lesson of
+      three, and this pair shows a second one.
+- [x] `smoke_render` offscreen **first**, then the live window. Render before
+      claiming. Four offscreen passes; the first two changed the design (see
+      below), and the live window was then opened, dragged and closed.
+- [x] A `Label` with the right text that was never added to the figure passes
       every text assertion anyone can write about it — assert it is *in* the
-      figure (M4 step 3).
-- [ ] The M4 promise it discharges is named in the window's own docstring, so the
-      commitment and the delivery are in one place.
-- [ ] If cut (D11): the inherited promise is **restated in the follow-on batch**,
-      not quietly dropped.
+      figure (M4 step 3). Six labels asserted in the layout, with a control that
+      proves the helper can say no. **It caught one**: the "frequency channel
+      only" qualifier lived in a `section_label!` heading nobody held, so no check
+      could reach it; it moved into the block it qualifies.
+- [x] The M4 promise it discharges is named in the window's own docstring, so the
+      commitment and the delivery are in one place — quoted verbatim, in the file
+      header and in `voltage_playback`'s docstring, along with the half that is
+      NOT discharged.
+- [x] If cut (D11): the inherited promise is **restated in the follow-on batch**,
+      not quietly dropped. Not cut.
+
+### What the renders changed, in order
+
+1. **The pre-event offset is bigger than the disturbance.** The two runs start
+   0.135 pu apart and the ramp moves the voltage 0.096 — so the largest number on
+   the voltage panel is `Machine.E′` serving two denominations at `t = 0`, not a
+   result. This is M4's "0.857 Hz that is not the lesson" in voltage form, met a
+   second time. It is drawn, named on the caption, and separated from the movement
+   in the read-out; and the frozen-flux control, where it collapses tenfold, is
+   what says it is denomination rather than a broken comparison.
+2. **A generation ramp was the wrong disturbance, twice over.** `DetailedEngine`
+   refuses `TripGenerator` by name and a line trip moves this ring by 1.5 mHz, so
+   a ramp was forced. But a ramp on a GENERATOR unloads it and the voltage RISES
+   toward the classical constants — which reads as the tiers converging. The
+   shipped ramp adds LOAD, and the voltage sags. The rejected run is kept as the
+   control that the direction claim is not vacuous.
+3. **Twenty seconds was too short** (`T′do = 8 s`, so the flux was still moving at
+   the right-hand edge and "largest movement" was just the last sample), and the
+   read-out column overflowed into the caption.
+
+### The mutation, and what it found
+
+Running the bus→machine mutation — the check the whole mapping testset existed for
+— showed the transposition is **unreachable**: `NetworkModel` stores machines
+sorted by bus, and the classical tier refuses a bus without exactly one machine, so
+machine index equals vertex index and the positional form returns the identical
+vector. **The test's own premise was wrong**, and the fixture built to be "out of
+order" comes back in order from the constructor. The testset now asserts the
+invariant that makes the two equivalent, and says the lookup is kept because that
+equivalence is a property of two *other* invariants rather than of this code.
 
 ## Housekeeping owed by this milestone
 
-- [ ] `docs/SPEC.md` §7.6's third lesson (IBR behaviour) still has no tier —
-      stated as un-scheduled rather than implied by M5's voltage work.
-- [ ] `docs/validation-ledger.md` gains a detailed-tier section, every row
-      labelled, `un-oracled` rows stated out loud.
-- [ ] `docs/plans/README.md` M5 row updated as steps land.
+- [x] `docs/SPEC.md` §7.6's third lesson (IBR behaviour) still has no tier —
+      stated as un-scheduled rather than implied by M5's voltage work. §7.6 now
+      lists all three lessons with which window draws which, and IBR as owed and
+      unplanned.
+- [x] `docs/validation-ledger.md` gains a detailed-tier section, every row
+      labelled, `un-oracled` rows stated out loud. Step 8's own section added; the
+      passive bus is the `un-oracled — out of reach` row.
+- [x] `docs/plans/README.md` M5 row updated as steps land.
 - [ ] Re-resolve all three environments from deleted manifests at the end, as M4
       step 5 did — the gitignored-manifest trap has now caught this repo twice
       (`m4-context.md` D15, and the 2026-08-18 stale dev manifest).
-- [ ] `Pkg.add` rewrites `Project.toml` and drops every comment — `git diff` after
-      any dependency change and put them back.
+- [x] `Pkg.add` rewrites `Project.toml` and drops every comment — `git diff` after
+      any dependency change and put them back. No dependency changed in step 8.

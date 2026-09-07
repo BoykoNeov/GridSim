@@ -6,11 +6,11 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **four**: two real-time windows,
-one per fidelity tier, chosen by the model you hand `launch` — a third for the
-other *execution mode*, the playback overlay, which has its own verb — and the
-scenario editor, which has no engine in it at all and produces the model the
-other three start from (both below).
+Built on `GLMakie` (native window). There are **five**: two real-time windows,
+one per fidelity tier, chosen by the model you hand `launch` — two more for the
+other *execution mode*, the playback overlays, which have their own verbs — and
+the scenario editor, which has no engine in it at all and produces the model the
+others start from (all below).
 
 The two real-time windows:
 
@@ -32,6 +32,30 @@ do not accept the same events: `TripLine` has no method on the aggregate view (a
 classical-tier load is a machine, and there is no aggregate imbalance to move).
 The set of buttons a window can offer is a property of the engine, so it is
 settled by dispatch on the model type.
+
+The two playback overlays draw a run that has already finished, scrubbed with a
+slider rather than watched. Neither has an event queue, a control block or a
+repaint throttle, because nothing in either is running:
+
+- **`playback` — the aggregate tier against the network swing tier** (M4 step 3).
+  Frequency on one panel, the gap between the two on a log panel below it with the
+  agreement band and the instant they part company. The band is derived from the
+  solve's own tolerance and there is deliberately **no control for it**: a slider
+  would let a reader look at the gap first and then choose the band that puts the
+  departure where they expected it.
+- **`voltage_playback` — the classical tier against the detailed (DAE) tier**
+  (M5 step 8), with a third panel carrying **bus voltage magnitude**: an algebraic
+  state the detailed tier solves for and the classical tier does not have at all.
+  That panel has no band and no departure read, because a cross-tier voltage
+  difference is a modelling difference rather than solver noise.
+
+  **Read the movement, not the offset.** The two runs do not start at the same bus
+  voltage — `Machine.E′` is the voltage *at* the bus classically and the source
+  *behind* `(Ra + jXq)` in detail, so the same number sits 5.7× further back in one
+  model. The offset that puts on the screen (0.135 pu) is larger than what the
+  disturbance then does (0.096 pu), it is there before anything happens, and the
+  read-out separates the two. Hand `governed_ring()` to both sides and it collapses
+  tenfold, which is what says it is denomination and not a broken comparison.
 
 Two things about the multi-machine panels are worth knowing before reading one:
 
@@ -85,6 +109,14 @@ Hand it a network model instead and you get the multi-machine window:
 ```julia
 using GridSimUI, GridSim
 wait_for_close(launch(three_machine_ring(); rtf = 0.5))
+```
+
+The playback overlays take their own verbs, because both execution modes run on
+the same `NetworkModel` and the model type cannot say which was wanted:
+
+```
+julia --project=ui -e "using GridSimUI; wait_for_close(playback())"
+julia --project=ui -e "using GridSimUI; wait_for_close(voltage_playback())"
 ```
 
 The window takes a few seconds to appear (GLFW window creation and shader
