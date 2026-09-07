@@ -321,7 +321,9 @@ where it lives rather than approximating it in the core environment.
 ## Step 3 — the nonlinear (AC) power flow (D6, D10, D11, D12)
 
 Done 2026-09-07. Entered at **2996 core**; leaves **3175 core** (+179 in
-`test/m6_steady_state.jl`). UI and `reference/` unchanged in count.
+`test/m6_steady_state.jl`). **UI 382 and `reference/` 986 — both RUN, exit 0, not
+assumed** (see F12: this step edits `src/engines/detailed.jl`, which `reference/`
+drives, so an unchanged count here is a measurement or it is nothing).
 
 - [x] Residual equations written (polar form, real and reactive balance per bus),
       handed to `NonlinearSolve`. Ours are the equations; theirs is the solver (D2).
@@ -449,7 +451,7 @@ but not before two checks were fixed, and the fixes are the finding:
 | limits: algebra says it MUST bind | **red** | **red** | **red** | — | **red** | — |
 | limits: EXACTLY that bus, of two | **red** | — | **red** | — | **red** | — |
 | limits: back-off refused | — | **red** | — | — | **red** | — |
-| **the `|V|` band REJECTS** | **red** | **red** | **red** | **red** | — | — |
+| **the `\|V\|` band REJECTS** | **red** | **red** | **red** | **red** | — | — |
 | the rating check REJECTS | **red** | **red** | — | — | — | — |
 | the three checks, split not copied | — | — | — | — | — | — |
 | the refusals, each by name | — | — | — | — | — | — |
@@ -501,6 +503,37 @@ infinite limit and every case turns pathological at once. A mutation that breaks
 everything says less than one that changes an answer subtly — S3, S4 and S6 are
 the informative ones here. Step 4's mutations should prefer sabotages that leave
 the solve well-posed.
+
+**F12 — step 1's criterion harness is BLIND to the path this step changed, and
+saying "unchanged" about a suite nobody ran is the M4 step 5 failure.** Two claims
+in this step's first draft were arguments rather than measurements, and both were
+checked afterwards:
+
+  - **"UI and `reference/` unchanged in count."** This step edits
+    `src/engines/detailed.jl` twice, and `reference/` compiles its oracle from
+    `NetworkModel` and drives the detailed tier — it is the suite most likely to
+    notice. Both were then run: **382 UI, 986 reference, exit 0 each**. The counts
+    were right; they were not evidence until they were run. `m4-context.md` D15 is
+    the precedent — same counts, measured against a manifest nobody had checked.
+  - **`_zip_k`'s docstring claims the constant-impedance path is "bitwise the
+    arithmetic M5 measured".** Step 1 built the tool for exactly this claim
+    (`criterion_snapshot.jl` plus `criterion-STEP1.txt`), and re-running it gives
+    the **same MD5** (`c79b7c07d039b66efdeff10e45e88305`) — so the
+    `_check_power_flow` split moved nothing. **But that capture cannot see the
+    change the docstring is actually about:** `scripts/iberia_two_area.jl` builds
+    **no `Load` at all** — its consumers are negative-`P0` machines — so it never
+    reaches `_load_current`, let alone `_zip_k`. A harness whose whole purpose is
+    "no number moved" is only as wide as the models it runs, and step 1's is
+    narrower than its name suggests.
+
+    So a second capture was built for the path in question: `DetailedEngine` over
+    5 s on `load_bus_system` at four ZIP corners — the mixed 0.2 / 0.3 / 0.5 case
+    where `_zip_k` runs on every load-current evaluation, the two single-share
+    corners, and the default that must not reach `_zip_k` at all — with every
+    channel printed at shortest-round-trip precision. Captured with the
+    pre-extraction body restored in place (so nothing but the extraction differs)
+    and again at HEAD: **72 lines, same MD5** (`363e1b7…`). The docstring's word
+    is now a measurement.
 
 **F11 — `Pgen` is read back, not copied, and that decides two `==` vs `≈` calls.**
 The reported generation at a bus is `P_network + P_load` from the solved answer
