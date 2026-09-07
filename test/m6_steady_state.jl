@@ -583,3 +583,631 @@ end
 end
 
 end # M6 step 2
+
+# ════════════════════════════════════════════════════════════════════════════════
+# M6 step 3 — the nonlinear ("AC") power flow (docs/plans/m6-plan.md, m6-tasks.md).
+#
+# The fixtures here, like step 2's, exist to make an ALGEBRAIC prediction checkable
+# and their numbers are chosen by the check rather than by any scenario.
+#
+# TWO OF THEM CARRY CONSTANT-POWER LOADS (`a_p = 1`) WHERE THE REPO'S DEFAULT IS
+# CONSTANT IMPEDANCE, and that is not incidental. A `Load` in this repo is a ZIP
+# load; the AC solve therefore holds a ZIP *schedule* at a load bus rather than a
+# constant complex power, which is what makes step 4's flat run against the DAE tier
+# meaningful (m6-context.md D11). Where a check's prediction is the textbook
+# power-flow one — a voltage sag that does not relieve itself, an angle that follows
+# the DC answer with only the sine truncation between them — the fixture says
+# `a_p = 1` so the model is the textbook one and the prediction is about the SOLVER
+# rather than about the load model.
+
+# Two buses, the slack holding 1.0 and a generator bus holding 1.05 with a load on
+# it. Everything about this case has a closed form (see the testset), which is the
+# only reason a two-bus fixture appears at all after step 2's finding that two buses
+# are structurally blind: here the point IS the closed form.
+function _ac_two_bus(; V_set = 1.05, Q_min = -Inf, Q_max = Inf,
+                       X = 0.2, P_L = 50.0, Q_L = 20.0)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, X, 500.0)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, P_L),
+                Machine(:G2, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0;
+                        V_set = V_set, Q_min = Q_min, Q_max = Q_max)]
+    loads = [Load(:D2, :B2, P_L, Q_L, 0.0, 0.0, 1.0)]   # constant power
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+end
+
+# The three-bus case the small-angle rate control runs on, scaled by `λ`. Lossless,
+# every machine at `V_set = 1.0`, and the one load bus drawing NO reactive power —
+# the three conditions the O(λ³) derivation in that testset depends on.
+function _ac_rate_case(λ)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.10, 500.0),
+                Branch(:L23, :B2, :B3, 0.30, 500.0),
+                Branch(:L13, :B1, :B3, 0.20, 500.0)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 60.0 * λ),
+                Machine(:G2, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 30.0 * λ)]
+    loads = [Load(:D3, :B3, 90.0 * λ, 0.0, 0.0, 0.0, 1.0)]   # constant power, Q = 0
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+end
+
+# The lossy case: step 2's split fixture with resistance on every branch, which is
+# the only fixture in the repo where `Branch.R` reaches an equation at all.
+function _ac_lossy_case(; R = 0.02)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.10, 500.0; R = R),
+                Branch(:L23, :B2, :B3, 0.30, 500.0; R = 3R),
+                Branch(:L13, :B1, :B3, 0.20, 500.0; R = 2R)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 90.0)]
+    loads = [Load(:D3, :B3, 90.0, 30.0, 0.0, 0.0, 1.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+end
+
+@testset "M6 step 3 — the nonlinear (AC) power flow" begin
+
+# ── the admittance matrix ───────────────────────────────────────────────────────
+@testset "the admittance matrix is sparse structurally, and IS the DC one when R = 0" begin
+    for net in (three_machine_ring(), _dc_split_case(), _dc_radial_case(), _ac_lossy_case())
+        Y = GridSim._ac_admittance(net)
+        n, m = length(net.buses), length(net.branches)
+        @test Y isa SparseArrays.SparseMatrixCSC{ComplexF64,Int}
+        # `n + 2m` for the same three reasons as step 2: no unbranched bus (the model
+        # rejects a disconnected network), no self-loop, no parallel circuit — so no
+        # off-diagonal is ever a sum and no diagonal is ever structurally absent.
+        @test SparseArrays.nnz(Y) == n + 2m
+        @test Y == transpose(Y)                     # symmetric, not Hermitian
+        # No shunt terms anywhere: with nothing to ground, a uniform voltage draws
+        # no current. This is the exact statement `B·1 = 0` is at the DC tier.
+        @test maximum(abs, Y * ones(n)) < 1e-12
+    end
+    # The radial is the one whose count can tell sparse from dense: 13 of 25. On the
+    # three-bus ring — a complete graph — `n + 2m` is 9 out of 9 and proves nothing.
+    @test SparseArrays.nnz(GridSim._ac_admittance(_dc_radial_case())) == 13
+    @test length(_dc_radial_case().buses)^2 == 25
+
+    # A LOSSLESS `Y` IS THE DC `B`. `y = 1/(jX) = −j/X`, so the imaginary part of
+    # every entry is the negative of the DC susceptance entry. This is the only check
+    # in the file that ties the two assemblies together, and it catches a sign or an
+    # orientation slip in either of them.
+    #
+    # IT IS NOT BITWISE, AND THE REASON IS THE COMPLEX RECIPROCAL RATHER THAN THE
+    # MODEL — measured, because `==` was tried first and failed here. Julia computes
+    # `inv(complex(0.0, X))` through a scaled division, which returns exactly `-1/X`
+    # for some `X` (0.25, 0.3) and one ulp off it for others (0.1, 0.2, 0.4). The
+    # real part IS exactly zero in every case, so the two assemblies disagree only in
+    # the last bit of a susceptance and only through that reciprocal. The bound is
+    # therefore stated in ulps of the largest entry rather than as a tolerance:
+    # measured worst case 3.55e-15 against a bound of 1.3e-14.
+    for net in (three_machine_ring(), _dc_split_case(), _dc_radial_case())
+        Y = GridSim._ac_admittance(net)
+        B = GridSim._dc_susceptance(net)
+        @test maximum(abs, imag.(Y) + B) <= 4 * eps() * maximum(abs, B)
+        @test maximum(abs, real.(Y)) == 0.0         # lossless: no conductance at all
+    end
+    # ...and it is NOT the DC one once a branch has resistance.
+    @test maximum(abs, real.(GridSim._ac_admittance(_ac_lossy_case()))) > 0.0
+end
+
+# ── the shape of a solution ─────────────────────────────────────────────────────
+@testset "what is held and what is solved" begin
+    net = three_machine_ring()          # a machine on every bus, all at V_set = 1.0
+    sol = ac_powerflow(net)
+    @test sol isa ACPowerFlow
+    @test sol.slack === net.slack
+    @test sol.buses == Symbol[b.id for b in net.buses]
+    @test sol.roles == [:slack, :generator, :generator]
+    @test isempty(sol.limited)
+    # every bus is a generator bus here, so every magnitude is HELD and exactly its
+    # setpoint — not approximately, held
+    @test sol.Vm == [1.0, 1.0, 1.0]
+    @test sol.θ[1] == 0.0                                    # the slack pins the reference
+    @test sol.residual < 1e-10
+    # The non-slack machines produce their schedule and the slack produces what is
+    # left — and `Pgen` is READ BACK from the solved network (`P_network + P_load`)
+    # rather than copied from the schedule, which is why this is `≈` and not `==`.
+    # Copying would make the check vacuous; reading it back makes it a check on the
+    # solve, at the price of carrying the residual (measured: 4e-16 here).
+    ma = machine_arrays(net)
+    for v in 2:3
+        @test sol.Pgen[v] ≈ ma.Pm[v] atol = 1e-12
+    end
+    # lossless network, so even the slack's pickup is its schedule to solver precision
+    @test sol.Pgen[1] ≈ ma.Pm[1] atol = 1e-12
+    @test bus_voltage(sol, :B2) == sol.Vm[2]
+    @test bus_angle(sol, :B2) == sol.θ[2]
+    @test bus_generation(sol, :B2).P == sol.Pgen[2]
+    @test bus_generation(sol, :B2).Q == sol.Qgen[2]
+    @test_throws ArgumentError bus_voltage(sol, :nope)
+    @test_throws ArgumentError bus_angle(sol, :nope)
+    @test_throws ArgumentError bus_generation(sol, :nope)
+    @test_throws ArgumentError branch_power(sol, :B1, :nope)
+
+    # A lossless branch delivers what it is given, so the two ends are negatives and
+    # the loss is zero. That is the DC contract, recovered here as a special case
+    # rather than assumed.
+    for br in net.branches
+        @test branch_power(sol, br.from, br.to) ≈ -branch_power(sol, br.to, br.from) atol = 1e-12
+        @test branch_loss(sol, br.from, br.to) ≈ 0.0 atol = 1e-12
+    end
+    @test branch_loss(sol) == sol.loss
+    @test branch_power(sol) == sol.flow
+    @test branch_reactive(sol) == sol.qflow
+    # a series reactance ABSORBS reactive power, so both ends send Q into it
+    @test branch_reactive(sol, :B1, :B2) + branch_reactive(sol, :B2, :B1) > 0.0
+end
+
+# ── the two-bus closed form ─────────────────────────────────────────────────────
+@testset "two buses: the angle and the generator's reactive output are closed form" begin
+    # Slack at V₁ = 1.0, a generator bus at V₂ = 1.05 whose machine is scheduled at
+    # zero and whose load draws P_L + jQ_L (constant power, so the draw does not move
+    # with the voltage). With a lossless branch the injection at bus 2 is
+    #
+    #     P₂ = V₁V₂ sin θ / X          Q₂ = (V₂² − V₁V₂ cos θ) / X
+    #
+    # and P₂ is known — it is `−P_L`. So θ and then the machine's reactive output
+    # Q_gen = Q₂ + Q_L are both written down before the solver runs.
+    X, P_L, Q_L, V1, V2 = 0.2, 0.5, 0.2, 1.0, 1.05
+    θ_pred = asin(-P_L * X / (V1 * V2))
+    Q2_pred = (V2^2 - V1 * V2 * cos(θ_pred)) / X
+    Qgen_pred = Q2_pred + Q_L
+
+    net = _ac_two_bus()
+    sol = ac_powerflow(net)
+    @test sol.roles == [:slack, :generator]
+    @test sol.Vm == [1.0, 1.05]
+    @test sol.θ[2] ≈ θ_pred atol = 1e-12
+    @test bus_generation(sol, :B2).Q ≈ Qgen_pred atol = 1e-12
+    @test bus_generation(sol, :B2).P ≈ 0.0 atol = 1e-12   # its schedule
+    # and the slack picks up the whole load, because nothing is lost on the way
+    @test bus_generation(sol, :B1).P ≈ P_L atol = 1e-12
+end
+
+# ── the small-angle rate control (the band is stated BEFORE the gap is seen) ─────
+@testset "positive control — the AC angles approach the DC ones at the predicted rate" begin
+    # THE BAND, WRITTEN DOWN BEFORE ANY NUMBER IS LOOKED AT, and derived from the
+    # truncation order rather than from either solve's convergence (m6-tasks.md).
+    #
+    # The DC approximation makes three errors against the AC one: it linearises
+    # `sin θ ≈ θ`, it holds every magnitude at 1, and it drops Q. On `_ac_rate_case`
+    # the second and third are made second-order on purpose — every machine sits at
+    # `V_set = 1.0` and the single load bus draws no reactive power, so its magnitude
+    # can only deviate through the branches' own `I²X` absorption, which is O(λ²).
+    # With θ = O(λ), the sine truncation is O(λ³) and the magnitude term enters the
+    # real-power balance as O(λ)·O(λ²) = O(λ³) as well. So
+    #
+    #     gap(λ) = max|θ_ac − θ_dc| = C·λ³ + O(λ⁵)
+    #
+    # and HALVING λ must divide the gap by 8. The band is on that ratio, and it is
+    # the next order — a relative O(λ²) correction, which is ~1% at λ = 0.4 — that
+    # sets its width. Anything outside says the leading error is not cubic, which is
+    # a statement about the physics of the fixture, not about a tolerance.
+    RATE_LO, RATE_HI = 7.5, 8.5
+
+    λs = [0.4, 0.2, 0.1, 0.05]
+    gaps = Float64[]
+    for λ in λs
+        net = _ac_rate_case(λ)
+        ac = ac_powerflow(net)
+        dc = dc_powerflow(net)
+        push!(gaps, maximum(abs, ac.θ .- dc.θ))
+        # the DC answer really is exactly linear in the loading, which is what makes
+        # the comparison a statement about the AC solve alone
+        @test dc.θ ≈ λ .* dc_powerflow(_ac_rate_case(1.0)).θ rtol = 1e-12
+    end
+    # THE FLOOR CHECK, and it comes first: a ratio computed from numbers at the
+    # solver's own tolerance is arithmetic on noise (M4's lesson). The solve runs at
+    # `abstol = 1e-12`, so the smallest gap must clear it by orders.
+    @test minimum(gaps) > 1e-10
+    ratios = gaps[1:end-1] ./ gaps[2:end]
+    @test all(r -> RATE_LO <= r <= RATE_HI, ratios)
+    # ...and the gap shrinks monotonically, which a ratio band alone does not say
+    @test issorted(gaps; rev = true)
+
+    # THE FIXTURE'S ZERO REACTIVE LOAD IS LOAD-BEARING, AND HERE IS THE MEASUREMENT
+    # RATHER THAN THE ARGUMENT. The derivation above gets its cube from the load
+    # bus's magnitude deviating only at O(λ²) — which is true because nothing draws
+    # reactive power there. Give the same load a `Q₀` that scales with λ and the
+    # magnitude deviates at O(λ) instead, the DC assumption `|V| = 1` becomes the
+    # leading error, and the rate drops to SQUARE. So the identical check run on an
+    # almost identical fixture must land in a DIFFERENT band — which is what makes
+    # the 8 above a statement about the physics and not a number that any smooth
+    # solve would produce.
+    RATE_Q_LO, RATE_Q_HI = 3.5, 4.5
+    gapsQ = Float64[]
+    for λ in λs
+        buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+        branches = [Branch(:L12, :B1, :B2, 0.10, 500.0),
+                    Branch(:L23, :B2, :B3, 0.30, 500.0),
+                    Branch(:L13, :B1, :B3, 0.20, 500.0)]
+        machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 60.0 * λ),
+                    Machine(:G2, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 30.0 * λ)]
+        loads = [Load(:D3, :B3, 90.0 * λ, 40.0 * λ, 0.0, 0.0, 1.0)]   # …and now Q ≠ 0
+        net = NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+        push!(gapsQ, maximum(abs, ac_powerflow(net).θ .- dc_powerflow(net).θ))
+    end
+    ratiosQ = gapsQ[1:end-1] ./ gapsQ[2:end]
+    @test all(r -> RATE_Q_LO <= r <= RATE_Q_HI, ratiosQ)
+    @test all(r -> r < RATE_LO, ratiosQ)          # and the two bands do not overlap
+end
+
+# ── losses, where R finally reaches an equation ─────────────────────────────────
+@testset "losses: the slack's pickup IS the summed branch losses" begin
+    net = _ac_lossy_case()
+    sol = ac_powerflow(net)
+    v_slack = net.bus_index[net.slack]
+    @test any(>(0.0), sol.loss)                       # the case is genuinely lossy
+
+    # BOTH SIDES ARE RECOMPUTED HERE FROM DIFFERENT DATA, which is the whole point.
+    # The left comes from the model's SCHEDULE (machines) and the ZIP draw at the
+    # solved magnitudes, with only the slack's own output taken from the solve. The
+    # right comes from `Branch.R`, `Branch.X` and the solved voltages. Neither
+    # touches the admittance matrix the residual was built on — so, unlike the
+    # identity `ΣP_network = Σlosses` (which holds for ANY Y, right or wrong, and is
+    # step 2's superposition finding in reactive form), a dropped or mis-assembled
+    # `Y` entry breaks this.
+    ma = machine_arrays(net)
+    sched = zeros(length(net.buses))
+    for k in eachindex(ma.bus)
+        sched[ma.bus[k]] += ma.Pm[k]
+    end
+    for v in eachindex(net.buses)
+        v == v_slack && continue
+        @test sol.Pgen[v] ≈ sched[v] atol = 1e-12     # a non-slack machine holds its schedule
+    end
+    gen = sum(v -> v == v_slack ? sol.Pgen[v] : sched[v], eachindex(net.buses))
+
+    # THE ZIP DRAW IS WRITTEN OUT HERE AS THE TEXTBOOK POLYNOMIAL, NOT READ FROM
+    # `_zip_scale`. Calling the solver's own scaling function would make this side
+    # of the identity a restatement of the other: a load model wrong by a whole
+    # power of |V| passed every check in this file except one, precisely because
+    # the checks kept reading it from the source they were checking. (Measured —
+    # sabotage S4 in `m6-tasks.md`.)
+    la = load_arrays(net)
+    drawn = 0.0
+    for k in eachindex(la.bus)
+        v = la.bus[k]
+        a_z = 1.0 - la.a_i[k] - la.a_p[k]
+        drawn += la.P[k] * (a_z * sol.Vm[v]^2 + la.a_i[k] * sol.Vm[v] + la.a_p[k])
+    end
+
+    losses = 0.0
+    for br in net.branches
+        f, t = net.bus_index[br.from], net.bus_index[br.to]
+        Vf = sol.Vm[f] * cis(sol.θ[f])
+        Vt = sol.Vm[t] * cis(sol.θ[t])
+        I = (Vf - Vt) / complex(br.R, br.X)
+        losses += abs2(I) * br.R
+    end
+
+    # THE BOUND IS DERIVED, NOT TUNED: each bus equation is satisfied only to the
+    # residual the solver achieved, and the identity sums them, so the mismatch is
+    # bounded by the number of buses times that residual. Stated this way it says
+    # something even when the solve is loose.
+    @test abs((gen - drawn) - losses) <= length(net.buses) * max(sol.residual, eps())
+    @test losses ≈ sum(sol.loss) atol = 1e-12
+    # and the loss really is what the two ends of each branch disagree by
+    for (e, br) in pairs(net.branches)
+        @test sol.loss[e] ≈ branch_power(sol, br.from, br.to) +
+                            branch_power(sol, br.to, br.from) atol = 1e-12
+        @test branch_loss(sol, br.from, br.to) == branch_loss(sol, br.to, br.from)  # no direction
+    end
+    # A LOSSY BRANCH IS THE ONE PLACE THE DC CONTRACT BREAKS, and the difference is
+    # not a rounding: the two ends differ by a real number.
+    @test branch_power(sol, :B1, :B3) != -branch_power(sol, :B3, :B1)
+end
+
+@testset "the ZIP scale IS the textbook polynomial, and the sharing is not cosmetic" begin
+    # `_zip_scale` is `|V|² · k(|V|)` with `k` shared bit-for-bit with the DAE tier's
+    # `_load_current`. That sharing is the whole point (step 4's flat run), but it
+    # also means nothing in this file may check the load model BY CALLING IT. So the
+    # model is pinned here against the polynomial it is supposed to be —
+    # `a_z|V|² + a_i|V| + a_p` — written out independently.
+    for (a_i, a_p) in ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (0.3, 0.5), (0.5, 0.25))
+        a_z = 1.0 - a_i - a_p
+        for Vm in (0.85, 0.95, 1.0, 1.05, 1.2)
+            @test GridSim._zip_scale(Vm, a_i, a_p) ≈ a_z * Vm^2 + a_i * Vm + a_p atol = 1e-14
+        end
+        # `P₀` means "drawn at |V| = 1" for EVERY split — exactly, not nearly, which
+        # is what the grouping `1 + a_i(1/V − 1) + a_p(1/V² − 1)` buys over the
+        # algebraically equal polynomial.
+        @test GridSim._zip_scale(1.0, a_i, a_p) == 1.0
+    end
+    # ...and the constant-impedance default is `|V|²` with no division taken at all,
+    # which is what keeps the DAE tier's hot path bitwise what M5 measured.
+    @test GridSim._zip_scale(0.7, 0.0, 0.0) === 0.7 * 0.7
+    @test GridSim._zip_k(0.8, 0.0, 0.0) == 1.0
+end
+
+# ── reactive limits ─────────────────────────────────────────────────────────────
+@testset "reactive limits: wide ones cannot bind, and reproduce the answer EXACTLY" begin
+    open_  = ac_powerflow(_ac_two_bus())                                # no limits at all
+    wide   = ac_powerflow(_ac_two_bus(Q_min = -50.0, Q_max = 50.0))     # limits, unreachable
+    # EXACT, not approximate — and it is a claim about the CODE, not only the test:
+    # the first solve is the unlimited solve, and a round in which nothing switches
+    # exits without re-solving, so there is no second Newton run to perturb the
+    # answer in the last bits.
+    @test wide.Vm == open_.Vm
+    @test wide.θ == open_.θ
+    @test wide.Pgen == open_.Pgen
+    @test wide.Qgen == open_.Qgen
+    @test isempty(wide.limited)
+    @test wide.roles == open_.roles
+end
+
+@testset "reactive limits: a case where algebra says the limit MUST bind" begin
+    # The unlimited answer's reactive output is the closed form above — 0.4864 pu.
+    # So a ceiling of 0.25 is known to bind BEFORE the solve, and a bus held at its
+    # ceiling must (a) report exactly that ceiling, (b) stop holding its setpoint,
+    # and (c) sag BELOW it, because the reason it was capped is that holding 1.05
+    # took more reactive power than it has.
+    X, P_L, Q_L, V1, V2 = 0.2, 0.5, 0.2, 1.0, 1.05
+    Qgen_unlimited = (V2^2 - V1 * V2 * cos(asin(-P_L * X / (V1 * V2)))) / X + Q_L
+    @test Qgen_unlimited > 0.25                       # the premise of the case, checked
+
+    sol = ac_powerflow(_ac_two_bus(Q_max = 0.25))
+    @test sol.limited == [:B2]
+    @test sol.roles == [:slack, :load]
+    @test bus_generation(sol, :B2).Q ≈ 0.25 atol = 1e-9
+    @test bus_voltage(sol, :B2) < 1.05
+    # the ACTIVE schedule is untouched by a reactive limit (read back from the
+    # network, so to the residual — see the note in "what is held and what is solved")
+    @test bus_generation(sol, :B2).P ≈ 0.0 atol = 1e-12
+    # and a floor set above what the bus wants binds the other way: it is forced to
+    # inject MORE reactive power than the setpoint needs, so its voltage rises
+    up = ac_powerflow(_ac_two_bus(V_set = 1.0, Q_min = 0.6))
+    @test up.limited == [:B2]
+    @test bus_generation(up, :B2).Q ≈ 0.6 atol = 1e-9
+    @test bus_voltage(up, :B2) > 1.0
+end
+
+@testset "reactive limits: EXACTLY the bus algebra names, on a case with two candidates" begin
+    # Two generator buses, one load. B3 is held ABOVE its neighbours (1.05 against
+    # 1.0) with a lagging load sitting on it, so it must inject strictly positive
+    # reactive power — a ceiling of ZERO therefore cannot be met and must bind. B2
+    # is given a ceiling it cannot reach. The check is not "something bound", it is
+    # "this bus bound and that one did not".
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.10, 500.0),
+                Branch(:L23, :B2, :B3, 0.30, 500.0),
+                Branch(:L13, :B1, :B3, 0.20, 500.0)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 60.0),
+                Machine(:G2, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 30.0;
+                        V_set = 1.0, Q_max = 20.0),
+                Machine(:G3, :B3, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0;
+                        V_set = 1.05, Q_max = 0.0)]
+    loads = [Load(:D3, :B3, 90.0, 30.0, 0.0, 0.0, 1.0)]
+    net = NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+
+    unlimited = ac_powerflow(NetworkModel(100.0, 50.0, buses, branches,
+        [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 60.0),
+         Machine(:G2, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 30.0; V_set = 1.0),
+         Machine(:G3, :B3, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0; V_set = 1.05)],
+        loads; slack = :B1))
+    # the premise: B3 wants positive Q (so a zero ceiling binds) and B2 wants far
+    # less than 20 pu (so its ceiling does not)
+    @test bus_generation(unlimited, :B3).Q > 0.0
+    @test bus_generation(unlimited, :B2).Q < 20.0
+
+    sol = ac_powerflow(net)
+    @test sol.limited == [:B3]
+    @test sol.roles == [:slack, :generator, :load]
+    @test bus_voltage(sol, :B2) == 1.0                # still held, exactly
+    @test bus_voltage(sol, :B3) < 1.05                # let go, and it sagged
+    @test bus_generation(sol, :B3).Q ≈ 0.0 atol = 1e-9
+end
+
+@testset "reactive limits: back-off is refused by name, not answered wrongly" begin
+    # Bind-only switching cannot un-limit a bus, so a bus held at `Q_max` whose
+    # magnitude ends up ABOVE its setpoint is a case this solver has no answer for.
+    # The guard is unit-tested with a hand-built argument list, the way M5 unit-tests
+    # `_check_power_flow` against a hand-built collapsed voltage vector — a guard for
+    # a pathology is exactly the guard no fixture reaches by accident.
+    net = _ac_two_bus(Q_max = 0.25)
+    msg = try
+        GridSim._ac_assert_no_backoff(net, [2], [true], [0.0, 0.25], [1.0, 1.10], [1.0, 1.05])
+        "NO ERROR THROWN"
+    catch e
+        e.msg
+    end
+    @test occursin("B2", msg)
+    @test occursin("Back-off is not implemented", msg)
+    # ...and the same guard passes the physically sensible side, so it is not
+    # simply always-on
+    @test GridSim._ac_assert_no_backoff(net, [2], [true], [0.0, 0.25],
+                                        [1.0, 1.00], [1.0, 1.05]) === nothing
+    # a floor binds the other way round, and the sensible side is then ABOVE
+    @test GridSim._ac_assert_no_backoff(net, [2], [false], [0.0, 0.60],
+                                        [1.0, 1.02], [1.0, 1.0]) === nothing
+    @test_throws ErrorException GridSim._ac_assert_no_backoff(
+        net, [2], [false], [0.0, 0.60], [1.0, 0.98], [1.0, 1.0])
+    # and the real solves above go through it without tripping it
+    @test isempty(ac_powerflow(_ac_two_bus()).limited)
+end
+
+# ── the checks that make a converged answer a result ────────────────────────────
+@testset "the |V| band REJECTS, and it is the inherited discriminator" begin
+    # A load bus drawing 1.0 + j0.6 pu of CONSTANT power through a 0.25 pu reactance
+    # sags to the upper root of `V⁴ + V²(2QX − 1) + X²|S|² = 0`, which is 0.737 pu —
+    # comfortably below the nose of the curve, so it is a real solution and not a
+    # non-existent one. The solve converges; the answer is a
+    # real operating point of a network nobody would run; the band is what refuses
+    # it. This is the case without which the discriminator is decorative — every
+    # other fixture in this file lands comfortably inside [0.9, 1.1].
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.25, 5000.0)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 100.0)]
+    loads = [Load(:D2, :B2, 100.0, 60.0, 0.0, 0.0, 1.0)]
+    sag = NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+    msg = try
+        ac_powerflow(sag)
+        "NO ERROR THROWN"
+    catch e
+        e.msg
+    end
+    @test occursin("outside", msg)
+    @test occursin("TIGHTER residual", msg)          # the reason, not just the rule
+    @test occursin("B2", msg)
+    # "OUTSIDE" IS NOT ENOUGH, AND THAT IS MEASURED RATHER THAN SUSPECTED: with the
+    # reactive residual's sign flipped (sabotage S3) this bus INJECTS 0.6 pu instead
+    # of drawing it, floats far ABOVE 1.1, and the band still fires — so the test
+    # passed against the bug it was closest to. The magnitude the refusal reports is
+    # therefore read out of the message and checked against the closed-form upper
+    # root of `V⁴ + V²(2QX − 1) + X²|S|² = 0`, which is a number, on a side.
+    V_root = sqrt(((1 - 2 * 0.6 * 0.25) +
+                   sqrt((1 - 2 * 0.6 * 0.25)^2 - 4 * 0.25^2 * (1.0^2 + 0.6^2))) / 2)
+    @test 0.73 < V_root < 0.74                       # the prediction, before the read
+    hit = match(r"\|V\| = ([0-9.eE+-]+) pu", msg)
+    @test hit !== nothing
+    @test parse(Float64, hit[1]) ≈ V_root atol = 1e-9
+    # the SAME network at a tenth of the loading is inside the band and solves
+    light = NetworkModel(100.0, 50.0, buses, branches,
+                         [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 10.0)],
+                         [Load(:D2, :B2, 10.0, 6.0, 0.0, 0.0, 1.0)]; slack = :B1)
+    @test ac_powerflow(light) isa ACPowerFlow
+end
+
+@testset "the rating check REJECTS, and it reads the heavier end of a lossy branch" begin
+    net = _ac_lossy_case()
+    @test ac_powerflow(net) isa ACPowerFlow          # it passes at the real ratings
+    tight = NetworkModel(net.S_base, net.f0, net.buses,
+                         [Branch(br.id, br.from, br.to, br.X, 5.0; R = br.R)
+                          for br in net.branches],
+                         net.machines, net.loads; slack = net.slack)
+    msg = try
+        ac_powerflow(tight)
+        "NO ERROR THROWN"
+    catch e
+        e.msg
+    end
+    @test occursin("against a rating", msg)
+end
+
+@testset "the three checks are the M5 ones, split rather than copied" begin
+    # M6 step 3 broke `_check_power_flow` into three named pieces so the AC path
+    # could run them in the order the M5 docstring already CLAIMED (band, ratings,
+    # residual) rather than the order it executed (residual first). The composition
+    # must still behave exactly as M5's suite asserts — that is checked over in
+    # `test/m5_detailed.jl`; what is checked here is that the pieces exist and are
+    # the same ones.
+    net = three_machine_ring()
+    @test GridSim._check_voltage_band(net, [1.0, 1.0, 1.0], "unit") === nothing
+    @test_throws ErrorException GridSim._check_voltage_band(net, [1.0, 0.5, 1.0], "unit")
+    @test GridSim._check_branch_ratings(net, zeros(3), "unit") === nothing
+    @test_throws ErrorException GridSim._check_branch_ratings(net, fill(100.0, 3), "unit")
+    @test GridSim._check_residual(0.0, "unit") === nothing
+    @test_throws ErrorException GridSim._check_residual(1.0, "unit")
+    # the composition still refuses a collapsed voltage with a perfect residual
+    @test_throws ErrorException GridSim._check_power_flow(
+        net, ComplexF64[0.389 + 0im, 0.203 + 0im, 0.131 + 0im], zeros(3), 0.0, "unit")
+end
+
+# ── what it refuses ─────────────────────────────────────────────────────────────
+@testset "the refusals, each by name" begin
+    # A slack bus with no machine: NetworkModel accepts it (a half-built editor draft
+    # must stay constructible — M5 D3), and the tier that has to put a voltage source
+    # there refuses it. Exactly the pattern step 1 established.
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.2, 500.0)]
+    machines = [Machine(:G1, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 50.0)]
+    loads = [Load(:D1, :B1, 50.0, 10.0)]
+    net = NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+    @test bus_role(net, :B1) === :slack               # the model is happy
+    err = try; ac_powerflow(net); "NO ERROR"; catch e; e.msg; end
+    @test occursin("carries no machine", err)
+    @test occursin("B1", err)
+
+    # Two machines on one bus asking for different terminal voltages is a
+    # contradiction in the data, not a tie-break.
+    two = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 25.0; V_set = 1.0),
+           Machine(:G2, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 25.0; V_set = 1.02)]
+    clash = NetworkModel(100.0, 50.0, buses, branches, two,
+                         [Load(:D2, :B2, 50.0, 10.0)]; slack = :B1)
+    err2 = try; ac_powerflow(clash); "NO ERROR"; catch e; sprint(showerror, e); end
+    @test occursin("different", err2)
+    @test occursin("V_set", err2)
+
+    # A solve given one iteration cannot have converged, and says so rather than
+    # returning where it got to.
+    err3 = try
+        ac_powerflow(_ac_two_bus(); maxiters = 1)
+        "NO ERROR"
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("does not converge", err3) || occursin("MaxIters", err3)
+end
+
+# ── machines on one bus ─────────────────────────────────────────────────────────
+@testset "two machines on a bus sum — in P and in both reactive limits" begin
+    # `NetworkModel` has expressed more than one machine per bus since M5 step 1 and
+    # no engine reads it. The power flow does, so it is checked rather than shipped:
+    # splitting a machine in two must change nothing at all.
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0)]
+    branches = [Branch(:L12, :B1, :B2, 0.2, 500.0)]
+    loads = [Load(:D2, :B2, 90.0, 20.0, 0.0, 0.0, 1.0)]
+    one = NetworkModel(100.0, 50.0, buses, branches,
+        [Machine(:G0, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0),
+         Machine(:G1, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 90.0; V_set = 1.02, Q_max = 0.5)],
+        loads; slack = :B1)
+    split = NetworkModel(100.0, 50.0, buses, branches,
+        [Machine(:G0, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0),
+         Machine(:G1a, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 45.0; V_set = 1.02, Q_max = 0.25),
+         Machine(:G1b, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 45.0; V_set = 1.02, Q_max = 0.25)],
+        loads; slack = :B1)
+    a, b = ac_powerflow(one), ac_powerflow(split)
+    # 45 + 45 and 0.25 + 0.25 are exact in binary, so the two schedules are the same
+    # floats and the two answers are the same bits. `≈` here would hide a summation
+    # that is merely close.
+    @test b.Vm == a.Vm
+    @test b.θ == a.θ
+    @test b.Pgen == a.Pgen
+    @test b.Qgen == a.Qgen
+    @test b.limited == a.limited
+    # ...and the summed ceiling is what binds, on a case where it does
+    tight_one = NetworkModel(100.0, 50.0, buses, branches,
+        [Machine(:G0, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0),
+         Machine(:G1, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 90.0; V_set = 1.02, Q_max = 0.1)],
+        loads; slack = :B1)
+    tight_split = NetworkModel(100.0, 50.0, buses, branches,
+        [Machine(:G0, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0),
+         Machine(:G1a, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 45.0; V_set = 1.02, Q_max = 0.05),
+         Machine(:G1b, :B2, 300.0, 4.0, 2.0, 0.30, 1.05, 45.0; V_set = 1.02, Q_max = 0.05)],
+        loads; slack = :B1)
+    ta, tb = ac_powerflow(tight_one), ac_powerflow(tight_split)
+    @test ta.limited == [:B2]
+    @test tb.limited == [:B2]
+    @test tb.Vm == ta.Vm
+    @test tb.Qgen == ta.Qgen
+end
+
+# ── the tier's character ────────────────────────────────────────────────────────
+@testset "superposition FAILS here, which is the point" begin
+    # Step 2's finding was that superposition catches none of the DC solve's
+    # implementation bugs, because a wrong linear map is still linear. The mirror of
+    # that statement is worth one testset: the AC solve must NOT superpose, and by a
+    # margin far larger than the solver's tolerance. It is the one check that
+    # distinguishes the two tiers by their character rather than by their numbers.
+    a = ac_powerflow(_ac_rate_case(0.5))
+    b = ac_powerflow(_ac_rate_case(1.0))
+    # linear would mean θ(2λ) = 2·θ(λ) exactly; the gap is the nonlinearity
+    @test maximum(abs, b.θ .- 2 .* a.θ) > 1e-6
+    # while the DC solve at the same two loadings superposes to the bit
+    da = dc_powerflow(_ac_rate_case(0.5))
+    db = dc_powerflow(_ac_rate_case(1.0))
+    @test maximum(abs, db.θ .- 2 .* da.θ) < 1e-14
+end
+
+@testset "R is READ here, unlike at the DC tier" begin
+    # The DC solve ignores `Branch.R` by design and says so. The AC solve is the step
+    # `Branch.R` was added for, and this is the check that it actually arrives: the
+    # same model with and without resistance must give DIFFERENT answers.
+    lossless = _ac_lossy_case(R = 0.0)
+    lossy    = _ac_lossy_case(R = 0.02)
+    @test dc_powerflow(lossless).θ == dc_powerflow(lossy).θ          # DC: identical
+    a, b = ac_powerflow(lossless), ac_powerflow(lossy)
+    @test a.θ != b.θ                                                  # AC: not
+    @test all(iszero, a.loss)
+    @test sum(b.loss) > 1e-4
+    # and the slack picks up more when the network loses more
+    @test b.Pgen[1] > a.Pgen[1]
+end
+
+end   # M6 step 3

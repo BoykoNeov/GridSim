@@ -6,10 +6,10 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–2 done; steps 3–6 open.** Entered at `181fe4e` with
+Status: **steps 0–3 done; steps 4–6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
-manifests at M5's close. At step 2's close: **2996 core**, UI and `reference/`
-unchanged.
+manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
+**3175 core**, UI and `reference/` unchanged throughout.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -318,34 +318,199 @@ where it lives rather than approximating it in the core environment.
 
 ---
 
-## Step 3 — the nonlinear (AC) power flow (D6)
+## Step 3 — the nonlinear (AC) power flow (D6, D10, D11, D12)
 
-- [ ] Residual equations written (polar form, real and reactive balance per bus),
+Done 2026-09-07. Entered at **2996 core**; leaves **3175 core** (+179 in
+`test/m6_steady_state.jl`). UI and `reference/` unchanged in count.
+
+- [x] Residual equations written (polar form, real and reactive balance per bus),
       handed to `NonlinearSolve`. Ours are the equations; theirs is the solver (D2).
-- [ ] Generator buses hold `P` and `|V|`; load buses hold `P` and `Q`; the slack
-      holds `|V|` and angle and picks up the losses.
-- [ ] **The band discriminator inherited from `_check_power_flow`, not
-      re-derived** — checks ordered band, then ratings, then residual last (D6).
-- [ ] Reactive-limit switching: a generator bus that hits `Q_max` becomes a load
-      bus at its limit.
-- [ ] **Positive control for the limits:** limits set so wide they cannot bind must
-      reproduce the unlimited answer *exactly*.
-- [ ] **Discriminating case for the limits:** a case where algebra says a specific
-      bus must bind, which must report exactly that bus.
-- [ ] **Positive control for the whole step:** with every `R = 0` and generator
-      voltages at 1.0, the AC angles approach step 2's linear answer as loading
-      falls, at the rate the small-angle approximation predicts. A comparison
-      between two of *our* solves, so it catches what both oracles might absorb.
-      **This states a RATE, so it needs its band stated before the comparison
-      runs** — step 4's rule applies here too, and for the same reason: this is a
-      two-sided numerical comparison, and a band chosen after the gap is seen is
-      not a check. The band comes from the truncation order of the small-angle
-      approximation, not from either solve's own convergence.
-- [ ] A losses check with `R ≠ 0`: the slack's pickup equals the summed branch
-      losses, which is an identity and not a tolerance.
-- [ ] Anti-vacuity mutation: flip a sign in the reactive residual and confirm at
-      least one named check goes red. If none does, the checks are not testing what
-      they claim.
+      `src/steadystate/ac_powerflow.jl` — **not an engine and not in the mode
+      router**, for the same reason `dc_powerflow` is not.
+- [x] Generator buses hold `P` and `V_set`; load buses hold `P` and `Q`; the slack
+      holds `|V|` and angle and picks up the losses. **`Y` is sparse and checked
+      structurally** (`nnz == n + 2m`, symmetric, `Y·1 = 0`), the second place
+      `CLAUDE.md`'s never-a-dense-Y-bus rule binds our own code — and it is checked
+      on the five-bus radial where 13 of 25 can tell sparse from dense, because the
+      ring's 9-of-9 proves nothing (step 2's lesson, applied rather than repeated).
+- [x] **The band discriminator inherited from `_check_power_flow`, not
+      re-derived** — and "inherited" means the check itself, not the constant: the
+      function was **split into three named checks** and both callers compose them
+      (D10). The AC path runs band, ratings, residual. So does `_check_power_flow`
+      now, which is the order its own docstring has claimed since M5 while the code
+      ran the residual first — see F8.
+- [x] **…and the band REJECTS, on a case built for it.** A load bus drawing
+      `1.0 + j0.6` pu of constant power through `0.25` pu sags to the closed-form
+      upper root of `V⁴ + V²(2QX − 1) + X²|S|² = 0` — and **the refusal's own
+      reported magnitude is parsed out of the message and checked against that
+      root**, because "outside the band" alone passed against a real sabotage that
+      pushed the voltage out of the *other* side (F11). The rating check is
+      likewise made to fire, on the lossy fixture with its ratings cut to 5 MVA.
+- [x] Reactive-limit switching: a generator bus that hits `Q_max` becomes a load
+      bus at its limit. **Bind-only, with the missing half refused by name** — see
+      D12 and F9.
+- [x] **Positive control for the limits:** limits set so wide they cannot bind
+      reproduce the unlimited answer **exactly** (`==` on magnitudes, angles and
+      both generation vectors). That is a constraint on the LOOP — the first solve
+      is the unlimited solve and a round with no violation exits without re-solving
+      — not only on the test (D12).
+- [x] **Discriminating case for the limits, twice over.** A two-bus case whose
+      answer is closed form (`Q_gen = (V₂² − V₁V₂cos θ)/X + Q_L` with
+      `sin θ = −P_L X/(V₁V₂)`), so the binding value is written down before the
+      solve; and a three-bus case with **two** candidate generator buses where
+      algebra names one — a bus held at 1.05 above 1.0 neighbours with a lagging
+      load on it must inject reactive power, so a ceiling of zero cannot be met —
+      and the check is "this bus bound and that one did not", not "something bound".
+- [x] **Positive control for the whole step: the band was stated before the gap
+      was seen, and the fixture was then proved load-bearing.** Ratio of successive
+      gaps predicted 8 from the truncation order, band [7.5, 8.5] written into the
+      test file first. Measured **8.020 / 8.005 / 8.001** at λ = 0.4 → 0.05, with
+      the smallest gap 1.06e-07 — three orders above the solve tolerance, checked
+      *before* the ratios are formed (M4's rule: a number under the solver's own
+      tolerance is not a result). Then the same check on the same topology with a
+      **scaled reactive load** gives **4.220 / 4.106 / 4.052**, and both bands are
+      asserted, non-overlapping. Without that second run the 8 would be a number
+      any smooth solve produces; with it, it is a statement about which
+      approximation is leading.
+- [x] A losses check with `R ≠ 0`: the slack's pickup equals the summed branch
+      losses. **Both sides are recomputed in the test from different data** — the
+      left from the model's schedule plus the ZIP draw at the solved magnitudes
+      with only the slack's own output from the solve, the right from `Branch.R`,
+      `Branch.X` and the solved voltages. Neither touches the admittance matrix the
+      residual was built on, which is what stops it being `ΣP_network = Σlosses` —
+      an identity that holds for **any** `Y`, right or wrong, and is step 2's
+      superposition finding in reactive form. **The bound is derived, not tuned:**
+      `n · residual`, because the identity sums `n` bus equations each satisfied
+      only to that.
+- [x] Anti-vacuity mutation: the plan's named one (a sign flipped in the reactive
+      residual) is **S3** below and goes red in four testsets. It was run as one of
+      **six**, and the set includes the class step 2's F6 said it owed this step —
+      a mutation that changes the **sparsity pattern** rather than a value in it.
+      The blindness map is F10, and running it changed the suite twice.
+- [x] `NonlinearSolve` added by `Pkg.add` — "**No packages added to or removed from
+      Manifest**", step 0's zero-new-packages measurement confirmed a second time.
+      `Project.toml` diffed after: nothing dropped, and the compat bound `Pkg` wrote
+      (`"4.29.2"`) is correct as written — unlike step 2's `SparseArrays` case,
+      `NonlinearSolve` is an ordinary package and a caret bound on it says nothing
+      about the Julia floor (F5's lesson, applied and found not to bite here).
+- [x] Exports checked against `names(GLMakie)` **in the `ui/` environment** (F7's
+      rule): `intersect` still `Symbol[]` with `ACPowerFlow`, `ac_powerflow`,
+      `bus_voltage`, `bus_generation`, `branch_reactive` and `branch_loss` added.
+      **`bus_angle` and `branch_power` are deliberately NOT re-exported** — the AC
+      solve adds methods to generics that already exist (M5 step 7's one-name rule).
+
+### What this step found that the plan did not anticipate
+
+**F8 — the check order the plan asked for was already the documented intent, and
+the code had been contradicting it since M5.** `_check_power_flow`'s docstring
+lists the band first and says of the residual "Listed third deliberately: it is
+necessary and conspicuously not sufficient" — above a function that tested the
+residual first and returned before ever reaching the band. Nothing was wrong with
+the *answers* (every check must pass), only with which failure a doubly-bad solve
+reports. Reading the function before changing it is what turned "add an ordering"
+into "implement an ordering that was already written down", and the split into
+three named checks (D10) is what let both callers have it without a second copy of
+the discriminator.
+
+**F9 — the back-off guard has no fixture, and that is why it is a function.**
+Bind-only switching has exactly one state it must refuse: a bus on its limit that
+ends up on the wrong side of its setpoint. Attempts to reach it from a model failed
+in an instructive way — a floor set above what a bus wants makes it over-inject and
+its voltage rises, which is the *correct* side and not the pathology. So the guard
+is `_ac_assert_no_backoff`, exercised directly with a hand-built argument list
+exactly as M5 exercises `_check_power_flow` with a hand-built collapsed voltage
+vector, and checked to pass on both sensible sides so it is not simply always-on. A
+guard for a pathology is the guard no fixture reaches by accident.
+
+**F10 — six implementation sabotages, and TWO of them found a check reading its
+answer from the source it was checking.** Each sabotage was applied to
+`src/steadystate/ac_powerflow.jl` and the whole M6 suite re-run. All six go red —
+but not before two checks were fixed, and the fixes are the finding:
+
+  - **S1** off-diagonal sign flipped in `_ac_admittance`
+  - **S2** one branch's off-diagonal pair never emitted — a **dropped
+    contribution**, which changes the sparsity pattern rather than a value in it.
+    This is the class step 2's F6 recorded as owed
+  - **S3** sign flipped in the reactive residual (the plan's named mutation)
+  - **S4** `_zip_scale` loses a power of `|V|` — the load model wrong everywhere
+    except at `|V| = 1`, which is exactly where the cheap checks look
+  - **S5** the reactive limit compared against the wrong bound
+  - **S6** a branch's far end read in the near end's orientation
+
+| check | S1 sign | S2 dropped | S3 Q-sign | S4 ZIP | S5 bound | S6 far end |
+|---|---|---|---|---|---|---|
+| admittance: sparsity / symmetry / `Y·1 = 0` / **is the DC `B`** | **red** | **red** | — | — | — | — |
+| what is held and what is solved | — | — | — | — | **red** | **red** |
+| two-bus closed form (θ and `Q_gen`) | **red** | **red** | — | **red** | **red** | — |
+| small-angle rate control | **red** | **red** | — | — | **red** | — |
+| losses identity (`R ≠ 0`) | **red** | **red** | — | **red** | — | **red** |
+| **the ZIP scale IS the polynomial** | — | — | — | **red** | — | — |
+| limits: wide ones cannot bind (`==`) | — | **red** | — | — | **red** | — |
+| limits: algebra says it MUST bind | **red** | **red** | **red** | — | **red** | — |
+| limits: EXACTLY that bus, of two | **red** | — | **red** | — | **red** | — |
+| limits: back-off refused | — | **red** | — | — | **red** | — |
+| **the `|V|` band REJECTS** | **red** | **red** | **red** | **red** | — | — |
+| the rating check REJECTS | **red** | **red** | — | — | — | — |
+| the three checks, split not copied | — | — | — | — | — | — |
+| the refusals, each by name | — | — | — | — | — | — |
+| two machines on a bus sum | **red** | **red** | — | — | **red** | — |
+| superposition FAILS here | **red** | — | — | — | **red** | — |
+| `R` is READ here | **red** | **red** | **red** | — | — | **red** |
+
+**The two rows in bold arrived because the run demanded them, and the first
+version of this table is the argument for running mutations at all:**
+
+  - **S4 was caught by exactly ONE check** — the two-bus closed form. Not by the
+    losses identity, and the reason is that the losses test computed the load's
+    draw by calling `GridSim._zip_scale`, *the very function the sabotage broke*.
+    A check that reads its answer from the source it is checking is not a check.
+    The test now writes the ZIP draw out as the textbook polynomial
+    `a_z|V|² + a_i|V| + a_p`, and a new testset pins `_zip_scale` against that
+    polynomial directly. S4 went from 1 red to 4. **The general rule this yields,
+    and it is not confined to loads: no check of a model may evaluate that model
+    through the function under test** (D11).
+  - **S3 was NOT caught by the band case**, the one fixture with a genuine PQ load
+    bus. With the reactive sign flipped, the bus *injects* 0.6 pu instead of drawing
+    it and floats far ABOVE 1.1 — so the band still fired, the message still said
+    "outside", and the test passed **against the bug it sat closest to**. "Outside"
+    is not a check; the side is. The refusal's own reported magnitude is now parsed
+    out of the message and compared to the closed-form root of the PV curve, which
+    is a number on a side. S3 went from 3 red to 4, and the band case became one of
+    the four strongest checks in the file.
+
+**Two structural notes, both the same shape as step 2's.**
+
+  - **No single check carries this step.** Step 2's three-bus split went red under
+    all five of its sabotages; here the best any one check manages is **four of
+    six**, and it takes a *pair* to cover the set — the two-bus closed form (S1,
+    S2, S4, S5) with "`R` is READ here" (S1, S2, S3, S6), which is to say a
+    fixture with no losses together with one whose entire content is losses. That
+    is a property of the tier, not a weakness of the fixtures: the AC solve has
+    four largely independent surfaces (the matrix, the reactive side, the load
+    model, the limit logic) and no one case exercises all of them.
+  - **Two testsets are red under nothing, correctly.** "The three checks are the M5
+    ones, split rather than copied" and "the refusals, each by name" both run
+    before or beside any solved number — one unit-tests the extracted guards with
+    hand-built inputs, the other tests rejections that happen before the solver is
+    reached. Neither is evidence about the solve, and neither pretends to be.
+
+**A limit of THIS mutation set, recorded so step 4 does not inherit it.** S5's
+breadth (9 testsets) is partly an artifact: with `Q_min` defaulting to `-Inf`, a
+swapped comparison is *always* true, so every generator bus switches to an
+infinite limit and every case turns pathological at once. A mutation that breaks
+everything says less than one that changes an answer subtly — S3, S4 and S6 are
+the informative ones here. Step 4's mutations should prefer sabotages that leave
+the solve well-posed.
+
+**F11 — `Pgen` is read back, not copied, and that decides two `==` vs `≈` calls.**
+The reported generation at a bus is `P_network + P_load` from the solved answer
+rather than the schedule copied through, so a non-slack machine's output matches
+its schedule only to the residual (4e-16). Copying would have made "the machine
+produces its schedule" vacuous. Related and separate: the lossless `Y` is **not**
+bitwise the DC `B` — `inv(complex(0.0, X))` is one ulp off `-1/X` for some
+reactances and exact for others (measured; the real part is exactly zero
+throughout), so that cross-check is bounded in ulps of the largest susceptance
+rather than asserted with `==`.
 
 ---
 
@@ -429,9 +594,9 @@ where it lives rather than approximating it in the core environment.
 
 - [~] `docs/validation-ledger.md` gains a steady-state section, every row labelled,
       `un-oracled` rows stated out loud. **Opened at step 2** with the step 1 and
-      step 2 rows; four rows say `un-oracled` and each names the step that closes
-      it. Not ticked: step 3's AC rows and step 4's two oracle sections are owed.
-- [~] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-2;
+      step 2 rows; step 3's AC rows added, including the two `un-oracled` rows that
+      step 4's two oracles close. Not ticked: step 4's oracle sections are owed.
+- [~] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-3;
       stays open until the milestone closes.
 - [x] `docs/SPEC.md` §9 item 5 annotated (step 0's second open box) — the refused
       half struck through in place, with the reason and D1's measurement pointed at.
@@ -447,4 +612,7 @@ where it lives rather than approximating it in the core environment.
       dropped comments back. Done for step 2's `SparseArrays` add: nothing was
       dropped (the root file carries no comments), but the **compat bound had to be
       corrected** — see step 2's F5, where `Pkg`'s `"1.12.0"` would have raised the
-      package's Julia floor from 1.10 to 1.12 in silence.
+      package's Julia floor from 1.10 to 1.12 in silence. Done again for step 3's
+      `NonlinearSolve` add: nothing dropped, and the bound `Pkg` wrote is right this
+      time — F5 bites only on a **versioned stdlib**, and `NonlinearSolve` is an
+      ordinary package whose caret bound says nothing about the Julia floor.

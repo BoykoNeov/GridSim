@@ -48,6 +48,13 @@ import LinearAlgebra
 # dependency at zero new packages (m6-context.md D2, measured at step 0 and
 # confirmed by `Pkg.add`: "No packages added to or removed from Manifest").
 import SparseArrays
+# NonlinearSolve supplies the Newton solve M6 step 3's power-flow residuals are
+# handed to — the same split every engine already makes: the equations are ours,
+# the solver is the ecosystem's (m6-context.md D2). Already in the manifest
+# transitively via the SciML stack, so it is a direct dependency at zero new
+# packages (measured at step 0; confirmed by `Pkg.add`: "No packages added to or
+# removed from Manifest").
+import NonlinearSolve
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
@@ -112,6 +119,10 @@ include("engines/detailed.jl")
 # adds a method to that generic rather than inventing a second name for the same
 # physical quantity (M5 step 7's rule).
 include("steadystate/dc_powerflow.jl")
+# The nonlinear (AC) solve, after the linear one: it inherits `_zip_k` from the
+# detailed tier and the three acceptance checks from `_check_power_flow`, and it is
+# the DC answer's cheap sanity partner rather than the other way round.
+include("steadystate/ac_powerflow.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -159,6 +170,13 @@ export bus_roles, bus_role
 # generic the two dynamic tiers already answer to. All four checked clear against
 # `names(GLMakie)` before being added (2026-09-07) — the standing check since M1.
 export DCPowerFlow, dc_powerflow, bus_angle, bus_injections
+# M6 step 3 - the nonlinear (AC) power flow. `bus_angle` and `branch_power` are
+# NOT re-exported: the AC solve adds methods to generics that already exist, which
+# is the same one-name rule the DC solve followed. All five new names checked clear
+# against `names(GLMakie)` in the `ui/` environment before being added (2026-09-07)
+# - the standing check since M1, and F7's lesson that it belongs where it lives.
+export ACPowerFlow, ac_powerflow, bus_voltage, bus_generation, branch_reactive
+export branch_loss
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

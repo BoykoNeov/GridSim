@@ -439,3 +439,154 @@ and the same injections) would be invisible to it. Step 3's own checks must
 therefore include at least one whose answer is fixed by algebra outside both
 solves — the losses identity with `R ≠ 0` is the candidate, since the slack's
 pickup equals the summed branch losses and neither side of that is a tolerance.
+
+
+---
+
+## D10 — The three acceptance checks are SPLIT, not copied, and the AC path runs
+them in the order the M5 docstring already claimed
+
+D6 says the `|V|` band is *inherited* from `_check_power_flow` rather than
+re-derived. Step 3 had to decide what "inherited" means in code, because the
+tasks list also asked for a different **order** — band, then ratings, then
+residual — and `_check_power_flow` ran the residual first.
+
+Reading it before changing anything turned up the smaller half of the answer:
+**the M5 docstring already listed them in the significance order and the code
+already contradicted it**, with "Listed third deliberately" written above a
+residual check that executed first. So the ordering was not a new requirement; it
+was a documented intent that had never been implemented.
+
+Three options, and the choice:
+
+- **Copy the band into the AC file.** Rejected outright — two copies of a
+  discriminator is how a discriminator drifts, and D6 exists to prevent exactly
+  that.
+- **Call `_check_power_flow` from the AC solve.** Rejected for two reasons: it
+  takes complex voltages, which the AC solve does not have (it solves in
+  magnitude and angle and would have to *build* complex numbers to be checked),
+  and it would import the residual-first order rather than fix it.
+- **Split it into `_check_voltage_band`, `_check_branch_ratings` and
+  `_check_residual`, chosen.** Each is one named check with its own docstring;
+  `_check_power_flow` becomes the three composed, and the composition now runs
+  them in the order it always claimed. The AC path composes the same three in the
+  same order.
+
+The band check takes **magnitudes** rather than complex voltages, which is the AC
+solve's native form and costs the M5 caller one `abs.(V)`. One text change went
+with it: the residual message used to say "see the band check below", which is a
+statement about a position in a function; it now names the band without pointing
+at where it sits.
+
+**What this costs, stated:** M5's callers now report a band or a ratings failure
+in preference to a residual failure on a solve that fails more than one. That is
+the order the docstring always said was the right one, and no M5 test asserts the
+selection.
+
+---
+
+## D11 — A load bus holds a ZIP schedule, not a constant complex power, and step
+4 is the reason
+
+The textbook power flow's PQ bus holds a constant complex power. This repo's
+`Load` is a **ZIP** load whose default share is constant *impedance*, and the
+detailed tier integrates all three shares through `_load_current` (M5 step 6).
+
+So the AC residual had a choice: hold `P0 + jQ0` at a load bus (textbook), or
+hold the ZIP schedule evaluated at the solved magnitude (this repo's load model).
+**It holds the ZIP schedule**, and the reason is entirely about step 4:
+
+> Oracle A is a solved power flow fed to `DetailedEngine` as its initial
+> condition, which must then produce a run that does nothing. That is a check on
+> the *solve* only if both sides model the load identically. Hold constant power
+> in the power flow and ZIP in the DAE tier, and the flat run acquires a floor
+> that has nothing to do with either being wrong.
+
+"Identically" is taken literally rather than as physics: `_zip_k` — the voltage
+scalar — was **extracted from `_load_current`** and is now called by both.
+`_zip_scale` is `|V|² · k`, which is `S_load = V·conj(I_load)` exactly. The
+grouping is preserved rather than expanded to the algebraically equal
+`a_z|V|² + a_i|V| + a_p`, because the grouping is what makes `k = 1` hold *in
+floating point* at `|V| = 1` for any split and at `a_i = a_p = 0` for any voltage.
+`_load_current`'s early return is untouched, so the constant-impedance hot path
+still takes no square root and is bitwise the arithmetic M5 measured.
+
+**Two consequences, both scheduled rather than left to be discovered:**
+
+1. **Step 4's oracle-B fixtures need `a_p = 1.0` loads.** `PowerFlows`' PQ bus is
+   constant power. Compared on a default `a_z = 1` model the two sides are solving
+   different networks, and the gap would be a load model rather than a solver.
+2. **The `|V| → 0` singularity is inherited, not re-taken.** With `a_p > 0` the
+   load current diverges at a collapsed bus — M5 D23's decision, and it is the
+   model telling the truth rather than a missing guard.
+
+And one rule that fell out of the mutation run rather than the design: **no check
+of the load model may evaluate it through `_zip_scale`.** The losses identity did,
+and was blind to a sabotage that dropped a whole power of `|V|` from it. See
+`m6-tasks.md` step 3, F10.
+
+---
+
+## D12 — Reactive-limit switching is bind-only, and the missing half refuses
+rather than answers
+
+A generator bus holds its terminal voltage only while its machines can supply the
+reactive power that takes. Past `Q_max` it becomes a load bus **at that limit**.
+The classical implementation also does the reverse — a bus comes back **off** its
+limit when the network no longer needs it there — and that reverse is what makes
+the PV/PQ iteration cycle between two classifications forever.
+
+**Bind-only, chosen**, with three things attached so that it is a boundary rather
+than an omission:
+
+1. **The missing half is a refusal, not a silence.** After convergence, a bus held
+   at `Q_max` whose magnitude ended up *above* its setpoint (or at `Q_min` and
+   below) is exactly the state back-off exists for, and `_ac_assert_no_backoff`
+   throws by name, saying so. It is a separate function precisely so it can be
+   exercised directly — no fixture reaches a pathology by accident, and a guard
+   that never runs is decoration (M5 step 8's lesson, and `_check_power_flow`'s
+   own precedent).
+2. **The round cap throws with the bus list** rather than returning a
+   half-switched answer. Bind-only switching should terminate, so reaching the cap
+   is a bug or a genuinely limitless case; either way the answer is not one.
+3. **The first solve IS the unlimited solve.** A round in which nothing switches
+   exits without re-solving, which is what makes the positive control — limits set
+   so wide they cannot bind must reproduce the unlimited answer **exactly** — an
+   `==` rather than an `≈`. That is a constraint on the loop's shape, not only on
+   the test, and it is written into the loop's comment where someone might
+   otherwise "tidy" it into an always-one-more-pass form.
+
+**The slack's own reactive limits are not enforced**, and that is named here
+rather than discovered. The slack is the bus whose injection is whatever the
+network needs; limiting it requires a distributed or area slack, which no type in
+this repo expresses.
+
+---
+
+### What step 3 measured (2026-09-07)
+
+**The rate control's exponent is a statement about the fixture, and the fixture
+was proved load-bearing by measurement.** The band [7.5, 8.5] on the ratio of
+successive gaps was written into the test before any number was looked at, from
+the truncation order alone. Measured: **8.020, 8.005, 8.001** at λ = 0.4 → 0.05,
+with the smallest gap 1.06e-07, three orders above the solve tolerance. Then the
+same check on the same topology with a **scaled reactive load** — the one
+condition the derivation forbids — gives **4.220, 4.106, 4.052**. The two bands do
+not overlap, so the 8 is a claim about the physics rather than a number a smooth
+solve would produce anyway. Both are now in the suite: the second is what makes
+the first mean something.
+
+**A lossless `Y` is the DC `B` — but not to the bit, and the reason is Julia's
+complex reciprocal rather than anything about the model.** `==` was tried first
+and failed at 3.55e-15. `inv(complex(0.0, X))` returns exactly `-1/X` for some
+reactances (0.25, 0.3) and one ulp off for others (0.1, 0.2, 0.4); the real part
+is exactly zero in every case. The check is therefore stated in ulps of the
+largest susceptance (bound 1.3e-14) rather than as a tolerance, and it is the only
+check that ties the two matrix assemblies together.
+
+**`Pgen` is read back from the solved network, not copied from the schedule.**
+`Pgen = P_network + P_load`, so a non-slack machine's reported output equals its
+schedule only to the residual (measured 4e-16). Copying the schedule in would have
+made "the machine produces its schedule" a vacuous test; reading it back makes it
+a check on the solve, and the price is that two assertions are `≈` rather than
+`==`.

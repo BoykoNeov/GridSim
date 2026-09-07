@@ -360,9 +360,27 @@ at all rather than a special case.
     Iim = G * Vim + B * Vre
     # Constant impedance (and "no load at all"): k ≡ 1, and no sqrt is computed.
     (a_i == 0.0) & (a_p == 0.0) && return (Ire, Iim)
-    invV = inv(hypot(Vre, Vim))
-    k = 1 + a_i * (invV - 1) + a_p * (invV * invV - 1)
+    k = _zip_k(hypot(Vre, Vim), a_i, a_p)
     return (k * Ire, k * Iim)
+end
+
+"""
+    _zip_k(Vm, a_i, a_p) -> Float64
+
+The ZIP voltage scalar `k = 1 + a_i(1/|V| - 1) + a_p(1/|V|^2 - 1)`, extracted from
+`_load_current` at M6 step 3 so the **power flow and the DAE tier cannot come to
+hold different load models** — which is the whole content of step 4's flat-run
+oracle (`m6-context.md` D11). The grouping is `_load_current`'s exactly, and it is
+that grouping rather than the algebraically equal `a_z + a_i/|V| + a_p/|V|^2`
+because it makes `k = 1` hold **in floating point** at `|V| = 1` for any split and
+at `a_i = a_p = 0` for any voltage.
+
+Called only after `_load_current`'s early return, so the constant-impedance hot
+path still computes no `hypot` and is bitwise the arithmetic M5 measured.
+"""
+@inline function _zip_k(Vm, a_i, a_p)
+    invV = inv(Vm)
+    return 1 + a_i * (invV - 1) + a_p * (invV * invV - 1)
 end
 
 """
@@ -761,36 +779,38 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
-    _check_power_flow(net, V, flows, residual, what)
+    _check_voltage_band(net, Vm, what)
 
-The solution is CHECKED, NOT TRUSTED (m5-prestudy.md §4, D7). Three tests, and
-the first one is the one that matters:
+`|V| in [0.9, 1.1]` at every bus, `Vm` being the magnitudes in vertex order.
 
-  1. `|V| ∈ [0.9, 1.1]` at every bus. This is not a comfort check on voltage
-     quality — it is the **only** thing that separates the true solution from the
-     collapsed spurious one, whose residual is 400× tighter (see the header).
-  2. Every branch flow within its rating, so a "converged" answer that needs a
-     line to carry three times its thermal limit is refused rather than reported.
-  3. The residual below `1e-10`. Listed third deliberately: it is necessary and
-     conspicuously not sufficient.
+**This is the discriminator.** Not a comfort check on voltage quality — it is the
+*only* thing that separates the true solution from the collapsed spurious one,
+whose residual is 400x tighter (see the header). Split out of `_check_power_flow`
+at M6 step 3 so the AC power flow **inherits the check itself** rather than
+re-deriving the band (`m6-context.md` D6, D10).
 """
-function _check_power_flow(net::NetworkModel, V::Vector{ComplexF64},
-                           flows::Vector{Float64}, residual::Float64,
-                           what::AbstractString)
-    residual < _PF_RESIDUAL || throw(ErrorException(
-        "$what: the network solve converged to a residual of $residual, above the " *
-        "$_PF_RESIDUAL threshold. This is necessary and not sufficient — see the " *
-        "band check below, which is what actually separates the true solution from " *
-        "a self-consistent collapsed one."))
+function _check_voltage_band(net::NetworkModel, Vm::AbstractVector{Float64},
+                             what::AbstractString)
     for (v, b) in pairs(net.buses)
-        Vm = abs(V[v])
-        _PF_VMIN <= Vm <= _PF_VMAX || throw(ErrorException(
-            "$what: bus $(b.id) solved to |V| = $Vm pu, outside [$_PF_VMIN, $_PF_VMAX]. " *
+        _PF_VMIN <= Vm[v] <= _PF_VMAX || throw(ErrorException(
+            "$what: bus $(b.id) solved to |V| = $(Vm[v]) pu, outside [$_PF_VMIN, $_PF_VMAX]. " *
             "A collapsed-voltage solution is SELF-CONSISTENT and converges to a " *
             "TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), " *
             "so this band is the discriminator and the residual is not. Either the " *
             "case is genuinely infeasible, or the solve fell into the spurious basin."))
     end
+    return nothing
+end
+
+"""
+    _check_branch_ratings(net, flows, what)
+
+Every branch's `|S|` (pu, indexed by branch) within its thermal rating, so a
+"converged" answer that needs a line to carry three times its limit is refused
+rather than reported.
+"""
+function _check_branch_ratings(net::NetworkModel, flows::AbstractVector{Float64},
+                               what::AbstractString)
     for (e, br) in pairs(net.branches)
         mva = flows[e] * net.S_base
         mva <= br.rating || throw(ErrorException(
@@ -798,6 +818,45 @@ function _check_power_flow(net::NetworkModel, V::Vector{ComplexF64},
             "$(br.rating) MVA. The solve converged, but onto a dispatch the network " *
             "cannot physically run."))
     end
+    return nothing
+end
+
+"""
+    _check_residual(residual, what)
+
+The solve's residual below `1e-10`. **Last, deliberately**: it is necessary and
+conspicuously not sufficient, and the band is what actually decides.
+"""
+function _check_residual(residual::Float64, what::AbstractString)
+    residual < _PF_RESIDUAL || throw(ErrorException(
+        "$what: the network solve converged to a residual of $residual, above the " *
+        "$_PF_RESIDUAL threshold. This is necessary and not sufficient — the " *
+        "|V| band check is what actually separates the true solution from a " *
+        "self-consistent collapsed one."))
+    return nothing
+end
+
+"""
+    _check_power_flow(net, V, flows, residual, what)
+
+The solution is CHECKED, NOT TRUSTED (m5-prestudy.md §4, D7). The three checks
+above, composed — in significance order, which since M6 step 3 is also the order
+they **execute** in (`m6-context.md` D10; before that the residual ran first while
+this docstring already listed it third).
+
+  1. `_check_voltage_band` — the discriminator.
+  2. `_check_branch_ratings` — converged onto a dispatch the network cannot run.
+  3. `_check_residual` — necessary, conspicuously not sufficient.
+
+`V` is complex here because this caller has complex voltages to hand; the band
+check takes magnitudes, which is what the AC power flow solves in directly.
+"""
+function _check_power_flow(net::NetworkModel, V::Vector{ComplexF64},
+                           flows::Vector{Float64}, residual::Float64,
+                           what::AbstractString)
+    _check_voltage_band(net, abs.(V), what)
+    _check_branch_ratings(net, flows, what)
+    _check_residual(residual, what)
     return nothing
 end
 
