@@ -256,3 +256,330 @@ end
 end
 
 end # M6 step 1
+
+# ════════════════════════════════════════════════════════════════════════════════
+# M6 step 2 — the linear ("DC") power flow (docs/plans/m6-plan.md, m6-tasks.md).
+#
+# Two fixtures live here rather than in `src/`, and deliberately: both exist to make
+# an ALGEBRAIC prediction checkable, so their numbers are chosen by the check and
+# not by any physical scenario. Nothing outside this file needs them.
+#
+# `_dc_split_case` is the three-bus case whose whole point is that the two paths
+# between the ends have DIFFERENT reactances — 0.2 direct against 0.1 + 0.3 = 0.4
+# round — so the 2 : 1 split the current divider predicts cannot be a coincidence
+# of symmetry. `three_machine_ring` would not do: its three branches are all 0.25,
+# and on a symmetric ring a sign or an orientation bug can leave the magnitudes
+# untouched. Its middle bus carries neither machine nor load, which makes it a pure
+# junction and makes the divider EXACT rather than approximate.
+
+# One injection at `B1`, the matching withdrawal at `B3`, `B2` a bare junction.
+# `X13` is a keyword so the positive control can move exactly one reactance and
+# nothing else about the model.
+function _dc_split_case(; X13 = 0.2, P_MW = 90.0)
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    branches = [
+        Branch(:L12, :B1, :B2, 0.1, 500.0),
+        Branch(:L23, :B2, :B3, 0.3, 500.0),
+        Branch(:L13, :B1, :B3, X13, 500.0),
+    ]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, P_MW)]
+    loads = [Load(:D3, :B3, P_MW, 0.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+end
+
+# A five-bus radial, whose only job is to be a case where the susceptance matrix is
+# genuinely sparse: `n + 2m = 13` stored entries out of `n^2 = 25`. On the three-bus
+# ring — a complete graph — `n + 2m` is 9 out of 9, so the count is satisfied by a
+# DENSE matrix and proves nothing about the rule it is there to check.
+function _dc_radial_case()
+    buses = [Bus(Symbol("R", k), 400.0) for k in 1:5]
+    branches = [Branch(Symbol("L", k), Symbol("R", k), Symbol("R", k + 1), 0.1 * k, 500.0)
+                for k in 1:4]
+    machines = [Machine(:G1, :R1, 300.0, 4.0, 2.0, 0.30, 1.05, 120.0)]
+    loads = [Load(:D4, :R4, 50.0, 0.0), Load(:D5, :R5, 70.0, 0.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :R1)
+end
+
+@testset "M6 step 2 — the linear (DC) power flow" begin
+
+# ── the injection vector ────────────────────────────────────────────────────────
+@testset "bus_injections: machines minus load, in pu, in vertex order" begin
+    net = _dc_split_case()
+    P = bus_injections(net)
+    @test P == [0.9, 0.0, -0.9]        # 90 MW on a 100 MVA base, and a bare junction
+    @test length(P) == length(net.buses)
+    # The Σ-balance guard means this is true of every constructible model, which is
+    # also why step 2 has NO slack-pickup check: it would assert 0 == 0. Losses get
+    # a home in step 3, where the slack picks up a number that is not zero.
+    @test sum(P) == 0.0
+    @test sum(bus_injections(three_machine_ring())) == 0.0
+
+    # The conversion is `machine_arrays` and `load_arrays`, never a second copy of
+    # it: a machine on a different S_rated must not move the injection, because P0
+    # is in MW and is never on the machine base. (That weight is the thing which
+    # keeps going wrong — M2 and M5 both paid for it.)
+    wide = NetworkModel(100.0, 50.0, net.buses, net.branches,
+                        [Machine(:G1, :B1, 900.0, 4.0, 2.0, 0.30, 1.05, 90.0)],
+                        net.loads; slack = :B1)
+    @test bus_injections(wide) == P
+
+    # A ZIP load and its shares do NOT appear: at |V| = 1, which is the whole DC
+    # approximation, constant-impedance, constant-current and constant-power all
+    # draw P0. That is exact here, not a simplification of it.
+    zip = NetworkModel(100.0, 50.0, net.buses, net.branches, net.machines,
+                       [Load(:D3, :B3, 90.0, 0.0, 0.0, 0.0, 1.0)];   # a_z, a_i, a_p
+                       slack = :B1)
+    @test bus_injections(zip) == P
+end
+
+# ── the matrix, and the rule this repo has never had to obey in its own code ─────
+@testset "the susceptance matrix is sparse structurally, not merely by type" begin
+    for net in (three_machine_ring(), _dc_split_case(), _dc_radial_case())
+        B = GridSim._dc_susceptance(net)
+        n, m = length(net.buses), length(net.branches)
+        @test B isa SparseArrays.SparseMatrixCSC{Float64,Int}
+        # THE STRUCTURAL CHECK. `n` diagonal entries (every bus carries a branch, or
+        # the model is disconnected and rejected) plus `2m` off-diagonal ones with
+        # no cancellation, because `Branch` rejects a self-loop and `NetworkModel`
+        # rejects a parallel circuit — so every off-diagonal is a single −1/X.
+        @test SparseArrays.nnz(B) == n + 2m
+        @test B == B'                              # symmetric by construction
+        # Singular: angles are relative, so the all-ones vector is in the null
+        # space. This is WHY the solve deletes a row and a column rather than
+        # factorising B, and it is the property a wrong diagonal would break.
+        @test maximum(abs, B * ones(n)) < 1e-12
+        # Off-diagonals are −1/X, diagonals the positive sum at the bus.
+        for br in net.branches
+            i, j = net.bus_index[br.from], net.bus_index[br.to]
+            @test B[i, j] == -inv(br.X)
+            @test B[j, i] == -inv(br.X)
+        end
+        @test all(k -> B[k, k] > 0, 1:n)
+    end
+
+    # …and on a case where the count can tell dense from sparse. The three-bus ring
+    # is a COMPLETE graph, so its 9 stored entries are all 9 of them: the count
+    # passes there against a dense matrix and is only evidence on this one.
+    radial = _dc_radial_case()
+    B = GridSim._dc_susceptance(radial)
+    n = length(radial.buses)
+    @test SparseArrays.nnz(B) == 13
+    @test SparseArrays.nnz(B) < n^2            # 13 < 25 — genuinely sparse
+end
+
+# ── two buses: a closed form, and it is a single division ───────────────────────
+@testset "two-bus closed form" begin
+    net = two_machine_system()                 # +60 MW at B1, −60 at B2, X = 0.25
+    sol = dc_powerflow(net)
+
+    @test sol.slack === :B1                    # the declared default of the model
+    @test sol.θ[1] === 0.0                     # the reference angle, exactly
+
+    # θ₂ = −P₂ / b = −0.6 / 4. With one unknown the "solve" is one division, so
+    # this is EXACT and asserted as such — if a solver change ever makes it
+    # inexact, that is a fact worth seeing rather than absorbing into a tolerance.
+    @test sol.θ[2] == -0.6 / 4.0
+    @test bus_angle(sol, :B2) == sol.θ[2]
+
+    # The flow is the injection: one branch, nowhere else for it to go.
+    @test branch_power(sol, :B1, :B2) ≈ 0.6
+    @test branch_power(sol, :B1, :B2) == -branch_power(sol, :B2, :B1)
+    @test branch_power(sol) == sol.flow
+    @test branch_power(sol) !== sol.flow       # a copy, not the live vector
+end
+
+# ── three buses: the split is a ratio of reactances, written down ───────────────
+#
+# `B2` carries nothing, so all 0.9 pu leaving `B1` must reach `B3`, dividing between
+# the direct branch and the two-branch path in inverse proportion to their
+# reactances: direct : path = (X12 + X23) : X13 = 0.4 : 0.2 = 2 : 1.
+@testset "three-bus split is the reactance ratio" begin
+    net = _dc_split_case()
+    sol = dc_powerflow(net)
+
+    direct = branch_power(sol, :B1, :B3)
+    path   = branch_power(sol, :B1, :B2)
+    @test direct + path ≈ 0.9                  # everything injected leaves B1
+    @test path ≈ branch_power(sol, :B2, :B3)   # …and nothing is lost at the junction
+
+    X12, X23, X13 = 0.1, 0.3, 0.2
+    @test direct / path ≈ (X12 + X23) / X13
+    @test direct ≈ 0.9 * (X12 + X23) / (X12 + X23 + X13)
+    @test path   ≈ 0.9 * X13 / (X12 + X23 + X13)
+
+    # The angle drop is the same over both paths — which is the divider, stated as
+    # the loop equation it comes from rather than as a second number.
+    @test bus_angle(sol, :B1) - bus_angle(sol, :B3) ≈ direct * X13
+    @test bus_angle(sol, :B1) - bus_angle(sol, :B3) ≈ path * (X12 + X23)
+end
+
+# ── the positive control: move one reactance, and the split moves as predicted ──
+@testset "positive control — the split follows the reactance it is a ratio of" begin
+    base = dc_powerflow(_dc_split_case(X13 = 0.2))
+    d0 = branch_power(base, :B1, :B3)
+    p0 = branch_power(base, :B1, :B2)
+    @test d0 > p0                              # the cheap path carries more
+
+    # Double the direct reactance to 0.4 and the two paths are equal: the split must
+    # become exactly 50/50, and the DIRECTION of the move is down.
+    even = dc_powerflow(_dc_split_case(X13 = 0.4))
+    @test branch_power(even, :B1, :B3) ≈ 0.45
+    @test branch_power(even, :B1, :B2) ≈ 0.45
+    @test branch_power(even, :B1, :B3) < d0    # …and it moved the right way
+    @test branch_power(even, :B1, :B2) > p0
+
+    # Make it the expensive path and the ordering reverses: 0.8 against 0.4 is 1 : 2.
+    flipped = dc_powerflow(_dc_split_case(X13 = 0.8))
+    @test branch_power(flipped, :B1, :B3) ≈ 0.9 * 0.4 / 1.2
+    @test branch_power(flipped, :B1, :B3) < branch_power(flipped, :B1, :B2)
+end
+
+# ── a radial, where conservation alone fixes every flow ─────────────────────────
+#
+# On a TREE there is exactly one path between any two buses, so each branch flow is
+# determined by the injections downstream of it and by nothing else — not by the
+# reactances, not by the slack. That makes this the sharpest closed form in the
+# step: the answer is written down from the load list, and it must survive both a
+# change of slack and a change of every reactance.
+#
+# It is also the case with a NON-CONTIGUOUS `keep`. Solving at the interior bus R3
+# deletes row and column 3, so the reduced system covers buses [1, 2, 4, 5] and the
+# solution has to be scattered back around the hole. That index step is invisible to
+# every fixture whose slack sits at an end, and an off-by-one in it is the shape M4
+# step 3 caught only with `===`.
+@testset "radial — conservation fixes every flow, and the slack sits inside it" begin
+    net = _dc_radial_case()                    # R1 injects 120 MW; R4 draws 50, R5 draws 70
+    at_end = dc_powerflow(net)
+
+    # Downstream of L1 and L2 sit both loads; downstream of L3 sit both; downstream
+    # of L4 sits only R5. In pu on 100 MVA:
+    for sol in (at_end,)
+        @test branch_power(sol, :R1, :R2) ≈ 1.2
+        @test branch_power(sol, :R2, :R3) ≈ 1.2
+        @test branch_power(sol, :R3, :R4) ≈ 1.2
+        @test branch_power(sol, :R4, :R5) ≈ 0.7
+    end
+
+    # The interior slack: `keep` becomes [1, 2, 4, 5], with a hole at 3.
+    inside = dc_powerflow(NetworkModel(100.0, 50.0, net.buses, net.branches,
+                                       net.machines, net.loads; slack = :R3))
+    @test inside.θ[3] === 0.0
+    @test inside.flow ≈ at_end.flow            # a tree does not care where the slack is
+    @test inside.θ ≈ at_end.θ .- at_end.θ[3]   # …and the angles differ by that offset alone
+
+    # The flows do not care about the reactances either — only the angles do. Scaling
+    # every reactance by 3 leaves the flows and multiplies the angle spread by 3,
+    # which separates "the solve is right" from "the fixture happens to be uniform".
+    stretched = dc_powerflow(
+        NetworkModel(100.0, 50.0, net.buses,
+                     [Branch(br.id, br.from, br.to, 3 * br.X, br.rating) for br in net.branches],
+                     net.machines, net.loads; slack = :R3))
+    @test stretched.flow ≈ inside.flow
+    @test stretched.θ ≈ 3 .* inside.θ
+    @test !(stretched.θ ≈ inside.θ)            # not vacuous: the angles genuinely moved
+end
+
+# ── superposition: the property only a LINEAR model has ─────────────────────────
+#
+# The real discriminator of this step. A nonlinear solve gets the two-bus closed
+# form and the reactance ratio right too; only a linear one adds.
+#
+# THE CONSTRUCTOR SHAPES THIS TEST. `NetworkModel` rejects a model whose scheduled
+# injections do not balance, so the two summands cannot be arbitrary halves of the
+# whole — each must sum to zero ON ITS OWN. Hence two separate generator/load pairs
+# on one shared topology, and a third model carrying both.
+@testset "superposition — two injections solved apart sum to the pair together" begin
+    buses = [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)]
+    branches = [
+        Branch(:L12, :B1, :B2, 0.1, 500.0),
+        Branch(:L23, :B2, :B3, 0.3, 500.0),
+        Branch(:L13, :B1, :B3, 0.2, 500.0),
+    ]
+    build(machines, loads) =
+        NetworkModel(100.0, 50.0, buses, branches, machines, loads; slack = :B1)
+
+    G1(P) = Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, P)
+    G2(P) = Machine(:G2, :B2, 200.0, 3.0, 2.0, 0.20, 1.03, P)
+
+    a = build([G1(90.0)],            [Load(:D3, :B3, 90.0,  0.0)])
+    b = build([G2(60.0)],            [Load(:D3, :B3, 60.0,  0.0)])
+    c = build([G1(90.0), G2(60.0)],  [Load(:D3, :B3, 150.0, 0.0)])
+
+    sa, sb, sc = dc_powerflow(a), dc_powerflow(b), dc_powerflow(c)
+    @test sa.P .+ sb.P ≈ sc.P                  # the inputs add, which is the premise
+    @test sa.θ .+ sb.θ ≈ sc.θ                  # …and so do the answers
+    @test sa.flow .+ sb.flow ≈ sc.flow
+    # Not vacuous: the three solutions are genuinely different from one another.
+    @test !(sa.θ ≈ sb.θ) && !(sa.θ ≈ sc.θ)
+
+    # The three models do NOT agree on bus roles — B2 is a load bus in `a` and a
+    # generator bus in `b` and `c` — and the answers add anyway. That is the DC
+    # approximation stated as a test: at |V| = 1 with no reactive power, every
+    # non-slack bus holds the same thing, and only step 3 makes the roles matter.
+    @test bus_role(a, :B2) === :load
+    @test bus_role(b, :B2) === :generator
+    @test bus_roles(c) == [:slack, :generator, :load]
+end
+
+# ── the approximation and its own boundary ──────────────────────────────────────
+@testset "R is ignored by design, and the solve does NOT refuse a lossy model" begin
+    lossless = _dc_split_case()
+    lossy = NetworkModel(100.0, 50.0, lossless.buses,
+                         [Branch(br.id, br.from, br.to, br.X, br.rating; R = 0.05)
+                          for br in lossless.branches],
+                         lossless.machines, lossless.loads; slack = :B1)
+
+    # Every ENGINE refuses this model by name, because a lossy model run at a
+    # lossless tier is a different network than its data describes…
+    # …and it refuses it for THIS reason, not for some other property of the
+    # fixture: asserting only `ArgumentError` here would pass against a model
+    # rejected for its bare junction bus.
+    @test occursin("series resistance",
+                   argerr_msg(() -> init!(DetailedEngine, lossy)))
+    # …but the DC power flow is not a tier, it is an APPROXIMATION that states it
+    # drops R. Refusing here would refuse exactly the cases step 3 exists for.
+    @test dc_powerflow(lossy).θ == dc_powerflow(lossless).θ
+    @test dc_powerflow(lossy).flow == dc_powerflow(lossless).flow
+end
+
+# ── the slack is a choice, and the angles are stated against it ─────────────────
+@testset "the slack pins the reference angle and nothing else" begin
+    net = _dc_split_case()
+    at_b1 = dc_powerflow(net)
+    at_b3 = dc_powerflow(NetworkModel(100.0, 50.0, net.buses, net.branches,
+                                      net.machines, net.loads; slack = :B3))
+
+    @test at_b3.slack === :B3
+    @test at_b3.θ[3] === 0.0
+    @test at_b1.θ != at_b3.θ                   # the angles are stated against it…
+    # …but every DIFFERENCE, and therefore every flow, is unchanged: for the ANGLES
+    # the slack is a gauge choice. It is not one for the pickup — that is a dispatch
+    # choice (M5 D13) — which is why this says "difference" and not "everything".
+    @test at_b1.θ .- at_b1.θ[3] ≈ at_b3.θ
+    @test at_b1.flow ≈ at_b3.flow
+    # The slack may carry no machine at all: the model allows it, and here it is a
+    # bare junction. "The slack bus carries a machine" is an ENGINE guard (D3).
+    at_junction = dc_powerflow(NetworkModel(100.0, 50.0, net.buses, net.branches,
+                                            net.machines, net.loads; slack = :B2))
+    @test at_junction.θ[2] === 0.0
+    @test at_junction.flow ≈ at_b1.flow
+end
+
+# ── the degenerate case, and what the reads do with a name that is not there ────
+@testset "one bus, and the rejections" begin
+    # A single bus with no branches: the susceptance matrix is 0×0 once the slack
+    # row goes, so `n + 2m` does NOT describe it — there are no branches to make the
+    # diagonal structurally present. The answer is the reference angle alone.
+    solo = NetworkModel(100.0, 50.0, [Bus(:B1, 400.0)], Branch[],
+                        [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.30, 1.05, 0.0)])
+    sol = dc_powerflow(solo)
+    @test sol.θ == [0.0]
+    @test isempty(sol.flow)
+    @test SparseArrays.nnz(GridSim._dc_susceptance(solo)) == 0
+
+    ring = dc_powerflow(three_machine_ring())
+    @test occursin("no bus :B9", argerr_msg(() -> bus_angle(ring, :B9)))
+    @test occursin("no branch", argerr_msg(() -> branch_power(ring, :B1, :B9)))
+end
+
+end # M6 step 2

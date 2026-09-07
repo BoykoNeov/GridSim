@@ -328,6 +328,28 @@ cannot be read as — which is the only thing a window can get wrong.
 | The caption is in the picture | Every Label the window claims is asserted **in the figure's layout**, with a control proving the helper can say no. A Label with the right text that was never added passes every text assertion anyone can write about it | **structural (M3 step 7's lesson)** |
 | The passive bus | Structurally **absent**: the classical tier refuses a machine-free bus, so every model this window can draw has one machine per bus — and `state_series` says a machine-free bus "is often the one whose voltage matters". Named on the caption | **un-oracled — out of reach, named** |
 
+## The steady-state ladder — M6 steps 1-2, `src/steadystate/`, `model/network_model.jl`
+
+Started at step 2, incomplete on purpose: the two oracles are step 4, so every row
+here that says **un-oracled** is a row waiting for that step and not a gap that was
+overlooked. The nonlinear solve and its rows arrive with step 3.
+
+| Mechanism | Checked by | Label |
+|---|---|---|
+| `Branch.R`, `Machine.V_set`/`Q_min`/`Q_max`, `NetworkModel.slack` added without moving a number (step 1) | Full suite green with all 2835 pre-existing tests passing, **and** M5's 169 recorded criterion values bit-identical by MD5 against a capture taken at HEAD before the first edit — a tolerance-based suite cannot see a float move underneath it | structural |
+| Those fields are read by nothing that integrates | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) | structural |
+| `bus_roles` / `bus_role` derived, never stored | Rejection cases (slack naming a missing bus; a bus not in the model); a declared slack carrying no machine, which the model accepts and the engine refuses | structural |
+| DC susceptance matrix `B` is sparse **structurally** | `SparseMatrixCSC`, `nnz == n + 2m` on three fixtures, symmetric, `max|B·1| < 1e-12`; and on a five-bus radial where 13 of 25 entries can tell sparse from dense — on the three-bus ring, a complete graph, the same count passes against a dense matrix | structural |
+| DC solve `B·θ = P`, two buses | `θ₂ = −P/b` asserted **exactly** (`==`): one unknown makes the solve a single division, so a tolerance could only hide a solver change | closed form |
+| DC solve, three buses with two unequal paths | Current divider `direct : path = (X12+X23) : X13`, asserted as the ratio, as both absolute flows, and as the loop equation (equal angle drop over both paths) | closed form |
+| DC solve on a radial, and the reduction's own index arithmetic | On a tree every branch flow is fixed by the injections downstream of it alone, so the answer is written from the load list; it survives moving the slack to an **interior** bus (the only fixture with a non-contiguous reduced index set) and scaling every reactance by 3, which leaves the flows and triples the angle spread | closed form |
+| DC linearity | Superposition on three models sharing one topology — **and measured to be blind to all five implementation sabotages**, because a wrong linear map is still linear (`m6-tasks.md` step 2, F6). Kept as a statement about the tier's character, not relied on as the step's discriminator | structural (weak — see F6) |
+| The DC answer against anything outside the repo | nothing yet — step 4's `PowerFlows.jl` DC channel, with its own band | **un-oracled** |
+| The DC answer against our own AC solve | nothing yet — step 3's small-angle convergence, whose own blind spot is argued in `m6-context.md` D9 | **un-oracled** |
+| `R` ignored by the DC solve | Lossy and lossless models give `==` angles and flows, while `init!(DetailedEngine, …)` refuses the lossy one naming its resistance | structural |
+| The slack as a gauge for angles | Solving at three different slack buses — including a bus carrying no machine — leaves every angle *difference* and every flow unchanged | derived |
+| The slack's *pickup* | nothing, and deliberately: `NetworkModel`'s Σ-balance guard makes it identically zero in a lossless DC solve, so an assertion here would read `0 == 0`. It gets content in step 3's `R ≠ 0` losses identity | **un-oracled** (by construction) |
+
 ## Owed rows
 
 - SPEC §7.6's third lesson, **IBR behaviour**: no tier, and **un-scheduled**

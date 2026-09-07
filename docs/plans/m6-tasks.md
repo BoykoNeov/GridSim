@@ -6,9 +6,10 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **step 0 (planning) done; steps 1–6 open.** Entered at `181fe4e` with
+Status: **steps 0–2 done; steps 3–6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
-manifests at M5's close.
+manifests at M5's close. At step 2's close: **2996 core**, UI and `reference/`
+unchanged.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -156,19 +157,154 @@ the file **and the documented entry point** break unless step 5 updates both.
 
 ## Step 2 — the linear (DC) power flow
 
-- [ ] `src/steadystate/` created; the DC solve assembles `B` and solves `B·θ = P`.
-- [ ] **Sparse structurally, and checked as such:** the assembled matrix is a
-      `SparseMatrixCSC` and its stored-entry count equals what the branch list
-      predicts. First matrix this repo builds itself; first place the "no dense
-      Y-bus" rule binds our own code (D2).
-- [ ] Two-bus closed form.
-- [ ] Three-bus ring: the split between the two parallel paths is a ratio of
-      reactances, written down and asserted.
-- [ ] **Superposition** — two injections solved separately sum to the pair solved
-      together. A property only a linear model has, so it is a real discriminator
-      rather than a restatement.
-- [ ] Anti-vacuity mutation: perturb one reactance and show the split moves in the
-      direction and by the amount the ratio predicts.
+Done 2026-09-07. Entered at **2899 core**; leaves **2996 core** (+97 in
+`test/m6_steady_state.jl`). UI and `reference/` unchanged in count.
+
+- [x] `src/steadystate/` created; `dc_powerflow(net)` assembles `B` and solves
+      `B·θ = P` with the slack row and column deleted (which pins `θ_slack = 0` and
+      makes the remaining block symmetric positive definite, so the sparse
+      factorisation cannot meet the singularity that `B·1 = 0` guarantees).
+      **Not an engine and deliberately not in the mode router**: a steady state is a
+      function of a model, nothing here steps in time, and every `SimulationEngine`
+      verb would be meaningless on it.
+- [x] **Sparse structurally, and checked as such:** `_dc_susceptance` returns a
+      `SparseMatrixCSC{Float64,Int}` and its stored-entry count is exactly `n + 2m`
+      — `n` diagonals (an unbranched bus makes the model disconnected, which
+      `NetworkModel` rejects) plus `2m` off-diagonals that cannot cancel or
+      accumulate, because `Branch` rejects a self-loop and `NetworkModel` rejects a
+      parallel circuit. Assembled through `sparse(I, J, V, n, n)` so the duplicate
+      diagonal entries sum and each branch contributes its two terms without the
+      caller tracking bus degree. Also checked symmetric and singular
+      (`max|B·1| < 1e-12`), the property a wrong diagonal breaks.
+- [x] **…and checked on a case where the count can tell dense from sparse.** The
+      three-bus ring is a COMPLETE graph, so its `n + 2m` is 9 stored entries out of
+      9 — the count passes there against a dense matrix and is no evidence at all.
+      A five-bus radial was added for that one line: 13 of 25.
+- [x] Two-bus closed form, and it is asserted **exactly** (`==`, not `≈`): with one
+      unknown the solve is a single division, `θ₂ = −0.6/4`, so a tolerance here
+      would only hide a solver change.
+- [x] Three-bus ring: the split between the two parallel paths is a ratio of
+      reactances, written down and asserted — `direct : path = (X12+X23) : X13`, and
+      separately as the loop equation it comes from (the angle drop is the same over
+      both paths). The fixture uses **unequal** reactances (0.2 against 0.1 + 0.3)
+      and a middle bus carrying neither machine nor load, so the divider is exact
+      and the 2 : 1 answer is not a coincidence of symmetry.
+- [x] **Superposition** — two injections solved separately sum to the pair solved
+      together, on three models sharing one topology.
+- [x] **A radial, where conservation alone fixes every flow** — not on the plan's
+      list, added because the *reduction* had no check of its own — the `keep`
+      vector and the scatter of the reduced answer back around the deleted slack
+      row, which every one of the first four sabotages walked straight past. On a tree each branch flow is fixed by the injections downstream
+      of it and by nothing else, so the answer is written down from the load list
+      and must survive both a change of slack and a scaling of every reactance. It
+      is also the only fixture with a **non-contiguous `keep`**: solving at the
+      interior bus `R3` leaves the reduced system on buses [1, 2, 4, 5], with a hole
+      the scatter has to step over.
+- [x] Anti-vacuity mutation (the one the plan listed): one reactance perturbed, the
+      split moves in the predicted direction and to the predicted value — 0.2 → 0.4
+      gives exactly 50/50, 0.2 → 0.8 reverses the ordering to 1 : 2.
+- [x] **Five IMPLEMENTATION sabotages executed, and their blindness map recorded.**
+      See "what this step found" below: the plan's listed mutation is a positive
+      control, not an anti-vacuity check, and running real sabotages is what
+      produced this step's finding.
+- [x] `SparseArrays` added by `Pkg.add` — "**No packages added to or removed from
+      Manifest**", which is step 0's zero-new-packages measurement confirmed rather
+      than assumed. `Project.toml` diffed after: nothing dropped (the root file
+      carries no comments), but the compat bound `Pkg` wrote had to be corrected —
+      see F5.
+- [x] Exports checked against `names(GLMakie)`: `intersect(names(GridSim),
+      names(GLMakie))` is still `Symbol[]` with `DCPowerFlow`, `dc_powerflow`,
+      `bus_angle` and `bus_injections` added. **`branch_power` is deliberately NOT a
+      new export** — the DC solve adds a method to the generic both dynamic tiers
+      already answer to (M5 step 7's one-name rule), so the same physical quantity
+      does not acquire a third name.
+
+### What this step found that the plan did not anticipate
+
+**F5 — `Pkg.add` on a versioned stdlib raises the Julia floor silently, and this
+was MEASURED rather than reasoned.** `Pkg` wrote `SparseArrays = "1.12.0"`, a caret
+bound meaning `≥ 1.12.0, < 2`. The claim that this breaks the declared `julia =
+"1.10"` floor was checked on the 1.10 toolchain rather than recalled — M4 step 5 is
+the precedent for not trusting the obvious reading of a compat bound, since the
+Printf argument that "obviously" explained that round was simply wrong:
+
+  - `julia +1.10 -e 'pkgversion(SparseArrays)'` → **1.10.0** on Julia 1.10.12;
+  - a throwaway project declaring exactly that bound, resolved on 1.10:
+    **`ERROR: empty intersection between SparseArrays@1.10.0 and project
+    compatibility 1.12.0-1`**;
+  - the same file with `SparseArrays = "1"` resolves.
+
+So the line `Pkg` wrote would have moved the effective floor to Julia 1.12 while
+`julia = "1.10"` two lines below went on saying otherwise. Corrected to `"1"`, which
+is how `LinearAlgebra` is already treated. This is M4 step 5's lesson from the other
+direction: there the surprise was that compat on an **unversioned** stdlib is inert;
+here it is that compat on a **versioned** one is anything but.
+
+**F6 — the step's own showpiece check is blind to every implementation bug.**
+Five sabotages were applied to the source and the whole M6 file re-run against
+each: (M1) the off-diagonal sign flipped, (M2) the branch orientation reversed in
+the flow read, (M3) load added rather than subtracted in `bus_injections`, (M4) one
+diagonal term scaled by 0.9, (M5) the reduced solution scattered back in reverse
+order. All five go red somewhere — but not in the same place, and the map is the
+finding:
+
+| check | M1 sign | M2 orientation | M3 load sign | M4 diagonal | M5 scatter |
+|---|---|---|---|---|---|
+| `bus_injections` | — | — | **red** | — | — |
+| sparsity / symmetry / `B·1 = 0` | **red** | — | — | **red** | — |
+| two-bus closed form | — | **red** | — | — | — |
+| three-bus split | **red** | **red** | **red** | **red** | **red** |
+| positive control (reactance moved) | **red** | **red** | **red** | **red** | **red** |
+| radial, conservation + interior slack | * | * | * | * | **red** |
+| slack moved, flows unchanged | **red** | — | **red** | **red** | **red** |
+| **superposition** | — | — | — | — | — |
+| `R` ignored / one bus | — | — | — | — | — |
+
+`*` — the radial case did not exist when M1–M4 were run; M5 was run against the
+suite both without it (caught by three other checks) and with it (caught by four).
+It was added anyway, because "something else happens to catch it" is not the same
+claim as "a check covers it", and the reduction had no check of its own.
+
+**Superposition catches nothing.** The plan called it "a property only a linear
+model has, so it is a real discriminator rather than a restatement" — and that is
+true of the *class* of model and false of the *implementation*. Every one of these
+four sabotages produces a different linear map, and a wrong linear map is still
+linear, so `f(a) + f(b) = f(a+b)` holds exactly as well for the broken solve as for
+the right one. It is a real check of the tier's character and it is worth keeping,
+but it is not what makes this step safe, and calling it the discriminator would
+have left the step resting on the one test that cannot fail.
+
+Two smaller blindnesses fell out of the same run, both of them instances of the
+same warning — that a two-bus case is too symmetric to be evidence:
+
+  - **The two-bus closed form misses three of the four.** Deleting the slack row and
+    column on a two-bus network leaves a 1 × 1 matrix that contains *only* a
+    diagonal entry, so a flipped off-diagonal is not merely hard to see there, it is
+    structurally absent (M1). `two_machine_system` carries no `Load` at all — its
+    second machine has a negative `P0` — so the load-sign sabotage cannot reach it
+    (M3). And the surviving diagonal comes from the branch's `to` end, which M4 did
+    not touch.
+  - **The `R`-ignored and one-bus testsets are blind to all four**, correctly: both
+    compare a mutated solve against another mutated solve, or against nothing. They
+    check a boundary and a degenerate case, not a number.
+
+What actually carries the step is the **three-bus split with unequal reactances**
+and the positive control built on it — the only two checks red under all five. That
+is an argument for the fixture, not against the others: a case whose answer is
+fixed by algebra, on a topology with no symmetry to hide behind, is what a mutation
+cannot get past. The radial was added for the one thing none of the five originally
+targeted, the index arithmetic of the reduction itself; M5 exists because that gap
+was noticed by asking *which check covers this line*, not by a failing test.
+
+**F7 — the `ui/` manifest went stale the moment a core dependency changed, and
+this time it said so immediately.** Adding `SparseArrays` to the root package made
+`using GridSim` fail inside `ui/` with "Package GridSim does not have SparseArrays
+in its dependencies", fixed by `Pkg.resolve()` there. The gitignored-manifest trap
+has now caught this repo four times; the difference here is that it failed on the
+first load rather than several steps later, because the export check was run in the
+`ui/` environment as the standing rule requires. The check that exists for name
+collisions found a dependency-graph problem, which is an argument for running it
+where it lives rather than approximating it in the core environment.
 
 ---
 
@@ -281,16 +417,24 @@ the file **and the documented entry point** break unless step 5 updates both.
 
 ## Housekeeping owed by this milestone
 
-- [ ] `docs/validation-ledger.md` gains a steady-state section, every row labelled,
-      `un-oracled` rows stated out loud.
-- [ ] `docs/plans/README.md` M6 row updated as steps land.
-- [ ] `docs/SPEC.md` §9 item 5 annotated (step 0's second open box).
-- [ ] `docs/SPEC.md` §8's "no hand-rolled power-flow math" line annotated with D2's
+- [~] `docs/validation-ledger.md` gains a steady-state section, every row labelled,
+      `un-oracled` rows stated out loud. **Opened at step 2** with the step 1 and
+      step 2 rows; four rows say `un-oracled` and each names the step that closes
+      it. Not ticked: step 3's AC rows and step 4's two oracle sections are owed.
+- [~] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-2;
+      stays open until the milestone closes.
+- [x] `docs/SPEC.md` §9 item 5 annotated (step 0's second open box) — the refused
+      half struck through in place, with the reason and D1's measurement pointed at.
+- [x] `docs/SPEC.md` §8's "no hand-rolled power-flow math" line annotated with D2's
       reading, so the split between equations and solver is documented where a
-      reader meets the rule rather than only where it was argued.
+      reader meets the rule rather than only where it was argued. Done at step 0;
+      step 2 is the first code the annotation actually describes.
 - [ ] Re-resolve all three environments from deleted manifests at the end and
       **measure** the counts there — the gitignored-manifest trap has caught this
       repo three times (`m4-context.md` D15, the 2026-08-18 stale dev manifest, and
       `ui/`'s silently ignored `[sources]`).
-- [ ] `git diff` every `Project.toml` after every `Pkg` operation and put the
-      dropped comments back.
+- [~] `git diff` every `Project.toml` after every `Pkg` operation and put the
+      dropped comments back. Done for step 2's `SparseArrays` add: nothing was
+      dropped (the root file carries no comments), but the **compat bound had to be
+      corrected** — see step 2's F5, where `Pkg`'s `"1.12.0"` would have raised the
+      package's Julia floor from 1.10 to 1.12 in silence.

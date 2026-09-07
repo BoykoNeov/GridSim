@@ -7,6 +7,7 @@ import Observables          # the core→UI seam; also the positive control for 
 import Graphs               # to re-derive the graph the SwingEngine builds (edge ordering)
 import NetworkDynamics      # to read SwingEngine state symbolically, independently of its index vectors
 import Pkg                  # to inspect the dependency closure (no-Makie invariant)
+import SparseArrays         # to check M6's susceptance matrix STRUCTURALLY, not by type alone
 
 # The Iberian scenario script is a DELIVERABLE, so its claims are asserted below.
 # Included as a module so the scenario data stays single-sourced (no second copy of

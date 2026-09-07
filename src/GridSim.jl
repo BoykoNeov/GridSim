@@ -40,6 +40,14 @@ import NetworkDynamics
 # differential equation. An stdlib, so it adds nothing to the dependency closure
 # the no-Makie invariant test walks.
 import LinearAlgebra
+# SparseArrays supplies the one thing M6 step 2 needs and the repo has never needed
+# before: a matrix WE assemble. Every sparse structure to date has been
+# NetworkDynamics' — so this is the first place `CLAUDE.md`'s "sparse from day one,
+# never a dense Y-bus" binds our own code rather than a dependency's. An stdlib,
+# already in the manifest transitively via the SciML stack, so it is a direct
+# dependency at zero new packages (m6-context.md D2, measured at step 0 and
+# confirmed by `Pkg.add`: "No packages added to or removed from Manifest").
+import SparseArrays
 
 # --- domain model (M1: minimal aggregate model; later: PowerSystems adapter) ---
 include("model/system_model.jl")
@@ -96,6 +104,15 @@ include("engines/swing.jl")
 # and the event-log cap this engine reuses rather than copies.
 include("engines/detailed.jl")
 
+# --- M6's steady-state ladder: the grid before anything moves ------------------
+# NOT an engine and deliberately not in the mode router: a steady state is a
+# function of a MODEL, nothing here steps in time, and `SimulationEngine`'s verbs
+# would all be meaningless on it. Included after the engines only so that
+# `branch_power`'s primary definition is still the classical tier's — the DC solve
+# adds a method to that generic rather than inventing a second name for the same
+# physical quantity (M5 step 7's rule).
+include("steadystate/dc_powerflow.jl")
+
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
 include("analysis/postprocess.jl")
@@ -135,6 +152,13 @@ export write_scenario, read_scenario, Layout
 # against GLMakie's exports before being added (2026-09-07) — the standing check
 # since M1, when a collision cost a round.
 export bus_roles, bus_role
+# M6 step 2 — the linear (DC) power flow. `bus_injections` joins the derived-view
+# family (`machine_arrays`, `load_arrays`, `branch_topology`): the net scheduled
+# injection per bus, in pu, computed in the one place the conversion happens.
+# `branch_power` is deliberately NOT here — the DC solve adds a method to the
+# generic the two dynamic tiers already answer to. All four checked clear against
+# `names(GLMakie)` before being added (2026-09-07) — the standing check since M1.
+export DCPowerFlow, dc_powerflow, bus_angle, bus_injections
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

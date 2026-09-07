@@ -385,3 +385,57 @@ field is validated identically to a written one, and a file cannot build a model
 the constructors would refuse. The round-trip test gains a case that reads a
 pre-M6 file and asserts the defaults land where they should — which is the only
 thing standing between "a default" and "a silent reinterpretation of old files".
+
+---
+
+## D9 — The DC solve reads its dispatch from the model, and does not police `R`
+
+Two API decisions taken in step 2 that the plan did not pose, and that would each
+be expensive to reverse once step 5's editor and step 4's oracles call in.
+
+**No injection argument.** `dc_powerflow(net)` takes a model and nothing else.
+The tempting alternative — `dc_powerflow(net, P)` — makes superposition a
+three-line test instead of a three-model one, and that convenience is exactly why
+it is wrong: an injection argument is a second source of truth about the dispatch,
+free to disagree with the machines and loads actually attached. It is the same
+shape D3 refuses for bus type, and the same one SPEC §3.2 refuses for the model
+itself. The assemble-and-solve core is factored out internally, but the tests go
+through the public entry point, because a superposition check run on the internal
+helper is close to asserting that a linear solve is linear.
+
+The cost is real and worth naming: `NetworkModel` rejects a model whose scheduled
+injections do not balance, so the two halves of a superposition case must each
+balance **on their own** — two separate generator/load pairs on one shared
+topology, not two arbitrary halves of one dispatch. That constraint shaped the
+fixture before a line of it was written.
+
+**No `_assert_lossless_branches` call.** Every engine in `src/` refuses a model
+with `R ≠ 0`, and reaching for the same guard here is reflex. It would be wrong.
+The guard exists because a lossy model run at a lossless *tier* is a different
+network than its data describes, silently and with a plausible answer. The DC
+power flow is not a tier: dropping `R` is one of the four assumptions it is made
+of, it is stated in the docstring, and the AC solve in step 3 reads `R` on the
+same model. A DC solve that refused a lossy case would refuse exactly the cases
+step 3 exists for. The test pins both halves — the engine refuses the lossy model
+**by its resistance**, and the DC solve returns the lossless answer.
+
+### What step 2 measured, and what it costs step 3 (2026-09-07)
+
+**A check that a wrong implementation still passes is not the step's
+discriminator.** Four sabotages of the DC source were run against the whole M6
+suite, and superposition — the check the plan singled out as "a property only a
+linear model has, so it is a real discriminator" — survived every one of them.
+The reasoning behind the plan's claim was about the *class* of model and does not
+transfer to the implementation: a wrong linear map is still linear. The full
+blindness map is in `m6-tasks.md` step 2 (F6).
+
+This has a direct consequence for step 3, whose listed positive control is "the
+AC angles approach the DC answer as loading falls, at the rate the small-angle
+approximation predicts". That is a **rate**, not an identity, and it is a
+comparison between two of our own solves — so the same question has to be asked
+of it before it is written: *which wrong AC implementation would still produce
+that rate?* Any AC bug shared with the DC assembly (both read the same topology
+and the same injections) would be invisible to it. Step 3's own checks must
+therefore include at least one whose answer is fixed by algebra outside both
+solves — the losses identity with `R ≠ 0` is the candidate, since the slack's
+pickup equals the summed branch losses and neither side of that is a tolerance.
