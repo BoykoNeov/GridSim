@@ -6,11 +6,11 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–3 done, step 4's oracle A done; oracle B and steps 5–6 open.** Entered at `181fe4e` with
+Status: **steps 0–4 done (BOTH oracles); steps 5–6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
 **3175 core**; at oracle A's close **3284 core**, UI and `reference/` unchanged
-throughout.
+throughout; at oracle B's close **1130 reference** (986 unchanged + 144 new), core and UI untouched by that step.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -610,36 +610,174 @@ rather than asserted with `==`.
       prose here (M3 step 7's rule: an item carried without a criterion is the one
       that gets dropped).
 
-### Oracle B — `PowerFlows.jl` in `reference/`
+### Oracle B — `PowerFlows.jl` in `reference/` — **DONE (2026-09-08)**
 
-- [ ] `to_powersystems(net)` compiles the case from `NetworkModel` — **compiled,
-      never typed beside it** (the M4 rule).
-- [ ] **Conventions answered from their source BEFORE the comparison runs**
-      (M4 D13/D14): per-unit bases and whether they are process-global; the sign
-      convention on loads; where a shunt is booked; which bus is the angle
-      reference; whether their DC solve carries losses.
-- [ ] **The band is stated before the gap is seen.** Written into the test file
-      with its justification, then the comparison runs.
-- [ ] Bus voltage magnitudes, angles and branch flows compared on at least two
-      cases: one radial, one meshed.
-- [ ] **A LOSSY case (`R > 0`), which oracle A structurally cannot reach** (D14).
-      With `R = 0` our loss channel is zero and `flow + flow_rev` vanishes, so the
-      resistive half of `ac_powerflow` — the only thing `Branch.R` was added for —
-      has no internal check at all. Written as a box rather than left in oracle A's
-      prose, because an item carried without a criterion is the one that gets
-      dropped (M3 step 7, learned on Figure 3-67).
-- [ ] **A case with a BINDING reactive limit**, which oracle A is blind to for the
-      reason D13 names: a bus wrongly switched to a limit holds a `Q` nobody
-      scheduled and its magnitude becomes an unknown, so neither of the seeded
-      path's dispatch comparisons applies and the run is flat anyway. Only an
-      external solve on the same case can say the wrong bus was limited.
-- [ ] Their DC solve compared against ours as a separate channel with its own band
-      — a per-channel band, not the aggregate's (M4's lesson).
-- [ ] Anti-vacuity: sabotage a value on **our** side and confirm the comparison
-      goes red. The sabotage goes in the equations, not in a shared conversion both
-      sides read (M4 step 4's rule).
-- [ ] `reference/Project.toml` gains the two packages, its comment block restored
-      after `Pkg.add` rewrites it.
+Entered at **3284 core / 382 UI / 986 reference**; leaves **986 + 144 = 1130
+reference**, core and UI untouched (this step adds no core code at all). Full
+suite green, exit 0, with all 986 pre-existing reference tests unchanged.
+
+- [x] **The dependency measurement was RE-TAKEN in the environment being changed,
+      and that was not a formality.** Step 0's probe resolved PowerSystems +
+      PowerFlows against a bare stack carrying neither PowerDynamics nor the
+      dev-linked GridSim — i.e. not this environment. Re-measured here: **232 -> 286
+      packages, and nothing of ours moved** (NetworkDynamics 1.3.0, OrdinaryDiffEq
+      7.8.1, SciMLBase 3.53.1, PowerDynamics 5.0.0 all held). Two transitive
+      packages moved DOWN — `NonlinearSolveBase` 2.49.4 -> 2.48.0 and `TimerOutputs`
+      1.2.1 -> 0.5.29 — so `ac_powerflow` runs here on a solver base the core suite
+      never sees. Measured: its answer is **bit-identical** on both
+      `NonlinearSolveBase` versions.
+- [x] `to_powersystems(net)` compiles the case from `NetworkModel` — compiled,
+      never typed beside it (the M4 rule).
+- [x] **The bound is NOT `oracle.jl`'s bound, and the difference is the point.**
+      That oracle reads `machine_arrays`/`branch_arrays`, so both sides get the same
+      per-unit conversion and the comparison is blind to a bug in it. This builder
+      reads the raw structs and converts independently — a machine's power goes over
+      as `P0/S_rated` on the machine's OWN base and PowerSystems does the rebase.
+      The mapping table is in the file header.
+- [x] **Conventions answered from their source BEFORE the comparison ran**
+      (M4 D13/D14), all measured on 2026-09-08, probes in
+      `W:\temp\claude\gridsim-m6-oracleb\`: constructors take **DEVICE base
+      regardless of the system unit setting**; results export voltages in pu and
+      powers in **MW/MVAr**; the REF bus's `angle` is **honoured, not pinned** (set
+      it to 0.3 and every angle shifts), so this builder pins 0.0 and a test holds
+      it; load sign is positive-for-consumption as ours; no shunt is booked (`b = 0`
+      at both ends); their DC uses `1/x` and carries no losses; their Newton
+      tolerance defaults to `1e-9` (`DEFAULT_NR_TOL`) and is set explicitly.
+- [x] **`check_reactive_power_limits` defaults to `false`** — with it off a
+      generator held 126.7 MVAr against a 25 MVAr ceiling without complaint. Passed
+      explicitly, and the default is used as the binding-limit testset's own
+      anti-vacuity control.
+- [x] Bus voltage magnitudes, angles and branch flows compared on **five** fixtures,
+      one radial and four meshed, each with a stated reason on its own line.
+- [x] **A LOSSY case (`R > 0`), which oracle A structurally cannot reach** (D14).
+      Per-branch losses agree to every printed digit; the slack's pickup to 4.6e-8 pu.
+- [x] **A case with a BINDING reactive limit.** Both sides switch B2, hold it at
+      exactly 0.10 pu and drop its magnitude off 1.05. The fixture was tuned on OUR
+      side alone first — the first draft pulled B3 to 0.819 pu and `ac_powerflow`'s
+      own voltage band refused it, which is the guard working and cheaper to find
+      before a suite run than during one.
+- [x] Their DC solve compared as a separate channel with its own band (M4's
+      per-channel lesson), plus the direct check that a lossy model and its lossless
+      twin give BOTH sides the same angles.
+- [x] **Anti-vacuity: seven mutations, all on our side, all caught.** The fork here
+      is wider than `oracle.jl`'s, so `machine_arrays`/`load_arrays` are legitimate
+      targets. `_ac_admittance` reactance sign (35 failed); the branch-flow
+      read-out's *separate* reactance computation (12 failed); one off-diagonal
+      scaled by 0.999 (32); `_zip_k`'s current share given the impedance power (27);
+      `machine_arrays.Pm` on the machine base (8); `load_arrays` P multiplied
+      instead of divided (1 failed + 9 errored); `load_arrays` Q halved (35).
+- [x] `reference/Project.toml` gains the two packages, comment block restored after
+      `Pkg.add` rewrote it — which it did, dropping every comment AND moving
+      `[sources]` above `[compat]`. The note now records that it happened rather
+      than only predicting it.
+- [x] All seven new exports checked against `names(GLMakie)` (617 names): clear.
+- [x] `docs/validation-ledger.md` gains the oracle-B section; three `un-oracled`
+      rows closed and two new ones opened and named.
+
+### What oracle B found that the plan did not anticipate
+
+**F13 — the oracle's admittance matrix is SINGLE PRECISION, and that is the
+round.** `PowerNetworkMatrices/src/definitions.jl` line 1:
+`const YBUS_ELTYPE = ComplexF32`, a compile-time constant with no setting behind
+it. Their Newton reports a final ∞-norm residual of 4.4e-16 and is telling the
+truth — about a rounded network. Evaluated against a hand-built double-precision
+`Y`, the same answers leave **2.0e-7 to 3.8e-8 pu** where ours leave **4.4e-16 to
+2.9e-14**, a ratio of **6.7e6 to 4.1e8**. This is M4 D7's "the oracle is a floor,
+not a ceiling" arriving a second time by a completely different mechanism — there
+integration error at 3.5–18x, here fixed-width storage at seven orders. It was
+found the hard way: a 3.9e-9 disagreement that would not shrink no matter how tight
+either tolerance went, chased through a residual that did not match a reported one.
+
+**F14 — the band had to be REBUILT, and two derivations were measured and thrown
+away before the third.** M4's `convergence_band` — each side's own convergence — is
+**four orders too small** here, because the dominant error is a quantization and
+not a convergence (both self-convergence terms are ~1e-15 against a true gap of
+~4e-9). Two attempts to predict their error instead:
+
+  1. a `float32_admittance_twin` — our solve on the network whose admittances are
+     rounded onto their grid. It *identified* the mechanism (and is kept, with its
+     own test, for exactly that) but **under-predicts on meshed cases**: it realises
+     one rounding pattern where their assembly rounds each entry independently.
+  2. a first-order sum over single-branch perturbations. Covers three fixtures and
+     is **saturated at 2.94x on the off-base one**.
+
+The reason no factor rescues either is structural and it is why the third
+derivation is a different kind of statement: our model has no shunts, so
+`Y_vv = −Σ_u Y_vu` holds *by construction*, and **their rounded diagonal breaks that
+identity** — the implicit shunt it leaves is a perturbation our model cannot express
+at all. Multiplying a branch-sensitivity sum by 3 or 4 to cover it would be fitting
+a constant to the gap it judges, which M4 refused for the `tolerance_band` ratio
+that ran 5.2 → 15.3 and never settled. So the shipped band says only what can be
+said without modelling their error: **their admittance is stored to
+single-precision relative accuracy, so nothing derived from it can agree with a
+double-precision solve more closely than that relative accuracy times the
+quantity's own size.** No factor. Gaps land at **0.00–0.56 of band**.
+
+**F15 — the channel's own magnitude is the wrong scale for a branch flow, and one
+channel proved it.** With `eps(Float32) × max|channel|`, `qflow` lands at **3.17x,
+3.22x and 6.12x** the band on the meshed, lossy and off-base fixtures, and `flow`
+**saturates at 0.94x** on the off-base one. A branch flow is a difference of
+products of admittance entries and voltages, so its absolute error is set by those
+`|y|·|V|²`-sized ingredients and not by a result they may largely cancel into — on
+the meshed fixture `max|y|` is 10 against a `qflow` of 0.41. `flow_scale` is that
+statement. It is a cancellation argument, not a fitted correction — but it was
+written *after* the naive scale was measured to fail, and both sets of ratios are
+recorded here rather than the revision being absorbed.
+
+**F16 — the band's own recipe is not always attainable, and it says so instead of
+falling back.** The convergence probe re-solves at 1000x tighter. On the
+reactive-limit fixture our solve reaches a residual of **1.804e-15** and can go no
+further — the problem's own floor — so asking for `1e-15` makes Newton run its 200
+iterations and report `Stalled`. `powerflow_band` refuses by name and asks for an
+attainable `abstol_fine`, rather than swallowing the stall or quietly substituting a
+tolerance nobody chose, which would make the convergence term a different quantity
+on different fixtures with nothing in the output saying so.
+
+**F17 — D11's consequence 1 was WRONG, in our favour.** The plan said oracle B's
+fixtures "need `a_p = 1.0` loads" because "`PowerFlows`' PQ bus is constant power",
+and that a default `a_z = 1` model would have the two sides solving different
+networks. Their `StandardLoad` carries the full impedance/current/power split and
+its law is **exactly ours** — `a_z·V² + a_i·V + a_p`, agreeing to six decimals at
+(1,0,0), (0,1,0), (0,0,1) and (0.5,0.3,0.2) on a case pulled to 0.90 pu. So the
+full ZIP is oracled instead of excluded, which matters more than it sounds: `Load`'s
+default share is constant *impedance*, so the refusal the plan implied would have
+excluded nearly every fixture in the repo. Corrected in `m6-context.md` D11.
+
+**F18 — but their EXPORT does not book what their solve computed, and that is a
+guard rather than a comment.** On an `a_z = 1` case drawing 200 MW the solve is
+right (`Vm = 0.9104`, and the line delivers 165.78 MW = 200 × 0.9104²) while
+`bus_results.P_load` and `P_net` come back **`0.0`** — wrong, not merely absent. The
+channels that *are* booked (`Vm`, `θ`, both ends of every flow, the slack's
+generation) carry the ZIP answer correctly, so the comparison uses those and
+`_pf_bus_column` **throws by name** on the four bad columns. A comment asking the
+next reader not to touch them is the shape oracle A deleted three pieces of dead
+code for.
+
+**F19 — the off-base fixture is load-bearing, and the mutation proves it rather
+than the plan asserting it.** `machine_arrays.Pm` on the wrong base is caught by
+exactly three testsets, **all of them the off-base ones**; every banded comparison
+on radial, meshed and lossy stays green, because with every machine rated at the
+system base the rebase PowerSystems performs is the identity and the mutation is a
+no-op. This is oracle A's "two of ten mutations were no-ops on the fixture they
+were first run against", predicted this time instead of discovered.
+
+**F20 — one fixture is blind to the dominant error, and its output reads as
+strength.** On the reactive-limit fixture the two sides agree to **4.4e-16**, eight
+orders better than any other fixture. That is not sharpness: its branch reactances
+are both `0.10`, whose admittance is exactly `10.0`, which is exactly representable
+in `Float32`, so the two admittance matrices are *identical* and there is nothing to
+quantize. A fixture whose reactances happen to land on the single-precision grid
+cannot exercise the thing this oracle mostly measures. Recorded because the number
+looks like a result and is an accident of arithmetic.
+
+**F21 — `inv(complex(br.R, br.X))` appears TWICE in `ac_powerflow.jl` and both
+sites needed their own mutation.** That duplication is deliberate (step 3: the
+branch-flow read-out recomputes the series admittance rather than reading it back
+out of `Y`, so the losses identity compares two numbers built from different data),
+and it means a single search-and-replace mutation hits two places at once. Split,
+and each is caught independently — 35 failures for the assembly, 12 for the
+read-out. A mutation that silently covers two sites is a mutation whose result
+cannot be attributed.
 
 ---
 
@@ -684,10 +822,14 @@ rather than asserted with `==`.
 
 ## Housekeeping owed by this milestone
 
-- [~] `docs/validation-ledger.md` gains a steady-state section, every row labelled,
+- [x] `docs/validation-ledger.md` gains a steady-state section, every row labelled,
       `un-oracled` rows stated out loud. **Opened at step 2** with the step 1 and
       step 2 rows; step 3's AC rows added, including the two `un-oracled` rows that
-      step 4's two oracles close. Not ticked: step 4's oracle sections are owed.
+      step 4's two oracles close. **Closed at oracle B**: its own section added,
+      three `un-oracled` rows closed (the AC and DC external columns, the AC-against-
+      the-DAE-tier row) and **two new ones opened and named** — their per-bus load
+      columns, refused executably, and reactive-limit back-off, which was never
+      measured on their side.
 - [~] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-3;
       stays open until the milestone closes.
 - [x] `docs/SPEC.md` §9 item 5 annotated (step 0's second open box) — the refused

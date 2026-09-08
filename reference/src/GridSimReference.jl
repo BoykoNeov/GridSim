@@ -64,9 +64,20 @@ using PowerDynamics: Library
 using NetworkDynamics
 using OrdinaryDiffEq
 
+# M6 step 4, oracle B. Imported under short names rather than `using`: both
+# packages export a large surface (`System`, `Line`, `ACPowerFlow`, `DCPowerFlow`,
+# `Arc`, `Bus`...) and `ACPowerFlow`/`DCPowerFlow` COLLIDE by name with GridSim's
+# own two power-flow types, which this module also needs. A `using` on either
+# would make both names ambiguous and every reference to ours an error.
+import PowerSystems as PSY
+import PowerFlows as PF
+
 export OracleCase, build_oracle, oracle_solve, oracle_band, reduced_line_reactance
 export set_mechanical_power!
+export to_powersystems, oracle_powerflow, oracle_dc_powerflow, powerflow_band
+export float32_admittance_twin, independent_mismatch, flow_scale
 
 include("oracle.jl")
+include("powerflow_oracle.jl")
 
 end # module

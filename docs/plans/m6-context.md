@@ -513,9 +513,23 @@ still takes no square root and is bitwise the arithmetic M5 measured.
 
 **Two consequences, both scheduled rather than left to be discovered:**
 
-1. **Step 4's oracle-B fixtures need `a_p = 1.0` loads.** `PowerFlows`' PQ bus is
-   constant power. Compared on a default `a_z = 1` model the two sides are solving
-   different networks, and the gap would be a load model rather than a solver.
+1. ~~**Step 4's oracle-B fixtures need `a_p = 1.0` loads.**~~ **WRONG, and
+   measured wrong on 2026-09-08 — see `m6-tasks.md` oracle B, F17.** `PowerFlows`'
+   PQ bus is not the only load it has: `StandardLoad` carries the full
+   impedance/current/power split, and its law is **exactly ours** —
+   `a_z·V² + a_i·V + a_p`, agreeing to six decimals at (1,0,0), (0,1,0), (0,0,1)
+   and (0.5,0.3,0.2) on a case pulled to 0.90 pu. So the full ZIP is oracled
+   rather than excluded, and the oracle's fixtures deliberately carry MIXED shares
+   (a pure-`a_z` fixture cannot tell `a_z·V² + a_i·V` from `a_z·V²`).
+
+   The correction matters more than a fixture list: `Load`'s default share is
+   constant *impedance*, so the refusal this consequence implied would have
+   excluded nearly every fixture in the repo, and the oracle would have covered
+   only the load model no engine here defaults to. What IS true, and is a
+   different fact, is that **their per-bus `P_load`/`Q_load`/`P_net` export columns
+   do not book a ZIP load at all** — they return `0.0` while the solve is correct.
+   Those columns are refused by name (`_pf_bus_column`), and the comparison reads
+   the flow and slack-generation channels, which carry the ZIP answer correctly.
 2. **The `|V| → 0` singularity is inherited, not re-taken.** With `a_p > 0` the
    load current diverges at a collapsed bus — M5 D23's decision, and it is the
    model telling the truth rather than a missing guard.
@@ -740,3 +754,49 @@ bent dispatch on it, so the limited branch is not simply skipping everything.
 and `detailed_pair` share every bus id, every branch id and the same slack, so
 "is this solution for this model" written on ids alone passes on a solution for a
 completely different case. It is the *dispatch* comparison (D13) that refuses it.
+
+---
+
+## D15 — Oracle B's band is a statement about THEIR STORAGE, not a prediction of their error
+
+Taken 2026-09-08, after two other derivations were built, measured and thrown away.
+The full measurement record is `m6-tasks.md` oracle B, F13–F16; this is the decision.
+
+**The fact that forces it.** `PowerFlows` stores its admittance matrix in
+`ComplexF32` (`PowerNetworkMatrices/src/definitions.jl` line 1, a compile-time
+constant). Its Newton converges honestly to 4.4e-16 — on a rounded network. So the
+dominant term in any comparison with us is a **quantization**, not a convergence,
+and M4's `convergence_band` (each side's own convergence, which is what M4's
+transient oracle correctly used) is **four orders too small** here.
+
+**Why not predict their error instead.** Two predictors were built and measured. A
+single Float32 twin under-predicts on meshed cases; a first-order sum over
+single-branch perturbations is saturated at 2.94x on the off-base fixture. Neither
+can be rescued by a factor, and the reason is structural rather than numerical: our
+model has no shunts, so `Y_vv = −Σ_u Y_vu` holds **by construction**, and rounding
+their assembled diagonal breaks that identity. The implicit shunt it leaves is a
+perturbation our model *cannot express*. It is not a term with an unknown
+coefficient; it is a different kind of object, and multiplying a branch-sensitivity
+sum by 3 or by 4 to cover it is fitting a constant to the very gap the constant is
+meant to judge. M4 refused exactly that move when `tolerance_band`'s ratio ran
+5.2 → 12.8 → 15.3 → 6.2 → 4.7 and never settled.
+
+**So the band says only this:** their admittance is stored to single-precision
+relative accuracy, so nothing derived from it can agree with a double-precision
+solve more closely than that relative accuracy times the quantity's own size.
+`band = ours_convergence + theirs_convergence + eps(Float32) × scale`, **no
+factor**. Each term is a property of one side alone; none looks at the cross gap.
+
+**And the sharp check is elsewhere.** `independent_mismatch` evaluates each side's
+answer in a hand-built double-precision admittance and reports what it leaves. That
+is a statement about ONE answer, needs no band at all, and is what actually carries
+the step: theirs leaves 2.0e-7 to 3.8e-8 pu where ours leaves 4.4e-16 to 2.9e-14.
+The banded agreement checks are secondary to it, and were built second on purpose.
+
+**The consequence for how this oracle should be read.** M4 D7 said the oracle is a
+floor, not a ceiling, and measured PowerDynamics at 3.5–18x less accurate than us
+through integration error. Oracle B says the same thing through a different
+mechanism at seven orders. Two independent external packages, two different reasons,
+one conclusion: an external implementation agreeing with us is evidence we are not
+wrong in a way peculiar to us — it is **not** evidence about which is more accurate,
+and here the direction is measured and it is not theirs.

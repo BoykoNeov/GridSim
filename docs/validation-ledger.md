@@ -344,7 +344,7 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 | DC solve, three buses with two unequal paths | Current divider `direct : path = (X12+X23) : X13`, asserted as the ratio, as both absolute flows, and as the loop equation (equal angle drop over both paths) | closed form |
 | DC solve on a radial, and the reduction's own index arithmetic | On a tree every branch flow is fixed by the injections downstream of it alone, so the answer is written from the load list; it survives moving the slack to an **interior** bus (the only fixture with a non-contiguous reduced index set) and scaling every reactance by 3, which leaves the flows and triples the angle spread | closed form |
 | DC linearity | Superposition on three models sharing one topology — **and measured to be blind to all five implementation sabotages**, because a wrong linear map is still linear (`m6-tasks.md` step 2, F6). Kept as a statement about the tier's character, not relied on as the step's discriminator | structural (weak — see F6) |
-| The DC answer against anything outside the repo | nothing yet — step 4's `PowerFlows.jl` DC channel, with its own band | **un-oracled** |
+| The DC answer against anything outside the repo | **Closed by oracle B** (below): their DC solve as its own channel with its own band, and their formula measured to be `1/x` with no losses, as ours is | **external** |
 | The DC answer against our own AC solve | **The small-angle rate control (M6 step 3).** With `R = 0`, every machine at `V_set = 1.0` and the one load bus drawing no reactive power, the AC angles approach the DC ones as `C·λ³`, so halving the loading divides the gap by 8. Band [7.5, 8.5] **written into the test before any number was seen**, from the truncation order; measured 8.020 / 8.005 / 8.001, smallest gap 1.06e-07 against a 1e-12 solve tolerance (the floor is asserted before the ratios are formed). Anti-vacuity: the same check with a **scaled reactive load** — the one condition the derivation forbids — gives 4.220 / 4.106 / 4.052, and the two bands are asserted non-overlapping | internal cross-tier, rate |
 | `R` ignored by the DC solve | Lossy and lossless models give `==` angles and flows, while `init!(DetailedEngine, …)` refuses the lossy one naming its resistance | structural |
 | The slack as a gauge for angles | Solving at three different slack buses — including a bus carrying no machine — leaves every angle *difference* and every flow unchanged | derived |
@@ -369,8 +369,54 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 | Two machines on one bus | Splitting one machine into two halves the schedule and both limits, and must give the **same bits** (45+45 and 0.25+0.25 are exact) — in the unbound case and in the case where the summed ceiling binds. `NetworkModel` has expressed this since M5 step 1 and no engine reads it, so the power flow checks it rather than shipping it | exact |
 | The tier's character | Superposition **must fail** here by a margin far above tolerance, while the DC solve at the same two loadings superposes to the bit — the mirror of step 2's finding that a wrong linear map is still linear | structural |
 | That the implementation is testable at all | **Six sabotages, all red somewhere**, including one that changes the sparsity pattern (the class step 2's F6 recorded as owed). Two of them found checks reading their answer from the source under test, and both checks were rewritten. **No single check covers the set** — the best is 4 of 6, and it takes the two-bus closed form together with the lossy fixture (F10) | mutation |
-| The AC answer against anything outside the repo | nothing yet — step 4's `PowerFlows.jl` channel, whose fixtures must carry `a_p = 1.0` loads or the two sides are solving different networks (D11) | **un-oracled** |
-| The AC answer against the DAE tier | nothing yet — step 4's flat run, which is hurdle 8 and the strongest check in the milestone (D5) | **un-oracled** |
+| The AC answer against anything outside the repo | **Closed by oracle B** (below). The `a_p = 1.0` condition this row carried was **wrong**: `PowerFlows`' `StandardLoad` holds the full ZIP split and its law is exactly ours, measured on four share combinations, so the ZIP fixtures are oracled rather than excluded (D11's consequence 1, corrected) | **external** |
+| The AC answer against the DAE tier | **Closed by oracle A** — the flat run, 1.5e-13 over 50 s on five fixtures (hurdle 8, D5) | **internal, cross-tier** |
+
+### Oracle B — M6 step 4, `PowerFlows.jl` in `reference/`
+
+The external column for the steady-state ladder. Built 2026-09-08 against
+PowerSystems 5.12.3 / PowerFlows 0.25.2; the adapter is
+`reference/src/powerflow_oracle.jl` and the checks are the M6 testset in
+`reference/test/runtests.jl` (144 tests). **The case is compiled from
+`NetworkModel`, never typed beside it** (M4's rule), but the compilation reads the
+raw `Machine` / `Branch` / `Load` structs and does its own per-unit conversion, so
+unlike `oracle.jl` this oracle DOES reach `machine_arrays` and `load_arrays`.
+
+**The headline is about the oracle, not about us.** `PowerFlows` stores its
+admittance matrix in `ComplexF32` (`PowerNetworkMatrices/src/definitions.jl`, line
+1, a compile-time constant). Its Newton converges honestly — to 4.4e-16 on its own
+residual — but on a rounded network. Evaluated in an independently built
+double-precision admittance, its answers leave a mismatch of **2.0e-7 to 3.8e-8 pu**
+where ours leave **4.4e-16 to 2.9e-14**: a ratio of **6.7e6 to 4.1e8**. M4 D7's "the
+oracle is a floor, not a ceiling" arriving a second time by a different mechanism —
+there integration error at 3.5–18x, here a fixed-width admittance at seven orders.
+
+| claim | how it is checked | oracle |
+|---|---|---|
+| The AC answer against an outside implementation | Bus `\|V\|`, angle and both ends of every branch flow against `PowerFlows`' Newton solve, on five fixtures (radial, meshed, lossy, off-base, reactive-limit). Per-channel band, no factor: each side's own convergence plus `eps(Float32) x scale`, which is a statement about **their storage** and never a prediction of their error — every attempt at the latter was measured and refused (see below). Gaps land at **0.00–0.56 of band** | **external** |
+| The AC answer's *correctness*, without a band at all | `independent_mismatch`: each side's answer evaluated in a hand-built double-precision `Y` that reads `Branch` directly and touches neither `_ac_admittance` nor `PowerNetworkMatrices`. This is the round's sharp instrument — a statement about ONE answer rather than about a gap — and it is what carries the step | **external, band-free** |
+| **A LOSSY branch** — `Branch.R`'s only numerical check anywhere | Oracle A structurally cannot reach it (the dynamic tiers refuse `R != 0`, so `flow + flow_rev` is identically zero there). Here the per-branch losses agree to every printed digit (9.90225e-5 / 0.0229042 / 0.00918966 pu) and the slack's pickup to 4.6e-8 pu | **external** |
+| **A BINDING reactive limit** — which bus was limited, and at what `Q` | Oracle A is blind for D13's reason: a bus held at a `Q` nobody scheduled is still a fixpoint, so the flat run stays flat either way. Both sides switch **B2**, hold it at exactly 0.10 pu and drop its magnitude off 1.05. **Their `check_reactive_power_limits` defaults to `false`** and with it off they blow through the ceiling at 0.860 pu — used as the testset's own anti-vacuity control | **external** |
+| The machine per-unit conversion (`machine_arrays.Pm`) | Reachable *only* because the adapter writes `P0/S_rated` on the machine's own base and lets PowerSystems rebase. **Testable only on the off-base fixture** (`S_base = 250`, machines at 400/150 MVA): with every machine at the system base the rebase is the identity. Measured — the mutation that puts `Pm` on the wrong base is caught by exactly three testsets, all of them the off-base ones, and every other banded comparison stays green | **external, off-base fixture only** |
+| The ZIP load law against an outside implementation | Their `StandardLoad` carries the full impedance/current/power split and its law is exactly ours — `a_z·V² + a_i·V + a_p`, agreeing to six decimals at (1,0,0), (0,1,0), (0,0,1) and (0.5,0.3,0.2) on a case pulled to 0.90 pu. **The plan predicted the opposite** (D11) | **external** |
+| The DC answer against an outside implementation | Their DC solve compared as its own channel with its own band, and their formula confirmed `1/x` with no losses by direct measurement. A lossy model and its lossless twin give both sides the same angles | **external** |
+| Their per-bus `P_load` / `Q_load` / `P_net` columns | **Refused by name.** They do not book a constant-impedance or constant-current load: on an `a_z = 1` case drawing 200 MW the solve is right (`Vm = 0.9104`, 165.78 MW delivered = 200 × 0.9104²) but `P_load` and `P_net` come back `0.0` — wrong, not merely absent. `_pf_bus_column` throws rather than leaving a comment | **un-oracled — refused, and the refusal is executable** |
+| Reactive-limit **back-off** | Ours is bind-only by decision (D12) and refuses back-off cases by name. **Whether `PowerFlows` backs off was never measured**, so the comparison domain is "cases our side accepts" and this stays open. Stated rather than implied | **un-oracled, and named** |
+| Their *generation* numbers, banded | **Deliberately not banded.** At a generator bus our `Pgen` is the schedule exactly — not a solved quantity — and at the slack theirs passes through `post_processing.jl`'s redistribution loop, whose own `ISAPPROX_ZERO_TOLERANCE` is `1e-6` and has nothing to do with admittance precision. Compared on that constant, read from their source | **external, on their constant** |
+
+**What no oracle here can check**, said once: `Branch.X` and `Branch.R` are system
+per-unit on both sides by construction (measured — a `Line`'s device base IS the
+system base), so that number is genuinely shared and a bug in it is handed
+identically to both. Everything else in the mapping forks.
+
+**One fixture is blind to the dominant error and it is not obvious from its
+output.** On the reactive-limit fixture the two sides agree to **4.4e-16** — better
+than any other fixture by eight orders. That is not the oracle being sharp there:
+its branch reactances are both `0.10`, whose admittance is exactly `10.0`, which is
+exactly representable in `Float32`, so the two admittance matrices are *identical*
+and there is no quantization to see. Recorded because "agrees to 4e-16" reads as
+strength and is in fact a fixture that cannot exercise the thing this oracle is
+mostly measuring.
 
 ## Owed rows
 

@@ -29,6 +29,11 @@ using Test
 using GridSim
 using GridSimReference
 using PowerDynamics: set_fbase!, set_Sbase!
+# M6 step 4, oracle B. Same aliases the module itself uses and for the same reason:
+# `ACPowerFlow` and `DCPowerFlow` are names GridSim already owns, and a `using` on
+# either package would make both ambiguous here.
+import PowerSystems as PSY
+import PowerFlows as PF
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -1622,3 +1627,472 @@ end
 end
 
 end # M5 step 6
+
+# ============================================================================
+# M6 step 4, oracle B — PowerFlows.jl against `ac_powerflow` / `dc_powerflow`
+# ============================================================================
+#
+# The three rules at the head of this file are unchanged, but rule 1 changes its
+# MECHANISM here and the change is the round's headline. M4's band came from each
+# side's own convergence. That is four orders too small for this pair, because
+# `PowerFlows` stores its admittance in `ComplexF32` and its error is a
+# QUANTIZATION rather than a convergence: it converges to 4.4e-16 on its own
+# residual and still sits 7.6e-9 away from us in angle. `powerflow_band`'s third
+# term measures that, on our side of the comparison, and its docstring carries the
+# derivation.
+#
+# WHAT THIS ORACLE REACHES THAT ORACLE A COULD NOT — the two boxes M6's task list
+# wrote as boxes rather than prose:
+#
+#   * a LOSSY branch. Our dynamic tiers refuse `R != 0`, so oracle A's flat run can
+#     never see one and the resistive half of `ac_powerflow` has no internal check.
+#   * a BINDING reactive limit. A bus held at a `Q` nobody scheduled is still a
+#     fixpoint, so the flat run stays flat whichever bus was limited (D13).
+
+# The five fixtures. Each exists for one reason and the reason is on its line;
+# a fixture without a reason is a fixture nobody notices has stopped testing
+# anything (oracle A: two of ten mutations were no-ops on the case they were run
+# against, and the first reading of that table was wrong because of it).
+
+# 1. RADIAL, lossless, pure constant power. The simplest case that has a PV bus,
+#    a load bus and a slack all at once.
+pf_radial() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.10, 400.0), Branch(:L23, :B2, :B3, 0.15, 400.0)],
+    [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 60.0; V_set = 1.02),
+     Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 100.0; V_set = 1.01)],
+    [Load(:D3, :B3, 160.0, 40.0, 0.0, 0.0, 1.0)]; slack = :B1)
+
+# 2. MESHED, lossless, MIXED ZIP shares. Meshed because a radial fixes every flow
+#    by conservation alone and cannot see a wrong off-diagonal; mixed shares
+#    because with `a_i = 0` a constant-current term dropped entirely is invisible.
+pf_meshed() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.10, 400.0), Branch(:L23, :B2, :B3, 0.15, 400.0),
+     Branch(:L13, :B1, :B3, 0.30, 400.0)],
+    [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 60.0; V_set = 1.02),
+     Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 100.0; V_set = 1.01)],
+    [Load(:D3, :B3, 160.0, 40.0, 0.5, 0.3, 0.2)]; slack = :B1)
+
+# 3. LOSSY. The only fixture in the repo on which `Branch.R` reaches a residual
+#    equation and produces a number anyone can check.
+pf_lossy() = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.10, 400.0; R = 0.010),
+     Branch(:L23, :B2, :B3, 0.15, 400.0; R = 0.020),
+     Branch(:L13, :B1, :B3, 0.30, 400.0; R = 0.030)],
+    [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 60.0; V_set = 1.02),
+     Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 100.0; V_set = 1.01)],
+    [Load(:D3, :B3, 160.0, 40.0, 0.5, 0.3, 0.2)]; slack = :B1)
+
+# 4. OFF-BASE: `S_base = 250` and no machine rated at it. With every machine on the
+#    system base the rebase PowerSystems performs is the identity and a wrong one
+#    cannot be seen — the independence claimed in `powerflow_oracle.jl`'s header
+#    table is untestable without this fixture.
+pf_offbase() = NetworkModel(250.0, 60.0,
+    [Bus(:B1, 345.0), Bus(:B2, 345.0), Bus(:B3, 345.0)],
+    [Branch(:L12, :B1, :B2, 0.08, 900.0; R = 0.008),
+     Branch(:L23, :B2, :B3, 0.12, 900.0; R = 0.012),
+     Branch(:L13, :B1, :B3, 0.25, 900.0; R = 0.025)],
+    [Machine(:G1, :B1, 400.0, 5.0, 1.0, 0.2, 1.05, 150.0; V_set = 1.02),
+     Machine(:G2, :B2, 150.0, 4.0, 1.0, 0.2, 1.03, 120.0; V_set = 1.01)],
+    [Load(:D3, :B3, 270.0, 70.0, 0.4, 0.2, 0.4)]; slack = :B1)
+
+# 5. A BINDING reactive limit at B2. `Q_max` is set below what the unlimited solve
+#    asks for, so the bus must give up its voltage and hold the limit instead.
+#    Tuned on OUR side alone before anything was compared: the first draft pulled
+#    B3 down to 0.819 pu and `ac_powerflow`'s own voltage band refused it — the
+#    guard doing its job, and cheaper to find here than in a suite run.
+pf_qlimit(; Q_max = 0.10) = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.10, 400.0), Branch(:L23, :B2, :B3, 0.10, 400.0)],
+    [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 20.0; V_set = 1.00),
+     Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 70.0; V_set = 1.05,
+             Q_min = -Q_max, Q_max = Q_max)],
+    [Load(:D3, :B3, 90.0, 25.0, 0.0, 0.0, 1.0)]; slack = :B1)
+
+# The gap on one channel. Deliberately NOT a function of the band: a check that
+# computes its own threshold from the numbers it is judging is the shape step 3
+# shipped twice and had to fix (`m6-tasks.md` step 3).
+pf_gap(a, b, channel) = maximum(abs, channel(a) .- channel(b))
+
+@testset "M6 step 4 oracle B — PowerFlows as an external power-flow oracle" begin
+
+@testset "the case is compiled, and its conventions are the measured ones" begin
+    net = pf_meshed()
+    sys = to_powersystems(net)
+
+    # Every bus angle PINNED to zero. Their REF angle is honoured, not ignored —
+    # setting it to 0.3 shifts the whole solved answer by 0.3 — and our slack angle
+    # is zero by construction, so this is a claim that has to be held, not assumed.
+    for b in PSY.get_components(PSY.ACBus, sys)
+        @test PSY.get_angle(b) == 0.0
+    end
+
+    # Bus types come from `bus_roles`, which is the model's own derivation.
+    byname = Dict(PSY.get_name(b) => b for b in PSY.get_components(PSY.ACBus, sys))
+    @test PSY.get_bustype(byname["B1"]) == PSY.ACBusTypes.REF
+    @test PSY.get_bustype(byname["B2"]) == PSY.ACBusTypes.PV
+    @test PSY.get_bustype(byname["B3"]) == PSY.ACBusTypes.PQ
+    @test GridSim.bus_roles(net) == [:slack, :generator, :load]
+
+    # A generator bus starts at ITS OWN setpoint, not at 1.0 and not at `E'`.
+    # M5 step 8 measured what one number serving two denominations costs.
+    @test PSY.get_magnitude(byname["B2"]) == 1.01
+    @test PSY.get_magnitude(byname["B3"]) == 1.0
+
+    # The arc runs in the branch's DECLARED direction, so their `bus_from` is ours
+    # and no sign convention has to be argued about anywhere else in this file.
+    for l in PSY.get_components(PSY.Line, sys)
+        br = net.branches[findfirst(b -> String(b.id) == PSY.get_name(l), net.branches)]
+        arc = PSY.get_arc(l)
+        @test PSY.get_number(PSY.get_from(arc)) == net.bus_index[br.from]
+        @test PSY.get_number(PSY.get_to(arc)) == net.bus_index[br.to]
+        @test PSY.get_x(l) == br.X
+        @test PSY.get_r(l) == br.R
+        @test PSY.get_b(l) == (from = 0.0, to = 0.0)   # our model has no charging
+    end
+
+    # The load is ONE `StandardLoad` carrying the ZIP split, and the shares land in
+    # the three field pairs the way their law reads them.
+    sl = only(PSY.get_components(PSY.StandardLoad, sys))
+    l = only(net.loads)
+    @test PSY.get_impedance_active_power(sl) ≈ l.a_z * l.P0 / net.S_base atol = 1e-15
+    @test PSY.get_current_active_power(sl)   ≈ l.a_i * l.P0 / net.S_base atol = 1e-15
+    @test PSY.get_constant_active_power(sl)  ≈ l.a_p * l.P0 / net.S_base atol = 1e-15
+end
+
+@testset "the machine's per-unit conversion is INDEPENDENT of machine_arrays" begin
+    # The point of the off-base fixture. `to_powersystems` writes `P0/S_rated` on
+    # the machine's own base and PowerSystems rebases; `machine_arrays` writes
+    # `P0/S_base`. The two never meet, so this is a real cross-check — but only on
+    # a model where the rebase is not the identity.
+    net = pf_offbase()
+    @test all(m -> m.S_rated != net.S_base, net.machines)   # the fixture's whole job
+    sys = to_powersystems(net)
+    ma = machine_arrays(net)
+    for (k, m) in pairs(net.machines)
+        g = PSY.get_component(PSY.ThermalStandard, sys, String(m.id))
+        @test PSY.get_base_power(g) == m.S_rated
+        # Constructor arguments are DEVICE base regardless of the system setting —
+        # measured, and the reason the two paths are independent.
+        @test PSY.get_active_power(g) ≈ ma.Pm[k] atol = 1e-15   # read back in SYSTEM base
+        @test PSY.get_active_power(g) != m.P0 / m.S_rated       # ...and it was NOT stored so
+    end
+end
+
+@testset "what the builder refuses, by name" begin
+    # A slack with no machine: the MODEL accepts it (a half-built editor draft must
+    # stay constructible, M5 D3) and both power-flow paths refuse it.
+    headless = NetworkModel(100.0, 50.0,
+        [Bus(:B1, 230.0), Bus(:B2, 230.0)],
+        [Branch(:L12, :B1, :B2, 0.10, 400.0)],
+        [Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 60.0)],
+        [Load(:D1, :B1, 60.0, 20.0)]; slack = :B1)
+    @test bus_role(headless, :B1) === :slack
+    @test_throws ArgumentError to_powersystems(headless)
+    @test_throws ArgumentError ac_powerflow(headless)
+
+    # Two machines on one bus asking for two terminal voltages.
+    clash = NetworkModel(100.0, 50.0,
+        [Bus(:B1, 230.0), Bus(:B2, 230.0)],
+        [Branch(:L12, :B1, :B2, 0.10, 400.0)],
+        [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 60.0; V_set = 1.02),
+         Machine(:G1b, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 0.0; V_set = 1.04)],
+        [Load(:D2, :B2, 60.0, 20.0)]; slack = :B2)
+    @test_throws ArgumentError to_powersystems(clash)
+
+    # The bus columns that do not book a ZIP load are refused rather than read.
+    # This is a GUARD and not a comment: oracle A deleted three pieces of dead code
+    # in one batch, each a note written without checking the path it described.
+    res = oracle_powerflow(pf_meshed())
+    @test haskey(res, :Vm) && haskey(res, :Pgen)
+    for bad in (:P_load, :Q_load, :P_net, :Q_net)
+        @test !haskey(res, bad)
+    end
+    df = (; P_load = [1.0], Vm = [1.0])
+    @test_throws ArgumentError GridSimReference._pf_bus_column(df, :P_load)
+end
+
+@testset "the band's three terms, and which one dominates" begin
+    net = pf_radial()
+    b = powerflow_band(net; channel = s -> s.Vm)
+    @test b.band > 0
+    @test b.band == b.ours + b.theirs + b.precision          # no factor anywhere
+    # THE FINDING, as an inequality rather than as a number: what limits the
+    # agreement is their single-precision ADMITTANCE, not either side's Newton.
+    # Both convergence terms together are orders below the precision term. The
+    # measured multiples live in `m6-tasks.md`; asserting one here would turn a
+    # measurement into a threshold.
+    @test b.precision > b.ours + b.theirs
+    @test b.ours < 1.0e-12
+    @test b.precision ≈ eps(Float32) * maximum(abs, ac_powerflow(net).Vm)
+
+    ours = ac_powerflow(net)
+    theirs = oracle_powerflow(net)
+    @test pf_gap(ours, theirs, s -> s.Vm) < b.band
+    # NOTE the check that is deliberately absent: there is no lower bound on the
+    # gap. A channel that agrees far better than the band — `flow` on this fixture
+    # agrees to 7.8e-16 — is two solvers agreeing to the bit on a quantity the
+    # quantization happens not to reach, not a vacuous check, and asserting a floor
+    # under it would make an accident load-bearing.
+
+    # An identically-zero channel has no band and says so rather than returning 0.
+    @test_throws ArgumentError powerflow_band(net; channel = s -> zeros(3))
+    @test_throws ArgumentError powerflow_band(net; channel = s -> s.Vm, scale = 0.0)
+    # `flow_scale` is the admittance-sized number, not the flow-sized one — the
+    # whole point, and the ratio between them is what a naive band gets wrong.
+    ymax = maximum(abs(1 / complex(b.R, b.X)) for b in net.branches)
+    @test flow_scale(net, ours) == ymax * maximum(ours.Vm)^2
+    @test flow_scale(net, ours) > maximum(abs, ours.qflow)
+end
+
+@testset "the single-precision twin is the explanation, not a fitted constant" begin
+    net = pf_radial()
+    twin = float32_admittance_twin(net)
+    # The twin is a different network, and only in the last bits.
+    @test twin.branches[1].X != net.branches[1].X
+    @test twin.branches[1].X ≈ net.branches[1].X rtol = 1e-6
+    # Round-tripping a LOSSLESS branch must leave it lossless: `Branch` requires
+    # `R >= 0` and a clamp that fired on anything larger would be hiding a bug.
+    @test all(b -> b.R == 0.0, twin.branches)
+    @test all(b -> b.R > 0.0, float32_admittance_twin(pf_lossy()).branches)
+
+    # Their Ybus really is where the error lives: our solve on the twin lands on
+    # the same side of ours as theirs does, and by a comparable amount.
+    ours = ac_powerflow(net; abstol = 1e-14)
+    ontwin = ac_powerflow(twin; abstol = 1e-14)
+    theirs = oracle_powerflow(net)
+    @test pf_gap(ours, ontwin, s -> s.Vm) > pf_gap(ours, theirs, s -> s.Vm)
+    @test pf_gap(ours, theirs, s -> s.Vm) > 1.0e-10   # not solver noise
+end
+
+@testset "each side's answer in an INDEPENDENT admittance — the round's finding" begin
+    # The sharp instrument, and the one check here that needs no band at all: a
+    # mismatch is a statement about ONE answer, not about the gap between two.
+    # `independent_mismatch` builds its own double-precision Y from `Branch` and
+    # touches neither `_ac_admittance` nor `PowerNetworkMatrices`.
+    #
+    # The thresholds are stated as ORDERS, not as measured numbers, and they are
+    # stated from the mechanism rather than from the run: ours solves in double
+    # precision to `abstol = 1e-12`, so it must land near machine epsilon; theirs
+    # solves in double precision against a matrix stored to single-precision
+    # relative accuracy (eps(Float32) = 1.19e-7), so it cannot.
+    for (name, net) in (("radial", pf_radial()), ("meshed", pf_meshed()),
+                        ("lossy", pf_lossy()), ("offbase", pf_offbase()))
+        ours = independent_mismatch(net, ac_powerflow(net))
+        theirs = independent_mismatch(net, oracle_powerflow(net))
+        @test ours < 1.0e-13                    # a double-precision solve of the real network
+        @test theirs > 1.0e-9                   # a double-precision solve of a rounded one
+        @test theirs / ours > 1.0e4             # ...and the two are not the same kind of number
+        @test name isa String
+    end
+
+    # POSITIVE CONTROL: the instrument can read a small mismatch, so the large one
+    # it reports for their answer is not an artefact of the instrument. Our answer
+    # on the SAME code path is the control, and it is already above; here is the
+    # anti-vacuity half — bend our answer and the mismatch must follow.
+    net = pf_meshed()
+    good = ac_powerflow(net)
+    bent = (; Vm = good.Vm .+ 1.0e-6, θ = good.θ)
+    @test independent_mismatch(net, bent) > 1.0e-7
+    @test independent_mismatch(net, good) < 1.0e-13
+
+    # And it reads the LOAD MODEL, which is what makes it independent of `_zip_scale`:
+    # a fixture with mixed ZIP shares evaluated as though it were constant power
+    # leaves a mismatch, so a check built on this cannot be blind the way step 3's
+    # losses identity was (F10).
+    flat = NetworkModel(net.S_base, net.f0, net.buses, net.branches, net.machines,
+                        [Load(l.id, l.bus, l.P0, l.Q0, 0.0, 0.0, 1.0) for l in net.loads];
+                        slack = net.slack)
+    @test independent_mismatch(flat, good) > 1.0e-3      # same voltages, different load law
+end
+
+@testset "AC: radial and meshed agree, per channel and within a stated band" begin
+    for (name, net) in (("radial", pf_radial()), ("meshed", pf_meshed()))
+        ours = ac_powerflow(net)
+        theirs = oracle_powerflow(net)
+        for ch in (s -> s.Vm, s -> s.θ)
+            b = powerflow_band(net; channel = ch)
+            @test pf_gap(ours, theirs, ch) <= b.band
+        end
+        # A branch flow is a DIFFERENCE of |y|.|V|^2-sized products, so its precision
+        # term is built from those and not from the (partly cancelled) result — see
+        # `flow_scale`. Measured: on the channel's own magnitude, `qflow` runs 3.2x
+        # over on this pair of fixtures and `flow` saturates at 0.94x on the
+        # off-base one.
+        fs = flow_scale(net, ours)
+        for ch in (s -> s.flow, s -> s.flow_rev, s -> s.qflow)
+            b = powerflow_band(net; channel = ch, scale = fs)
+            @test pf_gap(ours, theirs, ch) <= b.band
+        end
+        # Generation is checked by IDENTITY, never banded — see `powerflow_band`'s
+        # docstring. At a generator bus our `Pgen` IS the schedule, exactly, and a
+        # band derived from a convergence that never happened would be meaningless.
+        ma = machine_arrays(net)
+        for (k, m) in pairs(net.machines)
+            v = net.bus_index[m.bus]
+            v == net.bus_index[net.slack] && continue
+            @test ours.Pgen[v] ≈ ma.Pm[k] atol = 1e-12
+        end
+        # The slack angle is a constraint on both sides, not a solved quantity, so
+        # it is compared EXACTLY — `powerflow_band` refuses to band it and says why.
+        @test ours.θ[1] == 0.0 && theirs.θ[1] == 0.0
+        # ...and the held generator magnitudes likewise.
+        for v in eachindex(net.buses)
+            GridSim.bus_role(net, net.buses[v].id) === :load && continue
+            @test ours.Vm[v] == theirs.Vm[v]
+        end
+        @test name isa String
+    end
+end
+
+@testset "AC: the LOSSY case — the half of ac_powerflow oracle A cannot reach" begin
+    net = pf_lossy()
+    ours = ac_powerflow(net)
+    theirs = oracle_powerflow(net)
+    # The loss channel exists at all only here: with `R = 0` every branch's
+    # `flow + flow_rev` is identically zero and this compares nothing.
+    ourloss = ours.flow .+ ours.flow_rev
+    theirloss = theirs.flow .+ theirs.flow_rev
+    @test all(>(0.0), ourloss)                       # a resistive branch dissipates
+    @test maximum(ourloss) > 1.0e-4                  # ...by an amount worth checking
+    fs = flow_scale(net, ours)
+    for ch in (s -> s.Vm, s -> s.θ)
+        b = powerflow_band(net; channel = ch)
+        @test pf_gap(ours, theirs, ch) <= b.band
+    end
+    for ch in (s -> s.flow, s -> s.flow_rev, s -> s.qflow)
+        b = powerflow_band(net; channel = ch, scale = fs)
+        @test pf_gap(ours, theirs, ch) <= b.band
+    end
+    bl = powerflow_band(net; channel = s -> s.flow .+ s.flow_rev, scale = fs)
+    @test maximum(abs, ourloss .- theirloss) <= bl.band
+
+    # The slack picks the losses up, and BOTH sides say the same amount. This is
+    # the identity `NetworkModel`'s sigma-balance guard stopped being able to make
+    # once `Branch.R` existed (step 1, F3) — checked here, against an outside
+    # solver, which is where that guard's annotation points.
+    la = load_arrays(net)
+    drawn = sum(la.P[k] * (la.a_z[k] * ours.Vm[la.bus[k]]^2 +
+                           la.a_i[k] * ours.Vm[la.bus[k]] + la.a_p[k])
+                for k in eachindex(la.bus))
+    @test sum(ours.Pgen) ≈ drawn + sum(ourloss) atol = 1e-10
+    # Their generation is compared on THEIR OWN constant, read from their source:
+    # `post_processing.jl` redistributes generator set points until the residual is
+    # within `ISAPPROX_ZERO_TOLERANCE = 1e-6` (per unit on the system base). That
+    # is the honest tolerance for any cross-comparison of their generation numbers,
+    # and it has nothing to do with admittance precision.
+    @test sum(theirs.Pgen) ≈ sum(ours.Pgen) atol = 1.0e-6
+end
+
+@testset "AC: the off-base fixture, where their rebase is not the identity" begin
+    net = pf_offbase()
+    @test net.S_base == 250.0                        # and not the 100.0 every probe used
+    ours = ac_powerflow(net)
+    theirs = oracle_powerflow(net)
+    for ch in (s -> s.Vm, s -> s.θ)
+        b = powerflow_band(net; channel = ch)
+        @test pf_gap(ours, theirs, ch) <= b.band
+    end
+    bf = powerflow_band(net; channel = s -> s.flow, scale = flow_scale(net, ours))
+    @test pf_gap(ours, theirs, s -> s.flow) <= bf.band
+    # Their export is in MW, ours in per-unit on `S_base`. On a 250 MVA base a
+    # reader that had assumed per-unit would be out by 250x, so the scale is
+    # asserted rather than trusted: the slack's pickup in MW is our pu times 250.
+    sys = to_powersystems(net)
+    raw = PF.solve_power_flow(PF.ACPowerFlow(; check_reactive_power_limits = true,
+              solver_settings = Dict{Symbol,Any}(:tol => 1.0e-12)), sys)
+    @test raw["bus_results"].P_gen[1] ≈ ours.Pgen[1] * net.S_base atol = 1e-6 * net.S_base
+    @test abs(raw["bus_results"].P_gen[1]) > 10.0    # ...and it is MW-sized, not pu-sized
+end
+
+@testset "the BINDING reactive limit, and the default that would have hidden it" begin
+    net = pf_qlimit()
+    ours = ac_powerflow(net)
+    # Ours switched B2 off its setpoint and holds it at the ceiling.
+    @test ours.limited == [:B2]
+    @test ours.Qgen[2] ≈ 0.10 atol = 1e-10
+    @test ours.Vm[2] < 1.05
+
+    theirs = oracle_powerflow(net; check_limits = true)
+    @test theirs.Qgen[2] ≈ 0.10 atol = 1e-6          # the SAME bus, at the SAME limit
+    @test theirs.Vm[2] < 1.05
+    # `abstol_fine` is passed, and the reason is a MEASUREMENT: this model's own
+    # residual floor is 1.804e-15, so the band's default 1000x-tighter probe
+    # (1e-15) makes Newton stall. `powerflow_band` refuses that by name rather than
+    # falling back silently, which is why the number appears here at the call site.
+    for ch in (s -> s.Vm, s -> s.θ)
+        b = powerflow_band(net; channel = ch, check_limits = true, abstol_fine = 1e-14)
+        @test pf_gap(ours, theirs, ch) <= b.band
+    end
+    @test_throws ErrorException powerflow_band(net; channel = s -> s.Vm,
+                                               check_limits = true)
+    bf = powerflow_band(net; channel = s -> s.flow, check_limits = true,
+                        abstol_fine = 1e-14, scale = flow_scale(net, ours))
+    @test pf_gap(ours, theirs, s -> s.flow) <= bf.band
+
+    # ANTI-VACUITY, and it is their own default. `ACPowerFlow()` ships with
+    # `check_reactive_power_limits = false`; with it off they hold the setpoint and
+    # blow straight through the ceiling, and the comparison must SEE that. A test
+    # that passed either way would be reading nothing.
+    unlimited = oracle_powerflow(net; check_limits = false)
+    @test unlimited.Vm[2] == 1.05
+    @test unlimited.Qgen[2] > 0.10 + 0.01            # measured: it asks for 0.860
+    bV = powerflow_band(net; channel = s -> s.Vm, check_limits = true,
+                        abstol_fine = 1e-14)
+    @test pf_gap(ours, unlimited, s -> s.Vm) > bV.band
+
+    # A limit so wide it cannot bind must reproduce the unlimited answer, on both
+    # sides. Ours does it EXACTLY (nothing switched means exactly one solve ran);
+    # theirs within the band.
+    wide = pf_qlimit(Q_max = 50.0)
+    ours_wide = ac_powerflow(wide)
+    @test isempty(ours_wide.limited)
+    @test ours_wide.Vm[2] == 1.05
+    theirs_wide = oracle_powerflow(wide; check_limits = true)
+    @test theirs_wide.Vm[2] == 1.05
+end
+
+@testset "DC: their linear solve against ours, on its own band" begin
+    for net in (pf_radial(), pf_meshed())
+        ours = dc_powerflow(net)
+        theirs = oracle_dc_powerflow(net)
+        b = powerflow_band(net; channel = s -> s.θ, dc = true)
+        @test pf_gap(ours, theirs, s -> s.θ) <= b.band
+        bf = powerflow_band(net; channel = s -> s.flow, dc = true,
+                            scale = flow_scale(net, ac_powerflow(net)))
+        @test pf_gap(ours, theirs, s -> s.flow) <= bf.band
+        @test ours.θ[1] == 0.0 && theirs.θ[1] == 0.0
+    end
+    # Their DC ignores resistance and uses `1/x`, measured; ours does the same, so
+    # the lossy model and its lossless twin must give BOTH sides the same angles.
+    lossy = pf_lossy()
+    lossless = NetworkModel(lossy.S_base, lossy.f0, lossy.buses,
+        [Branch(b.id, b.from, b.to, b.X, b.rating) for b in lossy.branches],
+        lossy.machines, lossy.loads; slack = lossy.slack)
+    @test dc_powerflow(lossy).θ == dc_powerflow(lossless).θ
+    bθ = powerflow_band(lossy; channel = s -> s.θ, dc = true)
+    @test pf_gap(oracle_dc_powerflow(lossy), oracle_dc_powerflow(lossless), s -> s.θ) <= bθ.band
+end
+
+@testset "anti-vacuity: the comparison can read a disagreement" begin
+    # The mutation that matters goes in `_ac_admittance` / `_ac_residual!` /
+    # `_ac_flows` / `_zip_scale` and is executed by hand — it cannot live in a test
+    # file, because a test cannot edit the source it is testing. The record of that
+    # run is in `docs/plans/m6-tasks.md`. What IS testable here is that the
+    # arithmetic these checks are built from is not vacuous: perturb one side by a
+    # multiple of the band and every channel check must fail.
+    net = pf_meshed()
+    ours = ac_powerflow(net)
+    theirs = oracle_powerflow(net)
+    for ch in (s -> s.Vm, s -> s.θ, s -> s.flow)
+        b = powerflow_band(net; channel = ch)
+        @test pf_gap(ours, theirs, ch) <= b.band                      # positive control
+        bent = (; Vm = ours.Vm .+ 10 * b.band, θ = ours.θ .+ 10 * b.band,
+                  flow = ours.flow .+ 10 * b.band)
+        @test pf_gap(bent, theirs, ch) > b.band                       # anti-vacuity
+    end
+end
+
+end # M6 step 4 oracle B
