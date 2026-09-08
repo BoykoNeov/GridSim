@@ -1,6 +1,7 @@
 name = "three-machine ring"
 S_base = 100.0
 f0 = 50.0
+slack = "B1"
 loads = []
 
 [layout]
@@ -24,18 +25,21 @@ from = "B1"
 to = "B2"
 X = 0.25
 rating = 500.0
+R = 0.0
 [[branches]]
 id = "L23"
 from = "B2"
 to = "B3"
 X = 0.25
 rating = 500.0
+R = 0.0
 [[branches]]
 id = "L31"
 from = "B3"
 to = "B1"
 X = 0.25
 rating = 500.0
+R = 0.0
 
 [[machines]]
 id = "G1"
@@ -59,6 +63,9 @@ K_A = 0.0
 T_E = +inf
 Efd_min = -inf
 Efd_max = +inf
+V_set = 1.0
+Q_min = -inf
+Q_max = +inf
 [[machines]]
 id = "G2"
 bus = "B2"
@@ -81,6 +88,9 @@ K_A = 0.0
 T_E = +inf
 Efd_min = -inf
 Efd_max = +inf
+V_set = 1.0
+Q_min = -inf
+Q_max = +inf
 [[machines]]
 id = "G3"
 bus = "B3"
@@ -103,3 +113,6 @@ K_A = 0.0
 T_E = +inf
 Efd_min = -inf
 Efd_max = +inf
+V_set = 1.0
+Q_min = -inf
+Q_max = +inf

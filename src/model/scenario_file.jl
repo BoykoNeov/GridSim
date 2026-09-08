@@ -134,6 +134,37 @@ function _field(rec::AbstractDict, key::AbstractString, ::Type{T}, what::Abstrac
     return v
 end
 
+# The one field the reader will not default (`m6-context.md` D8). Every other new
+# field has a value that is physically what its absence meant — a branch with no
+# `R` recorded was a lossless branch, and it still is. The reference bus has none:
+# it is a DISPATCH choice (M5 D13), so inventing one here would record a choice the
+# file never made, as though it had.
+#
+# The message names EVERY bus, the way `NetworkModel`'s own slack message does, and
+# deliberately not the machine-carrying subset: that a power flow needs a voltage
+# source at the reference bus is `ac_powerflow`'s rule, and a reader that taught it
+# in an error string would be a second validator (M5 D5, one validated path). The
+# machines are named as a separate sentence — a hint about which bus a dispatch
+# usually references, not a restriction on which ones the file may name.
+function _read_slack(doc::AbstractDict, buses::Vector{Bus}, machines::Vector{Machine})
+    haskey(doc, "slack") && return Symbol(_field(doc, "slack", String, "the file"))
+    isempty(buses) && throw(ArgumentError(
+        "read_scenario: the file declares no `slack`, and no buses either. The " *
+        "reference bus is the one field this reader will not invent — add buses, " *
+        "then a top-level `slack = \"...\"` naming one of them."))
+    hint = isempty(machines) ? "" :
+        " (this file's machines sit at " *
+        join(unique(String(m.bus) for m in machines), ", ") * ", and a dispatch " *
+        "usually references one of those — but any bus may be the reference)"
+    throw(ArgumentError(
+        "read_scenario: the file declares no top-level `slack`, and there is no " *
+        "value its absence could mean. Every other field this reader defaults has " *
+        "one — a branch with no `R` was a lossless branch — but the reference bus " *
+        "is a dispatch choice, and choosing one here would record it as though the " *
+        "file had said so. Add `slack = \"...\"` naming one of: " *
+        join((String(b.id) for b in buses), ", ") * hint * "."))
+end
+
 """
     read_scenario(path) -> (; net, layout, name)
 
@@ -145,9 +176,13 @@ file fails exactly where an invalid model does. `layout` is a [`Layout`](@ref), 
 Machine fields beyond the classical eight are optional and default the way the
 `Machine` constructor defaults them (no governor, frozen flux, no regulator, a
 1.0 pu voltage schedule and no reactive limits), so a hand-written file need only
-say what it means. `[[branches]].R` and the top-level `slack` default the same way
-(a lossless line; the bus of the first machine) — `m6-context.md` D8. Primed names are spelled with
-`_p` in the file (`Xd_p`, `E_p`, …), because TOML has no prime in a bare key.
+say what it means. `[[branches]].R` defaults the same way, to a lossless line.
+
+**The top-level `slack` is the one field that is required** (`m6-context.md` D8):
+every other absence has a physical reading, and the reference bus has none, so a
+file without one is refused with the buses it could have named. Primed names are
+spelled with `_p` in the file (`Xd_p`, `E_p`, …), because TOML has no prime in a
+bare key.
 """
 function read_scenario(path::AbstractString)
     isfile(path) || throw(ArgumentError("read_scenario: no file at $path."))
@@ -155,15 +190,9 @@ function read_scenario(path::AbstractString)
     name = String(get(doc, "name", ""))
     S_base = _field(doc, "S_base", Float64, "the file")
     f0 = _field(doc, "f0", Float64, "the file")
-    # M6 step 1 — read-side default, and it is DELIBERATELY still a default at this
-    # step. `m6-context.md` D8 decides that a file with no slack must eventually be
-    # REJECTED, because the slack is the one new field whose absence has no physical
-    # meaning; that rejection, its message and its round-trip test are step 5's box.
-    # Defaulting here in the meantime is what keeps a pre-M6 file readable while the
-    # milestone is mid-flight, and it is why the writer above already emits the key:
-    # nothing written after this step leans on the default.
-    slack_str = _field(doc, "slack", String, "the file"; default = "")
-    slack = isempty(slack_str) ? nothing : Symbol(slack_str)
+    # M6 step 5 — the slack is read BELOW, once the buses exist. Refusing a file that
+    # declares none means naming the buses it could have named, and at this point in
+    # the read there are not any yet.
 
     buses = Bus[]
     for (i, rec) in enumerate(get(doc, "buses", Any[]))
@@ -213,6 +242,7 @@ function read_scenario(path::AbstractString)
                           _field(rec, "a_i", Float64, w; default = 0.0),
                           _field(rec, "a_p", Float64, w; default = 0.0)))
     end
+    slack = _read_slack(doc, buses, machines)
     net = NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack)
 
     layout = nothing

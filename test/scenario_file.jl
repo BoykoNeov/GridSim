@@ -75,9 +75,17 @@ end
 @testset "scenario file: a hand-written file defaults the way the constructor does" begin
     dir = mktempdir()
     path = joinpath(dir, "minimal.toml")
+    # This IS a pre-M6 file, written out by hand rather than read off disk on
+    # purpose (`m6-tasks.md` step 5): the only genuine pre-M6 file the repo had was
+    # `docs/scenarios/three-machine-ring.toml`, and step 5 rewrites it through the
+    # writer, so a test that read it would stop testing anything the moment it did.
+    # It carries the eight classical machine numbers and NOTHING else — no branch
+    # `R`, no governor, no detailed reactances, no regulator, no voltage schedule,
+    # no reactive limits — plus the one key that is now required.
     write(path, """
         S_base = 100.0
         f0 = 50.0
+        slack = "B1"
         [[buses]]
         id = "B1"
         V_base = 400.0
@@ -114,6 +122,59 @@ end
     @test back.layout === nothing
     @test back.net.machines == two_machine_system().machines
     @test back.net.branches == two_machine_system().branches
+    @test back.net.slack === :B1
+
+    # ...and every default written down HERE as well, not only as "equal to the
+    # fixture". D8's whole claim is that each absence has a physical reading, and a
+    # comparison against another constructor call would pass just as happily if both
+    # sides drifted together — which is the silent reinterpretation of old files the
+    # decision exists to prevent. Exact `==`: these are defaults, not computations.
+    @test all(br.R == 0.0 for br in back.net.branches)             # a lossless line
+    for m in back.net.machines
+        @test m.R == Inf                                           # no governor
+        @test m.Pmax == m.P0 && m.Tg == 1.0                        # ...so no headroom
+        @test m.Xd == m.Xd′ && m.Xq == m.Xd′ && m.Xq′ == m.Xd′     # classical: one X
+        @test m.Td0′ == Inf && m.Tq0′ == Inf                       # frozen flux
+        @test m.Ra == 0.0
+        @test m.K_A == 0.0 && m.T_E == Inf                         # no regulator
+        @test m.Efd_min == -Inf && m.Efd_max == Inf                # unlimited field
+        @test m.V_set == 1.0                                       # a 1.0 pu schedule
+        @test m.Q_min == -Inf && m.Q_max == Inf                    # no reactive limits
+    end
+end
+
+@testset "scenario file: a file with no slack is refused, and says which buses it could be" begin
+    dir = mktempdir()
+    path = joinpath(dir, "no_slack.toml")
+    net = two_machine_system()
+    write_scenario(path, net)
+    text = read(path, String)
+    @test occursin("slack = \"B1\"\n", text)          # the writer emits it, always
+    write(path, replace(text, "slack = \"B1\"\n" => ""))
+
+    msg = argerr_msg(() -> read_scenario(path))
+    # Refused, not defaulted — D8's one exception.
+    @test occursin("no top-level `slack`", msg)
+    # Naming EVERY bus, the way `NetworkModel`'s own slack message does. That a
+    # power flow needs a machine at the reference bus is `ac_powerflow`'s rule, and
+    # the reader does not teach it: the machine buses appear as a hint in their own
+    # sentence, and a bus with no machine is still offered.
+    @test occursin("B1", msg) && occursin("B2", msg)
+    @test occursin("any bus may be the reference", msg)
+    # And the reason, so a hand-editor is not left guessing why this one field alone
+    # will not default.
+    @test occursin("dispatch", msg)
+
+    # A slack naming a bus that is not there is the CONSTRUCTOR's refusal, not a
+    # second one here (M5 D5, one validated path).
+    write(path, replace(text, "slack = \"B1\"\n" => "slack = \"B9\"\n"))
+    @test occursin("NetworkModel", argerr_msg(() -> read_scenario(path)))
+
+    # The degenerate file — no slack and no buses — has nothing to name and says so
+    # rather than offering an empty list.
+    empty_path = joinpath(dir, "empty.toml")
+    write(empty_path, "S_base = 100.0\nf0 = 50.0\n")
+    @test occursin("no buses either", argerr_msg(() -> read_scenario(empty_path)))
 end
 
 @testset "scenario file: an invalid file fails where an invalid model does" begin

@@ -242,17 +242,19 @@ end
 
     # READ-SIDE DEFAULTS (m6-context.md D8): a pre-M6 file says none of this, and
     # each absence must land on the value the absence physically meant — a lossless
-    # line, an unlimited machine at a 1.0 pu schedule. The slack's absence has NO
-    # such value, which is why D8 makes it the one exception; turning this default
-    # into a rejection with a message naming the candidate buses is step 5's box,
-    # and until then it defaults so a mid-milestone repo can still read its own files.
-    old = replace(text, r"(?m)^slack = .*\n" => "")
-    old = replace(old, r"(?m)^ *(R|V_set|Q_min|Q_max) = .*\n" => "")
+    # line, an unlimited machine at a 1.0 pu schedule.
+    old = replace(text, r"(?m)^ *(R|V_set|Q_min|Q_max) = .*\n" => "")
     write(path, old)
     pre = read_scenario(path).net
     @test all(br -> br.R === 0.0, pre.branches)
     @test all(m -> m.V_set === 1.0 && m.Q_min === -Inf && m.Q_max === Inf, pre.machines)
-    @test pre.slack === pre.machines[1].bus
+    # ...and the slack survived the strip, because it is the one key the reader will
+    # not supply. Step 1 defaulted it and said so; STEP 5 turned that into a
+    # refusal, which is asserted with its message in `test/scenario_file.jl`. Here
+    # only the consequence is checked: the slack is not among the defaulted fields.
+    @test pre.slack === :B2
+    write(path, replace(old, r"(?m)^slack = .*\n" => ""))
+    @test_throws ArgumentError read_scenario(path)
 end
 
 end # M6 step 1

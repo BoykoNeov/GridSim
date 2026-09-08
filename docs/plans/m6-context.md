@@ -272,6 +272,14 @@ It reads correctly today on the read-side default, and it is the file
 rejection, that file and that documented entry point break unless step 5 updates
 them.
 
+> **Closed at step 5 (2026-09-08).** The file was rewritten through the writer, so
+> it now carries `slack`, `R` and the three machine fields step 1 added, and the
+> `ui/README.md` entry point opens again. That *spent* the repo's only genuine
+> pre-M6 file, which is the artifact the round-trip test above exists to exercise —
+> so the pre-M6 fixture moved into `test/scenario_file.jl` as a hand-written string.
+> A test that reads a file the same step rewrites stops testing anything the moment
+> it does.
+
 ---
 
 ## D5 — The existing fixpoint is not a power flow, and cannot be extended into one
