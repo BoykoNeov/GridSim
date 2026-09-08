@@ -276,6 +276,48 @@ function rename!(ed::ScenarioEditor, kind::Symbol, id::Symbol, new_id::Symbol)
     return ed
 end
 
+# ---- the reference bus ---------------------------------------------------------
+
+"""
+    set_slack!(ed, bus) -> ed
+
+Declare `bus` the reference (slack) bus. `nothing` gives the declaration back up
+and lets `NetworkModel` derive one — what a fresh draft carries.
+
+The slack is a **dispatch** choice, not a gauge one (m5-context.md D13), which is
+why the scenario file refuses to invent it (m6-context.md D8) and why the editor
+lets a user say it rather than discovering it after a save.
+"""
+function set_slack!(ed::ScenarioEditor, bus::Union{Nothing,Symbol})
+    bus === nothing && (ed.slack = nothing; return ed)
+    _assert_bus(ed, bus)
+    ed.slack = bus
+    return ed
+end
+
+"""
+    effective_slack(ed) -> Symbol or nothing
+
+The bus a model built from this draft would use as its reference — the declared
+one, or the one `NetworkModel` would derive (the first bus carrying a machine, in
+bus order; the first bus when there are no machines). `nothing` only when the
+draft has no buses at all.
+
+The derivation is spelled out here rather than obtained from [`build_model`](@ref)
+because the map has to draw the reference on a draft the constructor would still
+refuse — an unbalanced one, say. That makes it a second copy of a rule, so a test
+asserts the two agree on every draft it can build; the map is not allowed to point
+at a bus the model would not use.
+"""
+function effective_slack(ed::ScenarioEditor)
+    ed.slack === nothing || return ed.slack
+    isempty(ed.buses) && return nothing
+    for b in ed.buses
+        any(m -> m.bus === b.id, ed.machines) && return b.id
+    end
+    return ed.buses[1].id
+end
+
 # ---- editing a field ---------------------------------------------------------------
 
 # Rebuild an immutable record with one field changed, THROUGH ITS CONSTRUCTOR, so
@@ -305,16 +347,23 @@ end
 """
     editable_fields(kind) -> Tuple of Symbols
 
-The numeric fields the property panel offers for each kind. For a machine that is
-the classical and governor set; the detailed-tier and regulator parameters are
-carried by the file and by [`set_field!`](@ref), not by the panel — nineteen
-text boxes do not fit beside a map.
+The numeric fields the property panel offers for each kind: for a machine, the
+classical and governor set plus the three the steady-state solve reads (`V_set`,
+`Q_min`, `Q_max`); for a branch, its reactance, rating and series resistance.
+
+The **detailed-tier** parameters (`Xd`, `Xq`, `Xq′`, `Td0′`, `Tq0′`, `Ra`) and the
+**regulator's** (`K_A`, `T_E`, `Efd_min`, `Efd_max`) are still carried by the file
+and by [`set_field!`](@ref) and not by the panel — twenty-two text boxes do not fit
+beside a map, and a tier with no real-time window of its own (m5-context.md D2) is
+not what a map is for. The three that were added are the ones a solve on this map
+actually consults, and `R` is the one a lossy flow does.
 """
 editable_fields(kind::Symbol) =
     kind === :bus ? (:V_base,) :
-    kind === :machine ? (:S_rated, :H, :D, :Xd′, :E′, :P0, :R, :Pmax, :Tg) :
+    kind === :machine ? (:S_rated, :H, :D, :Xd′, :E′, :P0, :R, :Pmax, :Tg,
+                         :V_set, :Q_min, :Q_max) :
     kind === :load ? (:P0, :Q0) :
-    kind === :branch ? (:X, :rating) :
+    kind === :branch ? (:X, :rating, :R) :
     throw(ArgumentError("editor: no element kind $kind."))
 
 """

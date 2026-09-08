@@ -233,7 +233,193 @@ end
     @test !any(m -> m.id === :Gen1, win.ed.machines)
     # A branch panel offers a branch's fields.
     win.ed.selection = (:branch, :L23); win.refresh!()
-    @test Set(keys(win.widgets.panel_boxes)) == Set((:id, :X, :rating))
+    @test Set(keys(win.widgets.panel_boxes)) == Set((:id, :X, :rating, :R))
+end
+
+@testset "editor window: the panel edits the three fields a solve reads, and R" begin
+    # M6 step 5. `V_set`, `Q_min`, `Q_max` and the branch's `R` were carried by the
+    # file and by `set_field!` before this step but were not in the panel, so a
+    # scenario drawn on the map could not say anything a power flow would notice
+    # beyond its dispatch.
+    ed = ScenarioEditor(load_bus_system())
+    ed.selection = (:machine, :G1)
+    win = EBUILD(ed)
+    boxes = win.widgets.panel_boxes
+    @test Set(keys(boxes)) == Set((:id, GridSimUI.editable_fields(:machine)...))
+    # ∓Inf is the DEFAULT of two of them, so every machine panel from now on shows a
+    # box holding "Inf" — and `apply` reads every box, so a value that did not
+    # survive `%g` and `tryparse` would silently become an error or a finite limit.
+    @test boxes[:Q_min].displayed_string[] == "-Inf"
+    @test boxes[:Q_max].displayed_string[] == "Inf"
+    @test boxes[:V_set].displayed_string[] == "1"
+    boxes[:V_set].displayed_string[] = "1.03"
+    boxes[:Q_max].displayed_string[] = "0.4"
+    click!(win.widgets.panel_buttons[:apply])
+    @test element(win.ed, :machine, :G1).V_set == 1.03
+    @test element(win.ed, :machine, :G1).Q_max == 0.4
+    @test element(win.ed, :machine, :G1).Q_min == -Inf     # untouched, and still ∓Inf
+    # ...and refused THROUGH THE CONSTRUCTOR, with its words, like every other field.
+    # It has to be `Q_min` ABOVE `Q_max` and not a negative `Q_max`: a machine may
+    # legitimately absorb reactive power at every operating point, so `Q_max = -2`
+    # against the default `Q_min = -Inf` is a perfectly good record and the
+    # constructor accepts it. The only guard here is the ordering of the pair.
+    boxes[:Q_min].displayed_string[] = "1"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("not applied", win.status[]) && occursin("Q_min", win.status[])
+    @test element(win.ed, :machine, :G1).Q_min == -Inf
+    @test element(win.ed, :machine, :G1).Q_max == 0.4
+    boxes[:Q_min].displayed_string[] = "-Inf"
+    boxes[:V_set].displayed_string[] = "0"
+    boxes[:Q_max].displayed_string[] = "0.4"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("V_set", win.status[]) && element(win.ed, :machine, :G1).V_set == 1.03
+
+    win.ed.selection = (:branch, :L12); win.refresh!()
+    br = win.widgets.panel_boxes
+    @test br[:R].displayed_string[] == "0"                 # a lossless line, written down
+    br[:R].displayed_string[] = "0.01"
+    click!(win.widgets.panel_buttons[:apply])
+    @test element(win.ed, :branch, :L12).R == 0.01
+    br[:R].displayed_string[] = "-0.01"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("not applied", win.status[]) && element(win.ed, :branch, :L12).R == 0.01
+end
+
+@testset "editor: the reference bus is declared, drawn, and agrees with the model" begin
+    ed = ScenarioEditor(load_bus_system())
+    @test ed.slack === :B1                       # carried in from the fixture
+    set_slack!(ed, nothing)
+    @test ed.slack === nothing
+    # With nothing declared the map still has to point somewhere, and where it points
+    # is a SECOND copy of `NetworkModel`'s derivation rule. The two are asserted to
+    # agree rather than assumed to: on drafts with machines, without them, and with
+    # the first bus empty.
+    @test effective_slack(ed) === build_model(ed).slack
+    set_slack!(ed, :B3)
+    @test effective_slack(ed) === :B3 === build_model(ed).slack
+    @test occursin("no bus", emsg(() -> set_slack!(ed, :B9)))
+
+    bare = ScenarioEditor()
+    @test effective_slack(bare) === nothing      # nothing to point at at all
+    add_bus!(bare, 0.0, 0.0; id = :A); add_bus!(bare, 1.0, 0.0; id = :B)
+    add_branch!(bare, :A, :B)
+    @test effective_slack(bare) === :A === build_model(bare).slack   # no machines: first bus
+    add_machine!(bare, :B; P0 = 0.0)
+    @test effective_slack(bare) === :B === build_model(bare).slack   # ...now the machine's
+
+    # A deleted or renamed slack does not leave the map pointing at a bus that is
+    # gone (the operations carried it from step 1; here it is the DRAWN one).
+    ed2 = ScenarioEditor(load_bus_system()); set_slack!(ed2, :B2)
+    rename!(ed2, :bus, :B2, :Middle)
+    @test effective_slack(ed2) === :Middle
+    remove!(ed2, :bus, :Middle)
+    @test ed2.slack === nothing && effective_slack(ed2) === :B1
+end
+
+@testset "editor window: the slack is on the map and chosen from the panel" begin
+    win = EBUILD(ScenarioEditor(load_bus_system()))
+    g = GridSimUI._glyph_positions(win.ed)
+    @test win.plots.slack_pts[] == [g.buses[:B1]]
+    @test only(win.plots.slack_labels[])[1] == "slack"
+
+    # Give the declaration up: the marker moves to the DERIVED bus and says so, which
+    # is the whole reason it is drawn — a derived reference is still a dispatch
+    # choice, and a save would otherwise write it without anyone having seen it.
+    set_slack!(win.ed, nothing); win.refresh!()
+    @test win.plots.slack_pts[] == [g.buses[:B1]]
+    @test only(win.plots.slack_labels[])[1] == "slack (derived)"
+
+    win.ed.selection = (:bus, :B3); win.refresh!()
+    @test win.widgets.panel_buttons[:slack].label[] == "make slack"
+    click!(win.widgets.panel_buttons[:slack])
+    @test win.ed.slack === :B3 && occursin("slack bus is B3", win.status[])
+    @test win.plots.slack_pts[] == [g.buses[:B3]]
+    @test only(win.plots.slack_labels[])[1] == "slack"
+    # ...and back, so a wrong declaration does not need the bus deleted to undo.
+    @test win.widgets.panel_buttons[:slack].label[] == "release slack"
+    click!(win.widgets.panel_buttons[:slack])
+    @test win.ed.slack === nothing && occursin("released", win.status[])
+    @test win.widgets.panel_buttons[:slack].label[] == "make slack"
+    # A machine's panel has no such button: the reference is a property of a bus.
+    win.ed.selection = (:machine, :G1); win.refresh!()
+    @test !haskey(win.widgets.panel_buttons, :slack)
+
+    # It survives a save and an open, which is what step 1 carried it through the
+    # editor for — and now the map is where that is visible.
+    dir = mktempdir(); path = joinpath(dir, "slack.toml")
+    set_slack!(win.ed, :B3)
+    win.widgets.tb_path.displayed_string[] = path
+    click!(win.widgets.b_save)
+    win2 = EBUILD(ScenarioEditor())
+    win2.widgets.tb_path.displayed_string[] = path
+    click!(win2.widgets.b_load)
+    @test win2.ed.slack === :B3
+    @test only(win2.plots.slack_labels[])[1] == "slack"
+end
+
+@testset "editor window: solve draws the flow, and a refusal leaves the drawing alone" begin
+    win = EBUILD(ScenarioEditor(load_bus_system()))
+    @test isempty(win.plots.flow_pts[]) && win.solve_text[] == ""
+    click!(win.widgets.b_solve)
+    s = win.last_solve[]
+    @test s !== nothing && occursin("solved", win.status[])
+    # One coloured halo per bus, one arrow per branch, and the numbers on the glyphs.
+    @test length(win.plots.solved_pts[]) == 3 && win.plots.solved_V[] == s.Vm
+    @test length(win.plots.flow_pts[]) == 3 && length(win.plots.flow_dirs[]) == 3
+    @test all(occursin(" pu", t) for (t, _) in win.plots.bus_labels[])
+    @test all(occursin(" MW", t) for (t, _) in win.plots.branch_labels[])
+    # The arrow points the way P LEAVES `from`, which is the one thing a magnitude
+    # label cannot say. Asserted against the sign of the solved flow, per branch,
+    # rather than against a picture: a reversed convention draws an equally tidy map.
+    g = GridSimUI._glyph_positions(win.ed)
+    @test count(e -> abs(s.flow[e]) > 1e-9, eachindex(s.branches)) == 3   # nothing is idle
+    for e in eachindex(s.branches)
+        along = g.buses[s.to[e]] - g.buses[s.from[e]]
+        d = win.plots.flow_dirs[][e]
+        @test sign(d[1] * along[1] + d[2] * along[2]) == sign(s.flow[e])
+    end
+    # The slack's pickup is a SOLVED number and the read-out says so against the
+    # schedule it is not equal to — on a lossless network they agree, and this
+    # fixture is lossless, so the line is checked for both halves being present.
+    @test occursin("picks up", win.solve_text[]) && occursin("residual", win.solve_text[])
+    @test occursin("B1", win.solve_text[])
+
+    # ANY edit invalidates it. A flow arrow over a changed model is not a stale
+    # picture, it is a wrong one.
+    move_bus!(win.ed, :B2, 4.0, 4.0); win.refresh!()
+    @test isempty(win.plots.flow_pts[]) && isempty(win.plots.solved_pts[])
+    @test win.last_solve[] === nothing && win.solve_text[] == ""
+
+    # A refusal `ac_powerflow` raises as an `ArgumentError`: the reference bus has no
+    # machine on it. `NetworkModel` allows that (a half-built draft must stay
+    # constructible), so this is the tier's refusal and not the constructor's.
+    set_slack!(win.ed, :B3)                       # the load bus
+    click!(win.widgets.b_solve)
+    @test win.last_solve[] === nothing
+    @test occursin("cannot solve", win.status[]) && occursin("carries no machine", win.status[])
+    @test isempty(win.plots.flow_pts[])
+    # ...and the editor is still an editor: the drawing is untouched and the next
+    # click still places a bus (the scenario editor's own lesson — a refused line
+    # once left its first bus armed).
+    @test length(win.plots.bus_pts[]) == 3
+    click!(win.widgets.tool_buttons[:bus])
+    win.canvas_press!(9.0, 9.0)
+    @test length(win.ed.buses) == 4
+
+    # And the OTHER kind, which is the one a hand-drawn scenario meets first: a case
+    # that converges outside the voltage band is an `ErrorException`, not an
+    # `ArgumentError`, so catching only the latter would crash the window.
+    set_slack!(win.ed, :B1)
+    remove!(win.ed, :bus, :B4)
+    set_field!(win.ed, :load, :L3, :P0, 900.0)
+    # `Pmax` first: it is the headroom ceiling, so raising `P0` past the old one is
+    # refused by `Machine` before the draft can become the case this test needs.
+    set_field!(win.ed, :machine, :G1, :Pmax, 860.0)
+    set_field!(win.ed, :machine, :G1, :P0, 860.0)
+    win.refresh!()
+    click!(win.widgets.b_solve)
+    @test win.last_solve[] === nothing && occursin("cannot solve", win.status[])
+    @test occursin("|V|", win.status[]) || occursin("Newton", win.status[])
 end
 
 @testset "editor window: run hands the constructor's model to the runner, or says why not" begin
@@ -303,4 +489,11 @@ end
     out = editor_render(; path = path, select = (:bus, :B2))
     @test out == path
     @test isfile(path) && filesize(path) > 10_000
+    # ...and one with the solve already run, which is the render the step's figure
+    # comes from. `solve = true` runs the button's own handler, so a PNG that came
+    # out cannot be showing a code path the window does not have.
+    solved = joinpath(dir, "editor-solved.png")
+    @test editor_render(; path = solved, net = load_bus_system(),
+                          select = (:branch, :L23), solve = true) == solved
+    @test isfile(solved) && filesize(solved) > 10_000
 end

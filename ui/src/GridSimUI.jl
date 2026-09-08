@@ -110,6 +110,11 @@ using GridSim: two_machine_system
 # constructor, plus the file pair and the `Layout` alias for the map positions.
 # All checked clear against GLMakie's exports (the standing check, 2026-09-07).
 using GridSim: Bus, Branch, Machine, Load, Layout, write_scenario, read_scenario
+# M6 step 5 — the editor's **solve** action. The steady state is a function of a
+# model and not an engine (`m6-tasks.md` step 2), so the editor calls it directly
+# rather than through the mode router; `bus_generation` is how the slack's pickup
+# reaches the read-out. Both checked clear against GLMakie's exports (2026-09-08).
+using GridSim: ac_powerflow, bus_generation
 
 # The shared look (fonts, colours, widget shapes, the two-label read-out) — one
 # file, applied by every builder through `themed`. Included first because the
@@ -139,7 +144,11 @@ export voltage_playback, voltage_playback_render
 # scenario should not have to reach through a figure to do it.
 export editor, editor_render, ScenarioEditor,
        add_bus!, add_machine!, add_load!, add_branch!, move_bus!, remove!, rename!,
-       set_field!, build_model, validation, power_balance, save!, load!
+       set_field!, build_model, validation, power_balance, save!, load!,
+       # M6 step 5 — the reference bus becomes something a user says rather than
+       # something a save discovers, so it needs a verb of its own and a way to ask
+       # what a draft would use when nobody has said.
+       set_slack!, effective_slack
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

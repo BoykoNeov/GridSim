@@ -361,9 +361,30 @@ pans, the wheel zooms, **fit view** frames everything.
 
 The panel edits an element's numbers and its id through the core's own
 constructors, so a value the model refuses (`H = 0`, a self-loop) is refused at
-**apply** with the constructor's message, and nothing is half-applied. The
-status line under the bar always says whether the drawing is currently a valid
-model and what Σ P is.
+**apply** with the constructor's message, and nothing is half-applied. A machine
+offers twelve numbers — the classical and governor set, plus the voltage setpoint
+and the two reactive limits a steady-state solve reads — and a branch three,
+including its series resistance. The status line under the bar always says whether
+the drawing is currently a valid model and what Σ P is.
+
+**The reference (slack) bus** is drawn on the map as a green diamond and chosen
+from a selected bus's panel: **make slack** declares it, **release slack** hands
+the choice back to `NetworkModel`'s derivation, and the marker then says
+`slack (derived)`. It is drawn even when nobody has declared one, on purpose — the
+reference is a *dispatch* choice, a scenario file refuses to invent it
+(`docs/plans/m6-context.md` D8), and a choice that is going to be written into a
+file should be one you have seen.
+
+**solve** runs the nonlinear power flow (`ac_powerflow`) on the drawing: each bus
+gets a colour for its solved `|V|` and its magnitude in the label, each branch an
+arrow for the direction active power leaves its `from` bus and its MW in the label,
+and the read-out gets the slack's pickup against the schedule, the `|V|` range, the
+losses and the residual. **Any edit clears that overlay** — a flow arrow over a
+model that has since changed would be wrong, not merely stale. A case the solver
+refuses (outside the `[0.9, 1.1]` band, unconverged, a reference bus with no
+machine on it) leaves the drawing exactly as it was and puts the solver's own words
+in the status line; on a hand-drawn scenario that is the common outcome, not the
+rare one.
 
 **save file** writes a TOML scenario — model and map positions, the latter in
 their own `[layout]` table and never in a `Bus` (`docs/SPEC.md` §3.5) — through
@@ -380,11 +401,18 @@ editor(; background = "iberia.png", extent = (-10.0, 4.5, 35.5, 44.0))   # lon/l
 
 Every editing operation is also a function — `add_bus!`, `add_machine!`,
 `add_load!`, `add_branch!`, `move_bus!`, `remove!`, `rename!`, `set_field!`,
-`build_model`, `validation`, `save!`, `load!` on a `ScenarioEditor` — because
-those are what the mouse handlers call, and a script should not need a figure to
-build a scenario. `editor_render(; path)` draws the window offscreen to a PNG.
+`set_slack!`, `effective_slack`, `build_model`, `validation`, `save!`, `load!` on a
+`ScenarioEditor` — because those are what the mouse handlers call, and a script
+should not need a figure to build a scenario. `editor_render(; path)` draws the
+window offscreen to a PNG, and `editor_render(; path, solve = true)` draws it with
+the solve already run.
 Design notes, what the build found, and the known Makie text-box glitch:
-`docs/plans/scenario-editor.md`.
+`docs/plans/scenario-editor.md`. Two rendered figures:
+`../docs/images/fig-editor-three-machine-ring.png` (the window) and
+`../docs/images/fig-editor-solved.png` (with **solve** run — a load bus at
+0.955 pu while both generator buses hold 1.000, and a slack picking up 60.42 MW
+against a schedule of 70.0, because a constant-impedance load draws less at a
+lower voltage).
 
 ## Tests
 
@@ -392,7 +420,7 @@ Design notes, what the build found, and the known Makie text-box glitch:
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-281 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+443 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do

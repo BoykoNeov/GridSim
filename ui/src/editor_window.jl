@@ -25,9 +25,20 @@
 # drag); right-drag still pans and the wheel still zooms.
 #
 # THE PROPERTY PANEL IS REBUILT PER SELECTION rather than hidden and shown: a
-# Makie `Textbox` has no `visible`, and a machine has nine editable numbers where
-# a branch has two. The boxes are read on "apply" from what is displayed, not from
-# the submitted string, so a user need not press Enter in each of nine boxes.
+# Makie `Textbox` has no `visible`, and a machine has twelve editable numbers where
+# a branch has three. The boxes are read on "apply" from what is displayed, not from
+# the submitted string, so a user need not press Enter in each of twelve boxes.
+#
+# M6 STEP 5 ADDED TWO THINGS THAT ARE NOT EDITING. The **reference bus** is drawn
+# on the map and chosen from the panel, because the scenario file refuses to invent
+# one (m6-context.md D8) and a draft that has not declared one still has a derived
+# one — drawing it is what keeps that choice from being made silently at a save.
+# And **solve** runs `ac_powerflow` on the drawing: bus colour is |V|, an arrow per
+# branch is the direction P leaves its `from` bus, and the read-out carries the
+# slack's pickup. Every redraw clears that overlay, so a flow arrow cannot outlive
+# the model it was solved from, and a refused solve — the COMMON case on a
+# hand-drawn scenario — leaves the drawing exactly as it was, with the solver's own
+# words in the status line.
 
 const EDITOR_TOOLS = (:select, :bus, :machine, :load, :branch, :delete)
 
@@ -124,8 +135,30 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     sel_pts = Observable(Point2f[])
     sel_segs = Observable(Point2f[])
     pend_pts = Observable(Point2f[])
+    # M6 step 5. The reference bus is drawn because it is a DISPATCH choice
+    # (m5-context.md D13) that the scenario file will not invent (m6-context.md D8)
+    # — and because a draft that has not declared one still HAS one, derived by
+    # `NetworkModel`. Drawing the derived choice is what stops it being silent.
+    slack_pts = Observable(Point2f[])
+    slack_labels = Observable(Tuple{String,Point2f}[])
+    # ...and the solve overlay: a coloured halo per bus, an arrow per branch. Both
+    # are empty except while a solved answer is on screen, and `do_refresh!` empties
+    # them, so a picture of a flow can never outlive the model it was solved from.
+    solved_pts = Observable(Point2f[])
+    solved_V = Observable(Float64[])
+    solved_range = Observable((0.95, 1.05))
+    flow_pts = Observable(Point2f[])
+    flow_dirs = Observable(Vec2f[])
+    # The marker angle is DERIVED from the direction vector rather than stored beside
+    # it: a rotation and a direction that can disagree are two sources of truth about
+    # which way the power goes, and the tests read the vector.
+    flow_rot = lift(ds -> Float32[atan(d[2], d[1]) for d in ds], flow_dirs)
 
     linesegments!(ax, sel_segs; color = (C_CURSOR, 0.5), linewidth = 8)
+    scatter!(ax, slack_pts; marker = :diamond, markersize = 34, color = :transparent,
+             strokecolor = C_INERTIA, strokewidth = 2.5)
+    scatter!(ax, solved_pts; marker = :circle, markersize = 30, color = solved_V,
+             colormap = :viridis, colorrange = solved_range, strokewidth = 0)
     linesegments!(ax, branch_segs; color = C_MUTED, linewidth = 2.5)
     linesegments!(ax, stub_segs; color = (C_MUTED, 0.7), linewidth = 1.2)
     scatter!(ax, sel_pts; marker = :circle, markersize = 36,
@@ -144,10 +177,20 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     text!(ax, load_labels; offset = (0, -13), align = (:center, :top), fontsize = 11)
     text!(ax, branch_labels; align = (:center, :bottom), offset = (0, 4), fontsize = 10,
           color = C_MUTED)
+    text!(ax, slack_labels; offset = (0, -20), align = (:center, :top), fontsize = 11,
+          color = C_INERTIA, font = :bold)
+    # Direction, not magnitude: the head says which way P leaves the branch's `from`
+    # bus, and the branch label carries the MW. A ROTATED SCATTER MARKER rather than
+    # `arrows2d!`, which is the natural recipe and CANNOT BE BUILT EMPTY — with no
+    # points it converts its mesh from a `Vector{Any}` and throws — and empty is this
+    # overlay's resting state. The precompile workload caught that, on a window
+    # nobody had solved; every other plot here is empty at construction too.
+    scatter!(ax, flow_pts; marker = :rtriangle, markersize = 17, rotation = flow_rot,
+             color = C_SWING, strokecolor = :white, strokewidth = 0.5)
 
     # ---- controls column ----------------------------------------------------------
     gc = fig[1, 2] = GridLayout(tellheight = false, valign = :top)
-    colsize!(fig.layout, 2, Fixed(340))
+    colsize!(fig.layout, 2, Fixed(390))
 
     tool = Observable(:select)
     pending = Observable{Union{Nothing,Symbol}}(nothing)   # the branch tool's first bus
@@ -182,7 +225,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     # ---- the property panel, rebuilt per selection (file header) --------------------
     section_label!(gc[4, 1], "selected")
     panel = gc[5, 1] = GridLayout()
-    rowgap!(panel, 4)
+    rowgap!(panel, 2)
     prows = Any[]
     pboxes = Dict{Symbol,Textbox}()
     pbuttons = Dict{Symbol,Button}()
@@ -201,30 +244,66 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         x = element(ed, kind, id)
         where = kind === :bus ? "" :
                 kind === :branch ? @sprintf("%s – %s", x.from, x.to) : "at bus $(x.bus)"
-        push!(prows, Label(panel[1, 1:2], @sprintf("%s  %s  %s", kind, id, where);
+        push!(prows, Label(panel[1, 1:4], @sprintf("%s  %s  %s", kind, id, where);
                            halign = :left, tellwidth = false, font = :bold))
+        # TWO FIELDS PER ROW, not one. A machine has twelve numbers since M6 step 5,
+        # and a single column of twelve ran straight off the bottom of a 900-px
+        # window and drew `Q_max`, `apply` and `delete` on top of the file buttons —
+        # the same failure the original build hit at nine fields, met again three
+        # fields later. Shrinking the rows bought 84 px and was not enough; the fix
+        # is the shape, so the count can grow again without the window breaking.
         r = 2
+        col = 1
         function row!(name, value)
-            push!(prows, Label(panel[r, 1], name; halign = :right, tellwidth = true,
-                               font = MONO_FONT, fontsize = 13))
-            # Compact rows: nine of these must fit above the bar with the two
-            # buttons beneath them (they did not, at the default height).
-            tb = Textbox(panel[r, 2]; stored_string = value, width = 150, height = 28,
-                         fontsize = 13, tellwidth = false)
+            push!(prows, Label(panel[r, col]; text = name, halign = :right,
+                               tellwidth = true, font = MONO_FONT, fontsize = 12))
+            tb = Textbox(panel[r, col + 1]; stored_string = value, width = 108,
+                         height = 24, fontsize = 12, tellwidth = false)
             push!(prows, tb)
-            r += 1
+            col == 1 ? (col = 3) : (col = 1; r += 1)
             return tb
         end
+        # `id` takes a row of its own — it is the only text field among numbers, and
+        # a rename sitting beside a reactance reads as one more parameter.
         pboxes[:id] = row!("id", String(id))
+        col == 1 || (col = 1; r += 1)
         for f in editable_fields(kind)
             pboxes[f] = row!(String(f), _fmt(getfield(x, f)))
         end
-        b_apply = Button(panel[r, 1:2]; label = "apply")
+        col == 1 || (col = 1; r += 1)
+        b_apply = Button(panel[r, 1:4]; label = "apply")
         on(b_apply.clicks) do _
             apply_panel!()
         end
         push!(prows, b_apply); pbuttons[:apply] = b_apply
-        b_del = Button(panel[r + 1, 1:2]; label = "delete")
+        r += 1
+        # The reference bus is chosen HERE, on a selected bus, and not from a list in
+        # the bar: it is a property of one bus, and every other property of one bus
+        # is edited in this panel. "release" gives the declaration back to
+        # `NetworkModel`'s derivation, which is what a fresh draft carries — both
+        # directions reachable, because a user who declared the wrong one otherwise
+        # has to delete the bus to undo it.
+        if kind === :bus
+            declared = ed.slack === id
+            b_slack = Button(panel[r, 1:4];
+                             label = declared ? "release slack" : "make slack")
+            on(b_slack.clicks) do _
+                s = ed.selection
+                (s === nothing || s[1] !== :bus) && return
+                if ed.slack === s[2]
+                    set_slack!(ed, nothing)
+                    status[] = "slack released — derived from the model again"
+                else
+                    set_slack!(ed, s[2])
+                    status[] = "slack bus is $(s[2])"
+                end
+                last_sel[] = :unset          # the button's own label has to change
+                refresh![]()
+            end
+            push!(prows, b_slack); pbuttons[:slack] = b_slack
+            r += 1
+        end
+        b_del = Button(panel[r, 1:4]; label = "delete")
         on(b_del.clicks) do _
             s = ed.selection
             s === nothing && return
@@ -276,11 +355,24 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     b_save = Button(gs[1, 9]; label = "save file", width = 90)
     b_load = Button(gs[1, 10]; label = "open file", width = 90)
     b_fit = Button(gs[1, 11]; label = "fit view", width = 80)
-    b_run = Button(gs[1, 12]; label = "run ▶", width = 90)
+    b_solve = Button(gs[1, 12]; label = "solve", width = 70)
+    b_run = Button(gs[1, 13]; label = "run ▶", width = 90)
     validation_text = Observable("")
-    Label(gs[2, 1:12], validation_text; halign = :left, tellwidth = false, fontsize = 12)
-    Label(gs[3, 1:12], status; halign = :left, tellwidth = false, fontsize = 12,
-          color = C_SWING)
+    solve_text = Observable("")
+    Label(gs[2, 1:13], validation_text; halign = :left, tellwidth = false, fontsize = 12)
+    Label(gs[3, 1:13], solve_text; halign = :left, tellwidth = false, fontsize = 12,
+          color = C_INERTIA, font = MONO_FONT)
+    # A REFUSED SOLVE IS THE COMMON PATH, not the rare one — a hand-drawn scenario
+    # meets the |V| band long before it meets a convergence failure — and the
+    # solver's refusals are several sentences long. So the status line WRAPS, at a
+    # row whose height is fixed: a message that grows must not push the canvas
+    # around, and the observable holds the whole text either way.
+    # `word_wrap`, a Bool — a Label BLOCK has no `word_wrap_width`; that is the
+    # `text!` primitive's attribute, and passing it here is an error rather than a
+    # no-op. The block wraps to the width of the cell it is in.
+    Label(gs[4, 1:13], status; halign = :left, tellwidth = false, tellheight = false,
+          fontsize = 12, color = C_SWING, word_wrap = true, justification = :left)
+    rowsize!(gs, 4, Fixed(52))
     rowgap!(gs, 2)
 
     # Bases and name are read whenever the model is built or saved, so a user need
@@ -345,6 +437,82 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         end
     end
 
+    # ---- the steady-state solve, drawn on the map ----------------------------------
+    # A steady state is a function of a model, not an engine, so this is a direct
+    # call and not a trip through the mode router (`m6-tasks.md` step 2). What it
+    # adds to the picture is the part a list of numbers cannot carry: WHERE the
+    # voltage sags and WHICH WAY the power goes.
+    last_solve = Ref{Any}(nothing)
+    function solve_now!()
+        try
+            take_bases!()
+            net = build_model(ed)
+            s = ac_powerflow(net)
+            # Refresh FIRST, then draw: the refresh clears the overlay, so the only
+            # way a flow arrow can be on screen is that the model under it solved.
+            refresh![]()
+            last_solve[] = s
+            g = _glyph_positions(ed)
+            solved_pts[] = [g.buses[b] for b in s.buses]
+            solved_V[] = copy(s.Vm)
+            lo, hi = extrema(s.Vm)
+            # A band that is never narrower than 0.02 pu: on a flat case every bus is
+            # 1.0 and a range of zero would paint the whole map one arbitrary colour.
+            mid = (lo + hi) / 2; half = max((hi - lo) / 2, 0.01)
+            solved_range[] = (mid - half, mid + half)
+
+            off = _glyph_offset(ed)
+            mids = [(g.buses[s.from[e]] + g.buses[s.to[e]]) / 2 for e in eachindex(s.branches)]
+            pts = Point2f[]; dirs = Vec2f[]
+            for e in eachindex(s.branches)
+                a = g.buses[s.from[e]]
+                d = g.buses[s.to[e]] - a
+                n = hypot(d[1], d[2])
+                n == 0 && continue                        # two buses on one point
+                sgn = s.flow[e] >= 0 ? 1.0f0 : -1.0f0     # `flow` LEAVES `from`
+                # NOT the midpoint: the branch's MW label is there, and the first
+                # render drew the marker straight through the digits.
+                push!(pts, Point2f(a[1] + 0.38f0 * d[1], a[2] + 0.38f0 * d[2]))
+                push!(dirs, Vec2f(sgn * 1.1f0 * off * d[1] / n,
+                                  sgn * 1.1f0 * off * d[2] / n))
+            end
+            flow_pts[] = pts; flow_dirs[] = dirs
+            # The numbers go on the glyphs they belong to — the arrow gives direction
+            # and the label gives the magnitude, so neither has to carry both.
+            branch_labels[] = [(@sprintf("%s %.1f MW", id, abs(s.flow[e]) * net.S_base),
+                                mids[e]) for (e, id) in pairs(s.branches)]
+            bus_labels[] = [(@sprintf("%s %.3f pu", b, s.Vm[v]), g.buses[b])
+                            for (v, b) in pairs(s.buses)]
+
+            gen = bus_generation(s, s.slack)
+            sched = sum((m.P0 for m in ed.machines if m.bus === s.slack); init = 0.0)
+            # A lossless network sums to about -1e-16 pu, which `%.2f` prints as
+            # "-0.00 MW" — a minus sign in front of a quantity that cannot be
+            # negative. Anything under a milliwatt is zero at this precision, and
+            # saying so is better than showing the sign of a rounding error.
+            loss_mw = sum(s.loss) * net.S_base
+            abs(loss_mw) < 1.0e-6 && (loss_mw = 0.0)
+            solve_text[] = @sprintf("solved — slack %s picks up %+.2f MW against a schedule of %+.1f MW; |V| %.4f–%.4f pu; losses %.2f MW; residual %.1e",
+                                    s.slack, gen.P * net.S_base, sched, lo, hi,
+                                    loss_mw, s.residual) *
+                          (isempty(s.limited) ? "" :
+                           "; held on a reactive limit: " * join(s.limited, ", "))
+            status[] = "solved"
+        catch err
+            # BOTH kinds, and this is not tidiness: `ac_powerflow` refuses a bad
+            # dispatch with an `ArgumentError` and a bad ANSWER — outside the voltage
+            # band, unconverged, still switching — with an `ErrorException`, and the
+            # second is the one a hand-drawn scenario meets first.
+            (err isa ArgumentError || err isa ErrorException) || rethrow()
+            refresh![]()           # the map goes back to the drawing, still editable
+            status[] = "cannot solve — " * err.msg
+        end
+        return nothing
+    end
+    on(b_solve.clicks) do _
+        solve_now!()
+    end
+
     # ---- fit the view to the layout ------------------------------------------------
     function fit!()
         if isempty(ed.layout)
@@ -397,6 +565,26 @@ function _build_editor_window_impl(ed::ScenarioEditor;
             sel_segs[] = Point2f[]
         end
         pend_pts[] = pending[] === nothing ? Point2f[] : [g.buses[pending[]]]
+
+        # The reference bus, declared or derived, and SAID to be which. A derived
+        # slack is still a dispatch choice; drawing it is what stops it being made
+        # silently at the moment of a save (m6-context.md D8).
+        es = effective_slack(ed)
+        if es === nothing || !haskey(g.buses, es)
+            slack_pts[] = Point2f[]; slack_labels[] = Tuple{String,Point2f}[]
+        else
+            slack_pts[] = [g.buses[es]]
+            slack_labels[] = [(ed.slack === nothing ? "slack (derived)" : "slack",
+                               g.buses[es])]
+        end
+
+        # Any redraw at all invalidates a solved overlay, because a redraw is what
+        # every edit ends in. A flow arrow over a model that has since changed is
+        # not a stale picture, it is a wrong one.
+        last_solve[] = nothing
+        solved_pts[] = Point2f[]; solved_V[] = Float64[]
+        flow_pts[] = Point2f[]; flow_dirs[] = Vec2f[]
+        solve_text[] = ""
 
         validation_text[] = validation(ed).message
         if sel != last_sel[]
@@ -496,15 +684,17 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     do_refresh!()
 
     widgets = (; tool_buttons, panel_boxes = pboxes, panel_buttons = pbuttons,
-                 tb_name, tb_sbase, tb_f0, tb_path, b_save, b_load, b_fit, b_run)
+                 tb_name, tb_sbase, tb_f0, tb_path, b_save, b_load, b_fit, b_solve, b_run)
     # The canvas's observables, so a test can ask what the picture holds rather
     # than what the state holds — the two are meant to agree, and only reading
     # both can say so.
     plots = (; bus_pts, mach_pts, load_pts, branch_segs, stub_segs, sel_pts, sel_segs,
-               pend_pts)
-    return (; fig, ax, ed, tool, pending, status, validation_text, widgets, plots, last_run,
-              refresh! = do_refresh!, fit!, canvas_press!, canvas_drag!, canvas_release!,
-              rebuild_panel!)
+               pend_pts, slack_pts, slack_labels, bus_labels, branch_labels,
+               solved_pts, solved_V, flow_pts, flow_dirs)
+    return (; fig, ax, ed, tool, pending, status, validation_text, solve_text, widgets,
+              plots, last_run, last_solve,
+              refresh! = do_refresh!, fit!, solve_now!, canvas_press!, canvas_drag!,
+              canvas_release!, rebuild_panel!)
 end
 
 """
@@ -541,15 +731,19 @@ end
 
 """
     editor_render(; path, net = three_machine_ring(), layout = nothing,
-                  select = nothing, background = nothing, extent = nothing) -> path
+                  select = nothing, solve = false, background = nothing,
+                  extent = nothing) -> path
 
 Build the same editor window offscreen over `net` and save a PNG to `path` — how
 the window is checked in a session with no screen. `select = (kind, id)` opens
-the property panel on that element so the render shows it.
+the property panel on that element so the render shows it; `solve = true` runs the
+**solve** button's own handler first, so the PNG shows the voltage colours, the
+flow arrows and the read-out — or, if the case is refused, the status line saying
+so, which is the same picture a user gets.
 """
 function editor_render(; path::AbstractString,
                        net::NetworkModel = three_machine_ring(),
-                       layout = nothing, select = nothing,
+                       layout = nothing, select = nothing, solve::Bool = false,
                        background::Union{Nothing,AbstractString} = nothing,
                        extent = nothing,
                        title::AbstractString = "GridSim — scenario editor")
@@ -558,6 +752,7 @@ function editor_render(; path::AbstractString,
     ed.selection = select
     win = _build_editor_window(ed; background = background, extent = extent, title = title)
     win.refresh!()
+    solve && win.solve_now!()
     mkpath(dirname(path))
     # One throwaway frame first: the first offscreen frame of a fresh window drew
     # three of nine text boxes with squashed glyphs (the atlas had not caught up),

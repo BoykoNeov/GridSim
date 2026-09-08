@@ -6,7 +6,7 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–4 done (BOTH oracles); steps 5–6 open.** Entered at `181fe4e` with
+Status: **steps 0–5 done (BOTH oracles; the editor folded in); step 6 open.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
 **3175 core**; at oracle A's close **3284 core**, UI and `reference/` unchanged
@@ -796,31 +796,121 @@ cannot be attributed.
 
 ---
 
-## Step 5 — the editor and the scenario file fold in (D8)
+## Step 5 — the editor and the scenario file fold in (D8) — **DONE (2026-09-08)**
 
-- [ ] `scenario_file.jl`: the new fields written explicitly; the field list, the
+Entered at **3284 core / 382 UI**; leaves **3312 core / 443 UI**.
+`reference/` untouched at 1130 (this step adds no oracle). No physics changed and
+no recorded number moved — the solve this step draws is step 3's, already oracled
+by step 4's oracle B.
+
+**The entry count was measured, not carried forward, and that was not a
+formality.** A first run of the core suite launched at the same minute as this
+step's first edits reported 3312 — which looks like an entry count and is not one:
+it had already picked up the new tests. The real entry count came from stashing the
+whole working tree and running both suites at `b758027`: **3284 / 382, both green,
+exit 0**. Two commits of this milestone had landed since the number this file
+carried, so "the last recorded count" would have been wrong in the other direction
+as well.
+
+- [x] `scenario_file.jl`: the new fields written explicitly; the field list, the
       key ranking and the reader all updated in the one place each is decided.
-- [ ] **Read-side defaults (D8)**, with a round-trip test that reads a *pre-M6*
-      file and asserts each default lands where it should. This is the only thing
-      between "a default" and "a silent reinterpretation of every old file".
-- [ ] The slack written as a **top-level** key with its own `_KEY_RANK` entry — it
-      is a model field, not a machine or bus record, so it does not ride along with
-      either.
-- [ ] **A file with no slack is REJECTED**, with a message naming the buses it
-      could be. This is D8's one exception and the reason for it is in D8: every
-      other new field has a value that is physically what its absence meant, and
-      the slack has none. Inventing one would record a dispatch choice as though
-      the file had said so (M5 D13).
-- [ ] Editor: line resistance, generator voltage setpoint and reactive limits
+      **Already true at step 1** — the writer has emitted `slack`, `Branch.R`,
+      `V_set`, `Q_min` and `Q_max` since then, which is what made this step's
+      rejection safe to land: nothing written after step 1 leans on a default.
+- [x] **Read-side defaults (D8)**, with a round-trip test that reads a *pre-M6*
+      file and asserts each default lands where it should. Every default is now
+      written down **in the test**, field by field, with `==` — the previous version
+      compared the whole record against `two_machine_system()`, which would pass
+      just as happily if both sides drifted together, and drifting together is
+      exactly the silent reinterpretation D8 exists to prevent.
+- [x] The slack written as a **top-level** key with its own `_KEY_RANK` entry.
+      Already true at step 1.
+- [x] **A file with no slack is REJECTED**, with a message naming the buses it
+      could be — `_read_slack`, and the read moved to *after* the buses are parsed,
+      because a refusal that names candidates cannot fire before there are any.
+      The message names **every** bus, the way `NetworkModel`'s own slack message
+      does, with the machine buses as a separate hint sentence: see F1.
+- [x] Editor: line resistance, generator voltage setpoint and reactive limits
       editable **through the constructors** (M5 D5 — one validated path).
-- [ ] Editor: the slack bus selectable, and shown on the map as such.
-- [ ] Editor: a **solve** action — the map colours by voltage, branches carry flow
-      arrows, the slack's pickup appears in the read-out.
-- [ ] A refused solve leaves the editor usable and says why (the scenario editor's
-      own lesson: a refused line once left a bus armed).
-- [ ] **Render before claiming.** Offscreen render inspected, not assumed — the
-      standing rule since M1, and the one that changed step 8's design twice in M5.
-- [ ] Exports checked against `names(GLMakie)`.
+      `editable_fields` grew from nine to twelve on a machine and from two to three
+      on a branch; `set_field!` already rebuilt through the constructor, so the
+      refusals are `Machine`'s and `Branch`'s own words, asserted as such.
+- [x] Editor: the slack bus selectable, and shown on the map as such —
+      `set_slack!`, a **make slack** / **release slack** button on a selected bus,
+      and a diamond on the map labelled `slack` or `slack (derived)`. The derived
+      case is drawn deliberately: a draft that has declared nothing still HAS a
+      reference, and a save would otherwise write that choice without anyone having
+      seen it. `effective_slack` is a second copy of the derivation rule and is
+      **asserted against `build_model`** on every draft the test can build.
+- [x] Editor: a **solve** action — bus colour and label are the solved `|V|`, a
+      rotated marker per branch is the direction P leaves its `from` bus with the
+      MW in the label, and the read-out carries the slack's pickup against the
+      schedule, the `|V|` range, the losses and the residual. **Any redraw clears
+      it**, and a redraw is what every edit ends in.
+- [x] A refused solve leaves the editor usable and says why — and catching only
+      `ArgumentError` would have crashed the window, because the refusal a
+      hand-drawn scenario meets first is the voltage band, which is an
+      `ErrorException`. Both kinds are caught, both are asserted, and the test that
+      follows a refusal places a bus to prove the editor is still an editor.
+- [x] **Render before claiming.** Four offscreen renders inspected, and they
+      changed the design three times: F2, F3, F4.
+- [x] Exports checked against `names(GLMakie)` — **both** lists, since this step
+      adds names to `GridSimUI` as well as importing two into it.
+      `intersect(names(GridSim), names(GLMakie))` and
+      `intersect(names(GridSimUI), names(GLMakie))` are each `Symbol[]` with
+      `set_slack!`, `effective_slack`, `ac_powerflow` and `bus_generation` in play.
+- [x] **F4's owed item closed:** `docs/scenarios/three-machine-ring.toml` rewritten
+      through the writer and `ui/README.md`'s entry point verified against it.
+
+### What this step found that the plan did not anticipate
+
+**F1 — the rejection message was about to teach a rule that is not the file's.**
+The obvious message names the buses that carry a machine, because that is what a
+power flow needs at its reference. But `NetworkModel` deliberately accepts a slack
+bus with no machine — `ac_powerflow`'s own refusal says why, in as many words ("a
+half-built model with buses placed and no machines yet must stay constructible") —
+so a reader whose error text offered only machine buses would be enforcing
+`ac_powerflow`'s constraint through its prose. That is the reader becoming a second
+validator (M5 D5) by the back door. The message names every bus, matching
+`NetworkModel`'s own slack message, and names the machine buses in a separate
+sentence that says out loud that any bus may be the reference. A test asserts both
+halves, so the narrower message cannot come back.
+
+**F2 — the property panel ran off the bottom of the window again, three fields
+later, and shrinking it did not fix it.** The original build's first render clipped
+the file and run controls with **nine** machine fields; this step's first render
+drew `Q_max`, `apply` and `delete` on top of the file buttons with **twelve**.
+Rows went 28 → 23 px and the gap 4 → 2, which bought 84 px and was still not
+enough. The fix is the **shape**: two fields per row, four panel columns, control
+column 340 → 390 px. A size fix would have bought exactly one more field; a shape
+fix means the count can grow again. Same lesson as M5 step 8's window, which its
+renders redesigned twice.
+
+**F3 — `arrows2d!` cannot be constructed empty, and empty is this overlay's resting
+state.** The natural recipe for a flow arrow throws when handed no points (its poly
+converts a `Vector{Any}`), and the flow overlay is empty on every window nobody has
+solved — which is every window at construction. **The precompile workload is what
+caught it**, not a test: it builds each window once at package build time, so a
+window that cannot be built empty fails there before any test runs. Replaced with a
+`scatter!` of rotated triangle markers, whose angle is *lifted* from the direction
+vector rather than stored beside it, so the two cannot disagree about which way the
+power goes.
+
+**F4 — the obvious demo fixture was the wrong one for the fourth time in this
+repo.** `three_machine_ring()` is the editor's own example scenario, and every bus
+in it solves to **exactly 1.000 pu** with the slack picking up **exactly** its
+schedule: a voltage colour scale with nothing on it and a read-out whose two
+numbers agree. The figure uses `load_bus_system()`, where the load bus sags to
+0.955 pu and the slack picks up **60.42 MW against a schedule of 70.0** — the
+constant-impedance load drawing less at a lower voltage, which is a thing the map
+shows and a dispatch table does not. (M4 step 3's generator trip, M5 step 8's
+disturbance, and the editor's own first render are the other three.)
+
+**F5 — two smaller ones the render found and no test would have.** A `Label` block
+has no `word_wrap_width` — that is `text!`'s attribute, and on a block it is an
+error rather than a no-op, so the wrapping the long refusals need was written wrong
+the first time. And a lossless network reported `losses -0.00 MW`: `%.2f` of about
+−1e-16 pu, a minus sign in front of a quantity that cannot be negative.
 
 ---
 
