@@ -377,7 +377,7 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 The external column for the steady-state ladder. Built 2026-09-08 against
 PowerSystems 5.12.3 / PowerFlows 0.25.2; the adapter is
 `reference/src/powerflow_oracle.jl` and the checks are the M6 testset in
-`reference/test/runtests.jl` (144 tests). **The case is compiled from
+`reference/test/runtests.jl` (154 tests). **The case is compiled from
 `NetworkModel`, never typed beside it** (M4's rule), but the compilation reads the
 raw `Machine` / `Branch` / `Load` structs and does its own per-unit conversion, so
 unlike `oracle.jl` this oracle DOES reach `machine_arrays` and `load_arrays`.
@@ -409,14 +409,15 @@ per-unit on both sides by construction (measured — a `Line`'s device base IS t
 system base), so that number is genuinely shared and a bug in it is handed
 identically to both. Everything else in the mapping forks.
 
-**One fixture is blind to the dominant error and it is not obvious from its
-output.** On the reactive-limit fixture the two sides agree to **4.4e-16** — better
-than any other fixture by eight orders. That is not the oracle being sharp there:
-its branch reactances are both `0.10`, whose admittance is exactly `10.0`, which is
-exactly representable in `Float32`, so the two admittance matrices are *identical*
-and there is no quantization to see. Recorded because "agrees to 4e-16" reads as
-strength and is in fact a fixture that cannot exercise the thing this oracle is
-mostly measuring.
+**A fixture nearly went out blind to the dominant error, and its output read as
+strength.** The first reactive-limit fixture used 0.10 pu on both branches and the
+two sides agreed to **4.4e-16** — eight orders better than anything else here. The
+admittance of a 0.10 pu reactance is exactly `10.0`, exactly representable in
+`Float32`, so the two matrices were *identical* and the quantization was switched
+off. Since this is the only external check on *which* bus got limited, that would
+have hidden a limit-switching bug of the size everything else here measures. The
+reactances are 0.11 and 0.13 for that reason, the gap is 2.5e-9, and the testset
+asserts the gap is real.
 
 ## Owed rows
 

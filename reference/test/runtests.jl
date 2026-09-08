@@ -1703,13 +1703,44 @@ pf_offbase() = NetworkModel(250.0, 60.0,
 #    Tuned on OUR side alone before anything was compared: the first draft pulled
 #    B3 down to 0.819 pu and `ac_powerflow`'s own voltage band refused it — the
 #    guard doing its job, and cheaper to find here than in a suite run.
+#
+#    **THE REACTANCES ARE 0.11 AND 0.13, AND THAT IS NOT COSMETIC.** The first
+#    working draft used 0.10 for both, and the two sides then agreed to 4.4e-16 —
+#    eight orders better than any other fixture. That was not sharpness: the
+#    admittance of a 0.10 pu reactance is exactly 10.0, which is exactly
+#    representable in `Float32`, so the two admittance matrices were IDENTICAL and
+#    the oracle's dominant error term was switched off. This is the only external
+#    check on WHICH bus got limited, so running it where the quantization cannot
+#    appear would hide a limit-switching bug of the size everything else here
+#    measures. Off-grid reactances put the gap back at 2.5e-9, where it belongs.
 pf_qlimit(; Q_max = 0.10) = NetworkModel(100.0, 50.0,
+    [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.11, 400.0), Branch(:L23, :B2, :B3, 0.13, 400.0)],
+    [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 20.0; V_set = 1.00),
+     Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 70.0; V_set = 1.05,
+             Q_min = -Q_max, Q_max = Q_max)],
+    [Load(:D3, :B3, 90.0, 25.0, 0.0, 0.0, 1.0)]; slack = :B1)
+
+# The SAME case with its reactances back on the single-precision grid. Kept — not
+# deleted — because it is the executable form of two findings that would otherwise
+# be prose: its admittances (1/0.10 = exactly 10.0) are representable in `Float32`,
+# so both sides build the IDENTICAL matrix and agree to 4.4e-16 where the shipped
+# fixture gaps at 2.5e-9; and its own residual floor is 1.804e-15, so the band's
+# default 1000x-tighter convergence probe cannot converge on it.
+pf_qlimit_ongrid(; Q_max = 0.10) = NetworkModel(100.0, 50.0,
     [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
     [Branch(:L12, :B1, :B2, 0.10, 400.0), Branch(:L23, :B2, :B3, 0.10, 400.0)],
     [Machine(:G1, :B1, 100.0, 5.0, 1.0, 0.2, 1.05, 20.0; V_set = 1.00),
      Machine(:G2, :B2, 100.0, 4.0, 1.0, 0.2, 1.03, 70.0; V_set = 1.05,
              Q_min = -Q_max, Q_max = Q_max)],
     [Load(:D3, :B3, 90.0, 25.0, 0.0, 0.0, 1.0)]; slack = :B1)
+
+# The convergence probe's tolerance on the ON-GRID reactive-limit fixture. Its own residual
+# Its own residual floor is 1.804e-15, so `powerflow_band`'s default 1000x-tighter
+# probe (1e-15) cannot converge and the band refuses by name rather than falling
+# back. The SHIPPED fixture does not need it (it floors at 8.0e-16 and converges
+# fine); this constant exists only where the refusal is being exercised.
+const PF_QLIMIT_ABSTOL_FINE = 1.0e-14
 
 # The gap on one channel. Deliberately NOT a function of the band: a check that
 # computes its own threshold from the numbers it is judging is the shape step 3
@@ -2017,19 +2048,16 @@ end
 
     theirs = oracle_powerflow(net; check_limits = true)
     @test theirs.Qgen[2] ≈ 0.10 atol = 1e-6          # the SAME bus, at the SAME limit
+    # ...and the two sides are genuinely different solves here, which the fixture's
+    # off-grid reactances are what buy: a measurable gap rather than an identity.
+    @test pf_gap(ours, theirs, s -> s.Vm) > 1.0e-10
     @test theirs.Vm[2] < 1.05
-    # `abstol_fine` is passed, and the reason is a MEASUREMENT: this model's own
-    # residual floor is 1.804e-15, so the band's default 1000x-tighter probe
-    # (1e-15) makes Newton stall. `powerflow_band` refuses that by name rather than
-    # falling back silently, which is why the number appears here at the call site.
     for ch in (s -> s.Vm, s -> s.θ)
-        b = powerflow_band(net; channel = ch, check_limits = true, abstol_fine = 1e-14)
+        b = powerflow_band(net; channel = ch, check_limits = true)
         @test pf_gap(ours, theirs, ch) <= b.band
     end
-    @test_throws ErrorException powerflow_band(net; channel = s -> s.Vm,
-                                               check_limits = true)
     bf = powerflow_band(net; channel = s -> s.flow, check_limits = true,
-                        abstol_fine = 1e-14, scale = flow_scale(net, ours))
+                        scale = flow_scale(net, ours))
     @test pf_gap(ours, theirs, s -> s.flow) <= bf.band
 
     # ANTI-VACUITY, and it is their own default. `ACPowerFlow()` ships with
@@ -2039,8 +2067,7 @@ end
     unlimited = oracle_powerflow(net; check_limits = false)
     @test unlimited.Vm[2] == 1.05
     @test unlimited.Qgen[2] > 0.10 + 0.01            # measured: it asks for 0.860
-    bV = powerflow_band(net; channel = s -> s.Vm, check_limits = true,
-                        abstol_fine = 1e-14)
+    bV = powerflow_band(net; channel = s -> s.Vm, check_limits = true)
     @test pf_gap(ours, unlimited, s -> s.Vm) > bV.band
 
     # A limit so wide it cannot bind must reproduce the unlimited answer, on both
@@ -2052,6 +2079,38 @@ end
     @test ours_wide.Vm[2] == 1.05
     theirs_wide = oracle_powerflow(wide; check_limits = true)
     @test theirs_wide.Vm[2] == 1.05
+end
+
+@testset "the on-grid twin: a fixture that cannot see the thing being measured" begin
+    # F20, as a test rather than as prose. The shipped reactive-limit fixture uses
+    # 0.11 and 0.13 pu; this is the same case with both back at 0.10, whose
+    # admittance is exactly 10.0 and therefore exactly representable in `Float32`.
+    on = pf_qlimit_ongrid()
+    off = pf_qlimit()
+    for net in (on, off)                              # the same physical situation
+        o = ac_powerflow(net)
+        @test o.limited == [:B2]
+        @test o.Qgen[2] ≈ 0.10 atol = 1e-10
+    end
+    gap_on = pf_gap(ac_powerflow(on), oracle_powerflow(on; check_limits = true), s -> s.Vm)
+    gap_off = pf_gap(ac_powerflow(off), oracle_powerflow(off; check_limits = true), s -> s.Vm)
+    @test gap_on < 1.0e-14                            # the two matrices are IDENTICAL
+    @test gap_off > 1.0e-10                           # ...and here they are not
+    @test gap_off > 1.0e5 * gap_on
+    # Which is the whole reason the shipped fixture's reactances are not round: this
+    # is the only external check on WHICH bus got limited, and on the on-grid twin a
+    # limit-switching bug the size of everything else measured here is invisible.
+
+    # F16, likewise executable: this model's residual floor is 1.804e-15, so the
+    # band's default 1000x-tighter convergence probe cannot converge on it, and
+    # `powerflow_band` refuses BY NAME rather than falling back to a tolerance
+    # nobody chose. The shipped fixture floors at 8.0e-16 and needs no override.
+    @test_throws ErrorException powerflow_band(on; channel = s -> s.Vm,
+                                               check_limits = true)
+    b = powerflow_band(on; channel = s -> s.Vm, check_limits = true,
+                       abstol_fine = PF_QLIMIT_ABSTOL_FINE)
+    @test b.band > 0
+    @test powerflow_band(off; channel = s -> s.Vm, check_limits = true).band > 0
 end
 
 @testset "DC: their linear solve against ours, on its own band" begin

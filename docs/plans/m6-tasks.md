@@ -612,7 +612,7 @@ rather than asserted with `==`.
 
 ### Oracle B — `PowerFlows.jl` in `reference/` — **DONE (2026-09-08)**
 
-Entered at **3284 core / 382 UI / 986 reference**; leaves **986 + 144 = 1130
+Entered at **3284 core / 382 UI / 986 reference**; leaves **986 + 154 = 1140
 reference**, core and UI untouched (this step adds no core code at all). Full
 suite green, exit 0, with all 986 pre-existing reference tests unchanged.
 
@@ -659,13 +659,21 @@ suite green, exit 0, with all 986 pre-existing reference tests unchanged.
 - [x] Their DC solve compared as a separate channel with its own band (M4's
       per-channel lesson), plus the direct check that a lossy model and its lossless
       twin give BOTH sides the same angles.
-- [x] **Anti-vacuity: seven mutations, all on our side, all caught.** The fork here
+- [x] **Anti-vacuity: ten mutations, all on our side, all caught.** The fork here
       is wider than `oracle.jl`'s, so `machine_arrays`/`load_arrays` are legitimate
       targets. `_ac_admittance` reactance sign (35 failed); the branch-flow
-      read-out's *separate* reactance computation (12 failed); one off-diagonal
-      scaled by 0.999 (32); `_zip_k`'s current share given the impedance power (27);
+      read-out's *separate* reactance computation (12); one off-diagonal scaled by
+      0.999 (32); `_zip_k`'s current share given the impedance power (27);
       `machine_arrays.Pm` on the machine base (8); `load_arrays` P multiplied
-      instead of divided (1 failed + 9 errored); `load_arrays` Q halved (35).
+      instead of divided (1 + 9 errored); `load_arrays` Q halved (35);
+      **`_ac_residual!`'s reactive equation with the ZIP scaling dropped (26)**;
+      and the two in the **limit-switching branch itself** — the `Q_max` test never
+      firing (13) and a switched bus held at `Q_min` instead of `Q_max` (1 + 2).
+      The first three of those were listed in the plan's mutation table and had NOT
+      been run at the first pass; the switching branch and `_ac_residual!` were the
+      only parts of the AC solve the set did not reach. **M8a is caught by the
+      binding-limit testset alone**, which is exactly the check the fixture retune
+      below exists to protect.
 - [x] `reference/Project.toml` gains the two packages, comment block restored after
       `Pkg.add` rewrote it — which it did, dropping every comment AND moving
       `[sources]` above `[compat]`. The note now records that it happened rather
@@ -761,14 +769,21 @@ system base the rebase PowerSystems performs is the identity and the mutation is
 no-op. This is oracle A's "two of ten mutations were no-ops on the fixture they
 were first run against", predicted this time instead of discovered.
 
-**F20 — one fixture is blind to the dominant error, and its output reads as
-strength.** On the reactive-limit fixture the two sides agree to **4.4e-16**, eight
-orders better than any other fixture. That is not sharpness: its branch reactances
-are both `0.10`, whose admittance is exactly `10.0`, which is exactly representable
-in `Float32`, so the two admittance matrices are *identical* and there is nothing to
-quantize. A fixture whose reactances happen to land on the single-precision grid
-cannot exercise the thing this oracle mostly measures. Recorded because the number
-looks like a result and is an accident of arithmetic.
+**F20 — a fixture WAS blind to the dominant error, its output read as strength,
+and the fix is why its reactances are not round numbers.** The first working
+reactive-limit fixture used 0.10 pu for both branches, and the two sides then agreed
+to **4.4e-16** — eight orders better than any other fixture. That is not sharpness:
+the admittance of a 0.10 pu reactance is exactly `10.0`, exactly representable in
+`Float32`, so the two admittance matrices were **identical** and the quantization
+this oracle mostly measures was switched off. Documenting that and shipping it would
+have been the wrong move, and it took a second reading to see why: this is the
+**only** external check on *which* bus got limited, so running it on the one fixture
+where the dominant error cannot appear would hide a limit-switching bug of exactly
+the size everything else here measures. The reactances are now 0.11 and 0.13, the
+gap is back to 2.5e-9, and the testset asserts the gap is real rather than an
+identity. M2's rule — switch the nuisance cause off *by construction* when a
+comparison can differ for two reasons — read from the other direction: do not let a
+fixture switch off the effect under test either.
 
 **F21 — `inv(complex(br.R, br.X))` appears TWICE in `ac_powerflow.jl` and both
 sites needed their own mutation.** That duplication is deliberate (step 3: the
