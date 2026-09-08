@@ -419,6 +419,25 @@ have hidden a limit-switching bug of the size everything else here measures. The
 reactances are 0.11 and 0.13 for that reason, the gap is 2.5e-9, and the testset
 asserts the gap is real.
 
+## The scenario editor's solve — M6 step 5, `ui/src/editor_window.jl`
+
+**No new physics row, and that is the finding rather than an omission.** The
+editor's **solve** button calls `ac_powerflow` and *displays* what comes back; it
+recomputes nothing, so every number on that map is already carried by the AC rung's
+rows above and by oracle B. A row asserting the window agrees with the solver would
+be asserting that a `Vector` read is faithful.
+
+What is genuinely new here is presentational, and two pieces of it can be wrong
+without any solver being wrong:
+
+| Claim | Checked against | Status |
+|---|---|---|
+| The flow marker points the way active power **leaves the branch's `from` bus** | The sign of `sol.flow[e]` against the branch's own drawn direction, per branch, in the UI suite — **and a sabotage that flips the drawn sign** (step 5's mutation M1), because the check and the drawing both read the same two bus positions and the same `flow[e]` | checked, and the check is proved non-vacuous |
+| The bus colour and label are the solved `|V|` | `plots.solved_V[] == sol.Vm`, by value | checked |
+| The reference bus the map draws is the one a model built from that draft would use | `effective_slack(ed) === build_model(ed).slack` on drafts with machines, without them, and with the first bus empty — **the last is the only one that discriminates**, since `load_bus_system`'s machine sits on `buses[1]` and cannot tell a correct derivation from "always the first bus" (mutation M2) | checked, on the fixture that can see it |
+| A solved overlay never outlives the model it came from | Every redraw clears it, and a redraw is what every edit ends in; asserted after an edit and after a refused solve (mutation M4) | checked |
+| The slack's pickup, `|V|` range, losses and residual in the read-out | Nothing beyond the solver's own rows — these are formatted reads | **un-oracled by construction, named** |
+
 ## Owed rows
 
 - SPEC §7.6's third lesson, **IBR behaviour**: no tier, and **un-scheduled**

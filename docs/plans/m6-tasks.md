@@ -852,8 +852,9 @@ as well.
       hand-drawn scenario meets first is the voltage band, which is an
       `ErrorException`. Both kinds are caught, both are asserted, and the test that
       follows a refusal places a bus to prove the editor is still an editor.
-- [x] **Render before claiming.** Four offscreen renders inspected, and they
-      changed the design three times: F2, F3, F4.
+- [x] **Render before claiming.** Four offscreen renders inspected — the plain
+      window, the ring solved, the load-bus case solved, and a refused solve — and
+      they changed the design three times: F2, F3, F4.
 - [x] Exports checked against `names(GLMakie)` — **both** lists, since this step
       adds names to `GridSimUI` as well as importing two into it.
       `intersect(names(GridSim), names(GLMakie))` and
@@ -861,6 +862,24 @@ as well.
       `set_slack!`, `effective_slack`, `ac_powerflow` and `bus_generation` in play.
 - [x] **F4's owed item closed:** `docs/scenarios/three-machine-ring.toml` rewritten
       through the writer and `ui/README.md`'s entry point verified against it.
+- [x] **Five anti-vacuity mutations executed, and their blindness map recorded** —
+      the gate at the head of this file, which this step had ticked eleven boxes
+      without meeting. All five go red; what they show is *how narrowly*. See F6.
+- [x] `docs/validation-ledger.md` gains an editor-solve section, and its finding is
+      that there is **no new physics row**: the window displays step 3's solve and
+      recomputes nothing, so the rows that would matter are the presentational ones
+      (the arrow's direction, the colour's source, the drawn reference bus, and the
+      overlay's lifetime) — each with the mutation that proves it non-vacuous.
+
+### The mutation set (F6 below is what it found)
+
+| # | Sabotage | Suite | Result | Caught by |
+|---|---|---|---|---|
+| M1 | the flow marker's sign flipped | UI | 440/443, **3 red** | the per-branch direction assertion, and **nothing else** |
+| M2 | `effective_slack` always returns `buses[1].id` | UI | 442/443, **1 red** | the `bare` draft whose machine is on the **second** bus — and only that one |
+| M3 | the reader defaults the slack again (step 1's behaviour) | core | 3306/3312, **6 red** | four message assertions, the no-buses case, and step 1's own round-trip |
+| M4 | a redraw stops clearing the solve overlay | UI | 438/443, **5 red** | the post-edit and post-refusal staleness checks |
+| M5 | the panel drops `V_set`/`Q_min`/`Q_max` | UI | 430/434, **4 red** | the three literal box-value assertions — **not** the field-set comparison |
 
 ### What this step found that the plan did not anticipate
 
@@ -911,6 +930,31 @@ has no `word_wrap_width` — that is `text!`'s attribute, and on a block it is a
 error rather than a no-op, so the wrapping the long refusals need was written wrong
 the first time. And a lossless network reported `losses -0.00 MW`: `%.2f` of about
 −1e-16 pu, a minus sign in front of a quantity that cannot be negative.
+
+**F6 — the mutations passed, and two of them passed by a single test each.** The
+step was written up and committed with eleven boxes ticked and **no mutation run**,
+against this file's own gate; the set was then executed and all five went red. What
+it found is not a hole but a *width*:
+
+- **M2 is carried by one assertion, on the one fixture that can see it.** The
+  derived reference bus is checked against `build_model`'s on three drafts, and two
+  of them are blind by construction: `load_bus_system`'s machine sits on `B1`,
+  which **is** `buses[1]`, so "the first bus carrying a machine" and "always the
+  first bus" give the same answer there. Only the `bare` draft, whose machine is on
+  the second of two buses, discriminates — 442 of 443 tests pass under a derivation
+  that is simply wrong. A second copy of a rule is only checked by the case where
+  the two copies could differ.
+- **M1 is carried by one assertion too**, and it is worth saying which: nothing
+  else in 443 UI tests notices that every flow arrow on the map points backwards.
+  A picture has no other reader.
+- **M5 found a vacuous check of the kind step 3 found two of.** The panel test
+  opens with `Set(keys(boxes)) == Set((:id, editable_fields(:machine)...))`, which
+  reads the field list from the very function the mutation edits and therefore
+  passes against it unchanged. What actually catches the dropped fields is the
+  three literal assertions on the boxes' contents (`"-Inf"`, `"Inf"`, `"1"`) — the
+  ones written to check `%g`/`tryparse` round-tripping, not coverage. The set
+  comparison stays, because it does document the intended relationship, but it is
+  not the check that carries the box.
 
 ---
 
