@@ -196,6 +196,20 @@ that is planned as a decision and executed as a decision is not a step that got
 cut; an item that keeps getting carried without a criterion is (M3 step 7's
 lesson, learned on Figure 3-67).
 
+**Decided 2026-09-23 — opened narrow.** Criteria 1 and 3 met by measurement; 2
+and 4 fail for a network OPF (no cost data in the repo; `PowerModels` does not
+resolve against our stack). The user opened the **network-free** rung, where
+costs are imported from a cited published case and the optimum has three checks
+that need nothing from outside. The network OPF stays owed on criterion 4.
+
+### Step 7 — Cheapest dispatch, network-free
+
+Cost fields on `Machine` under step 1's no-number-moves invariant; `JuMP` +
+`HiGHS` as the solver with our own formulation; checked against the closed form,
+a printed textbook answer and an exhaustive search; its answer handed to the AC
+flow, with the losses' cost gap reported rather than hidden. The design is D16,
+the gates are in the tasks file.
+
 ## What gets cut if the milestone runs long
 
 Stated before anything is built, the way M5 D11 required:

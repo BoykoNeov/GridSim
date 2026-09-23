@@ -808,3 +808,88 @@ mechanism at seven orders. Two independent external packages, two different reas
 one conclusion: an external implementation agreeing with us is evidence we are not
 wrong in a way peculiar to us — it is **not** evidence about which is more accurate,
 and here the direction is measured and it is not theirs.
+
+---
+
+## D16 — The rung that opened is network-free, and its oracle needs nothing from outside
+
+Step 6 evaluated D7's four criteria on 2026-09-23 (the answers, with the
+measurements, are in `m6-tasks.md` step 6). Criteria 1 and 3 hold. Criteria 2 and
+4 fail for the rung D7 was written about — an optimal power flow, where the
+network's limits and losses are inside the optimisation. The user opened a
+narrower rung instead: **economic dispatch without the network**. This section is
+its design, written before any code.
+
+**§1 — Scope.** Minimise the sum of the generators' running costs subject to one
+balance (total output equals total load) and each unit's minimum and maximum.
+That is all. The result is written into the generation schedule the AC flow
+already reads; the flow then puts the losses on the slack, so the cost of the
+*flowed* state exceeds the optimum by the cost of the losses at the slack's
+margin. That gap is reported, with its sign asserted, because hiding it would
+quote a network-free number as if the network agreed.
+
+**§2 — Where the costs come from (criterion 2).** The form is D7's own example: a
+heat-rate curve `H(P) = a + bP + cP²` (fuel per hour) times a fuel price, which is
+a quadratic cost. **The numbers are never ours.** First choice: Wood &
+Wollenberg's three-unit example, because it gives the heat rates and fuel prices
+*separately* (physical inputs, not a pre-multiplied cost) and prints the answers,
+including a variant with a unit at its limit — so the source is also part of the
+oracle (§5 b). It is transcribed from the book with the page cited when the step
+starts; nothing in this repo quotes its numbers from memory. Fallback: MATPOWER's
+`case9`, read from its public file on 2026-09-23 — costs `0.11P² + 5P + 150`,
+`0.085P² + 1.2P + 600`, `0.1225P² + P + 335` ($/h, P in MW), maxima 250 / 300 /
+270, minima 10 MW. **Its header cites Chow (1982) and an EPRI report for the
+network; the cost rows cite nothing.** Using them is permitted only with the
+ledger saying "published but unsourced" — the difference between a number with
+provenance and a number that is merely printed somewhere is exactly
+`entsoe-iberia-reproduction.md` §7.3's.
+
+**§3 — The fields.** On `Machine`, as D7 said: the cost coefficients and a
+minimum output (`Machine` has `Pmax` and no minimum; a dispatch without one lets a
+unit run at zero, which the sources do not allow). Concrete-typed, defaulting to
+"not given", and step 1's invariant applies unchanged: **no existing number
+moves**, checked by the full suite AND by M5's recorded criterion values
+bit-for-bit, captured before the first edit. A machine with no cost is refused by
+name. Units: stored per-unit on `S_base` like everything else, converted at the
+constructor boundary from $/h-against-MW, with a round-trip check. That
+conversion scales the quadratic term by `S_base²` and the linear one by `S_base`,
+and it is the one place a wrong factor survives every internal check (§6).
+
+**§4 — The solver.** Our formulation, `JuMP` + `HiGHS`'s solver: D2's split
+between equations and solver, applied a second time. Measured at step 6: +15
+packages, nothing moved, Julia floor 1.10 unchanged. Whether it enters core as a
+plain dependency or as a package extension that loads only when JuMP is loaded
+is decided at the step's start, against a re-measurement *in the environment
+being changed* (oracle B's lesson). The recommendation is the extension: 15
+packages is a real load-time cost for every user who never dispatches, and an
+extension keeps "core loads what it needs" true.
+
+**§5 — The oracle (criterion 4), three parts, none of them the solver.**
+(a) **The closed form.** With no limit binding, every unit runs at the same
+marginal cost λ: `Pᵢ = (λ − bᵢ) / 2cᵢ`, with λ fixed by the balance. Pure
+algebra, but it covers only the interior case. (b) **The printed answer**, from
+§2's source, including the binding-limit variant — the external check, in MW, in
+the source's own units. (c) **Exhaustive search** for the two- and three-unit
+cases: every feasible split on a fine grid, confirming nothing cheaper exists to
+the grid's resolution. Slow, dumb and independent — and it is the only part that
+covers an arbitrary binding pattern. The solver's own dual values are **not** a
+check; they are its own answer restated. **The band:** step 6 measured HiGHS at
+2.0e-4 MW off the closed form (130.000200 against 130) at default tolerances. So
+the band is not machine precision; it is written from the tolerances the step
+sets, before any gap is read, and it must survive the tolerances being tightened
+(M2's rule: a gap below the solver's own tolerance is not a result until it
+survives the tolerance changing).
+
+**§6 — The mutations, planned now.** Linear term's sign flipped; quadratic and
+linear coefficients swapped; one unit's maximum ignored; the per-unit conversion
+of the quadratic term off by one factor of `S_base`; the load total read from the
+wrong place. **The per-unit mutation is the one to watch**: (a) and (c) read the
+same converted coefficients as the solver, so they will agree with a wrong
+conversion. Only (b), in MW, can see it — M4's "a check that reads the
+conversion cannot check the conversion", met a third time, and planned for this
+time instead of discovered.
+
+**§7 — Owed, not built.** The network OPF (owed on criterion 4: `PowerModels`
+does not resolve against our stack at any registered version, the resolver's log
+ending at its `NLsolve` requirement against our `NonlinearSolve`); unit on/off
+decisions; loss-aware dispatch; the scenario file and the editor carrying costs.

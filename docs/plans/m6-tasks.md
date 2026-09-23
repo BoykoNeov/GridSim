@@ -6,11 +6,17 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–5 done (BOTH oracles; the editor folded in); step 6 open.** Entered at `181fe4e` with
+Status: **steps 0–6 done (BOTH oracles; the editor folded in; the gate decided —
+it opened NARROW); step 7, the network-free cheapest dispatch, planned and not
+started.** Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
 **3175 core**; at oracle A's close **3284 core**, UI and `reference/` unchanged
-throughout; at oracle B's close **1130 reference** (986 unchanged + 144 new), core and UI untouched by that step.
+throughout; at oracle B's close **1140 reference** (986 unchanged + 154 new), core and UI untouched by that step.
+At step 6 (2026-09-23), all three re-measured on manifests deleted and re-resolved:
+**3312 core / 1140 reference / 443 UI**, exit 0 each. (This line and step 5's
+said 1130 / 144 until then — the count before `b758027` added the on-grid twin
+fixture; the oracle B section itself had been corrected, these two had not.)
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed* — not when the code
@@ -799,7 +805,8 @@ cannot be attributed.
 ## Step 5 — the editor and the scenario file fold in (D8) — **DONE (2026-09-08)**
 
 Entered at **3284 core / 382 UI**; leaves **3312 core / 443 UI**.
-`reference/` untouched at 1130 (this step adds no oracle). No physics changed and
+`reference/` untouched at 1140 (this step adds no oracle; this line said 1130
+until step 6's re-measurement, see the status line). No physics changed and
 no recorded number moved — the solve this step draws is step 3's, already oracled
 by step 4's oracle B.
 
@@ -958,14 +965,117 @@ it found is not a hole but a *width*:
 
 ---
 
-## Step 6 — the optimisation rung: the gate (D7)
+## Step 6 — the optimisation rung: the gate (D7) — **DECIDED (2026-09-23): opened NARROW**
 
-- [ ] The four criteria in D7 evaluated **in writing**, each with its answer.
-- [ ] If the gate opens: the rung is planned as its own step with its own oracle
-      before any code.
-- [ ] If it does not: written into `docs/plans/README.md` as owed, **with the
-      criterion that failed named**. An item that keeps being carried is missing a
-      criterion, not missing work (M3 step 7, Figure 3-67).
+- [x] The four criteria in D7 evaluated **in writing**, each with its answer:
+  1. **Met, measured.** All three manifests deleted and re-resolved from nothing
+     (backups kept outside the repo), all three suites run one after another:
+     **3312 core / 1140 reference / 443 UI**, exit 0 each. Resolved at 188 / 286 /
+     364 packages; NetworkDynamics 1.3.0, OrdinaryDiffEq 7.8.1, SciMLBase 3.56.0 in
+     all three; NonlinearSolve 4.32.0 in core and UI but **4.30.0 in `reference/`**
+     (PowerFlows' tree holds it back — harmless, but the three environments do not
+     run the identical solver and that is now written down). PowerSystems 5.12.3,
+     PowerFlows 0.25.2, PowerDynamics 5.0.0, GLMakie 0.13.15.
+  2. **Not met by anything in the repo; met only by importing.** No fixture, no
+     type, no scenario carries a cost, a heat rate or a fuel price; the one place
+     a cost appears is oracle B's `ThermalGenerationCost(nothing)`, empty on
+     purpose. Published cases do carry them — but see D16 §2: the one case that
+     could be verified from its public source today (MATPOWER `case9`) cites its
+     *network* data and gives **no source for its cost rows**.
+  3. **Met, measured the D1 way and stricter.** Probe environment with GridSim
+     `develop`ed in, so our own compat bounds constrained the resolve: `JuMP`
+     1.31.2 + `HiGHS` 1.25.4 take it from **188 to 203 packages and move nothing**.
+     Julia floor of every new top-level package read from its own `Project.toml`
+     (step 2's F5 trap): JuMP, MathOptInterface, HiGHS, HiGHS_jll all **1.10** —
+     our floor does not move. **Usable, not only resolvable**: a two-unit merit-
+     order LP gives 80 / 40 MW at 2800 exactly, and a two-unit quadratic-cost
+     problem gives **130.000200 / 169.999800 against the closed form's 130 / 170**
+     — a 2.0e-4 MW gap at HiGHS's default tolerances, which is what step 7's band
+     has to be stated against (D16 §5).
+  4. **Not met for what D7 had in mind (a network OPF); met for the narrow rung.**
+     `PowerModels` — the obvious outside checker, and the analogue of what
+     PowerFlows was for oracle B — **does not resolve against our stack at any
+     registered version (0.8.0–0.21.6)**; the resolver's log ends in its `NLsolve`
+     requirement against our `NonlinearSolve`. Checking the solver against its
+     own dual values is the solver grading itself and does not count. What
+     remains is independent of the solver and covers only the network-free case:
+     the equal-incremental-cost closed form, a printed textbook answer, and an
+     exhaustive search (D16 §5).
+- [x] **The gate opened by decision, narrower than D7 imagined.** With 2 and 4
+      failing for a network OPF, the recommendation was to keep it shut; the user
+      chose (2026-09-23) to open the **network-free** rung, where 2 is met by an
+      imported published cost and 4 by three solver-independent checks. It is
+      planned below as step 7, with its oracle, **before any code**.
+- [x] **What stays owed, with the failed criterion named** (in
+      `docs/plans/README.md`'s M6 row): the **network OPF** — cheapest dispatch
+      *subject to* line limits and losses — is owed on **criterion 4**
+      (`PowerModels` unresolvable; no other external OPF checker is on the stack).
+      It reopens when `PowerModels` (or another OPF with printed answers) resolves
+      against us, re-measured the way this step did.
+- F1 (what the plan did not anticipate): **the gate's two failures are not the
+  same kind.** Criterion 2 fails in the repo and is fixable by import; criterion 4
+  fails in the ecosystem and is not fixable by us. That is why the narrow rung is
+  honest and the wide one is not: the narrow one has an oracle that needs nothing
+  from outside.
+- F2: **two lines of this file had carried a stale test count for two weeks**
+  (1130 against a true 1140). Only the re-resolve from deleted manifests caught
+  it, because it is the only step that counts rather than copies.
+
+---
+
+## Step 7 — cheapest dispatch, network-free (D16) — **PLANNED, not started**
+
+Minimise the total running cost of the generators so that together they meet the
+total load, each within its own minimum and maximum output. No lines, no losses,
+no voltages — those are the owed network OPF. The answer becomes the generation
+schedule the existing power flow already reads; the flow then runs, the slack
+picks up the losses, and **the flowed cost is above the optimum by exactly that**
+— stated in the output, not hidden.
+
+Gates, in order. Each box ticks only with its positive control and its mutation
+run, as everywhere in this file.
+
+- [ ] **The cost data, transcribed with its source cited before any field exists**
+      (D16 §2). Wood & Wollenberg's three-unit example (heat-rate curves times fuel
+      prices, with printed dispatches, one of them with a unit at its limit) is the
+      first choice and is transcribed **from the book, with the page** — this plan
+      quotes no numbers from memory. MATPOWER `case9`'s cost rows are the fallback,
+      labelled in the ledger as **published but unsourced**. If neither can be
+      cited, the step stops here: that is criterion 2 failing after all.
+- [ ] **The fields, under step 1's invariant** (D16 §3): cost coefficients and a
+      minimum output on `Machine`, concrete-typed, defaulting to "not given".
+      **No existing number moves** — the full suite AND the MD5 of M5's recorded
+      criterion values, captured at HEAD before the first edit. A machine without a
+      cost is **refused by name** by the dispatch, never costed at zero (a zero is
+      an invented number: criterion 2 again).
+- [ ] **The dependency** (D16 §4): `JuMP` + `HiGHS`, re-measured in the
+      environment being changed (oracle B's lesson: step 0's probe was not that
+      environment), `git diff` on every `Project.toml`, the Julia floor checked.
+- [ ] **The dispatch**: our formulation, their solver (D2's split, again).
+      Feasibility checked — total equals load, every unit within limits — but that
+      is **not** the oracle.
+- [ ] **Oracle, three parts, all independent of the solver** (D16 §5):
+      (a) the closed form when no limit binds; (b) the printed textbook answer,
+      including the case with a unit at its limit; (c) an exhaustive search over
+      feasible splits for the two- and three-unit cases, confirming nothing cheaper
+      exists to the grid's resolution. **Bands written before the gap is seen**,
+      from the solver's stated tolerances, and shown to survive tightening them.
+- [ ] **The mutation set, planned now** (D16 §6): linear cost term's sign flipped;
+      quadratic and linear coefficients swapped; a unit's maximum ignored; the
+      per-unit conversion of the quadratic term off by one factor of `S_base`; the
+      load total read from the wrong place. **The per-unit one is the trap**: the
+      closed form and the search read the same converted numbers as the solver, so
+      only the printed answer in MW can catch it (M4's lesson — a check that reads
+      the conversion cannot check the conversion). Each must go red on a named
+      check; record which.
+- [ ] **The hand-off to the power flow**: the dispatch written into the schedule,
+      the AC flow run, the slack's extra pickup and the resulting cost gap
+      reported. Assert its **sign** (flowed cost ≥ optimum on a lossy case) and that
+      it is **exactly zero** on a lossless one, rather than bounding it.
+- [ ] Out of scope, said here so it is not carried silently: network limits and
+      losses in the optimisation (the owed OPF), unit on/off decisions, and the
+      scenario file and editor carrying costs (a fold-in like step 5, to be owned
+      by whichever milestone next changes the model).
 
 ---
 
@@ -987,10 +1097,13 @@ it found is not a hole but a *width*:
       reading, so the split between equations and solver is documented where a
       reader meets the rule rather than only where it was argued. Done at step 0;
       step 2 is the first code the annotation actually describes.
-- [ ] Re-resolve all three environments from deleted manifests at the end and
+- [x] Re-resolve all three environments from deleted manifests at the end and
       **measure** the counts there — the gitignored-manifest trap has caught this
       repo three times (`m4-context.md` D15, the 2026-08-18 stale dev manifest, and
-      `ui/`'s silently ignored `[sources]`).
+      `ui/`'s silently ignored `[sources]`). **Done at step 6 (2026-09-23)**: 3312
+      core / 1140 reference / 443 UI, exit 0 each, on 188 / 286 / 364 packages —
+      and it caught a fourth thing, a stale count in two lines of this file (step
+      6, F2). **Step 7 adds a dependency, so it re-runs this box at its own close.**
 - [~] `git diff` every `Project.toml` after every `Pkg` operation and put the
       dropped comments back. Done for step 2's `SparseArrays` add: nothing was
       dropped (the root file carries no comments), but the **compat bound had to be
