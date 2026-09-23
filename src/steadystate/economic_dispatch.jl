@@ -4,8 +4,9 @@
 # equals total scheduled load) and each unit's own minimum and maximum. No lines, no
 # losses, no voltages: those are the owed network OPF (D16 §7). The answer is handed
 # to the power flow as a schedule (`dispatch_schedule`), and the flow's slack then
-# picks up the losses — `dispatch_loss_gap` reports what that costs, rather than
-# quoting a network-free optimum as though the network agreed with it.
+# picks up the losses AND the loads' voltage-dependent shift — `dispatch_loss_gap`
+# reports both parts and what the sum costs, rather than quoting a network-free
+# optimum as though the network agreed with it.
 #
 # THE SPLIT IS D2's, APPLIED A SECOND TIME: the formulation below is ours, the solver
 # is HiGHS through JuMP. And JuMP/HiGHS are a PACKAGE EXTENSION
@@ -196,21 +197,37 @@ end
 
 Run the AC power flow ([`ac_powerflow`](@ref), `kwargs` passed through) on the
 dispatched schedule and report what the network does to the optimum. The dispatch
-met the load with no losses; the flow puts the losses on the slack machine, so the
-*flowed* state costs more than the optimum by the slack's cost of that extra output.
+met the NOMINAL load with no losses; the flow puts whatever differs on the slack
+machine, so the *flowed* state's cost differs from the optimum by the slack's cost
+of that difference.
+
+**The difference is NOT only the losses.** The slack's pickup is
+
+    pickup = losses + load_shift,   load_shift = Σ(what the loads draw at the
+                                                  solved |V|) − Σ loads.P0/S_base
+
+and a load's draw moves with voltage unless it is constant power (`a_p = 1`).
+`Load`'s default is constant **impedance**, so on a default model the shift is
+usually the larger term, and it can be negative: measured on the case9 network
+without line charging, 4.30 MW of losses against a −18.46 MW shift, a pickup of
+−14.16 MW and a gap of **−318 \$/h**. The two parts are returned separately so a
+caller never reads the sum as "the cost of the losses" (m6-tasks.md step 7, F7).
 
   - `flow` — the `ACPowerFlow`; `schedule` — the `NetworkModel` it solved
   - `slack_machine` — the one machine at the slack bus (refused if there are several:
     the pickup would need a sharing rule the model does not have)
   - `pickup` — pu, the slack's solved output minus its dispatch
+  - `losses` — pu, the summed branch losses, `sum(flow.loss)`
+  - `load_shift` — pu, `sum(flow.Pload) − Σ loads.P0/S_base`
   - `cost_optimal`, `cost_flowed` — \$/h; `gap = cost_flowed − cost_optimal`
   - `slack_within_limits` — whether the slack's solved output is still inside its
     `[Pmin, Pmax]`. Reported, not enforced: the network-free dispatch never saw the
-    losses, so nothing kept room for them.
+    network, so nothing kept room for it.
 
-`gap = pickup·(2·a2·p + a1 + a2·pickup)` for the slack's own coefficients — so it
-has the sign of the pickup whenever the slack's marginal cost `2·a2·p + a1` is
-positive at its dispatch, which is the case the tests assert on.
+`gap = pickup·(2·a2·p + a1 + a2·pickup)` for the slack's own coefficients, so it has
+the sign of the **pickup** whenever the slack's marginal cost `2·a2·p + a1` is
+positive at its dispatch. Only with constant-power loads (`load_shift = 0`) is that
+the sign of the losses, i.e. positive.
 """
 function dispatch_loss_gap(net::NetworkModel, ed::EconomicDispatch; kwargs...)
     _assert_dispatch_of(net, ed)
@@ -219,16 +236,21 @@ function dispatch_loss_gap(net::NetworkModel, ed::EconomicDispatch; kwargs...)
     at = sched.machines_at_bus[v]
     length(at) == 1 || throw(ArgumentError(
         "dispatch_loss_gap: the slack bus :$(sched.slack) carries $(length(at)) " *
-        "machines. The losses land on the slack BUS, and pricing them needs to know " *
-        "which machine produces them — a sharing rule this model does not have."))
+        "machines. What the network adds lands on the slack BUS, and pricing it " *
+        "needs to know which machine produces it — a sharing rule this model does " *
+        "not have."))
     k = at[1]
     flow = ac_powerflow(sched; kwargs...)
     ca = cost_arrays(sched)
     pickup = flow.Pgen[v] - ed.P[k]
+    losses = sum(flow.loss; init = 0.0)
+    load_shift = sum(flow.Pload; init = 0.0) -
+                 sum(l.P0 for l in sched.loads; init = 0.0) / sched.S_base
     p_new = ed.P[k] + pickup
     cost_flowed = ed.cost - (ca.a2[k] * ed.P[k]^2 + ca.a1[k] * ed.P[k]) +
                   (ca.a2[k] * p_new^2 + ca.a1[k] * p_new)
-    return (; flow, schedule = sched, slack_machine = ca.ids[k], pickup,
-              cost_optimal = ed.cost, cost_flowed, gap = cost_flowed - ed.cost,
+    return (; flow, schedule = sched, slack_machine = ca.ids[k], pickup, losses,
+              load_shift, cost_optimal = ed.cost, cost_flowed,
+              gap = cost_flowed - ed.cost,
               slack_within_limits = ca.pmin[k] ≤ p_new ≤ ca.pmax[k])
 end

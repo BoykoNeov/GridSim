@@ -105,14 +105,16 @@ end
 # The case9 network WITHOUT line charging — `Branch` carries no `B` (m6-context.md
 # D4), so this is NOT case9 and is never called that. `R`, `X` and ratings are the
 # file's `branch` rows; bus 1 is the reference, as in the file. Loads are constant
-# power (`a_p = 1`), scaled together by `load/315`. The machines' dynamic data
-# (`H`, `D`, `Xd′`, `E′`) is placeholder — no code this step runs reads it — and
+# power (`a_p = 1`) by default, scaled together by `load/315`; `zip_default = true`
+# gives them `Load`'s own default instead — constant IMPEDANCE — which is what
+# most models in this repo carry and what the loss report has to survive (F7).
+# The machines' dynamic data (`H`, `D`, `Xd′`, `E′`) is placeholder — no code this step runs reads it — and
 # `S_rated` is the file's `mBase`. The starting `P0` is an arbitrary balanced
 # schedule (each unit's share of `ΣPmax`), NOT the file's `Pg`: those sum to 320.3
 # MW against 315 of load, the flow's losses already in them, and `NetworkModel`'s
 # schedule balance refuses that by design.
 function _ed_case9(; S_base = 100.0, load = 315.0, lossy = true, costed = true,
-                     rows = _C9)
+                     rows = _C9, zip_default = false)
     s = load / 315.0
     buses = [Bus(Symbol(:B, i), 345.0) for i in 1:9]
     br(id, f, t, r, x, rate) = Branch(id, Symbol(:B, f), Symbol(:B, t), x, rate;
@@ -137,9 +139,9 @@ function _ed_case9(; S_base = 100.0, load = 315.0, lossy = true, costed = true,
                                    cost_c0 = rows[i].c0, Pmin = rows[i].Pmin) :
                                   NamedTuple())...)
                 for i in 1:3]
-    loads = [Load(:D5, :B5, 90.0s, 30.0s, 0.0, 0.0, 1.0),
-             Load(:D7, :B7, 100.0s, 35.0s, 0.0, 0.0, 1.0),
-             Load(:D9, :B9, 125.0s, 50.0s, 0.0, 0.0, 1.0)]
+    L(id, bus, P, Q) = zip_default ? Load(id, bus, P, Q) : Load(id, bus, P, Q, 0.0, 0.0, 1.0)
+    loads = [L(:D5, :B5, 90.0s, 30.0s), L(:D7, :B7, 100.0s, 35.0s),
+             L(:D9, :B9, 125.0s, 50.0s)]
     return NetworkModel(S_base, 50.0, buses, branches, machines, loads; slack = :B1)
 end
 
@@ -393,12 +395,16 @@ end
     ed = economic_dispatch(net)
     g = dispatch_loss_gap(net, ed)
     losses = sum(g.flow.loss)
+    @test g.losses === losses
     @test losses > 0                                         # the case really is lossy
+    # constant-power loads draw their nominal P at any |V|: no shift to add
+    @test abs(g.load_shift) ≤ length(net.buses) * eps()
     # the slack's pickup IS the losses, to the flow's own residual (step 3's identity)
     @test abs(g.pickup - losses) ≤ length(net.buses) * max(g.flow.residual, eps())
     # THE SIGN, DERIVED: gap = L·(2·a2·p + a1 + a2·L). The slack's marginal cost is
     # positive at its dispatch, so the gap has the sign of the pickup — asserted, not
-    # bounded.
+    # bounded. And the pickup is the LOSSES only because these loads are constant
+    # power; see the next testset but one for a model where it is not.
     ca = cost_arrays(net)
     k = findfirst(==(g.slack_machine), ca.ids)
     @test 2ca.a2[k] * ed.P[k] + ca.a1[k] > 0
@@ -424,13 +430,49 @@ end
                              complex(b.R, b.X)) * b.R for b in net.branches)
     @test losses_from_R === 0.0
     # and the solved quantities are within the flow's own residual of it — the
-    # bound step 3's losses identity already uses, not a new one.
+    # bound step 3's losses identity already uses, not a new one. (The pickup is
+    # this small only because the loads are constant power: with `Load`'s default
+    # a lossless network still moves the slack, by the loads' shift — F7.)
     bound = length(net.buses) * max(g.flow.residual, eps())
     @test abs(sum(g.flow.loss)) ≤ bound
     @test abs(g.pickup) ≤ bound
     ca = cost_arrays(net)
     k = findfirst(==(g.slack_machine), ca.ids)
     @test abs(g.gap) ≤ bound * (2ca.a2[k] * ed.P[k] + ca.a1[k] + ca.a2[k] * bound)
+end
+
+@testset "on DEFAULT loads the pickup is NOT the losses — both parts, and the sum" begin
+    # F7, found by review after the step was first committed: the slack picks up the
+    # losses PLUS the change in what voltage-dependent loads draw. With `Load`'s
+    # default (constant impedance) the second term dominates and has the other sign,
+    # so a report of "the losses' cost" would have been negative on a default model.
+    net = _ed_case9(; zip_default = true)
+    @test all(l -> l.a_i == 0.0 && l.a_p == 0.0, net.loads)      # really the default
+    ed = economic_dispatch(net)
+    g = dispatch_loss_gap(net, ed)
+    # THE DRAW IS WRITTEN OUT AS THE TEXTBOOK POLYNOMIAL, not read from `Pload` or
+    # `_zip_scale` — step 3's lesson (sabotage S4): a check that computes the draw
+    # through the function it checks restates it.
+    drawn = 0.0
+    for l in net.loads
+        V = g.flow.Vm[net.bus_index[l.bus]]
+        drawn += l.P0 / net.S_base * (l.a_z * V^2 + l.a_i * V + l.a_p)
+    end
+    shift = drawn - sum(l.P0 for l in net.loads) / net.S_base
+    bound = length(net.buses) * max(g.flow.residual, eps())
+    @test abs(g.load_shift - shift) ≤ bound
+    @test abs(g.pickup - (g.losses + g.load_shift)) ≤ bound
+    # measured, and the reason this testset exists: the shift is the larger term,
+    # of the opposite sign, so the slack produces LESS than dispatched...
+    @test g.losses > 0
+    @test g.load_shift < -g.losses
+    @test g.pickup < 0
+    # ...and the flowed state is CHEAPER than the "optimum", which is not a paradox:
+    # the optimum was computed for a nominal load the network never draws.
+    @test g.gap < 0
+    ca = cost_arrays(net)
+    k = findfirst(==(g.slack_machine), ca.ids)
+    @test g.gap ≈ g.pickup * (2ca.a2[k] * ed.P[k] + ca.a1[k] + ca.a2[k] * g.pickup) rtol = 1e-12
 end
 
 @testset "a slack bus with two machines is refused, not guessed" begin
