@@ -6,9 +6,10 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–6 done (BOTH oracles; the editor folded in; the gate decided —
-it opened NARROW); step 7, the network-free cheapest dispatch, planned and not
-started.** Entered at `181fe4e` with
+Status: **steps 0–7 done (BOTH oracles; the editor folded in; the gate decided —
+it opened NARROW; step 7, the network-free cheapest dispatch, built and checked
+2026-09-23 — 3592 core / 1140 reference / 446 UI).**
+Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
 **3175 core**; at oracle A's close **3284 core**, UI and `reference/` unchanged
@@ -1023,59 +1024,178 @@ it found is not a hole but a *width*:
 
 ---
 
-## Step 7 — cheapest dispatch, network-free (D16) — **PLANNED, not started**
+## Step 7 — cheapest dispatch, network-free (D16) — **DONE (2026-09-23)**
 
 Minimise the total running cost of the generators so that together they meet the
 total load, each within its own minimum and maximum output. No lines, no losses,
 no voltages — those are the owed network OPF. The answer becomes the generation
 schedule the existing power flow already reads; the flow then runs, the slack
-picks up the losses, and **the flowed cost is above the optimum by exactly that**
-— stated in the output, not hidden.
+picks up the losses, and the flowed cost is above the optimum by the slack's cost
+of that pickup — stated in the output, not hidden.
 
-Gates, in order. Each box ticks only with its positive control and its mutation
-run, as everywhere in this file.
+Entered at `166254a` with **3312 core / 1140 reference / 443 UI** (core measured
+at HEAD before the first edit). Leaves **3592 core** (3312 unchanged + 280 new in
+`test/m6_economic_dispatch.jl`) / **1140 reference** / **446 UI** (443 + 3, F5).
+All three were measured on manifests deleted and re-resolved at the step's close
+(187 / 285 / 363 packages), exit 0 each — the UI at 443, before F5's test was
+added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate/economic_dispatch.jl`,
+`ext/GridSimDispatchExt.jl`.
 
-- [ ] **The cost data, transcribed with its source cited before any field exists**
-      (D16 §2). Wood & Wollenberg's three-unit example (heat-rate curves times fuel
-      prices, with printed dispatches, one of them with a unit at its limit) is the
-      first choice and is transcribed **from the book, with the page** — this plan
-      quotes no numbers from memory. MATPOWER `case9`'s cost rows are the fallback,
-      labelled in the ledger as **published but unsourced**. If neither can be
-      cited, the step stops here: that is criterion 2 failing after all.
-- [ ] **The fields, under step 1's invariant** (D16 §3): cost coefficients and a
-      minimum output on `Machine`, concrete-typed, defaulting to "not given".
-      **No existing number moves** — the full suite AND the MD5 of M5's recorded
-      criterion values, captured at HEAD before the first edit. A machine without a
-      cost is **refused by name** by the dispatch, never costed at zero (a zero is
-      an invented number: criterion 2 again).
-- [ ] **The dependency** (D16 §4): `JuMP` + `HiGHS`, re-measured in the
-      environment being changed (oracle B's lesson: step 0's probe was not that
-      environment), `git diff` on every `Project.toml`, the Julia floor checked.
-- [ ] **The dispatch**: our formulation, their solver (D2's split, again).
-      Feasibility checked — total equals load, every unit within limits — but that
-      is **not** the oracle.
-- [ ] **Oracle, three parts, all independent of the solver** (D16 §5):
-      (a) the closed form when no limit binds; (b) the printed textbook answer,
-      including the case with a unit at its limit; (c) an exhaustive search over
-      feasible splits for the two- and three-unit cases, confirming nothing cheaper
-      exists to the grid's resolution. **Bands written before the gap is seen**,
-      from the solver's stated tolerances, and shown to survive tightening them.
-- [ ] **The mutation set, planned now** (D16 §6): linear cost term's sign flipped;
-      quadratic and linear coefficients swapped; a unit's maximum ignored; the
-      per-unit conversion of the quadratic term off by one factor of `S_base`; the
-      load total read from the wrong place. **The per-unit one is the trap**: the
-      closed form and the search read the same converted numbers as the solver, so
-      only the printed answer in MW can catch it (M4's lesson — a check that reads
-      the conversion cannot check the conversion). Each must go red on a named
-      check; record which.
-- [ ] **The hand-off to the power flow**: the dispatch written into the schedule,
-      the AC flow run, the slack's extra pickup and the resulting cost gap
-      reported. Assert its **sign** (flowed cost ≥ optimum on a lossy case) and that
-      it is **exactly zero** on a lossless one, rather than bounding it.
-- [ ] Out of scope, said here so it is not carried silently: network limits and
-      losses in the optimisation (the owed OPF), unit on/off decisions, and the
-      scenario file and editor carrying costs (a fold-in like step 5, to be owned
-      by whichever milestone next changes the model).
+- [x] **The cost data — the FALLBACK, by the user's choice (2026-09-23).** The Wood
+      & Wollenberg book was not to hand, so the choice was put to the user: wait for
+      the pages, or take MATPOWER `case9`. They chose `case9`. Transcribed from the
+      file fetched that day
+      (`https://raw.githubusercontent.com/MATPOWER/matpower/master/data/case9.m`,
+      last commit touching it `31e3308e`, 2017-10-31): `0.11P² + 5P + 150`,
+      `0.085P² + 1.2P + 600`, `0.1225P² + P + 335` $/h, `Pmax` 250 / 300 / 270 MW,
+      `Pmin` 10 MW each — identical to what step 6 read. **Published but
+      unsourced** in the ledger: the header cites Chow (1982) and an EPRI report
+      for the network, and nothing for `gencost`. The startup column is not carried
+      (on/off decisions are out of scope). **Consequence, named rather than
+      absorbed: D16 §5 part (b), the printed answer, does not exist for this step**
+      — see the oracle box for what stands in for it.
+- [x] **The fields, under step 1's invariant.** `Machine` gains `cost_c2`,
+      `cost_c1`, `cost_c0` ($/MW²h, $/MWh, $/h) and `Pmin` (MW), keyword-only,
+      **defaulting to `NaN` = not given**. A cost is all three or none; `c2 ≥ 0`
+      (convexity); `Pmin ≤ Pmax`; **no `P0 ≥ Pmin` guard** (M2a's negative-`P0`
+      machines exist, and the minimum is the dispatch's constraint). **No existing
+      number moved**: all 3312 pre-existing core tests green, and M5's 169 criterion
+      values **bit-identical** — MD5 `c79b7c07d039b66efdeff10e45e88305` at HEAD
+      before the first edit and again after the re-resolve, the same digest step 1
+      recorded (captures: `W:\temp\claude\m6s7\criterion-HEAD.txt` /
+      `criterion-STEP7.txt`). **Departure from D16 §3, recorded:** the cost is stored
+      in the source's units and converted in the compiled view `cost_arrays`, not
+      "at the constructor boundary" — `Machine` stores `P0`/`Pmax` in MW and does
+      not know `S_base`, so that boundary does not have the base.
+- [x] **The dependency — as a PACKAGE EXTENSION** (D16 §4's recommendation, taken):
+      `Pkg.add` wrote `JuMP` + `HiGHS` into `[deps]`; the lines were **moved**, not
+      retyped, to `[weakdeps]`, with `[extensions] GridSimDispatchExt`, and added to
+      `[extras]` and the test target. `git diff Project.toml` checked (the root file
+      carries no comments, so nothing was dropped). Compat `JuMP 1.31.2`, `HiGHS
+      1.25.4`; Julia floor stays 1.10 (step 6 read every new package's own floor).
+      Re-measured in the environment being changed: the re-resolved core manifest
+      is 187 packages and contains neither — a session that never dispatches loads
+      nothing new. A test asserts core's `[deps]` did not grow and that the
+      extension actually loaded under the test target.
+- [x] **The dispatch**: `economic_dispatch(net; tol, regularization)` →
+      `EconomicDispatch`; the formulation and every refusal are in core, the
+      solver call is the extension's (`_dispatch_solve`, with a fallback that says
+      `using JuMP, HiGHS` instead of a `MethodError`). HiGHS's settings are
+      **explicit** (`primal_feasibility_tolerance`, `dual_feasibility_tolerance`,
+      `optimality_tolerance`, `qp_regularization_value` — names read from HiGHS's
+      own `HighsOptions.h`), because the band is derived from them. Termination
+      status checked. The answer is projected onto `[Pmin, Pmax]` and the
+      projection **refused if it moves anything by more than `tol`**. The cost is
+      recomputed from the returned `P`, not read off the solver's objective.
+      Refused by name: an uncosted machine, a machine with no minimum, a load below
+      every minimum (and above every maximum — see F3). Positive controls at the
+      exact edges: load = Σ Pmax puts every unit at its maximum, load = Σ Pmin every
+      unit at its minimum.
+- [x] **Oracle — (a) and (c) as planned; (b) ABSENT, with two stand-ins.** Every
+      oracle computes **in MW from a literal table of the file's rows typed into
+      the test**, never through `Machine` or `cost_arrays`:
+      (a) the closed form at case9's own 315 MW (interior — computed, not assumed:
+      86.564 / 134.378 / 94.058 MW, λ = 24.044 $/MWh, 5216.03 $/h), plus a
+      bisection-on-λ version with the limits in it, which agrees with the closed form
+      to 1e-12 where both apply and covers **two loads of OURS, labelled as ours**:
+      780 MW drives G2 to its 300 MW maximum and 60 MW holds G1 at its 10 MW minimum;
+      (c) exhaustive search on a 0.1 MW grid, for the two-unit and three-unit cases
+      and both binding loads, **one-sided on cost** (nothing cheaper than the
+      solver's cost minus the band) plus a non-vacuity bound (the grid's best is
+      within what its own spacing can miss). **In place of (b):** the MW oracle
+      itself (it never reads the conversion), and **`S_base` invariance** — the same
+      machines and load at 100 and 250 MVA give the same MW, at every test load.
+      Neither base is 1. **Bands written before any gap was read**, derived in the
+      test from the KKT conditions with HiGHS's tolerance `τ` and regularization
+      `ε`, with one stated undecided factor of 2. Measured against them: see F1.
+      Survives tightening: `τ ∈ {1e-7, 1e-9, 1e-10}` × `ε ∈ {1e-7, 0}`, all inside.
+- [x] **The mutation set — all red, each on a named check** (harness:
+      `W:\temp\claude\m6s7\mutate.py`, `mutate2.py`; logs `mut-*.txt`):
+
+      | Mutation | Caught by |
+      |---|---|
+      | linear term's sign flipped | oracle (a), (a′), search, tightening, `cost_arrays` written out |
+      | `c2` and `c1` swapped | the same five |
+      | a unit's **maximum** ignored | the post-solve bounds guard; **with the guard also off**: (a′) at 780 MW, the search's non-vacuity side, the Σ Pmax edge control |
+      | a unit's **minimum** ignored (added — `Pmin` is new) | the same, at 60 MW and the Σ Pmin edge |
+      | `a2 = c2·S_base` (one factor short) — **the trap** | oracle (a) in MW, (a′), search, **`S_base` invariance**, tightening |
+      | load read from `Q0` instead of `P0` | oracle (a), (a′), tightening, the edge controls |
+
+      The per-unit mutation is caught by both stand-ins for (b), so the trap D16 §6
+      planned for is closed without the printed answer. See F4 for the first
+      version of the "maximum ignored" mutation, which went red for the wrong
+      reason.
+- [x] **The hand-off to the power flow**: `dispatch_schedule` (the dispatch
+      written into `P0`, rebuilt through the constructors, every other field `===`
+      the original) and `dispatch_loss_gap` (flow run, slack pickup, cost gap). On
+      the case9 network **without line charging** (`Branch` has no `B`; never
+      called case9): losses 4.453 MW, the pickup equal to Σ branch loss to 5e-15,
+      **gap +109.26 $/h** on 5216.03 (2.1 %), slack still inside its limits. The
+      sign is **derived and asserted**: `gap = L·(2a2·p + a1 + a2·L)`, so it has the
+      pickup's sign whenever the slack's marginal cost is positive at its dispatch
+      (asserted too). **The lossless half of this box was wrong as planned** — see
+      F2.
+- [x] **Out of scope, said so**: network limits and losses in the optimisation
+      (the owed OPF), unit on/off decisions (hence no startup cost), and **the
+      editor showing or editing a cost** — it now *preserves* one (F5), it does not
+      display it. The **scenario file** was in this list and came out of it: see F5.
+
+### What this step found that the plan did not anticipate
+
+- **F1 — step 6's 2.0e-4 MW gap was HiGHS's regularization, and the per-unit
+  formulation makes it vanish.** HiGHS's active-set QP solver adds
+  `qp_regularization_value` (default 1e-7) to the Hessian. Posed in MW, as step
+  6's probe did, the Hessian is ~0.2 and that bias is ~1e-4 MW; posed in pu on 100
+  MVA it is ~2000 and the bias is **1.5e-9 MW** — measured, against a band of
+  2.7e-7 MW written beforehand. The gap is **identical at τ = 1e-7, 1e-9 and
+  1e-10** and drops to **2.8e-14 MW with ε = 0**: tolerance plays no part, the
+  solver is otherwise exact on this problem, and the whole residual is the
+  regularization the band's `ε` term was there for.
+- **F2 — "exactly zero on a lossless network" is false, twice.** D16 and the
+  box above planned to assert the lossless gap **exactly** zero; the review before
+  coding predicted that at least the summed branch loss would be. Measured on the
+  same network with `R = 0`: pickup **3.3e-16 pu**, Σ loss **−2.2e-16 pu**. The
+  loss is `flow + flow_rev`, two solved powers that cancel only to rounding. What
+  IS exactly zero is the loss recomputed from the data, `|I|²·R` at `R = 0`
+  (asserted `=== 0.0`); pickup, Σ loss and gap are asserted within the flow's own
+  residual bound — the one step 3's losses identity already uses. Measured first,
+  asserted second, and D16 corrected.
+- **F3 — the "above every maximum" refusal is unreachable.** `Machine` requires
+  `P0 ≤ Pmax` and `NetworkModel` requires `Σ P0 = Σ loads`, so every model that
+  can exist has `Σ loads ≤ Σ Pmax`. The first draft of the test asserted the
+  dispatch's refusal at 821 MW and got the **constructor's**. The check stays in
+  the dispatch (it should not lean on an invariant enforced in two other files),
+  documented as unreachable, and the test now asserts the constructor refusal.
+- **F4 — the exact-edge positive control found a rounding refusal, and the first
+  "maximum ignored" mutation was vacuous.** Three 10 MW minimums sum to
+  **30.000000000000004 MW** once divided by `S_base` and added, so a load of
+  exactly Σ Pmin was refused as below it; the feasibility checks now allow the
+  solver's primal tolerance. And the first "maximum ignored" mutation deleted the
+  bound in a way JuMP could not parse: **the extension failed to compile, every
+  dispatch fell back to "solver not loaded", and the suite went satisfyingly red
+  for a reason that tests nothing.** Caught only because a test asserts the
+  extension loaded. Rewritten; the corrected one was then caught first by the
+  post-solve bounds guard — the M2 shape of two defences masking each other — so
+  both bound mutations were re-run **with the guard off** as well, and the
+  oracles catch them on their own (table above).
+- **F5 — a guard forced the fold-in D16 deferred, and the editor had a silent
+  drop waiting.** `test/scenario_file.jl` asserts the writer's field list equals
+  `fieldnames(Machine)`, so four new fields meant carrying them or refusing to save.
+  They are carried (`cost_c2 = nan` for an uncosted machine; an older file with no
+  such keys reads as not given — tested). Separately, the editor's `_with`
+  rebuilt a `Machine` from a **hand-listed** field set: the next edit of any field
+  of a costed machine would have dropped its cost, with nothing on screen to say
+  so, because the editor does not show costs. It now calls core's
+  `_machine_with`, which walks `fieldnames(Machine)` — the same helper
+  `dispatch_schedule` uses. A UI test drives a field edit, a machine rename and a
+  bus rename on a costed machine; **restoring the old hand-listed `_with` reddens
+  exactly its 3 assertions and none of the 443 that were already there**, so the
+  drop was real and nothing else would have seen it.
+- **F6 — the published schedule does not balance.** case9's `Pg` column sums to
+  320.3 MW against 315 MW of load (the losses are already in it), and
+  `NetworkModel`'s schedule balance refuses it by design. The fixture starts from
+  a balanced share of `Σ Pmax` instead — only the dispatch's own output is ever
+  flowed — and says so.
 
 ---
 
@@ -1103,7 +1223,9 @@ run, as everywhere in this file.
       `ui/`'s silently ignored `[sources]`). **Done at step 6 (2026-09-23)**: 3312
       core / 1140 reference / 443 UI, exit 0 each, on 188 / 286 / 364 packages —
       and it caught a fourth thing, a stale count in two lines of this file (step
-      6, F2). **Step 7 adds a dependency, so it re-runs this box at its own close.**
+      6, F2). **Re-run at step 7's close (2026-09-23)**, because it added a dependency:
+      **3592 core / 1140 reference / 443 UI** (446 once F5's test landed), exit 0 each, on 187 / 285 / 363
+      packages — `JuMP`/`HiGHS` in none of them, being weak dependencies.
 - [~] `git diff` every `Project.toml` after every `Pkg` operation and put the
       dropped comments back. Done for step 2's `SparseArrays` add: nothing was
       dropped (the root file carries no comments), but the **compat bound had to be
@@ -1111,4 +1233,6 @@ run, as everywhere in this file.
       package's Julia floor from 1.10 to 1.12 in silence. Done again for step 3's
       `NonlinearSolve` add: nothing dropped, and the bound `Pkg` wrote is right this
       time — F5 bites only on a **versioned stdlib**, and `NonlinearSolve` is an
-      ordinary package whose caret bound says nothing about the Julia floor.
+      ordinary package whose caret bound says nothing about the Julia floor. Done
+      again for step 7's `JuMP` + `HiGHS` add: nothing dropped; `Pkg` wrote them
+      into `[deps]` and they were MOVED (not retyped) to `[weakdeps]`/`[extras]`.

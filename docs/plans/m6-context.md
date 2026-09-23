@@ -893,3 +893,33 @@ time instead of discovered.
 does not resolve against our stack at any registered version, the resolver's log
 ending at its `NLsolve` requirement against our `NonlinearSolve`); unit on/off
 decisions; loss-aware dispatch; the scenario file and the editor carrying costs.
+
+### What step 7 measured (2026-09-23) — three of D16's claims did not survive
+
+Written after the step, beside the design it corrects; the design above is left as
+it was written, so the difference stays visible. Details and numbers are in
+`m6-tasks.md` step 7, F1–F6.
+
+- **§2: the fallback, chosen by the user.** The book was not to hand; the user
+  chose `case9` knowing it prints no answer. So **§5 (b) does not exist for this
+  step**, and §6's claim that "only (b), in MW, can see" the per-unit mutation
+  had to be made false on purpose: every oracle now computes in MW from a literal
+  table of the file's rows typed into the test (never through `cost_arrays`), and
+  a second stand-in — the same machines at `S_base` 100 and 250 must give the
+  same MW — catches it independently. Both went red on it.
+- **§3: the conversion is not at the constructor boundary.** `Machine` stores
+  `P0`/`Pmax` in MW and never sees `S_base`, so the cost is stored in the
+  source's $/h-against-MW and converted in the compiled view `cost_arrays`, where
+  every other conversion in this repo lives.
+- **§1 and the task list: "exactly zero on a lossless network" is false.** Pickup
+  3.3e-16 pu and Σ branch loss −2.2e-16 pu at `R = 0`; the only exact zero is the
+  loss recomputed from `R`. Asserted within the flow's residual instead.
+- **§4 taken as recommended** — a package extension; core's manifest re-resolves
+  at 187 packages with neither `JuMP` nor `HiGHS` in it.
+- **§5's band, confirmed and explained.** Step 6's 2.0e-4 MW gap was HiGHS's QP
+  regularization (1e-7 on the Hessian) acting on a problem posed in MW. Posed in pu
+  it is 1.5e-9 MW against a band of 2.7e-7 written first, unchanged across three
+  tolerances, and 2.8e-14 with the regularization off.
+- **§7 shrank by one item.** The scenario file now carries costs (a field-list
+  guard forced it: carry or refuse to save); the editor preserves them through an
+  edit but does not show them.
