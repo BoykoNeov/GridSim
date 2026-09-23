@@ -8,7 +8,7 @@ valuable line.
 
 Status: **steps 0–7 done (BOTH oracles; the editor folded in; the gate decided —
 it opened NARROW; step 7, the network-free cheapest dispatch, built and checked
-2026-09-23 — 3592 core / 1140 reference / 446 UI).**
+2026-09-23 — 3602 core / 1140 reference / 446 UI).**
 Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
@@ -1034,8 +1034,8 @@ picks up the losses, and the flowed cost is above the optimum by the slack's cos
 of that pickup — stated in the output, not hidden.
 
 Entered at `166254a` with **3312 core / 1140 reference / 443 UI** (core measured
-at HEAD before the first edit). Leaves **3592 core** (3312 unchanged + 280 new in
-`test/m6_economic_dispatch.jl`) / **1140 reference** / **446 UI** (443 + 3, F5).
+at HEAD before the first edit). Leaves **3602 core** (3312 unchanged + 290 new in
+`test/m6_economic_dispatch.jl`; 280 at the first commit, +10 with F7) / **1140 reference** / **446 UI** (443 + 3, F5).
 All three were measured on manifests deleted and re-resolved at the step's close
 (187 / 285 / 363 packages), exit 0 each — the UI at 443, before F5's test was
 added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate/economic_dispatch.jl`,
@@ -1120,6 +1120,11 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       | a unit's **minimum** ignored (added — `Pmin` is new) | the same, at 60 MW and the Σ Pmin edge |
       | `a2 = c2·S_base` (one factor short) — **the trap** | oracle (a) in MW, (a′), search, **`S_base` invariance**, tightening |
       | load read from `Q0` instead of `P0` | oracle (a), (a′), tightening, the edge controls |
+      | (F7) load shift reported as zero | the default-load split test, 3 assertions — nothing else |
+
+      The most natural wrong source for the load total, `Σ machines.P0`, is **not**
+      in the table on purpose: the schedule balance makes it equal to `Σ loads.P0`
+      exactly, so that bug is invisible and harmless by construction. Hence `Q0`.
 
       The per-unit mutation is caught by both stand-ins for (b), so the trap D16 §6
       planned for is closed without the printed answer. See F4 for the first
@@ -1127,14 +1132,16 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       reason.
 - [x] **The hand-off to the power flow**: `dispatch_schedule` (the dispatch
       written into `P0`, rebuilt through the constructors, every other field `===`
-      the original) and `dispatch_loss_gap` (flow run, slack pickup, cost gap). On
-      the case9 network **without line charging** (`Branch` has no `B`; never
-      called case9): losses 4.453 MW, the pickup equal to Σ branch loss to 5e-15,
-      **gap +109.26 $/h** on 5216.03 (2.1 %), slack still inside its limits. The
-      sign is **derived and asserted**: `gap = L·(2a2·p + a1 + a2·L)`, so it has the
-      pickup's sign whenever the slack's marginal cost is positive at its dispatch
-      (asserted too). **The lossless half of this box was wrong as planned** — see
-      F2.
+      the original) and `dispatch_loss_gap` (flow run, slack pickup **split into
+      losses and the loads' voltage-driven shift**, cost gap). On the case9 network
+      **without line charging** (`Branch` has no `B`; never called case9) with
+      constant-power loads: losses 4.453 MW, the pickup equal to Σ branch loss to
+      5e-15, **gap +109.26 $/h** on 5216.03 (2.1 %), slack still inside its limits.
+      The sign is **derived and asserted**: `gap = L·(2a2·p + a1 + a2·L)`, so it has
+      the pickup's sign whenever the slack's marginal cost is positive at its
+      dispatch (asserted too) — and **the pickup is the losses only for
+      constant-power loads** (F7). **The lossless half of this box was wrong as
+      planned** — see F2.
 - [x] **Out of scope, said so**: network limits and losses in the optimisation
       (the owed OPF), unit on/off decisions (hence no startup cost), and **the
       editor showing or editing a cost** — it now *preserves* one (F5), it does not
@@ -1191,6 +1198,20 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
   bus rename on a costed machine; **restoring the old hand-listed `_with` reddens
   exactly its 3 assertions and none of the 443 that were already there**, so the
   drop was real and nothing else would have seen it.
+- **F7 — found by review AFTER the first commit: on default loads the "losses'
+  cost" was negative.** The slack picks up the losses **plus** the change in what
+  voltage-dependent loads draw, and `Load`'s default is constant impedance. Both
+  hand-off fixtures used constant-power loads, so nothing could see it. Measured on
+  the same network with default loads: losses **+4.30 MW**, load shift **−18.46
+  MW**, pickup **−14.16 MW**, gap **−318 $/h** — the report would have called a
+  negative number the cost of the losses. `dispatch_loss_gap` now returns
+  `losses` and `load_shift` separately; a test on default loads recomputes the
+  draw from the textbook ZIP polynomial (not `Pload`, not `_zip_scale` — step 3's
+  S4 lesson) and asserts `pickup = losses + load_shift` within the flow's residual
+  bound; the sign claim is narrowed to constant-power loads everywhere it was made.
+  Mutation: the shift reported as zero (the old behaviour) reddens exactly that
+  test's 3 split assertions. The planned mutation list had no entry that could
+  have found this — it is a wrong *label*, not a wrong number.
 - **F6 — the published schedule does not balance.** case9's `Pg` column sums to
   320.3 MW against 315 MW of load (the losses are already in it), and
   `NetworkModel`'s schedule balance refuses it by design. The fixture starts from

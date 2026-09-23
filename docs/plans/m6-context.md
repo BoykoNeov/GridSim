@@ -894,7 +894,7 @@ does not resolve against our stack at any registered version, the resolver's log
 ending at its `NLsolve` requirement against our `NonlinearSolve`); unit on/off
 decisions; loss-aware dispatch; the scenario file and the editor carrying costs.
 
-### What step 7 measured (2026-09-23) — three of D16's claims did not survive
+### What step 7 measured (2026-09-23) — four of D16's claims did not survive
 
 Written after the step, beside the design it corrects; the design above is left as
 it was written, so the difference stays visible. Details and numbers are in
@@ -920,6 +920,11 @@ it was written, so the difference stays visible. Details and numbers are in
   regularization (1e-7 on the Hessian) acting on a problem posed in MW. Posed in pu
   it is 1.5e-9 MW against a band of 2.7e-7 written first, unchanged across three
   tolerances, and 2.8e-14 with the regularization off.
+- **§1: "the flowed cost is above the optimum by the cost of the losses" holds
+  only for constant-power loads.** The slack also absorbs the change in what
+  voltage-dependent loads draw; on `Load`'s default that term is −18.46 MW against
+  +4.30 MW of losses, and the gap is −318 $/h. Found by review after the first
+  commit; the report now returns the two parts separately (F7).
 - **§7 shrank by one item.** The scenario file now carries costs (a field-list
   guard forced it: carry or refuse to save); the editor preserves them through an
   edit but does not show them.

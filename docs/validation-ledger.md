@@ -456,7 +456,8 @@ cheapest dispatch, network-free".
 | Nothing cheaper exists | Exhaustive 0.1 MW search, two- and three-unit, one-sided on cost, with a non-vacuity bound | **derived** |
 | The per-unit conversion of the cost (`a2 = c2·S_base²`, `a1 = c1·S_base`) | The MW oracles above (they never read it) **and `S_base` invariance** — same MW at 100 and 250 MVA. Both red on a one-factor-short mutation | **structural**, standing in for the printed answer that does not exist |
 | The band | Survives `τ ∈ {1e-7, 1e-9, 1e-10}` × regularization `∈ {1e-7, 0}`; the whole residual is HiGHS's QP regularization (2.8e-14 MW with it off) | **convergence** |
-| The loss gap's **sign** on a lossy network | `gap = L·(2a2·p + a1 + a2·L)` with the slack's marginal cost asserted positive; +109.26 $/h on case9-without-charging | **derived** |
+| The loss gap's **sign** on a lossy network — **constant-power loads only** | `gap = L·(2a2·p + a1 + a2·L)` with the slack's marginal cost asserted positive; +109.26 $/h on case9-without-charging | **derived** |
+| The slack's pickup = losses + the loads' voltage-driven shift | On `Load`'s default (constant impedance): the draw recomputed from the textbook ZIP polynomial, not from the solver's; +4.30 MW losses, −18.46 MW shift, gap −318 $/h — so the sum is never labelled "the losses' cost" | **derived** (F7) |
 | The loss gap on a lossless network | **Not exactly zero** (the plan said it would be): within the flow's residual bound; only `|I|²R` at `R = 0` is exactly zero | **derived**, the plan's claim corrected |
 | The solver's own dual values (λ) | **Not used as a check** — the solver restating its answer | **un-oracled by design** |
 | Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **un-oracled: the network OPF is owed** (criterion 4, `PowerModels` unresolvable) |
