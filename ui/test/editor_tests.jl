@@ -77,6 +77,24 @@ end
     @test occursin("no field", emsg(() -> set_field!(ed, :bus, :B1, :H, 1.0)))
 end
 
+@testset "editor: an edit keeps the fields the panel does not show (M6 step 7)" begin
+    # The editor shows no cost, so a rebuild that dropped one would say nothing on
+    # screen. The old hand-listed `_with` did exactly that; every path that rebuilds
+    # a machine is driven here — a field edit, a machine rename, and a bus rename
+    # that re-attaches it.
+    ed = ScenarioEditor()
+    add_bus!(ed, 0.0, 0.0)
+    add_machine!(ed, :B1; P0 = 50.0, Pmax = 250.0,
+                 cost_c2 = 0.11, cost_c1 = 5.0, cost_c0 = 150.0, Pmin = 10.0)
+    costed(m) = (m.cost_c2, m.cost_c1, m.cost_c0, m.Pmin) === (0.11, 5.0, 150.0, 10.0)
+    set_field!(ed, :machine, :G1, :H, 6.0)
+    @test element(ed, :machine, :G1).H == 6.0 && costed(element(ed, :machine, :G1))
+    rename!(ed, :machine, :G1, :Gx)
+    @test costed(element(ed, :machine, :Gx))
+    rename!(ed, :bus, :B1, :Bx)
+    @test element(ed, :machine, :Gx).bus === :Bx && costed(element(ed, :machine, :Gx))
+end
+
 @testset "editor: removing a bus takes its attachments; renaming one carries them" begin
     ed = ScenarioEditor(three_machine_ring())
     add_load!(ed, :B2; id = :LD, P0 = 0.0)

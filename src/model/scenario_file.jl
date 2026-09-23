@@ -35,7 +35,8 @@ const Layout = Dict{Symbol,Tuple{Float64,Float64}}
 const _MACHINE_FIELDS = (:S_rated, :H, :D, :Xd′, :E′, :P0, :R, :Pmax, :Tg,
                          :Xd, :Xq, :Xq′, :Td0′, :Tq0′, :Ra,
                          :K_A, :T_E, :Efd_min, :Efd_max,
-                         :V_set, :Q_min, :Q_max)
+                         :V_set, :Q_min, :Q_max,
+                         :cost_c2, :cost_c1, :cost_c0, :Pmin)
 
 # The prime (`′`) is not a bare-key character in TOML: a file would have to spell
 # `"Xd′" = 0.3` with quotes, and the first hand-written file did not (it was the
@@ -175,8 +176,13 @@ file fails exactly where an invalid model does. `layout` is a [`Layout`](@ref), 
 
 Machine fields beyond the classical eight are optional and default the way the
 `Machine` constructor defaults them (no governor, frozen flux, no regulator, a
-1.0 pu voltage schedule and no reactive limits), so a hand-written file need only
-say what it means. `[[branches]].R` defaults the same way, to a lossless line.
+1.0 pu voltage schedule, no reactive limits, and no cost or minimum — `NaN`, "not
+given", which the dispatch refuses by name), so a hand-written file need only say
+what it means. An uncosted machine is written as `cost_c2 = nan` and so on: TOML
+has the spelling, and writing every field is what keeps a file's meaning fixed
+(M6 step 7 — the field-list guard in `test/scenario_file.jl` forced the fold-in
+D16 had deferred, and carrying four fields beat refusing to save a costed model).
+`[[branches]].R` defaults the same way, to a lossless line.
 
 **The top-level `slack` is the one field that is required** (`m6-context.md` D8):
 every other absence has a physical reading, and the reference bus has none, so a
@@ -230,7 +236,11 @@ function read_scenario(path::AbstractString)
                                 Efd_max = opt(:Efd_max, Inf),
                                 V_set = opt(:V_set, 1.0),
                                 Q_min = opt(:Q_min, -Inf),
-                                Q_max = opt(:Q_max, Inf)))
+                                Q_max = opt(:Q_max, Inf),
+                                cost_c2 = opt(:cost_c2, NaN),
+                                cost_c1 = opt(:cost_c1, NaN),
+                                cost_c0 = opt(:cost_c0, NaN),
+                                Pmin = opt(:Pmin, NaN)))
     end
     loads = Load[]
     for (i, rec) in enumerate(get(doc, "loads", Any[]))

@@ -323,15 +323,12 @@ end
 # Rebuild an immutable record with one field changed, THROUGH ITS CONSTRUCTOR, so
 # the constructor's validation runs on the new value. `Machine`'s detailed and
 # regulator parameters are keyword-only there, hence the split.
-function _with(m::Machine, f::Symbol, v)
-    g(n) = n === f ? v : getfield(m, n)
-    return Machine(g(:id), g(:bus), g(:S_rated), g(:H), g(:D), g(:Xd′), g(:E′), g(:P0),
-                   g(:R), g(:Pmax), g(:Tg);
-                   Xd = g(:Xd), Xq = g(:Xq), Xq′ = g(:Xq′), Td0′ = g(:Td0′),
-                   Tq0′ = g(:Tq0′), Ra = g(:Ra), K_A = g(:K_A), T_E = g(:T_E),
-                   Efd_min = g(:Efd_min), Efd_max = g(:Efd_max),
-                   V_set = g(:V_set), Q_min = g(:Q_min), Q_max = g(:Q_max))
-end
+#
+# The machine case delegates to core's `_machine_with`, which walks every field. The
+# hand-listed rebuild it replaced (M6 step 7) would have DROPPED a machine's cost
+# and minimum on its next edit: the editor does not show those fields, so nothing
+# on screen would have said they were gone.
+_with(m::Machine, f::Symbol, v) = _machine_with(m; (f => v,)...)
 # `Branch.R` is keyword-only on the constructor (M6 step 1), so the generic
 # splat-every-field rebuild below cannot build one: `fieldnames` would hand `R` to
 # a five-positional method. Its own method, for the same reason `Machine` has one.

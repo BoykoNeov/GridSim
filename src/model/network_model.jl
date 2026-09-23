@@ -222,6 +222,24 @@ engine in `src/engines/` reads any of them:
                    stops holding `V_set` and becomes a load bus at its limit — the
                    thing that makes a power flow a power flow (M6 step 3).
 
+**M6 step 7 — the four fields a DISPATCH needs** (`m6-context.md` D16). No engine
+and no power flow reads them; [`economic_dispatch`](@ref) does:
+
+  - `cost_c2`,
+    `cost_c1`,
+    `cost_c0`    — the running cost `c2·P² + c1·P + c0` in **\$/h with `P` in MW**,
+                   i.e. \$/MW²h, \$/MWh and \$/h — the units the source prints, like
+                   `P0` and `Pmax` are in MW. `Machine` does not know `S_base`, so
+                   the per-unit conversion lives in the compiled view
+                   [`cost_arrays`](@ref), as every other one does.
+  - `Pmin`       — MW, the lowest output the unit may be dispatched to.
+
+All four default to **`NaN`, meaning "not given"** — never to zero, because a zero
+cost or a zero minimum is an invented number, and the dispatch refuses an uncosted
+machine by name rather than loading it first. A cost is all three coefficients or
+none. There is **no `P0 ≥ Pmin` guard**: a pre-dispatch schedule may sit anywhere
+(M2a's negative-`P0` machines exist), and the minimum is the dispatch's constraint.
+
 **`Vref` is deliberately NOT here.** The setpoint is *derived* at initialisation
 from the solved equilibrium (`Vref = |V| + Efd/K_A`), for the same reason the
 detailed tier takes `Pm` from the power flow rather than from `Machine.P0`: a
@@ -280,6 +298,11 @@ struct Machine
     V_set::Float64     # pu    — scheduled TERMINAL voltage magnitude (not E′)
     Q_min::Float64     # pu on S_base — reactive floor   (-Inf = unlimited)
     Q_max::Float64     # pu on S_base — reactive ceiling ( Inf = unlimited)
+    # M6 step 7 — the dispatch's cost and floor. NaN = NOT GIVEN (never zero).
+    cost_c2::Float64   # $/MW²h — quadratic running-cost coefficient
+    cost_c1::Float64   # $/MWh  — linear running-cost coefficient
+    cost_c0::Float64   # $/h    — running cost at zero output
+    Pmin::Float64      # MW     — dispatch floor
 
     # Reject a machine that is wrong on its face rather than letting it poison a
     # solve — the spirit of `GeneratingUnit`'s headroom guard. `H > 0` is strict
@@ -311,7 +334,9 @@ struct Machine
                      Td0′::Real = Inf, Tq0′::Real = Inf, Ra::Real = 0.0,
                      K_A::Real = 0.0, T_E::Real = Inf,
                      Efd_min::Real = -Inf, Efd_max::Real = Inf,
-                     V_set::Real = 1.0, Q_min::Real = -Inf, Q_max::Real = Inf)
+                     V_set::Real = 1.0, Q_min::Real = -Inf, Q_max::Real = Inf,
+                     cost_c2::Real = NaN, cost_c1::Real = NaN, cost_c0::Real = NaN,
+                     Pmin::Real = NaN)
         S_rated > 0 || throw(ArgumentError(
             "Machine $id: S_rated ($S_rated) must be > 0 MVA."))
         H > 0 || throw(ArgumentError(
@@ -403,14 +428,55 @@ struct Machine
             "machine with the schedule switched off."))
         Q_max ≥ Q_min || throw(ArgumentError(
             "Machine $id: Q_max ($Q_max) must be ≥ Q_min ($Q_min) pu."))
+        # M6 step 7. A cost is all three coefficients or none: a missing one would
+        # be read by the dispatch as a zero, which is exactly the invented number the
+        # NaN default exists to refuse. `c2 ≥ 0` because a concave cost makes the
+        # problem non-convex, and the solver's answer would no longer be a minimum.
+        given = count(!isnan, (cost_c2, cost_c1, cost_c0))
+        given in (0, 3) || throw(ArgumentError(
+            "Machine $id: a cost is all three of cost_c2, cost_c1, cost_c0 or none " *
+            "(got $cost_c2, $cost_c1, $cost_c0) — a missing coefficient would be " *
+            "dispatched as a zero, which the data never said."))
+        if given == 3
+            all(isfinite, (cost_c2, cost_c1, cost_c0)) || throw(ArgumentError(
+                "Machine $id: cost coefficients must be finite (got $cost_c2, " *
+                "$cost_c1, $cost_c0)."))
+            cost_c2 ≥ 0 || throw(ArgumentError(
+                "Machine $id: cost_c2 ($cost_c2) must be ≥ 0 \$/MW²h — a concave " *
+                "running cost makes the dispatch non-convex, and the solver's " *
+                "answer would stop being the minimum."))
+        end
+        # `Pmin ≤ Pmax` and nothing about `P0` (see the docstring). The NaN default
+        # passes; a given minimum must be a finite number of MW.
+        isnan(Pmin) || (isfinite(Pmin) && Pmin ≤ Pmax) || throw(ArgumentError(
+            "Machine $id: Pmin ($Pmin) must be finite and ≤ Pmax ($Pmax) MW."))
         return new(id, bus, Float64(S_rated), Float64(H), Float64(D),
                    Float64(Xd′), Float64(E′), Float64(P0),
                    Float64(R), Float64(Pmax), Float64(Tg),
                    Float64(Xd), Float64(Xq), Float64(Xq′),
                    Float64(Td0′), Float64(Tq0′), Float64(Ra),
                    Float64(K_A), Float64(T_E), Float64(Efd_min), Float64(Efd_max),
-                   Float64(V_set), Float64(Q_min), Float64(Q_max))
+                   Float64(V_set), Float64(Q_min), Float64(Q_max),
+                   Float64(cost_c2), Float64(cost_c1), Float64(cost_c0), Float64(Pmin))
     end
+end
+
+# The constructor's positional arguments, in order; every other field is a keyword.
+const _MACHINE_POSITIONAL = (:id, :bus, :S_rated, :H, :D, :Xd′, :E′, :P0, :R, :Pmax, :Tg)
+
+# `m` with the named fields changed, rebuilt THROUGH THE CONSTRUCTOR so its validation
+# runs on the new values (M6 step 7). It walks `fieldnames(Machine)` rather than
+# naming the fields, so a field added later is carried without anyone remembering
+# to — the silent drop a hand-listed copy invites (the editor's `_with` was one, and
+# would have dropped a machine's cost on its next edit).
+function _machine_with(m::Machine; changes...)
+    for k in keys(changes)
+        k in fieldnames(Machine) || throw(ArgumentError(
+            "_machine_with: Machine has no field `$k`."))
+    end
+    g(n) = haskey(changes, n) ? changes[n] : getfield(m, n)
+    kw = (n => g(n) for n in fieldnames(Machine) if !(n in _MACHINE_POSITIONAL))
+    return Machine((g(n) for n in _MACHINE_POSITIONAL)...; kw...)
 end
 
 """

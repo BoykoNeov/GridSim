@@ -123,6 +123,11 @@ include("steadystate/dc_powerflow.jl")
 # detailed tier and the three acceptance checks from `_check_power_flow`, and it is
 # the DC answer's cheap sanity partner rather than the other way round.
 include("steadystate/ac_powerflow.jl")
+# The cheapest dispatch, network-free (M6 step 7, m6-context.md D16). After the AC
+# solve, because its hand-off runs one. The SOLVER is a package extension
+# (`ext/GridSimDispatchExt.jl`, loaded by `using JuMP, HiGHS`); the formulation and
+# every refusal are here.
+include("steadystate/economic_dispatch.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -177,6 +182,10 @@ export DCPowerFlow, dc_powerflow, bus_angle, bus_injections
 # - the standing check since M1, and F7's lesson that it belongs where it lives.
 export ACPowerFlow, ac_powerflow, bus_voltage, bus_generation, branch_reactive
 export branch_loss
+# M6 step 7 - the network-free cheapest dispatch. All five checked clear against
+# `names(GLMakie)` in the `ui/` environment before being added (2026-09-23).
+export EconomicDispatch, economic_dispatch, cost_arrays, dispatch_schedule
+export dispatch_loss_gap
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

@@ -110,6 +110,10 @@ using GridSim: two_machine_system
 # constructor, plus the file pair and the `Layout` alias for the map positions.
 # All checked clear against GLMakie's exports (the standing check, 2026-09-07).
 using GridSim: Bus, Branch, Machine, Load, Layout, write_scenario, read_scenario
+# M6 step 7 — the editor rebuilds a machine through core's field-walking helper, so a
+# field the editor does not show (a cost, a minimum) survives an edit. Private, and
+# not exported, so no GLMakie check applies.
+using GridSim: _machine_with
 # M6 step 5 — the editor's **solve** action. The steady state is a function of a
 # model and not an engine (`m6-tasks.md` step 2), so the editor calls it directly
 # rather than through the mode router; `bus_generation` is how the slack's pickup

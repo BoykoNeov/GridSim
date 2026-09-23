@@ -15,9 +15,18 @@ SciMLBase = "0bca4576-84f4-4d90-8ffe-ffa030f20462"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 
+[weakdeps]
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
+
+[extensions]
+GridSimDispatchExt = ["HiGHS", "JuMP"]
+
 [compat]
 CommonSolve = "0.2.7"
 Graphs = "1.14.0"
+HiGHS = "1.25.4"
+JuMP = "1.31.2"
 LinearAlgebra = "1"
 NetworkDynamics = "1.1.0"
 NonlinearSolve = "4.29.2"
@@ -29,9 +38,11 @@ TOML = "1.0.3"
 julia = "1.10"
 
 [extras]
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Pkg", "Printf", "Test"]
+test = ["HiGHS", "JuMP", "Pkg", "Printf", "Test"]
