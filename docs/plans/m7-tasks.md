@@ -43,7 +43,11 @@ runs.
 - [x] Plan trio written (`m7-plan.md`, `m7-context.md`, `m7-tasks.md`).
 - [x] **M5's criterion values captured at HEAD before any code edit**, for step 1's
       gate: `W:\temp\claude\m7\criterion-HEAD.txt` (harness
-      `W:\temp\claude\m7\criterion_snapshot.jl`, M6's, unchanged).
+      `W:\temp\claude\m7\criterion_snapshot.jl`, M6's, unchanged). **169 values,
+      identical line for line to M6 step 7's capture**; digest of the value lines
+      (`grep " = " | md5sum`) `bfea9f4b81d80dfba5b7ba97ee1e5cb1`. (M6's recorded
+      `c79b7c07…` digest was taken over differently filtered text, so the two
+      digests are not comparable with each other — the line-for-line diff is.)
 
 ## Step 1 — the `Inverter` type, no number moved, refused where unbuilt
 
