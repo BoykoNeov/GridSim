@@ -70,9 +70,14 @@ All in Hz/s, all the same length as `t`, `NaN` where the window is not yet full.
 
 **A phase jump reads in `pll` and not in `coi`.** At an event the bus angles jump
 while every rotor speed is continuous; a PLL chases the jump and reports a frequency
-spike of height `≈ K_p·|V|·Δ` (rad/s, for a jump `Δ`), and a window longer than the
-spike turns that into a phantom RoCoF of `spike/window` — a `1/window` law, from an
-event that changed no frequency anywhere.
+spike. Its height tends to `K_p·|V|·Δ` (rad/s, for a jump `Δ`) as the PLL's output
+filter shrinks — at the default 300 Hz filter it reads ~6 % under that, and a
+first-order correction for the filter closes it to ~1 % (`m7-context.md` D14). A
+window longer than the spike reaches back to before the jump, so the phantom RoCoF
+is AT LEAST `spike/window` — a `1/window` law from below, reached once the window
+also outlasts the PLL's ringing (a window that starts on the spike ends on the
+opposite-signed ringing, which adds to it: 1.3e-3 of the spike at 250 ms, nothing at
+1 s on step 6's fixture). All from an event that changed no frequency anywhere.
 
 **Refused**, by name, when the centre-of-inertia frequency is `NaN` anywhere in the
 series: that is a network run in which every source had tripped, the inertia weights

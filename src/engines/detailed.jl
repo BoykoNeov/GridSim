@@ -1442,10 +1442,15 @@ end
 
 """
     init!(DetailedEngine, net::NetworkModel; t0=0.0, dt=0.02, slack=the model's slack bus,
-          solver=Rodas5P(), reltol, abstol, powerflow=nothing, capacity)
+          solver=Rodas5P(), reltol, abstol, powerflow=nothing, meters=PLLMeter[],
+          capacity)
 
 Build the detailed tier's engine: compile both networks, solve the power flow,
 back-substitute every machine state, and place a stiff integrator on the result.
+
+`meters` (M7 step 6) arms measurement-only [`PLLMeter`](@ref)s, at most one per bus,
+each locked on its bus voltage at rest. They inject nothing; with none armed the
+network compiled is the one it always was.
 
 `powerflow` replaces the *first* of those with M6's other steady-state solve: pass
 an [`ac_powerflow`](@ref) solution and the engine starts from it instead of from its
@@ -2179,8 +2184,18 @@ _record!(eng::DetailedEngine) = _record_at!(eng, eng.integrator.t, eng.integrato
 """
     state_series(eng::DetailedEngine) -> NamedTuple
 
-`(; t, δ_<id>..., ω_<id>..., E′q_<id>..., E′d_<id>..., Efd_<id>..., V_<bus>...,
-δ_coi, f_coi)`. Bounded and decimating, like every recorder in the repo.
+`(; t, δ_<id>..., ω_<id>..., E′q_<id>..., E′d_<id>..., Efd_<id>...,
+δ_<inv>..., ω_<inv>..., E_<inv>..., θpll_<inv>..., ωpll_<inv>...,
+θmeter_<bus>..., ωmeter_<bus>..., V_<bus>..., δ_coi, f_coi)`, in that order.
+Bounded and decimating, like every recorder in the repo.
+
+The machines' five come first; then each grid-forming inverter's formed angle, droop
+frequency and formed magnitude (M7 step 4); each grid-following inverter's PLL angle
+and PLL frequency (pu deviation, M7 step 5); each armed `PLLMeter`'s angle and
+frequency, named by bus in the order armed (M7 step 6); then the buses. Every group
+after the machines is empty on a model or run without it, so a pre-M7 channel list is
+the list it was. PLL and meter frequencies are measurements and are weighted into
+nothing (D6).
 
 **One channel per BUS, not per machine**, for the voltage: a machine-free bus is
 exactly the thing this tier added, and it is often the one whose voltage matters.
