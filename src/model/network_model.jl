@@ -629,7 +629,7 @@ end
 """
     Inverter(id, bus, mode, S_rated, P0; Q0 = 0.0,
              K_p = 0.05, τ_p = 0.1, K_q = 0.0, τ_q = 0.1, V_set = 1.0, X_c = 0.1,
-             K_pll_p = 2π·10, K_pll_i = (2π·10)²/4)
+             K_pll_p = 2π·10, K_pll_i = (2π·10)²/4, τ_pll = 1/(2π·300))
 
 An inverter-based resource — solar, battery, or anything else that reaches the
 grid through power electronics rather than a rotating machine (M7,
@@ -685,9 +685,16 @@ Grid-forming only (unread by `:grid_following`):
 Grid-following only (unread by `:grid_forming`):
 
   - `K_pll_p`, `K_pll_i` — the PLL's proportional (1/s) and integral (1/s²) gains on
-    the angle error. Base-free: they act on an angle. The defaults are
-    PowerDynamics' `SimpleGFL` ones — a 10 Hz loop, critically damped
+    the error `|V|·sin(θ_V − θ_pll)` — PowerDynamics' `PLL_LPF` form, taken EXACTLY
+    (M7 step 5, `m7-context.md` D12), so the gains act on the angle scaled by `|V|`
+    and are base-free only at `|V| = 1`. The defaults are `SimpleGFL`'s — a 10 Hz loop
+    that WITHOUT the output filter would be critically damped
     (`ζ = K_pll_p/(2√K_pll_i) = 1`).
+  - `τ_pll` — s, the first-order filter on the PLL's frequency estimate (`PLL_LPF`'s
+    `τ_lpf`; default `1/(2π·300)`, a 300 Hz corner). It makes the loop THIRD order.
+    Kept rather than dropped because without it the gap to PowerDynamics' `SimpleGFL`
+    would level off at the filter's share instead of shrinking with their current
+    loop's stiffness, which is Hurdle 12's claim.
 
 **What is not here, and is named rather than implied** (`m7-context.md` D8): no
 current limit (a real grid-forming inverter's "inertia" is capped by its overcurrent
@@ -713,12 +720,14 @@ struct Inverter
     # grid-following PLL (unread by :grid_forming)
     K_pll_p::Float64   # 1/s
     K_pll_i::Float64   # 1/s²
+    τ_pll::Float64     # s — the PLL's frequency filter (M7 step 5)
 
     function Inverter(id::Symbol, bus::Symbol, mode::Symbol, S_rated::Real, P0::Real;
                       Q0::Real = 0.0,
                       K_p::Real = 0.05, τ_p::Real = 0.1, K_q::Real = 0.0,
                       τ_q::Real = 0.1, V_set::Real = 1.0, X_c::Real = 0.1,
-                      K_pll_p::Real = 2π * 10, K_pll_i::Real = (2π * 10)^2 / 4)
+                      K_pll_p::Real = 2π * 10, K_pll_i::Real = (2π * 10)^2 / 4,
+                      τ_pll::Real = 1 / (2π * 300))
         mode in (:grid_forming, :grid_following) || throw(ArgumentError(
             "Inverter $id: mode must be :grid_forming or :grid_following, got :$mode. " *
             "They are different physics — one sets a voltage, the other follows one."))
@@ -755,9 +764,13 @@ struct Inverter
             "Inverter $id: K_pll_p ($K_pll_p) must be > 0 1/s."))
         K_pll_i > 0 || throw(ArgumentError(
             "Inverter $id: K_pll_i ($K_pll_i) must be > 0 1/s²."))
+        τ_pll > 0 || throw(ArgumentError(
+            "Inverter $id: τ_pll ($τ_pll) must be > 0 s — it divides the PLL's " *
+            "frequency filter; zero would remove a state, not set a value."))
         return new(id, bus, mode, Float64(S_rated), Float64(P0), Float64(Q0),
                    Float64(K_p), Float64(τ_p), Float64(K_q), Float64(τ_q),
-                   Float64(V_set), Float64(X_c), Float64(K_pll_p), Float64(K_pll_i))
+                   Float64(V_set), Float64(X_c), Float64(K_pll_p), Float64(K_pll_i),
+                   Float64(τ_pll))
     end
 end
 
@@ -765,7 +778,7 @@ end
 # once so the scenario file's writer and reader, and any rebuild helper, walk the same
 # list rather than each keeping its own (the `_MACHINE_FIELDS` precedent).
 const _INVERTER_NUMERIC = (:S_rated, :P0, :Q0, :K_p, :τ_p, :K_q, :τ_q, :V_set, :X_c,
-                           :K_pll_p, :K_pll_i)
+                           :K_pll_p, :K_pll_i, :τ_pll)
 
 """
     NetworkModel(S_base, f0, buses, branches, machines, loads = Load[]; slack = nothing)
@@ -1303,6 +1316,19 @@ _holds_voltage(net::NetworkModel, v::Integer) =
     !isempty(net.machines_at_bus[v]) ||
     any(k -> net.inverters[k].mode === :grid_forming, net.inverters_at_bus[v])
 
+# D5's sentence (M7 step 5), for a refusal that finds no voltage source where one is
+# needed: when the model carries grid-following inverters, say what that means for
+# them — they follow a voltage and cannot hold one. Empty otherwise, so every pre-M7
+# message is the message it was.
+function _nothing_to_follow(net::NetworkModel)
+    gfl = [i.id for i in net.inverters if i.mode === :grid_following]
+    isempty(gfl) && return ""
+    return "Its grid-following inverter(s) ($(join(gfl, ", "))) inject a current " *
+           "phased to a voltage something ELSE holds — they cannot hold one — so " *
+           "without a machine or a grid-forming inverter there is nothing to follow " *
+           "(m7-context.md D5). "
+end
+
 """
     bus_role(net::NetworkModel, bus::Symbol) -> Symbol
 
@@ -1413,6 +1439,32 @@ function _inverter_arrays(net::NetworkModel)
             V_set = Float64[i.V_set for i in invs],
             S = Float64[i.S_rated / Sb for i in invs],
             Q_cap = Float64[sqrt(max(i.S_rated^2 - i.P0^2, 0.0)) / Sb for i in invs])
+end
+
+"""
+    _gfl_arrays(net::NetworkModel) -> NamedTuple
+
+The **grid-following** inverters on the system base, in model (bus) order (M7 step
+5) — `_inverter_arrays`' counterpart, and the one place their dispatch converts.
+
+  - `id`, `bus` (vertex), `k` (index into `net.inverters`)
+  - `P`, `Q` — pu, the scheduled injection `P0/S_base`, `Q0/S_base`: a grid-following
+              inverter is a CONSTANT-POWER source in the power flow, whatever the
+              voltage it finds (it follows the voltage, it does not hold it)
+  - `K_pll_p`, `K_pll_i`, `τ_pll` — the PLL, unconverted (they act on an angle)
+  - `S`     — pu, the rating
+"""
+function _gfl_arrays(net::NetworkModel)
+    ks = [k for (k, i) in pairs(net.inverters) if i.mode === :grid_following]
+    invs = net.inverters[ks]
+    Sb = net.S_base
+    return (; k = ks, id = Symbol[i.id for i in invs],
+            bus = Int[net.bus_index[i.bus] for i in invs],
+            P = Float64[i.P0 / Sb for i in invs], Q = Float64[i.Q0 / Sb for i in invs],
+            K_pll_p = Float64[i.K_pll_p for i in invs],
+            K_pll_i = Float64[i.K_pll_i for i in invs],
+            τ_pll = Float64[i.τ_pll for i in invs],
+            S = Float64[i.S_rated / Sb for i in invs])
 end
 
 """

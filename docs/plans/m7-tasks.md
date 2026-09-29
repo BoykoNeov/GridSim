@@ -272,6 +272,15 @@ runs.
 
 ## Step 5 — grid-following in the detailed tier
 
+- [x] **Power flows (commit A)**: a grid-following inverter is a constant-power
+      `P0 + jQ0` injection on a load-type bus in `ac_powerflow` (fixed `Qfix`, not the
+      ZIP law), and an injection in `bus_injections`/`dc_powerflow`; closed form
+      `V_t² = (V_g² + √(V_g⁴ − 4X²P²))/2` to 1e-12. `Inverter.τ_pll` added (D12).
+- [x] **The transfer limit, in two halves (D13)**: band edge 1.9615 pu bracketed to
+      1e-4 through `ac_powerflow`; the nose 2.5 pu bracketed to 1e-4 on the band-free
+      first round, always on the high branch. The plan's single scan was unreachable.
+- [x] D5: a model with nothing to follow is refused naming the inverters.
+- [x] Mutations C1–C4 executed, each red. Core **3848**.
 - [ ] Ideal current source in its PLL frame; PLL form chosen and recorded.
 - [ ] Existence limit `P = |V_g|²/(2X)` located by a scan.
 - [ ] PLL closed-form phase-step response, peak predicted before the run.

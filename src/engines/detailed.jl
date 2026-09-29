@@ -956,7 +956,12 @@ function _check_voltage_band(net::NetworkModel, Vm::AbstractVector{Float64},
             "A collapsed-voltage solution is SELF-CONSISTENT and converges to a " *
             "TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), " *
             "so this band is the discriminator and the residual is not. Either the " *
-            "case is genuinely infeasible, or the solve fell into the spurious basin."))
+            "case is genuinely infeasible, or the solve fell into the spurious basin — " *
+            "or, with a grid-following inverter pushing power through a reactance, it " *
+            "is a REAL operating point on the right branch that sits below the band: " *
+            "such an inverter reaches its transfer limit only at |V| ≈ 0.71 pu, so " *
+            "between the band's edge and that limit the band IS the limit this repo " *
+            "enforces (m7-context.md D13)."))
     end
     return nothing
 end

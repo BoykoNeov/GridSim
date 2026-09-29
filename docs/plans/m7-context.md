@@ -433,3 +433,43 @@ it — which is what that comparison is for. Measured in step 4's commit C: it i
 red there, and the FLAT RUN is what catches it first — their power filter starts
 0.016 pu away from rest, which is `|I|²X_c` at that operating point.
 
+## D12 — The PLL is PowerDynamics' `PLL_LPF`, taken exactly (step 5)
+
+The plan left "whichever PLL form is chosen" open. Taken: `PLL_LPF` line for line —
+the error `e = −sin θ·u_r + cos θ·u_i` (NOT divided by `|V|`), a PI on it into a
+first-order filter on the frequency, `θ̇ = Δω`. Hurdle 12's claim is that the gap to
+`SimpleGFL` shrinks as its current loop stiffens; that is clean only if the current
+loop and the filter inductor are the ONLY differences. Leave the output filter out
+and the gap levels off at the filter's share, so "shrinks" becomes "shrinks to a floor
+that then needs explaining".
+
+Costs, stated: one new field, `Inverter.τ_pll` (default `1/(2π·300)`, guarded > 0,
+walked by the scenario file like every numeric field); the gains act on `|V|·sin`,
+so "base-free, on an angle" is exact only at `|V| = 1`; and the loop is THIRD order —
+D0 and the plan said second. The phase-step prediction is therefore the matrix
+exponential of the linearised 3×3 loop, computed by hand in the test.
+
+## D13 — The transfer limit is behind the band, so it is checked in two halves (step 5)
+
+The plan's scan — "initialisation succeeds below `P = |V_g|²/(2X)` and is refused
+above it" — is UNREACHABLE as written. At unity power factor the nose sits at
+`V_t = V_g/√2` ≈ 0.71 pu for ANY `X`, and every steady-state solve here refuses
+`|V| < 0.9` (M5's band: the only discriminator between the real solution and the
+collapsed one). So through the solvers the band refuses first.
+
+Split, both pre-registered in closed form on the two-bus fixture (`X = 0.2`):
+
+  (a) **where the solvers refuse** — the band edge, `P_band = 0.9·√(V_g² − 0.81)/X`
+      = 1.9615 pu: `ac_powerflow` succeeds at 0.9999·P_band and refuses at
+      1.0001·P_band;
+  (b) **where the equations stop** — the nose, `P = V_g²/(2X)` = 2.5 pu, on the
+      band-free first round (`_ac_first_round` + `_ac_newton`): it converges at
+      0.9, 0.99, 0.999 and 0.9999 of the nose, every time on the HIGH branch of
+      the closed form (agreement 1e-14), and fails at 1.0001.
+
+The band's error message said the case was "genuinely infeasible, or the spurious
+basin"; between the two points it is neither — a real operating point on the right
+branch — and the message now says so. The constant-current bound `X·i_d ≤ V_g` from
+D0 is a different (and also unreachable) statement and is not what a constant-power
+power flow meets.
+

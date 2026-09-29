@@ -40,7 +40,8 @@ end
         @test Inverter(:I, :B, :grid_following, 100.0, 80.0; Q0 = 60.0).Q0 == 60.0
         @test Inverter(:I, :B, :grid_following, 100.0, -80.0).P0 == -80.0   # charging
         for kw in ((; K_p = 0.0), (; τ_p = 0.0), (; K_q = -0.01), (; τ_q = 0.0),
-                   (; V_set = 0.0), (; X_c = 0.0), (; K_pll_p = 0.0), (; K_pll_i = 0.0))
+                   (; V_set = 0.0), (; X_c = 0.0), (; K_pll_p = 0.0), (; K_pll_i = 0.0),
+                   (; τ_pll = 0.0))
             # Guarded in BOTH modes, whichever one reads the field.
             @test_throws ArgumentError Inverter(:I, :B, :grid_forming, 100.0, 1.0; kw...)
             @test_throws ArgumentError Inverter(:I, :B, :grid_following, 100.0, 1.0; kw...)
@@ -142,14 +143,9 @@ end
             # for good (a tier boundary) — its own testset checks the message.
             mode === :grid_following && @test refuses(() -> SwingEngine(net))
             # Step 4 taught the detailed tier and the power flows the grid-forming
-            # kind (their own testsets check what they do with it); grid-following
-            # waits for step 5.
-            if mode === :grid_following
-                @test refuses(() -> init!(DetailedEngine, net))
-                @test refuses(() -> ac_powerflow(net))
-                @test refuses(() -> dc_powerflow(net))
-                @test refuses(() -> bus_injections(net))   # exported on its own
-            end
+            # kind, step 5 taught the power flows the grid-following one (their own
+            # testsets check what they do with them).
+            mode === :grid_following && @test refuses(() -> init!(DetailedEngine, net))
             @test refuses(() -> economic_dispatch(net))
         end
         # The swing tier's message says the grid-following refusal is a boundary,
@@ -170,7 +166,8 @@ end
                      :bus_roles, :branch_arrays])
         # Consumers a later M7 step has TAUGHT inverters (their own testsets check
         # what they do with them). Growing this set is how a step lifts a refusal.
-        learned = Set([:coi_model])
+        learned = Set([:coi_model,
+                       :bus_injections, :dc_powerflow, :ac_powerflow])   # M7 step 5
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)
@@ -234,7 +231,7 @@ end
         invs = [Inverter(:gfm, :A, :grid_forming, 120.0, 40.0; Q0 = 5.0, K_p = 0.03,
                          τ_p = 0.2, K_q = 0.02, τ_q = 0.05, V_set = 1.02, X_c = 0.12),
                 Inverter(:gfl, :C, :grid_following, 80.0, 20.0; Q0 = -3.0,
-                         K_pll_p = 50.0, K_pll_i = 700.0)]
+                         K_pll_p = 50.0, K_pll_i = 700.0, τ_pll = 0.002)]
         net = NetworkModel(100.0, 50.0, buses, br, Machine[],
                            [Load(:dB, :B, 60.0, 10.0)]; inverters = invs, slack = :A)
         path = write_scenario(joinpath(dir, "inv.toml"), net)
@@ -246,7 +243,7 @@ end
         end
         # `τ` is not a bare TOML key; it is spelled `tau` on disk.
         txt = read(path, String)
-        @test occursin("tau_p", txt) && !occursin("τ", txt)
+        @test occursin("tau_p", txt) && occursin("tau_pll", txt) && !occursin("τ", txt)
     end
 
     @testset "a hand-written minimal record takes the constructor's defaults" begin
@@ -670,13 +667,6 @@ _m7_same(a::ACPowerFlow, b::ACPowerFlow) =
         @test occursin("slack bus A", msg) && occursin("rated 50.0 MVA", msg)
     end
 
-    @testset "grid-following is still refused by the power flows (step 5)" begin
-        net = _m7_pair(mode = :grid_following)
-        for f in (ac_powerflow, dc_powerflow, bus_injections)
-            msg = try; f(net); ""; catch e; e.msg; end
-            @test occursin("I2", msg) && occursin("step 5", msg)
-        end
-    end
 end
 
 # The equivalence run: inverter and hand-converted machine twin, BOTH started from
@@ -863,5 +853,79 @@ end
         end
         # A relay between the two machines is untouched.
         @test init!(DetailedEngine, net; out_of_step = [(:B1, :B3) => 1.0]) isa DetailedEngine
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5 — the grid-following inverter.
+#
+# The two-bus fixture of Hurdle 11 claim 3: a machine holding V_g at A (the power
+# flow holds a machine's V_set at its bus), a lossless line X, and a grid-following
+# inverter at B injecting P at unity power factor. Its closed form, derived BY HAND:
+# the current is in phase with V_t, so V_g = V_t − jX·I with jX·I ⟂ V_t, hence
+# |V_g|² = V_t² + X²·i_d² and V_t·i_d = P, i.e.
+#     V_t² = (V_g² + √(V_g⁴ − 4X²P²))/2       (the high branch)
+# with no solution past the nose P = V_g²/(2X), where V_t = V_g/√2.
+const _X5 = 0.2
+_m7_gfl_pair(P_MW; V_g = 1.0, Q_MVAr = 0.0) =
+    NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+        [Branch(:AB, :A, :B, _X5, 5000.0)],
+        [Machine(:G, :A, 1000.0, 5.0, 1.0, 0.3, 1.0, -P_MW; V_set = V_g)];
+        inverters = [Inverter(:pv, :B, :grid_following, 400.0, P_MW; Q0 = Q_MVAr)])
+_m7_Vt(P; V_g = 1.0) = sqrt((V_g^2 + sqrt(V_g^4 - 4 * _X5^2 * P^2)) / 2)
+
+@testset "M7 step 5 — the power flows learn the grid-following inverter" begin
+
+    @testset "AC: a constant-power injection, on the closed form" begin
+        sol = ac_powerflow(_m7_gfl_pair(100.0))
+        @test sol.roles == [:slack, :load]            # it holds nothing
+        @test bus_voltage(sol, :B) ≈ _m7_Vt(1.0) atol = 1e-12
+        g = bus_generation(sol, :B)                    # its output, as scheduled
+        @test g.P ≈ 1.0 atol = 1e-12
+        @test abs(g.Q) < 1e-12
+        # A reactive schedule is held too, and changes the voltage the right way.
+        q = ac_powerflow(_m7_gfl_pair(100.0; Q_MVAr = 20.0))
+        @test bus_generation(q, :B).Q ≈ 0.2 atol = 1e-12
+        @test bus_voltage(q, :B) > bus_voltage(sol, :B)
+    end
+
+    @testset "DC: an injection like any other" begin
+        net = _m7_gfl_pair(100.0)
+        @test bus_injections(net) == [-1.0, 1.0]
+        @test dc_powerflow(net).θ[2] ≈ _X5 * 1.0 atol = 1e-15
+    end
+
+    @testset "the transfer limit, where it is and where the solvers refuse (D13)" begin
+        # PRE-REGISTERED, BOTH IN CLOSED FORM. The nose is at P = V_g²/(2X) = 2.5 pu,
+        # where V_t = 1/√2 ≈ 0.71 — far below the band's 0.9. So the plan's scan
+        # ("initialisation succeeds below the limit and is refused above it") is
+        # unreachable through `ac_powerflow`: the band refuses first, at the P where
+        # V_t = 0.9, i.e. P_band = 0.9·√(V_g² − 0.81)/X = 1.96 pu. Two checks instead.
+        P_band = 0.9 * sqrt(1 - 0.81) / _X5
+        P_nose = 1 / (2 * _X5)
+        # (a) Where the solver refuses: the band edge, bracketed to 1e-4.
+        @test ac_powerflow(_m7_gfl_pair(100 * 0.9999 * P_band)) isa ACPowerFlow
+        msg = try; ac_powerflow(_m7_gfl_pair(100 * 1.0001 * P_band)); ""; catch e; e.msg; end
+        @test occursin("REAL operating point", msg)   # and it says so, not "spurious"
+        # (b) Where the equations stop: the nose, on the band-free first round.
+        newton(P) = begin
+            c, x0 = GridSim._ac_first_round(_m7_gfl_pair(100P))
+            x, _ = GridSim._ac_newton(c, x0, 1e-12, 200)
+            GridSim._ac_expand(c, x)[1][2]
+        end
+        for f in (0.9, 0.99, 0.999, 0.9999)             # the HIGH branch, every time
+            @test newton(f * P_nose) ≈ _m7_Vt(f * P_nose) atol = 1e-12
+        end
+        @test newton(0.9999 * P_nose) < 0.72             # it really was near the nose
+        @test_throws ErrorException newton(1.0001 * P_nose)
+    end
+
+    @testset "nothing to follow is refused by name (D5)" begin
+        # Two buses, a load and a grid-following inverter, no voltage source at all.
+        net = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+            [Branch(:AB, :A, :B, 0.2, 500.0)], Machine[], [Load(:D, :B, 30.0, 0.0)];
+            inverters = [Inverter(:pv, :A, :grid_following, 50.0, 30.0)])
+        msg = try; ac_powerflow(net); ""; catch e; e.msg; end
+        @test occursin("pv", msg) && occursin("nothing to follow", msg)
     end
 end

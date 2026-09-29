@@ -180,6 +180,19 @@ function _ac_schedule(net::NetworkModel)
         Q_min[v] -= ia.Q_cap[j]
         Q_max[v] += ia.Q_cap[j]
     end
+    # A grid-following inverter (M7 step 5) holds nothing: it injects its scheduled
+    # `P0 + jQ0` whatever voltage it finds, so it adds to the bus's generation and to
+    # a fixed reactive injection `Qfix`, and does NOT make the bus a source. A bus
+    # carrying only one is a load bus with a negative load — at CONSTANT power, not
+    # the ZIP law a `Load` follows.
+    Pfix = zeros(Float64, n)
+    Qfix = zeros(Float64, n)
+    fa = _gfl_arrays(net)
+    for j in eachindex(fa.bus)
+        Pgen[fa.bus[j]] += fa.P[j]
+        Pfix[fa.bus[j]] += fa.P[j]
+        Qfix[fa.bus[j]] += fa.Q[j]
+    end
     Pl  = zeros(Float64, n)
     Ql  = zeros(Float64, n)
     a_i = zeros(Float64, n)
@@ -192,7 +205,7 @@ function _ac_schedule(net::NetworkModel)
         a_i[v] = la.a_i[k]
         a_p[v] = la.a_p[k]
     end
-    return (; Pgen, V_set, Q_min, Q_max, has_source, Pl, Ql, a_i, a_p)
+    return (; Pgen, V_set, Q_min, Q_max, has_source, Pfix, Qfix, Pl, Ql, a_i, a_p)
 end
 
 """
@@ -211,6 +224,8 @@ different problem wearing the same object (M3's rebuild-per-cell rule).
   - `Vm_held` — the magnitude at the slack and at every unswitched generator bus
   - `Qgen_held` — the reactive injection from machines at a bus whose limit has
     bound (zero everywhere else, which is also the truth at a bus with no machine)
+  - `Qfix` — the grid-following inverters' scheduled reactive injection (M7 step 5),
+    held at every bus whatever its role
 """
 struct _ACContext
     n::Int
@@ -221,6 +236,7 @@ struct _ACContext
     Vm_held::Vector{Float64}
     Pgen::Vector{Float64}
     Qgen_held::Vector{Float64}
+    Qfix::Vector{Float64}
     Pl::Vector{Float64}
     Ql::Vector{Float64}
     a_i::Vector{Float64}
@@ -300,7 +316,7 @@ function _ac_residual!(F, x, c::_ACContext)
     off = length(c.nonslack)
     @inbounds for (i, v) in pairs(c.pq)
         z = _zip_scale(Vm[v], c.a_i[v], c.a_p[v])
-        F[off + i] = Q[v] - (c.Qgen_held[v] - c.Ql[v] * z)
+        F[off + i] = Q[v] - (c.Qgen_held[v] + c.Qfix[v] - c.Ql[v] * z)
     end
     return nothing
 end
@@ -442,6 +458,41 @@ function _ac_newton(c::_ACContext, x0::Vector{Float64}, abstol::Float64, maxiter
     return (Vector{Float64}(sol.u), maximum(abs, F))
 end
 
+# One round's problem: which buses hold a magnitude and which solve for one, given the
+# generator buses switched to a limit so far. Built fresh each round (see
+# `_ACContext`), and factored out so `_ac_first_round` builds EXACTLY the first one.
+function _ac_round_context(sch, Y, v_slack::Int, nonslack::Vector{Int},
+                           limited::Vector{Int}, Qheld::Vector{Float64})
+    n = length(sch.Pgen)
+    held = Set(limited)
+    pq = [v for v in nonslack if !sch.has_source[v] || v in held]
+    Vm_held = [sch.has_source[v] && !(v in held) ? sch.V_set[v] : 1.0 for v in 1:n]
+    return _ACContext(n, Y, v_slack, nonslack, pq, Vm_held,
+                      sch.Pgen, Qheld, sch.Qfix, sch.Pl, sch.Ql, sch.a_i, sch.a_p)
+end
+
+"""
+    _ac_first_round(net) -> (context, flat_start)
+
+The first round of `ac_powerflow`'s solve — the problem and its flat start — with
+NONE of the checks after it: no band, no ratings, no switching. For one use: locating
+where the equations themselves stop having a solution, which the band hides (M7 step
+5, `m7-context.md` D13). A grid-following inverter pushing power through a reactance
+reaches its transfer limit at `|V| = V_g/√2` ≈ 0.71 pu, far below the band's 0.9, so
+through `ac_powerflow` the band is what refuses and the limit is never seen. Hand the
+result to `_ac_newton`.
+"""
+function _ac_first_round(net::NetworkModel)
+    sch = _ac_schedule(net)
+    v_slack = net.bus_index[net.slack]
+    nonslack = [v for v in 1:length(net.buses) if v != v_slack]
+    c = _ac_round_context(sch, _ac_admittance(net), v_slack, nonslack, Int[],
+                          zeros(Float64, length(net.buses)))
+    x0 = zeros(Float64, length(nonslack) + length(c.pq))
+    x0[length(nonslack)+1:end] .= 1.0
+    return c, x0
+end
+
 """
     ac_powerflow(net::NetworkModel; abstol = 1e-12, maxiters = 200,
                  max_switch_rounds = 20) -> ACPowerFlow
@@ -500,15 +551,15 @@ function ac_powerflow(net::NetworkModel;
                       abstol::Real = 1.0e-12,
                       maxiters::Integer = 200,
                       max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
-    # M7 step 1 refused every inverter; step 4 lifts the grid-forming kind.
-    _assert_no_grid_following(net, "ac_powerflow"; unbuilt =
-        "(M7 step 5: grid-following as a scheduled injection.)")
+    # M7 step 1 refused every inverter; step 4 lifted the grid-forming kind and step
+    # 5 the grid-following one (a scheduled injection). Nothing is refused by kind.
     n = length(net.buses)
     v_slack = net.bus_index[net.slack]           # the constructor guarantees this resolves
     sch = _ac_schedule(net)
     sch.has_source[v_slack] || throw(ArgumentError(
         "ac_powerflow: the declared slack bus :$(net.slack) carries no machine and no " *
         "grid-forming inverter — no voltage source. " *
+        _nothing_to_follow(net) *
         "NetworkModel accepts that — a half-built model with buses placed and no " *
         "machines yet must stay constructible — but a power flow needs a voltage " *
         "source at the reference bus, and there is nothing there to be one."))
@@ -527,11 +578,8 @@ function ac_powerflow(net::NetworkModel;
 
     round = 0
     while true
-        held = Set(limited)
-        pq = [v for v in nonslack if !sch.has_source[v] || v in held]
-        Vm_held = [sch.has_source[v] && !(v in held) ? sch.V_set[v] : 1.0 for v in 1:n]
-        c = _ACContext(n, Y, v_slack, nonslack, pq, Vm_held,
-                       sch.Pgen, Qheld, sch.Pl, sch.Ql, sch.a_i, sch.a_p)
+        c = _ac_round_context(sch, Y, v_slack, nonslack, limited, Qheld)
+        pq = c.pq
         # Flat start on the first round; on a later one, the previous answer with
         # the newly freed magnitudes seeded at where they already were.
         x0 = zeros(Float64, length(nonslack) + length(pq))
@@ -555,12 +603,16 @@ function ac_powerflow(net::NetworkModel;
         # Which unswitched generator buses cannot supply what they were asked for.
         newly = Int[]
         newly_at_max = Bool[]
+        held = Set(limited)
         for v in gen_buses
             v in held && continue
-            if Qgen[v] > sch.Q_max[v] + _AC_QLIM_TOL
+            # The SOURCES' output only: a grid-following inverter's fixed share on the
+            # same bus is not theirs to cap (M7 step 5).
+            Qsrc = Qgen[v] - sch.Qfix[v]
+            if Qsrc > sch.Q_max[v] + _AC_QLIM_TOL
                 push!(newly, v); push!(newly_at_max, true)
                 Qheld[v] = sch.Q_max[v]
-            elseif Qgen[v] < sch.Q_min[v] - _AC_QLIM_TOL
+            elseif Qsrc < sch.Q_min[v] - _AC_QLIM_TOL
                 push!(newly, v); push!(newly_at_max, false)
                 Qheld[v] = sch.Q_min[v]
             end
@@ -616,7 +668,8 @@ function ac_powerflow(net::NetworkModel;
     _check_voltage_band(net, Vm, what)
     _check_branch_ratings(net, mva, what)
     _check_residual(res, what)
-    _ac_check_inverter_slack(net, v_slack, Pgen[v_slack], Qgen[v_slack])
+    _ac_check_inverter_slack(net, v_slack, Pgen[v_slack] - sch.Pfix[v_slack],
+                             Qgen[v_slack] - sch.Qfix[v_slack])
 
     held = Set(limited)
     roles = [v == v_slack ? :slack :
