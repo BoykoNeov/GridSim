@@ -62,5 +62,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "scenario_file.jl"))
     include(joinpath(@__DIR__, "m6_steady_state.jl"))
     include(joinpath(@__DIR__, "m6_economic_dispatch.jl"))
+    include(joinpath(@__DIR__, "m7_inverters.jl"))
 
 end

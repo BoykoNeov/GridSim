@@ -428,6 +428,10 @@ function ac_powerflow(net::NetworkModel;
                       abstol::Real = 1.0e-12,
                       maxiters::Integer = 200,
                       max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
+    # M7 step 1 — refused until steps 4 and 5 teach the solve both inverter kinds.
+    _assert_no_inverters(net, "ac_powerflow"; unbuilt =
+        "(M7 steps 4 and 5: grid-forming as a voltage-controlled bus, grid-following " *
+        "as a scheduled injection.)")
     n = length(net.buses)
     v_slack = net.bus_index[net.slack]           # the constructor guarantees this resolves
     sch = _ac_schedule(net)

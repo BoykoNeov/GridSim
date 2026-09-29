@@ -183,6 +183,48 @@ Gains are declared on the **inverter's own rating**, like `Machine.H` and
 `Machine.D`, and converted to the system base in the compiled view only (D1's
 base finding). The field list is settled in step 1, not here.
 
+### What step 1 settled
+
+The fields are `id`, `bus`, `mode`, `S_rated`, `P0`, `Q0`; the grid-forming
+`K_p`, `τ_p`, `K_q`, `τ_q`, `V_set`, `X_c`; the grid-following `K_pll_p`,
+`K_pll_i`. Everything after `mode` is a keyword with a default, and the defaults
+are chosen the way `Machine`'s are:
+
+- **`K_q = 0` is the default because it is the degeneration** — the voltage is
+  held, which is what makes the grid-forming inverter exactly a swing machine
+  (Hurdle 11). `K_p = 0.05` and `τ_p = τ_q = 0.1` are `IdealDroopInverter`'s own
+  defaults, so a default-built inverter is the one step 0 measured; `X_c = 0.1`
+  is a typical filter-plus-transformer reactance and is unread outside the detailed
+  tier.
+- **The PLL defaults are `SimpleGFL`'s** (`2π·10` and `(2π·10)²/4`): a 10 Hz loop,
+  critically damped, asserted in `test/`.
+- **One rating check, and only one**: `|P0 + jQ0| ≤ S_rated`. A machine is not
+  checked this way (it has a short-term overload); an inverter's switches are rated
+  for their current, so a dispatch above its rating is wrong on its face.
+- **Every guard fires in both modes**, including on fields that mode does not
+  read — `Machine.Tg`'s precedent (data that is only sometimes read is the data
+  that gets set wrong and noticed a milestone later).
+- **No frequency response on the grid-following mode.** D3's table allowed "zero
+  response unless given frequency droop"; step 1 gives it none, so a grid-following
+  inverter in M7 is always a constant-power source. Named in the docstring as not
+  here, with current limiting.
+
+Two bookkeeping choices the plan did not spell out:
+
+- **An inverter id may not equal a machine id.** Generation is looked up by id
+  ("the unit that tripped"), so the two collections share a namespace. Loads do not
+  join it.
+- **The default reference bus**, with no machine in the model, is the first
+  grid-forming inverter's bus — never a grid-following one's, and the first bus
+  when there is neither. With any machine present the pre-M7 default is untouched,
+  so no existing default moves.
+
+**The refusal goes FIRST in every tier guard.** An inverter's bus usually carries
+no machine, so where a tier's guards run "one machine per bus" before the inverter
+check, the message reports the symptom (a bus with nothing on it) instead of the
+cause. Caught while writing step 1's tests: `SwingEngine` and `coi_model` both had
+the order wrong on the first draft.
+
 ---
 
 ## D3 — Which tier holds which inverter

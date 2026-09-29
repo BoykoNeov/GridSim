@@ -33,6 +33,8 @@ using GridSim: NetworkModel, Layout, read_scenario, load_bus_system
 # produces both of this window's models; `machine_at` is how a bus is tied to the
 # machine standing on it, which is the mapping these tests exist to pin.
 using GridSim: governed_ring, machine_at, Machine, Bus, Branch
+# M7 step 1 — the editor refuses a model carrying inverters until step 8 teaches it.
+using GridSim: Inverter, write_scenario
 
 GLMakie.activate!(visible = false)
 

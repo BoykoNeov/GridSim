@@ -2155,3 +2155,21 @@ end
 end
 
 end # M6 step 4 oracle B
+
+# ---------------------------------------------------------------------------
+# M7 step 1 — both builders refuse a model carrying inverters, by name, until
+# steps 4 and 5 map them onto IdealDroopInverter / SimpleGFL. A builder that ran the
+# model with the inverter silently absent would hand both sides a DIFFERENT network
+# and the comparison would go green on it.
+# ---------------------------------------------------------------------------
+@testset "M7 step 1: the builders refuse inverters" begin
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0)]
+    net = NetworkModel(100.0, 50.0, buses, [Branch(:L, :B1, :B2, 0.2, 500.0)],
+                       [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, -30.0),
+                        Machine(:G2, :B2, 200.0, 5.0, 2.0, 0.3, 1.0, 0.0)];
+                       inverters = [Inverter(:INV, :B2, :grid_forming, 50.0, 30.0)])
+    names_it(f) = try; f(); false; catch e; e isa ArgumentError && occursin("INV", e.msg); end
+    @test names_it(() -> build_oracle(net))
+    @test names_it(() -> build_oracle(net; tier = :sauer_pai))
+    @test names_it(() -> to_powersystems(net))
+end

@@ -595,6 +595,9 @@ function _assert_detailed_tier(net::NetworkModel)
     # `(Vf − Vt)/(jX)`, so a lossy branch would be silently simulated as a lossless
     # one. Refused here until M6 step 3's power flow reads it.
     _assert_lossless_branches(net, "DetailedEngine")
+    # M7 step 1 — refused until steps 4 (grid-forming) and 5 (grid-following).
+    _assert_no_inverters(net, "DetailedEngine"; unbuilt =
+        "(M7 steps 4 and 5 build the two inverter kinds at this tier.)")
     for (v, ks) in pairs(net.machines_at_bus)
         length(ks) <= 1 || throw(ArgumentError(
             "DetailedEngine: bus $(net.buses[v].id) carries $(length(ks)) machines " *

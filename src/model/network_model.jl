@@ -627,6 +627,142 @@ struct Load
 end
 
 """
+    Inverter(id, bus, mode, S_rated, P0; Q0 = 0.0,
+             K_p = 0.05, τ_p = 0.1, K_q = 0.0, τ_q = 0.1, V_set = 1.0, X_c = 0.1,
+             K_pll_p = 2π·10, K_pll_i = (2π·10)²/4)
+
+An inverter-based resource — solar, battery, or anything else that reaches the
+grid through power electronics rather than a rotating machine (M7,
+`docs/plans/m7-context.md` D2). **Not a `Machine` with `H = 0`**: `Machine` refuses
+a zero inertia because its swing equation divides by `2H`, and a grid-following
+inverter has none of a machine's states at all.
+
+`mode` is one of two control philosophies, and they are different physics rather
+than different settings:
+
+  - `:grid_forming` — the inverter **sets** a voltage (magnitude and angle) and lets
+    the current be whatever the network draws. Its frequency comes from a droop on
+    measured, low-pass-filtered power: `ω = 1 − K_p·(P_filt − P_set)` with
+    `τ_p·dP_filt/dt = P_meas − P_filt`, and its voltage from
+    `V = V_set − K_q·(Q_filt − Q_set)`. With `K_q = 0` that is **algebraically a
+    swing machine** with `2H = τ_p/K_p`, `D = 1/K_p` (Hurdle 11) — the reason
+    `K_q = 0` is the default: it is the degeneration, like `Machine`'s classical
+    defaults.
+  - `:grid_following` — the inverter **follows** a voltage something else sets. It
+    measures its bus angle with a phase-locked loop (PLL) and injects a current
+    phased to it that delivers `P0 + jQ0`. It needs a voltage source elsewhere in
+    the network to follow (D5), and it has no frequency of its own — only the PLL's
+    estimate of its bus's.
+
+Fields — dispatch and rating, read by both modes:
+
+  - `S_rated` — MVA, the inverter's own base. **Gains are on this base** and are
+    converted to the system base in the compiled views only, as `Machine.H` is.
+  - `P0` — MW, active power **injected** (negative = absorbing, e.g. a charging
+    battery). Same sign convention as `Machine.P0`, opposite to `Load.P0`.
+  - `Q0` — MVAr, reactive power injected. The grid-following schedule, and the
+    grid-forming inverter's `Q_set` for its voltage droop.
+
+Grid-forming only (unread by `:grid_following`):
+
+  - `K_p` — pu frequency per pu power, own base. `0.05` is a 5 % droop and is
+    PowerDynamics' `IdealDroopInverter` default.
+  - `τ_p` — s, the active-power measurement filter. With `K_p` it sets the virtual
+    inertia `τ_p/(2K_p)` (1 s on the inverter's own base at the defaults).
+  - `K_q` — pu voltage per pu reactive power, own base. `0` holds the voltage.
+  - `τ_q` — s, the reactive-power measurement filter.
+  - `V_set` — pu, the voltage magnitude setpoint.
+  - `X_c` — pu, own base, the coupling reactance (output filter plus transformer)
+    the detailed tier puts the voltage behind. **Unread by the swing tier**, which
+    puts every source at its bus (`m7-context.md` D3) — the same asymmetry
+    `Machine.Xd′` carries.
+
+Grid-following only (unread by `:grid_forming`):
+
+  - `K_pll_p`, `K_pll_i` — the PLL's proportional (1/s) and integral (1/s²) gains on
+    the angle error. Base-free: they act on an angle. The defaults are
+    PowerDynamics' `SimpleGFL` ones — a 10 Hz loop, critically damped
+    (`ζ = K_pll_p/(2√K_pll_i) = 1`).
+
+**What is not here, and is named rather than implied** (`m7-context.md` D8): no
+current limit (a real grid-forming inverter's "inertia" is capped by its overcurrent
+headroom, which this model does not have), no fault ride-through, no DC link, and
+no frequency response on the grid-following mode. The one rating check the
+constructor makes is the dispatch's own: `|P0 + jQ0| ≤ S_rated`, because unlike a
+machine an inverter has no short-term overload to lean on.
+"""
+struct Inverter
+    id::Symbol
+    bus::Symbol
+    mode::Symbol       # :grid_forming | :grid_following
+    S_rated::Float64   # MVA   — own base
+    P0::Float64        # MW    — injected (negative = absorbing)
+    Q0::Float64        # MVAr  — injected
+    # grid-forming droop (unread by :grid_following)
+    K_p::Float64       # pu freq / pu power, own base
+    τ_p::Float64       # s
+    K_q::Float64       # pu volt / pu reactive power, own base
+    τ_q::Float64       # s
+    V_set::Float64     # pu
+    X_c::Float64       # pu, own base
+    # grid-following PLL (unread by :grid_forming)
+    K_pll_p::Float64   # 1/s
+    K_pll_i::Float64   # 1/s²
+
+    function Inverter(id::Symbol, bus::Symbol, mode::Symbol, S_rated::Real, P0::Real;
+                      Q0::Real = 0.0,
+                      K_p::Real = 0.05, τ_p::Real = 0.1, K_q::Real = 0.0,
+                      τ_q::Real = 0.1, V_set::Real = 1.0, X_c::Real = 0.1,
+                      K_pll_p::Real = 2π * 10, K_pll_i::Real = (2π * 10)^2 / 4)
+        mode in (:grid_forming, :grid_following) || throw(ArgumentError(
+            "Inverter $id: mode must be :grid_forming or :grid_following, got :$mode. " *
+            "They are different physics — one sets a voltage, the other follows one."))
+        S_rated > 0 || throw(ArgumentError(
+            "Inverter $id: S_rated ($S_rated) must be > 0 MVA."))
+        all(isfinite, (P0, Q0)) || throw(ArgumentError(
+            "Inverter $id: P0 ($P0) and Q0 ($Q0) must be finite."))
+        hypot(P0, Q0) ≤ S_rated * (1 + 1e-12) || throw(ArgumentError(
+            "Inverter $id: dispatch |P0 + jQ0| = $(hypot(P0, Q0)) MVA exceeds " *
+            "S_rated ($S_rated MVA). An inverter has no short-term overload — its " *
+            "switches are rated for its current."))
+        # Every divisor and every filter constant is guarded even when this mode does
+        # not read it: data that is only sometimes read is exactly the data that gets
+        # set wrong and noticed a milestone later (the `Machine.Tg` precedent).
+        K_p > 0 || throw(ArgumentError(
+            "Inverter $id: K_p ($K_p) must be > 0 — the droop gain divides the " *
+            "virtual inertia τ_p/(2K_p) and the damping 1/K_p."))
+        τ_p > 0 || throw(ArgumentError(
+            "Inverter $id: τ_p ($τ_p) must be > 0 s — it is the power filter's " *
+            "time constant. (τ_p → 0 is a droop with no inertia at all, and not the " *
+            "same model: it removes a state.)"))
+        K_q ≥ 0 || throw(ArgumentError(
+            "Inverter $id: K_q ($K_q) must be ≥ 0 — a negative voltage droop raises " *
+            "the voltage as reactive output rises, which is positive feedback. Use " *
+            "K_q = 0 (the default) to hold the voltage."))
+        τ_q > 0 || throw(ArgumentError(
+            "Inverter $id: τ_q ($τ_q) must be > 0 s."))
+        V_set > 0 || throw(ArgumentError(
+            "Inverter $id: V_set ($V_set) must be > 0 pu — zero is a collapsed bus."))
+        X_c > 0 || throw(ArgumentError(
+            "Inverter $id: X_c ($X_c) must be > 0 pu — it is the coupling reactance " *
+            "the detailed tier divides by."))
+        K_pll_p > 0 || throw(ArgumentError(
+            "Inverter $id: K_pll_p ($K_pll_p) must be > 0 1/s."))
+        K_pll_i > 0 || throw(ArgumentError(
+            "Inverter $id: K_pll_i ($K_pll_i) must be > 0 1/s²."))
+        return new(id, bus, mode, Float64(S_rated), Float64(P0), Float64(Q0),
+                   Float64(K_p), Float64(τ_p), Float64(K_q), Float64(τ_q),
+                   Float64(V_set), Float64(X_c), Float64(K_pll_p), Float64(K_pll_i))
+    end
+end
+
+# Every field `Inverter` carries beyond `id`/`bus`/`mode`, in declaration order. Named
+# once so the scenario file's writer and reader, and any rebuild helper, walk the same
+# list rather than each keeping its own (the `_MACHINE_FIELDS` precedent).
+const _INVERTER_NUMERIC = (:S_rated, :P0, :Q0, :K_p, :τ_p, :K_q, :τ_q, :V_set, :X_c,
+                           :K_pll_p, :K_pll_i)
+
+"""
     NetworkModel(S_base, f0, buses, branches, machines, loads = Load[]; slack = nothing)
 
 The canonical M2 network: buses, the branches between them, and the machines on
@@ -640,6 +776,13 @@ them, plus the system-wide bases.
                to the bus of `machines[1]` *after* the bus sort, which on every
                pre-M6 model is the bus of the first machine and therefore
                reproduces `DetailedEngine`'s old default exactly.
+  - `inverters` — inverter-based resources (M7 step 1, `m7-context.md` D2).
+               Keyword-only, default empty, so every pre-M7 model is the model it
+               was. Stored sorted by bus like the machines; `inverters_at_bus` is
+               the vertex → indices map. **A bus may carry an inverter, a machine,
+               both, or several of each** as far as the MODEL is concerned — which
+               combinations a tier can run is the engine's business, as it has
+               been for machines since M5 D3.
 
 **The slack is a bus, and `DetailedEngine`'s `slack` is a machine.** They are two
 fields, in bijection only on a model where the reference bus carries exactly one
@@ -702,11 +845,14 @@ struct NetworkModel
     machines_at_bus::Vector{Vector{Int}}  # vertex -> indices into `machines` (may be empty)
     load_at_bus::Vector{Int}          # vertex -> index into `loads`, or 0 for none
     slack::Symbol                     # id of the reference bus (M6 step 1, D3)
+    inverters::Vector{Inverter}       # sorted by bus (M7 step 1)
+    inverters_at_bus::Vector{Vector{Int}}  # vertex -> indices into `inverters`
 
     function NetworkModel(S_base::Real, f0::Real, buses::Vector{Bus},
                           branches::Vector{Branch}, machines::Vector{Machine},
                           loads::Vector{Load} = Load[];
-                          slack::Union{Symbol,Nothing} = nothing)
+                          slack::Union{Symbol,Nothing} = nothing,
+                          inverters::Vector{Inverter} = Inverter[])
         S_base > 0 || throw(ArgumentError("NetworkModel: S_base ($S_base) must be > 0 MVA."))
         f0 > 0 || throw(ArgumentError("NetworkModel: f0 ($f0) must be > 0 Hz."))
         isempty(buses) && throw(ArgumentError("NetworkModel: needs at least one bus."))
@@ -715,6 +861,15 @@ struct NetworkModel
         _reject_duplicates(b -> b.id, branches, "branch")
         _reject_duplicates(m -> m.id, machines, "machine")
         _reject_duplicates(l -> l.id, loads, "load")
+        _reject_duplicates(i -> i.id, inverters, "inverter")
+        # An inverter and a machine may not share an id: both are generation, and
+        # every by-id lookup that names "the unit that tripped" would otherwise have
+        # to guess which collection was meant.
+        for inv in inverters
+            any(m -> m.id === inv.id, machines) && throw(ArgumentError(
+                "NetworkModel: id :$(inv.id) names both a machine and an inverter. " *
+                "Generation is looked up by id, so the two must not collide."))
+        end
 
         bus_index = Dict{Symbol,Int}(b.id => v for (v, b) in enumerate(buses))
 
@@ -819,10 +974,29 @@ struct NetworkModel
         # power from the POWER FLOW rather than from `P0` (m5-prestudy.md §4).
         # Measured on the step-1 spike: a 0.8 pu load at |V| = 0.978 draws 0.765, and
         # the slack settles at 0.465 against a scheduled 0.5.
-        ΣP = sum(m.P0 for m in ordered; init = 0.0) -
+        #
+        # M7 step 1: inverters inject, with a machine's sign. With none present the
+        # extra term is `+ 0.0`, and `x + 0.0 === x` for every finite `x`, so every
+        # pre-M7 model computes the guard it always did, to the bit.
+        inv_grouped = [Int[] for _ in 1:length(buses)]
+        for (k, inv) in pairs(inverters)
+            v = get(bus_index, inv.bus, 0)
+            v == 0 && throw(ArgumentError(
+                "Inverter $(inv.id) sits on bus $(inv.bus), which is not in the model."))
+            push!(inv_grouped[v], k)
+        end
+        ordered_inv = Inverter[inverters[k] for v in 1:length(buses) for k in inv_grouped[v]]
+        inverters_at = [Int[] for _ in 1:length(buses)]
+        next_i = 0
+        for v in 1:length(buses), _ in inv_grouped[v]
+            next_i += 1
+            push!(inverters_at[v], next_i)
+        end
+        ΣP = sum(m.P0 for m in ordered; init = 0.0) +
+             sum(i.P0 for i in ordered_inv; init = 0.0) -
              sum(l.P0 for l in ordered_loads; init = 0.0)
         abs(ΣP) ≤ 1e-6 * S_base || throw(ArgumentError(
-            "NetworkModel: Σ machines.P0 − Σ loads.P0 = $(ΣP) MW ≠ 0. The network is " *
+            "NetworkModel: Σ machines.P0 + Σ inverters.P0 − Σ loads.P0 = $(ΣP) MW ≠ 0. The network is " *
             "lossless in P, so a net injection has no equilibrium at all — the " *
             "steady-state solve would fail or drift. (A machine's P0 is an injection; " *
             "a load's P0 is a draw. M2a's negative-P0 machine is still a machine.)"))
@@ -839,8 +1013,16 @@ struct NetworkModel
         # equivalent. A model with no machines at all defaults to the first bus:
         # nothing can solve it yet, but it must be constructible (a draft in the
         # editor is exactly this model).
+        #
+        # M7 step 1: with no machine but a grid-forming inverter, the default is that
+        # inverter's bus — the only other thing that holds a voltage (`m7-context.md`
+        # D5). A grid-following inverter is never a default reference: it follows a
+        # voltage, it cannot set one. Any model with a machine takes the old branch,
+        # so no pre-M7 default moves.
+        gfm = findfirst(i -> i.mode === :grid_forming, ordered_inv)
         slack_bus = slack === nothing ?
-            (isempty(ordered) ? buses[1].id : ordered[1].bus) : slack
+            (!isempty(ordered) ? ordered[1].bus :
+             gfm !== nothing ? ordered_inv[gfm].bus : buses[1].id) : slack
         haskey(bus_index, slack_bus) || throw(ArgumentError(
             "NetworkModel: slack = :$slack_bus is not a bus in this model " *
             "(buses: $(join([b.id for b in buses], ", "))). The slack is the angle " *
@@ -848,20 +1030,24 @@ struct NetworkModel
             "choice, so it is declared rather than derived."))
 
         return new(Float64(S_base), Float64(f0), buses, branches, ordered,
-                   ordered_loads, bus_index, machines_at, load_at, slack_bus)
+                   ordered_loads, bus_index, machines_at, load_at, slack_bus,
+                   ordered_inv, inverters_at)
     end
 end
 
 """
-    NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[])
+    NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[],
+                 slack = nothing, inverters = Inverter[])
 
 Keyword form, so a model reads as its own documentation at a call site. Same
 validation — the positional inner constructor is the only path, so no
 `NetworkModel` can exist unvalidated regardless of how it was built (including a
 future `from_powersystems`, D5).
 """
-NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[], slack = nothing) =
-    NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack)
+NetworkModel(; S_base, f0, buses, branches, machines, loads = Load[], slack = nothing,
+             inverters = Inverter[]) =
+    NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack,
+                 inverters = inverters)
 
 # Duplicate-id rejection, shared by the three collections so the message reads the
 # same in each. `key` extracts the id.
@@ -1084,8 +1270,12 @@ Each bus's role in a power flow, in **vertex order** — `:slack`, `:generator` 
 (`m6-context.md` D3):
 
   - the declared slack bus is `:slack`, whatever sits on it;
-  - a bus carrying at least one machine is `:generator` (holds `P` and `V_set`);
-  - every other bus is `:load` (holds `P` and `Q`).
+  - a bus carrying at least one machine **or grid-forming inverter** is
+    `:generator` (holds `P` and `V_set`) — a grid-forming inverter sets a voltage,
+    which is what the role means (M7 step 1);
+  - every other bus is `:load` (holds `P` and `Q`) — **including one carrying only
+    grid-following inverters**, which inject a scheduled `P + jQ` and follow the
+    voltage rather than hold it.
 
 There is no way to force a generator bus to behave as a load bus by declaration.
 That happens only when its reactive limits bind, which is the physical reason it
@@ -1096,11 +1286,17 @@ function bus_roles(net::NetworkModel)
     v_slack = net.bus_index[net.slack]      # constructor guarantees this resolves
     roles = Vector{Symbol}(undef, length(net.buses))
     for v in eachindex(net.buses)
-        roles[v] = v == v_slack ? :slack :
-                   isempty(net.machines_at_bus[v]) ? :load : :generator
+        roles[v] = v == v_slack ? :slack : _holds_voltage(net, v) ? :generator : :load
     end
     return roles
 end
+
+# Whether vertex `v` carries something that SETS a voltage: a machine, or a
+# grid-forming inverter. One predicate for both role functions, so they cannot
+# disagree about what a generator bus is.
+_holds_voltage(net::NetworkModel, v::Integer) =
+    !isempty(net.machines_at_bus[v]) ||
+    any(k -> net.inverters[k].mode === :grid_forming, net.inverters_at_bus[v])
 
 """
     bus_role(net::NetworkModel, bus::Symbol) -> Symbol
@@ -1111,8 +1307,45 @@ One bus's role — see [`bus_roles`](@ref). Throws if the bus is not in the mode
 function bus_role(net::NetworkModel, bus::Symbol)
     v = get(net.bus_index, bus, 0)
     v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
-    return bus === net.slack ? :slack :
-           isempty(net.machines_at_bus[v]) ? :load : :generator
+    return bus === net.slack ? :slack : _holds_voltage(net, v) ? :generator : :load
+end
+
+"""
+    inverters_at(net::NetworkModel, bus::Symbol) -> Vector{Inverter}
+
+The inverters on `bus` (possibly none), in model order. Throws if the bus is not in
+the model, as `machines_at` does.
+"""
+function inverters_at(net::NetworkModel, bus::Symbol)
+    v = get(net.bus_index, bus, 0)
+    v == 0 && throw(ArgumentError("NetworkModel: no bus :$bus."))
+    return Inverter[net.inverters[k] for k in net.inverters_at_bus[v]]
+end
+
+"""
+    _assert_no_inverters(net::NetworkModel, who::AbstractString; unbuilt = "")
+
+Refuse a model carrying inverters, by name (M7 step 1, `m7-plan.md`). Every consumer
+that reads `net.machines` and has not yet learned inverters calls this, because the
+alternative is the silent failure this repo keeps paying for: the consumer would
+run the model with the inverters **absent** — a network whose generation does not
+meet its load, or worse, one that balances by accident — and return a plausible
+answer about a different system.
+
+`unbuilt` names the M7 step that teaches this consumer, so the message says whether
+the refusal is a tier boundary or work not yet done. The guard is lifted consumer by
+consumer as the steps land; the set of callers is the list of what still has to
+learn.
+"""
+function _assert_no_inverters(net::NetworkModel, who::AbstractString;
+                              unbuilt::AbstractString = "")
+    isempty(net.inverters) && return nothing
+    why = isempty(unbuilt) ? "" : " $unbuilt"
+    throw(ArgumentError(
+        "$who: the model carries $(length(net.inverters)) inverter(s) " *
+        "($(join([i.id for i in net.inverters], ", "))), which $who does not " *
+        "represent. Running it without them would describe a different network — " *
+        "one whose generation no longer meets its load.$why"))
 end
 
 """
@@ -1791,6 +2024,10 @@ function coi_model(net::NetworkModel)
     #     inside the one derivation the repo points at to show reduced models are
     #     derived rather than hand-maintained. An aggregate view of the detailed tier
     #     is real work and is not this milestone's.
+    # M7 step 1 — first, for the reason `_assert_classical_tier` gives.
+    _assert_no_inverters(net, "coi_model"; unbuilt =
+        "(M7 step 2 teaches the aggregate: grid-forming as virtual inertia, " *
+        "grid-following as none.)")
     _assert_one_machine_per_bus(net, "coi_model")
     _assert_frozen_flux(net, "coi_model")
     isempty(net.loads) || throw(ArgumentError(

@@ -462,9 +462,25 @@ cheapest dispatch, network-free".
 | The solver's own dual values (λ) | **Not used as a check** — the solver restating its answer | **un-oracled by design** |
 | Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **un-oracled: the network OPF is owed** (criterion 4, `PowerModels` unresolvable) |
 
+## Inverter-based resources — M7, `model/network_model.jl` (`Inverter`)
+
+Step 1 adds the type and nothing that runs it: every consumer that has not learned
+inverters refuses a model carrying one, by name. test: "M7 step 1 — the Inverter
+type and the model's bookkeeping", "M7 step 1 — inverters in the scenario file".
+
+| Claim | Checked against | Label |
+|---|---|---|
+| No existing number moved when the type entered | All 3602 pre-M7 core tests green, and M5's 169 criterion values bit-identical to a capture taken at HEAD before the first edit | **structural** |
+| The balance guard counts inverter `P0` | A model balanced only with the inverter counted constructs; the same data without it is rejected. Red on the "guard ignores inverters" mutation | **structural** |
+| No consumer runs a model with an inverter silently absent | One test per consumer asserting the refusal names the inverter (swing, detailed, aggregate, both power flows, dispatch, both oracle builders, editor both ways in). Red when one consumer's refusal is removed | **structural** |
+| A rebuild carries inverters | `dispatch_schedule` on a model where carrying the inverter breaks the balance and dropping it would not. Red on the "drops inverters" mutation | **structural** |
+| The file round-trips every field | Field-by-field `===` after write/read, both modes; field list equals `fieldnames(Inverter)`. Red on the "writer skips `K_q`" mutation | **structural** |
+| Grid-forming droop ≡ swing machine (`2H = τ_p/K_p`, `D = 1/K_p`, `K_q = 0`) | **On PowerDynamics' own components only, so far** (step 0: 5.4e-11 rad; `K_q = 0.05` opens 1.1e-4). Ours is step 3 | **external** (outside model against itself); **un-oracled on our side until step 3** |
+
 ## Owed rows
 
-- SPEC §7.6's third lesson, **IBR behaviour**: no tier, and **un-scheduled**
+- SPEC §7.6's third lesson, **IBR behaviour**: **scheduled as M7** (2026-09-29),
+  with the rest of this bullet kept as the record of what it said before. No tier, and **un-scheduled**
   rather than implied by M5's voltage work. An inverter has no swing equation, so
   it is a third fidelity and not a machine with different numbers. Step 8's window
   says so on its own caption, and SPEC §7.6 now says it too

@@ -581,6 +581,15 @@ Passing does not prove an equilibrium exists, it only rules out one that provabl
 cannot.
 """
 function _assert_classical_tier(net::NetworkModel)
+    # M7 step 1. Until step 3 builds the grid-forming vertex, an inverter here would
+    # be silently absent; a grid-following one stays refused for good, because this
+    # tier has no bus voltage for a current source to inject into (m7-context.md D3).
+    # FIRST, because an inverter's bus usually carries no machine, and the
+    # one-machine-per-bus refusal below would otherwise report the symptom (a bus
+    # with nothing on it) instead of the cause (an inverter this tier cannot hold).
+    _assert_no_inverters(net, "SwingEngine"; unbuilt =
+        "(M7 step 3 builds the grid-forming inverter at this tier; a grid-following " *
+        "one is a tier boundary here, not unbuilt work — m7-context.md D3.)")
     _assert_one_machine_per_bus(net, "SwingEngine")
     _assert_frozen_flux(net, "SwingEngine")
     _assert_lossless_branches(net, "SwingEngine")   # M6 step 1 — R is validated, not read

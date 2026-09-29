@@ -94,6 +94,11 @@ end
 # 30.000000000000004 MW once divided by `S_base` and added, so "load = Σ Pmin" was
 # refused as below it (m6-tasks.md step 7).
 function _dispatch_problem(net::NetworkModel, tol::Float64 = 1.0e-9)
+    # M7 step 1. The dispatch meets Σ loads with machines; an inverter's output would
+    # be dropped from the balance. How an uncosted must-run injection enters a cost
+    # minimisation is a modelling choice no M7 step makes, so this is refused, not
+    # scheduled.
+    _assert_no_inverters(net, "economic_dispatch")
     isempty(net.machines) && throw(ArgumentError(
         "economic_dispatch: the model has no machines, so there is nothing to dispatch."))
     ca = cost_arrays(net)
@@ -188,8 +193,10 @@ through the constructors — the schedule the power flow reads. Nothing else mov
 function dispatch_schedule(net::NetworkModel, ed::EconomicDispatch)
     _assert_dispatch_of(net, ed)
     ms = Machine[_machine_with(m; P0 = ed.P[k] * net.S_base) for (k, m) in pairs(net.machines)]
+    # Inverters carried through (M7 step 1): a rebuild that lists fields by hand is
+    # exactly where a new collection gets dropped.
     return NetworkModel(net.S_base, net.f0, net.buses, net.branches, ms, net.loads;
-                        slack = net.slack)
+                        slack = net.slack, inverters = net.inverters)
 end
 
 """

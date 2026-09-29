@@ -305,6 +305,9 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # sections below), so a lossy branch is refused here for the same reason
     # `SwingEngine` and `DetailedEngine` refuse it: it would be silently dropped.
     GridSim._assert_lossless_branches(net, "build_oracle")
+    # M7 step 1 — the builder maps machines and loads only.
+    GridSim._assert_no_inverters(net, "build_oracle"; unbuilt =
+        "(M7 steps 4 and 5 map the inverters onto IdealDroopInverter / SimpleGFL.)")
 
     # The two detailed tiers share every mapping but the injector: `:sauer_pai` puts
     # the machine on the bus with its field voltage HELD, `:sauer_pai_avr` wraps it

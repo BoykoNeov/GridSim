@@ -61,6 +61,17 @@ const _KEY_RANK = Dict{String,Int}(
 for (i, f) in enumerate(_MACHINE_FIELDS)
     _KEY_RANK[_file_key(f)] = 40 + i
 end
+# M7 step 1 — the inverter record. `τ` is not a bare-key character either, so on
+# disk it is spelled `tau` (`tau_p`, `tau_q`), by the same one-table rule as the
+# prime. Machine fields contain no `τ`, so their spellings do not move.
+_inv_file_key(f::Symbol) = replace(String(f), "τ" => "tau")
+const _INV_FILE_KEYS = Dict{Symbol,String}(f => _inv_file_key(f) for f in _INVERTER_NUMERIC)
+_KEY_RANK["inverters"] = 10
+_KEY_RANK["mode"] = 18
+for (i, f) in enumerate(_INVERTER_NUMERIC)
+    k = _inv_file_key(f)
+    haskey(_KEY_RANK, k) || (_KEY_RANK[k] = 80 + i)
+end
 # Ties (every bus in `[layout]`, say) fall back to the name, so a file diffs
 # stably rather than in `Dict` order.
 _key_rank(k) = (get(_KEY_RANK, String(k), 1000), String(k))
@@ -98,6 +109,20 @@ function write_scenario(path::AbstractString, net::NetworkModel;
                                      "P0" => l.P0, "Q0" => l.Q0,
                                      "a_z" => l.a_z, "a_i" => l.a_i, "a_p" => l.a_p)
                     for l in net.loads]
+    # Written only when there are any, so a pre-M7 model writes the byte-identical
+    # file it always did. Every field is written, defaults included, for the reason
+    # the machine record is (the file header).
+    if !isempty(net.inverters)
+        doc["inverters"] = [begin
+                                d = Dict{String,Any}("id" => String(i.id),
+                                                     "bus" => String(i.bus),
+                                                     "mode" => String(i.mode))
+                                for f in _INVERTER_NUMERIC
+                                    d[_INV_FILE_KEYS[f]] = getfield(i, f)
+                                end
+                                d
+                            end for i in net.inverters]
+    end
     if layout !== nothing
         tbl = Dict{String,Any}()
         for (id, xy) in layout
@@ -252,8 +277,27 @@ function read_scenario(path::AbstractString)
                           _field(rec, "a_i", Float64, w; default = 0.0),
                           _field(rec, "a_p", Float64, w; default = 0.0)))
     end
+    # M7 step 1. `id`, `bus`, `mode`, `S_rated` and `P0` are required; every other
+    # field is passed ONLY when the file has it, so an absent field takes the
+    # constructor's own default rather than a second copy of it kept here.
+    inverters = Inverter[]
+    for (i, rec) in enumerate(get(doc, "inverters", Any[]))
+        id = Symbol(_field(rec, "id", String, "inverter #$i"))
+        w = "inverter $id"
+        kw = Dict{Symbol,Float64}()
+        for f in _INVERTER_NUMERIC
+            f in (:S_rated, :P0) && continue
+            k = _INV_FILE_KEYS[f]
+            haskey(rec, k) && (kw[f] = _field(rec, k, Float64, w))
+        end
+        push!(inverters, Inverter(id, Symbol(_field(rec, "bus", String, w)),
+                                  Symbol(_field(rec, "mode", String, w)),
+                                  _field(rec, _INV_FILE_KEYS[:S_rated], Float64, w),
+                                  _field(rec, _INV_FILE_KEYS[:P0], Float64, w); kw...))
+    end
     slack = _read_slack(doc, buses, machines)
-    net = NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack)
+    net = NetworkModel(S_base, f0, buses, branches, machines, loads; slack = slack,
+                       inverters = inverters)
 
     layout = nothing
     if haskey(doc, "layout")

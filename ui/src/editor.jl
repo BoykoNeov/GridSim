@@ -57,6 +57,7 @@ when it is `nothing`) go on a circle, in bus order — deterministic, so a file
 saved without positions draws the same way every time it is opened.
 """
 function ScenarioEditor(net::NetworkModel; layout = nothing, name::AbstractString = "")
+    _refuse_inverters(net, "ScenarioEditor")
     ed = ScenarioEditor(; S_base = net.S_base, f0 = net.f0, name = name)
     append!(ed.buses, net.buses)
     append!(ed.branches, net.branches)
@@ -66,6 +67,17 @@ function ScenarioEditor(net::NetworkModel; layout = nothing, name::AbstractStrin
     ed.slack = net.slack
     _place_missing!(ed)
     return ed
+end
+
+# M7 step 1. The editor holds no inverters until M7 step 8, so a model that has them,
+# opened here and saved again, would lose them without a word. Both ways in — from a
+# model and from a file — refuse before anything is overwritten.
+function _refuse_inverters(net::NetworkModel, who::AbstractString)
+    isempty(net.inverters) || throw(ArgumentError(
+        "$who: the model carries $(length(net.inverters)) inverter(s) " *
+        "($(join([i.id for i in net.inverters], ", "))), which the editor cannot " *
+        "hold yet (M7 step 8). Opening it here and saving would silently drop them."))
+    return nothing
 end
 
 # Circle placement for buses without a position: radius 1 (or the span of the
@@ -443,6 +455,9 @@ place go on the circle.
 """
 function load!(ed::ScenarioEditor, path::AbstractString)
     sc = read_scenario(path)
+    # Refused BEFORE anything is overwritten, so a refused open leaves the editor as
+    # it was (M7 step 1).
+    _refuse_inverters(sc.net, "load!")
     ed.S_base = sc.net.S_base; ed.f0 = sc.net.f0; ed.name = sc.name
     empty!(ed.buses); append!(ed.buses, sc.net.buses)
     empty!(ed.branches); append!(ed.branches, sc.net.branches)

@@ -140,6 +140,21 @@ end
     @test ed2.name == "ring" && ed2.S_base == 100.0 && ed2.f0 == 50.0
 end
 
+@testset "editor: a model with inverters is refused, both ways in (M7 step 1)" begin
+    # The editor holds no inverters until M7 step 8; opening one and saving would
+    # drop them silently. Refused from a model and from a file, by name, and a
+    # refused open leaves the editor exactly as it was.
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0)]
+    net = NetworkModel(100.0, 50.0, buses, [Branch(:L, :B1, :B2, 0.2, 500.0)],
+                       [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, 0.0)];
+                       inverters = [Inverter(:INV, :B2, :grid_forming, 50.0, 0.0)])
+    @test occursin("INV", emsg(() -> ScenarioEditor(net)))
+    path = write_scenario(joinpath(mktempdir(), "inv.toml"), net)
+    ed = ScenarioEditor(three_machine_ring(); name = "kept")
+    @test occursin("INV", emsg(() -> load!(ed, path)))
+    @test ed.name == "kept" && build_model(ed).machines == three_machine_ring().machines
+end
+
 # ---- the window -------------------------------------------------------------------
 
 @testset "editor window: the canvas draws what the state holds, and only that" begin

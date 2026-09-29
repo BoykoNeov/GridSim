@@ -176,6 +176,8 @@ The mapping, one line each:
 """
 function to_powersystems(net::GridSim.NetworkModel)
     S_base = net.S_base
+    # M7 step 1 — the translation writes machines and loads only.
+    GridSim._assert_no_inverters(net, "to_powersystems")
     roles = GridSim.bus_roles(net)
     v_slack = net.bus_index[net.slack]
     isempty(net.machines_at_bus[v_slack]) && throw(ArgumentError(
@@ -529,7 +531,8 @@ function float32_admittance_twin(net::GridSim.NetworkModel)
         GridSim.Branch(br.id, br.from, br.to, Float64(imag(z)), br.rating; R = R)
     end
     return GridSim.NetworkModel(net.S_base, net.f0, net.buses, branches,
-                                net.machines, net.loads; slack = net.slack)
+                                net.machines, net.loads; slack = net.slack,
+                                inverters = net.inverters)
 end
 
 """

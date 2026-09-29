@@ -168,6 +168,9 @@ export write_scenario, read_scenario, Layout
 # against GLMakie's exports before being added (2026-09-07) — the standing check
 # since M1, when a collision cost a round.
 export bus_roles, bus_role
+# M7 step 1 — inverter-based resources. Checked clear against GLMakie's exports
+# before being added, the standing check.
+export Inverter, inverters_at
 # M6 step 2 — the linear (DC) power flow. `bus_injections` joins the derived-view
 # family (`machine_arrays`, `load_arrays`, `branch_topology`): the net scheduled
 # injection per bus, in pu, computed in the one place the conversion happens.

@@ -156,6 +156,9 @@ the same thing (their `P`), and only the slack is distinguished — by having it
 angle pinned to zero. `bus_roles` starts mattering in step 3.
 """
 function dc_powerflow(net::NetworkModel)
+    # M7 step 1 — `bus_injections` sums machines and loads only.
+    _assert_no_inverters(net, "dc_powerflow"; unbuilt =
+        "(M7 step 4 teaches the power flow inverters.)")
     n = length(net.buses)
     P = bus_injections(net)
     B = _dc_susceptance(net)
