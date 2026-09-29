@@ -249,10 +249,26 @@ runs.
       its own base, virtual inertia out of the COI weight, re-init re-solving `E`,
       relay lookup by machine index); **B7, `Q` measured at the bus, GREEN in-house as
       pre-registered** — only the PowerDynamics comparison can see it.
-- [x] Gates: core **3832**, M5 criterion **bit-identical** (`W:	emp\claude\m7\criterion-STEP4.txt`).
-- [ ] PowerDynamics `IdealDroopInverter` + line `X_c`, `K_q` live, band stated
-      before the gap is seen.
-- [ ] Mutations: `K_q` sign; `X_c` dropped.
+- [x] Gates: core **3832**, M5 criterion **bit-identical** (`W:\temp\claude\m7\criterion-STEP4.txt`).
+- [x] PowerDynamics `IdealDroopInverter` + line `X_c`, `K_q` live, band stated
+      before the gap is seen (commit C). `build_oracle(:sauer_pai)` puts each
+      grid-forming inverter on its own internal vertex after the buses, joined by a
+      line of `X_c`; its gains and `X_c` are converted to the system base IN THE
+      BUILDER from the inverter's own fields, so a wrong base in core is a
+      disagreement (M4's blind spot, closed for this component). The fixture has
+      **no machine** — every detailed machine carries M5's stator-ω residual, which
+      a band around the sum would hide an inverter error inside. Measured: the flat
+      run agrees to 1e-9 on every channel; after a line trip the two agree to
+      **~1e-12** on every channel against `convergence_band`s of 1e-8–1e-9, while the
+      trip moves each channel by 1e-4–6e-3 (≥ 1e4 bands). The seed could not set the
+      internal vertex's voltage: their component SETS it, so it is an observable.
+- [x] Mutations against PowerDynamics, each red: `K_q` sign; `X_c` on its own base
+      (gap 8.9e-3 against a 3.5e-7 band); **`Q` measured at the bus — B7, green
+      in-house — red here, caught first by the FLAT RUN** (their filter starts
+      0.016 pu off rest: `|I|²X_c`). A data mutation on our side only (`K_q` +20 %,
+      `X_c` +20 %) is in the suite itself.
+- [x] **Step 4 gates:** core **3832**, reference **1210** (1143 + 67), UI **449**,
+      M5 criterion bit-identical.
 
 ## Step 5 — grid-following in the detailed tier
 

@@ -51,6 +51,12 @@ terms. Concrete-typed fields (SPEC §4).
                 `Ta → 0` limit (`m5-prestudy.md` §2a), and a limit is not a setting:
                 this number is the whole of the difference between the two models,
                 so it lives where a test can read it and halve it.
+  - `inv_ids`, `inv_vertex`, `inv_H` — the grid-forming inverters (M7 step 4, tier
+                `:sauer_pai` only): their ids in model order, the INTERNAL vertex each
+                `IdealDroopInverter` sits on (appended after the buses, so every bus
+                keeps its vertex number), and the virtual inertia `τ_p/(2K_p)` on the
+                system base that weights each in the centre-of-inertia read-out.
+                Empty everywhere else.
 """
 struct OracleCase
     net::NetworkModel
@@ -67,6 +73,9 @@ struct OracleCase
     mpfx::Symbol
     regulated::Vector{Bool}
     avr_Ta::Float64
+    inv_ids::Vector{Symbol}
+    inv_vertex::Vector{Int}
+    inv_H::Vector{Float64}
 end
 
 # Machine symbols under a case's namespace. One place, so a tier that moves the
@@ -305,9 +314,15 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # sections below), so a lossy branch is refused here for the same reason
     # `SwingEngine` and `DetailedEngine` refuse it: it would be silently dropped.
     GridSim._assert_lossless_branches(net, "build_oracle")
-    # M7 step 1 — the builder maps machines and loads only.
-    GridSim._assert_no_inverters(net, "build_oracle"; unbuilt =
-        "(M7 steps 4 and 5 map the inverters onto IdealDroopInverter / SimpleGFL.)")
+    # M7 step 1 refused every inverter. Step 4 maps the grid-forming kind at
+    # `:sauer_pai` — `IdealDroopInverter` behind an explicit line of `X_c`, which is
+    # what `DetailedEngine` builds (m7-context.md D3) — and nowhere else: the swing
+    # tier's inverter has its own exact oracle (the converted machine, step 3), and
+    # `:sauer_pai_avr` is about the exciter. Grid-following waits for step 5.
+    GridSim._assert_no_grid_following(net, "build_oracle"; unbuilt =
+        "(M7 step 5 maps it onto SimpleGFL.)")
+    tier === :sauer_pai || GridSim._assert_no_inverters(net, "build_oracle(tier = :$tier)";
+        unbuilt = "(M7 step 4 maps the grid-forming inverter at tier = :sauer_pai only.)")
 
     # The two detailed tiers share every mapping but the injector: `:sauer_pai` puts
     # the machine on the bus with its field voltage HELD, `:sauer_pai_avr` wraps it
@@ -499,6 +514,34 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         push!(buses, b)
     end
 
+    # --- grid-forming inverters (M7 step 4) -----------------------------------
+    # Each is an `IdealDroopInverter` on its OWN internal vertex, appended after the
+    # buses (so no bus is renumbered), joined to its bus by a line of reactance `X_c`
+    # below — D3's mapping, and the one PowerDynamics' own component admits: it is an
+    # ideal voltage source at its terminal, with no reactance of its own.
+    #
+    # THE PER-UNIT CONVERSION IS DONE HERE, FROM THE INVERTER'S OWN FIELDS, and not
+    # read from core's `_inverter_arrays`. M4 recorded the blind spot of the other
+    # choice: when the builder hands PowerDynamics the already-converted numbers,
+    # both sides fork downstream of the conversion and no comparison can see it.
+    # Written out again here, a wrong base in core is a disagreement.
+    #
+    # Their setpoints `Pset`/`Qset`/`Vset` are placeholders overwritten from OUR
+    # fixpoint in the seed. Every other parameter is passed explicitly — their `Kq`
+    # defaults to 0.05, ours to 0, and a default is not a guarantee.
+    Sb = net.S_base
+    gfm_inv = [i for i in net.inverters if i.mode === :grid_forming]
+    inv_vertex = Int[nb + j for j in eachindex(gfm_inv)]
+    for (j, inv) in pairs(gfm_inv)
+        droop = Library.IdealDroopInverter(; name = :droop,
+            Kp = inv.K_p * Sb / inv.S_rated, Kq = inv.K_q * Sb / inv.S_rated,
+            τ_p = inv.τ_p, τ_q = inv.τ_q, ωset = 1.0,
+            Pset = 0.0, Qset = 0.0, Vset = 1.0)
+        push!(buses, compile_bus(MTKBus(droop); vidx = inv_vertex[j],
+                                 name = Symbol(inv.id, :_src)))
+    end
+    inv_H = Float64[inv.τ_p / (2 * inv.K_p) * inv.S_rated / Sb for inv in gfm_inv]
+
     # --- edges ---------------------------------------------------------------
     # `R` and all four shunt terms are passed explicitly as zero rather than left
     # to PowerDynamics' defaults (which are zero today). The classical tier's
@@ -524,6 +567,14 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         end
         push!(lines, l)
     end
+    # Each inverter's coupling reactance, internal vertex → its bus, lossless and
+    # shunt-free like every other line here, converted from its own rating.
+    for (j, inv) in pairs(gfm_inv)
+        pl = Library.PiLine(; name = :pibranch, R = 0.0, X = inv.X_c * Sb / inv.S_rated,
+                              G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0)
+        push!(lines, compile_line(MTKLine(pl); src = inv_vertex[j],
+                                  dst = net.bus_index[inv.bus], name = Symbol(inv.id, :_Xc)))
+    end
 
     nw = Network(buses, lines; warn_order = false)
 
@@ -531,6 +582,7 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     s0 = NWState(nw)
     if detailed
         _seed_sauer_pai!(s0, net, ma, mach_bus, X_ls, mpfx, regulated)
+        _seed_droop!(s0, net, inv_vertex)
     else
         eng = SwingEngine(net)
         δ0 = collect(current_state(eng).δ)
@@ -541,7 +593,44 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     end
 
     return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips,
-                      bus_ids, mach_bus, X_ls, mpfx, regulated, Float64(avr_Ta))
+                      bus_ids, mach_bus, X_ls, mpfx, regulated, Float64(avr_Ta),
+                      Symbol[i.id for i in gfm_inv], inv_vertex, inv_H)
+end
+
+"""
+    _seed_droop!(s0, net, inv_vertex)
+
+Seed each `IdealDroopInverter` from **our** detailed fixpoint (M7 step 4) — the
+module's standing rule, so the band is solver tolerance alone and their flat run is
+an independent check of OUR steady state: of where we measure the power (at the
+source, as their terminal does), and of the droop intercept we derive.
+
+Their states are the formed angle and the two filters; the internal vertex's own
+voltage is an observable of those (it is not seeded). Their droop is `V = Vset − Kq·(Qfilt − Qset)`
+and ours `E = V_ref − K_q·Q_filt`: only `Vset + Kq·Qset` enters either, so we hand
+them `Qset = Q_filt(0)` and `Vset = E(0)` — the pair that puts their filter at rest
+at our operating point. `Pset` is our derived setpoint (the slack's is free).
+"""
+function _seed_droop!(s0, net::NetworkModel, inv_vertex::Vector{Int})
+    isempty(inv_vertex) && return s0
+    eng = init!(DetailedEngine, net)
+    st = current_state(eng)
+    u, g = eng.integrator.u, eng.gfm
+    for j in eachindex(inv_vertex)
+        v = inv_vertex[j]
+        δ, E, Qf = st.δ_inv[j], st.E_inv[j], u[g.Qf_idx[j]]
+        s0.v[v, :droop₊δ]     = δ
+        s0.v[v, :droop₊Pfilt] = u[g.Pf_idx[j]]
+        s0.v[v, :droop₊Qfilt] = Qf
+        # NO `busbar₊u_r/u_i` here, unlike every bus: their component SETS its
+        # terminal voltage (`u = V·(cos δ, sin δ)`), so on its own vertex the voltage
+        # is an observable of `(δ, Qfilt)` and the parameters, not a state —
+        # measured: `setsym` refuses it.
+        s0.p.v[v, :droop₊Pset] = eng.params[g.Pset_pidx[j]]
+        s0.p.v[v, :droop₊Qset] = Qf
+        s0.p.v[v, :droop₊Vset] = E
+    end
+    return s0
 end
 
 """
@@ -868,9 +957,18 @@ function oracle_solve(case::OracleCase, tspan; saveat,
     mb = case.mach_bus
     δ = [take(sol[VIndex(mb[k], case.angsym)]) for k in 1:nm]
     ω = [take(sol[VIndex(mb[k], _ms(case, "ω"))]) .- 1.0 for k in 1:nm]
+    # M7 step 4 — the grid-forming inverters: their formed angle, their droop
+    # frequency (absolute pu on their side, the deviation on ours) and the magnitude
+    # they form, `V` — an observable of their component, as `ω` is.
+    ni = length(case.inv_ids)
+    iv = case.inv_vertex
+    δi = [take(sol[VIndex(iv[j], :droop₊δ)]) for j in 1:ni]
+    ωi = [take(sol[VIndex(iv[j], :droop₊ω)]) .- 1.0 for j in 1:ni]
+    Ei = [take(sol[VIndex(iv[j], :droop₊V)]) for j in 1:ni]
 
     # The live COI weights, sample by sample. `<` and not `≤`: the sample AT an
-    # event instant is the pre-event one on our side too.
+    # event instant is the pre-event one on our side too. Inverters enter at OUR
+    # virtual-inertia weights (D6), never tripped (the detailed tier refuses it).
     f0 = case.net.f0
     δ_coi = Vector{Float64}(undef, length(grid))
     f_coi = Vector{Float64}(undef, length(grid))
@@ -880,10 +978,12 @@ function oracle_solve(case::OracleCase, tspan; saveat,
         for (t_ev, v) in case.trips
             t_ev < t && (w[mach_of_bus[v]] = 0.0)
         end
-        Σw = sum(w)
+        Σw = sum(w; init = 0.0) + sum(case.inv_H; init = 0.0)
         if Σw > 0
-            δ_coi[i] = sum(w[k] * δ[k][i] for k in 1:nm) / Σw
-            f_coi[i] = f0 * (1 + sum(w[k] * ω[k][i] for k in 1:nm) / Σw)
+            δ_coi[i] = (sum((w[k] * δ[k][i] for k in 1:nm); init = 0.0) +
+                        sum((case.inv_H[j] * δi[j][i] for j in 1:ni); init = 0.0)) / Σw
+            f_coi[i] = f0 * (1 + (sum((w[k] * ω[k][i] for k in 1:nm); init = 0.0) +
+                                  sum((case.inv_H[j] * ωi[j][i] for j in 1:ni); init = 0.0)) / Σw)
         else
             δ_coi[i] = NaN
             f_coi[i] = NaN
@@ -926,6 +1026,11 @@ function oracle_solve(case::OracleCase, tspan; saveat,
                  take(sol[VIndex(mb[k], Symbol(apfx, "vfout"))]) :
                  fill(case.s0.p.v[mb[k], Symbol(apfx, "vf_fixed")], length(grid))))
         end
+        # The inverters' three, where `state_series(::DetailedEngine)` puts them:
+        # after the machines', before the buses'.
+        for j in 1:ni; push!(names, Symbol(:δ_, case.inv_ids[j])); push!(vals, δi[j]); end
+        for j in 1:ni; push!(names, Symbol(:ω_, case.inv_ids[j])); push!(vals, ωi[j]); end
+        for j in 1:ni; push!(names, Symbol(:E_, case.inv_ids[j])); push!(vals, Ei[j]); end
         for v in eachindex(case.bus_ids)
             ur = take(sol[VIndex(v, :busbar₊u_r)])
             ui = take(sol[VIndex(v, :busbar₊u_i)])

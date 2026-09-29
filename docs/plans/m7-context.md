@@ -429,5 +429,7 @@ source because the component this is checked against measures at its own termina
 which is the source (D3). Executed as a mutation: moving the measurement to the bus
 is INVISIBLE to every in-house check (both the flat run and the droop-gain check
 follow the mutated `Q` consistently), and only the PowerDynamics comparison can see
-it — which is what that comparison is for.
+it — which is what that comparison is for. Measured in step 4's commit C: it is
+red there, and the FLAT RUN is what catches it first — their power filter starts
+0.016 pu away from rest, which is `|I|²X_c` at that operating point.
 

@@ -2170,6 +2170,129 @@ end # M6 step 4 oracle B
                        inverters = [Inverter(:INV, :B2, :grid_forming, 50.0, 30.0)])
     names_it(f) = try; f(); false; catch e; e isa ArgumentError && occursin("INV", e.msg); end
     @test names_it(() -> build_oracle(net))
-    @test names_it(() -> build_oracle(net; tier = :sauer_pai))
     @test names_it(() -> to_powersystems(net))
+    # M7 step 4 maps the grid-forming kind at `:sauer_pai` (its own testset below);
+    # grid-following is still refused there, by name, until step 5.
+    gfl = NetworkModel(100.0, 50.0, buses, [Branch(:L, :B1, :B2, 0.2, 500.0)],
+                       [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, -30.0),
+                        Machine(:G2, :B2, 200.0, 5.0, 2.0, 0.3, 1.0, 0.0)];
+                       inverters = [Inverter(:INV, :B2, :grid_following, 50.0, 30.0)])
+    @test names_it(() -> build_oracle(gfl; tier = :sauer_pai))
+end
+
+# ===========================================================================
+# M7 step 4 — the grid-forming inverter against IdealDroopInverter + a line X_c
+# ===========================================================================
+#
+# THE FIXTURE HAS NO MACHINE, DELIBERATELY. Every detailed-tier machine carries the
+# stator-ω residual M5 identified by its signature (`(ω − 1)·V`, first order in slip),
+# so a case with machines in it would measure that residual plus the inverter, and a
+# band around the sum would hide an inverter error of the same size. Two grid-forming
+# inverters and a load: whatever gap is left is the inverter model's alone.
+#
+# Rated OFF the system base (150 and 120 MVA on 100) so a wrong per-unit conversion
+# changes the answer; voltage droop LIVE on both (`K_q = 0.05`), which is the part of
+# the model no in-house check reaches — at `K_q = 0` the inverter is a classical
+# machine and the core suite's equivalence already pins it. `τ_q` differs between the
+# two so a filter constant passed to the wrong place shows.
+function m7_all_gfm(; K_q = 0.05, X_c = 0.1)
+    NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0), Bus(:C, 1.0)],
+        [Branch(:AC, :A, :C, 0.2, 500.0), Branch(:BC, :B, :C, 0.25, 500.0),
+         Branch(:AB, :A, :B, 0.3, 500.0)], Machine[], [Load(:D, :C, 90.0, 20.0)];
+        inverters = [Inverter(:iA, :A, :grid_forming, 150.0, 50.0; V_set = 1.02,
+                              K_q = K_q, X_c = X_c),
+                     Inverter(:iB, :B, :grid_forming, 120.0, 40.0; K_q = K_q,
+                              τ_q = 0.2, X_c = X_c)])
+end
+const M7_CHANNELS = (:ω_iA, :ω_iB, :E_iA, :E_iB, :V_A, :V_B, :V_C, :f_coi)
+m7_dδ(s) = s.δ_iB .- s.δ_iA
+
+@testset "M7 step 4 — the grid-forming inverter against IdealDroopInverter" begin
+
+@testset "it maps: an internal vertex per inverter, and refusals by name" begin
+    net = m7_all_gfm()
+    case = build_oracle(net; tier = :sauer_pai)
+    @test case.inv_ids == [:iA, :iB] && case.inv_vertex == [4, 5]
+    @test case.bus_ids == [:A, :B, :C]                # the buses keep their numbers
+    # Virtual inertia τ_p/(2K_p) on the system base, BY HAND: 1 s · 150/100, · 120/100.
+    @test case.inv_H ≈ [1.5, 1.2] atol = 1e-15
+    @test occursin("iA", argerr_msg(() -> build_oracle(net; tier = :swing)))
+    gfl = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+        [Branch(:AB, :A, :B, 0.2, 500.0)], [Machine(:G, :A, 100.0, 4.0, 1.0, 0.3, 1.0, 20.0)];
+        inverters = [Inverter(:pv, :B, :grid_following, 50.0, -20.0)])
+    @test occursin("step 5", argerr_msg(() -> build_oracle(gfl; tier = :sauer_pai)))
+end
+
+@testset "the flat run: PowerDynamics says our inverter's steady state is one" begin
+    # Their flat run is the independent check of the two things our initialisation
+    # CHOSE rather than derived: where the power is measured (at the source, as
+    # their terminal does) and the droop intercept. Measure Q at the bus instead and
+    # their filter starts away from rest, by |I|²X_c.
+    net = m7_all_gfm()
+    grid = collect(0.0:0.02:3.0)
+    o, t = both_detailed(net, (0.0, 3.0), grid)
+    @test keys(o) == keys(t)
+    for k in keys(o)
+        k === :t && continue
+        a, b = getproperty(o, k), getproperty(t, k)
+        @test maximum(abs, a .- a[1]) < 1.0e-9
+        @test maximum(abs, b .- b[1]) < 1.0e-9
+        @test maximum(abs, a .- b)    < 1.0e-9
+    end
+end
+
+@testset "the transient, K_q live: inside a band stated before the gap is seen" begin
+    # The band is `convergence_band` — each side's OWN change between two tolerances,
+    # never the gap it judges (M4 D7's structural form of "state it first"). With no
+    # machine in the case there is no known modelling residual to identify, so the
+    # prediction written here BEFORE the run is the strong one: every channel inside.
+    net = m7_all_gfm()
+    grid = collect(0.0:0.01:4.0)
+    pert = [1.0 => TripLine(:A, :B)]
+    o9, t9 = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                           reltol = 1.0e-9, abstol = 1.0e-12)
+    o5, t5 = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+    # MEASURED, and recorded because the size is the finding: at the matched tight
+    # tolerance the two agree to ~1e-12 on every channel, 1e-4 of their bands
+    # (1e-8–1e-9), while the trip moves each channel by 1e-4–6e-3 — at least 1e4
+    # bands. So the check is not vacuous, and it is not being carried by its band.
+    # (The droop damping 1/K_p = 20 per inverter is why the speed swing is only
+    # 1.4e-4 pu: this all-inverter grid is heavily damped by construction.)
+    for k in M7_CHANNELS
+        band = convergence_band(o5, o9, t5, t9; channel = chan(k))
+        a = getproperty(t9, k)
+        @test maximum(abs, a .- a[1]) > 1.0e4 * band      # the trip moves it
+        @test divergence(o9, t9; band = band, channel = chan(k)).max < band
+        @test gap(o9, t9, k) < 1.0e-10
+    end
+    band = convergence_band(o5, o9, t5, t9; channel = m7_dδ)
+    @test divergence(o9, t9; band = band, channel = m7_dδ).max < band
+end
+
+@testset "anti-vacuity: a droop datum wrong on OUR side only is seen" begin
+    # The comparison can go red, on the channel the datum acts through. `K_q` 20 %
+    # high on our side only (their case is always built from the true model): the
+    # static solve does not read it, so both start at the same point and part only
+    # in the transient.
+    net = m7_all_gfm()
+    grid = collect(0.0:0.01:4.0)
+    pert = [1.0 => TripLine(:A, :B)]
+    o9, t9 = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                           reltol = 1.0e-9, abstol = 1.0e-12)
+    o5, t5 = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                           reltol = 1.0e-5, abstol = 1.0e-8)
+    ob, _ = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                          reltol = 1.0e-9, abstol = 1.0e-12,
+                          mutate = _ -> m7_all_gfm(K_q = 0.06))
+    band = convergence_band(o5, o9, t5, t9; channel = chan(:E_iB))
+    @test gap(ob, t9, :E_iB) > 100 * band
+    @test gap(ob, t9, :E_iB) - gap(o9, t9, :E_iB) > 100 * band
+    # The same for the coupling reactance: it moves the operating point itself.
+    ox, _ = both_detailed(net, (0.0, 4.0), grid; perturbations = pert,
+                          reltol = 1.0e-9, abstol = 1.0e-12,
+                          mutate = _ -> m7_all_gfm(X_c = 0.12))
+    @test gap(ox, t9, :E_iB) > 100 * band
+end
+
 end
