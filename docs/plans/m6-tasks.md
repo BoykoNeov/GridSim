@@ -6,9 +6,11 @@ step ticks its own boxes and records what it found, **including what it found th
 the plan did not anticipate** — which in M2, M3, M4 and M5 was every round's most
 valuable line.
 
-Status: **steps 0–7 done (BOTH oracles; the editor folded in; the gate decided —
-it opened NARROW; step 7, the network-free cheapest dispatch, built and checked
-2026-09-23 — 3602 core / 1140 reference / 446 UI).**
+Status: **M6 COMPLETE — closed 2026-09-29** on manifests deleted and re-resolved
+at the close: **3602 core / 1140 reference / 446 UI**, exit 0 each (see the
+housekeeping section's last box). Steps 0–7 done (BOTH oracles; the editor folded
+in; the gate decided — it opened NARROW; step 7, the network-free cheapest
+dispatch, built and checked 2026-09-23).
 Entered at `181fe4e` with
 **2835 core / 382 UI / 986 reference**, all three measured on freshly resolved
 manifests at M5's close. At step 2's close: **2996 core**; at step 3's close
@@ -1230,8 +1232,9 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       the-DAE-tier row) and **two new ones opened and named** — their per-bus load
       columns, refused executably, and reactive-limit back-off, which was never
       measured on their side.
-- [~] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-3;
-      stays open until the milestone closes.
+- [x] `docs/plans/README.md` M6 row updated as steps land. Updated at steps 1-3
+      and 7; **closed 2026-09-29** with the row marked COMPLETE and the close's
+      measured counts, and hurdles 7 and 8 marked closed where they are listed.
 - [x] `docs/SPEC.md` §9 item 5 annotated (step 0's second open box) — the refused
       half struck through in place, with the reason and D1's measurement pointed at.
 - [x] `docs/SPEC.md` §8's "no hand-rolled power-flow math" line annotated with D2's
@@ -1247,7 +1250,18 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       6, F2). **Re-run at step 7's close (2026-09-23)**, because it added a dependency:
       **3592 core / 1140 reference / 443 UI** (446 once F5's test landed), exit 0 each, on 187 / 285 / 363
       packages — `JuMP`/`HiGHS` in none of them, being weak dependencies.
-- [~] `git diff` every `Project.toml` after every `Pkg` operation and put the
+      **Re-run at the milestone close (2026-09-29)**, all three manifests deleted
+      and re-resolved in sequence (never concurrently): **3602 core / 1140
+      reference / 446 UI**, exit 0 each — identical to step 7's. The package set
+      is identical to the manifests it replaced in all three environments (no
+      package added or removed), with 11 / 17 / 15 patch or minor bumps
+      (`SciMLBase` 3.56.0 → 3.56.1, `RecursiveArrayTools` 4.5.2 → 4.5.3,
+      `StringManipulation` 0.5.0 → 0.6.1 the largest) moving no count. Counted as
+      `[[deps.` entries the three manifests hold **188 / 286 / 364** — and so did
+      the step-7 manifests they replaced, by the same count, so the 187 / 285 / 363
+      recorded at step 7 was a different counting method, one lower in each, not
+      a different set. The close's figures use the stated method.
+- [x] `git diff` every `Project.toml` after every `Pkg` operation and put the
       dropped comments back. Done for step 2's `SparseArrays` add: nothing was
       dropped (the root file carries no comments), but the **compat bound had to be
       corrected** — see step 2's F5, where `Pkg`'s `"1.12.0"` would have raised the
@@ -1257,3 +1271,6 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       ordinary package whose caret bound says nothing about the Julia floor. Done
       again for step 7's `JuMP` + `HiGHS` add: nothing dropped; `Pkg` wrote them
       into `[deps]` and they were MOVED (not retyped) to `[weakdeps]`/`[extras]`.
+      And at the close: the re-resolve (`Pkg.instantiate` on deleted manifests)
+      changed no `Project.toml` — `git diff` shows only the two docs this close
+      edited.
