@@ -299,8 +299,21 @@ runs.
       ONLY by the network-side check, as pre-registered); output filter removed;
       re-init at constant power.
 - [x] Gates (commit B): core **3868**, M5 criterion bit-identical.
-- [ ] PowerDynamics `SimpleGFL`: gap shrinks as their current loop stiffens.
-- [ ] Mutations: PLL error sign; wrong current frame.
+- [x] PowerDynamics `SimpleGFL` (commit C): an injector ON its bus, `Rf = 0`,
+      `Xf = 0.05` a builder constant (the inductor we do not have), PLL from the
+      inverter's fields, current-loop gains × `cc_scale`; filter current, PLL and
+      loop integrators seeded from ours through THEIR equations. Flat run agrees to
+      ~5e-15. After a line trip the gap falls as **1/k**: V_B 0.0141 → 0.00367 →
+      0.000849, θpll 5.6e-4 → 1.3e-4 → 3.1e-5, ω_gf 7.1e-6 → 1.8e-6 → 4.4e-7 (ratios
+      3.85–4.42); **ωpll falls FASTER** (15.3, 7.7) — not predicted, recorded, asserted
+      only as ≥ 1/k. Bands ≥ 1e4 below the smallest gap. At their default gains the
+      gap on V_B (0.014) is two-thirds of the excursion (0.021): the ideal source is a
+      coarse model of the first milliseconds after an event, now with a number.
+- [x] Mutations against `SimpleGFL`, each red: PLL error sign (fails even the FLAT
+      run — the flipped loop is unstable, so round-off grows off rest); current in the
+      bus frame (flat run passes, the 1/k signature breaks).
+- [x] **Step 5 gates:** core **3868**, reference **1251**, UI **449**, M5 criterion
+      bit-identical.
 
 ## Step 6 — frequency read-outs
 

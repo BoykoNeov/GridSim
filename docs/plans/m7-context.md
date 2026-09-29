@@ -473,3 +473,18 @@ branch — and the message now says so. The constant-current bound `X·i_d ≤ V
 D0 is a different (and also unreachable) statement and is not what a constant-power
 power flow meets.
 
+### What step 5 measured against `SimpleGFL` (Hurdle 12)
+
+The claim held and its signature is clean on three channels: stiffening their current
+loop by k (both PI gains) shrinks the gap as 1/k — ratios 3.85–4.42 per factor of 4
+on the bus voltage, the PLL angle and the grid-forming frequency, with every
+`convergence_band` at least 1e4 below the smallest gap. The PLL FREQUENCY gap fell
+faster (15.3, then 7.7): it reads the current loop's fast transient at the trip
+through a derivative. Not predicted; recorded rather than fitted.
+
+The size is the honest part. At their default gains the voltage gap right after the
+trip is 0.014 pu on a 0.021 pu excursion — the ideal current source is a coarse model
+of the first milliseconds after an event, which is exactly the time scale Hurdle 12
+says a phasor tier cannot hold. It is a fidelity boundary with a number on it, not a
+tolerance.
+

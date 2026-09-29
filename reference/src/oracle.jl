@@ -57,6 +57,10 @@ terms. Concrete-typed fields (SPEC §4).
                 keeps its vertex number), and the virtual inertia `τ_p/(2K_p)` on the
                 system base that weights each in the centre-of-inertia read-out.
                 Empty everywhere else.
+  - `gfl_ids`, `gfl_bus`, `cc_scale` — the grid-following inverters (M7 step 5, tier
+                `:sauer_pai` only): their ids and bus vertices, each a `SimpleGFL`
+                injector ON its bus; and the factor their current loop's gains were
+                scaled by — the knob Hurdle 12's claim turns.
 """
 struct OracleCase
     net::NetworkModel
@@ -76,6 +80,9 @@ struct OracleCase
     inv_ids::Vector{Symbol}
     inv_vertex::Vector{Int}
     inv_H::Vector{Float64}
+    gfl_ids::Vector{Symbol}
+    gfl_bus::Vector{Int}
+    cc_scale::Float64
 end
 
 # Machine symbols under a case's namespace. One place, so a tier that moves the
@@ -305,7 +312,8 @@ zeroes the machine's mechanical power **and** deactivates every incident line,
 because that is what zeroing `Pm` and every incident `K` amounts to.
 """
 function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = (),
-                      X_ls_frac::Real = 0.5, avr_Ta::Real = 0.002)
+                      X_ls_frac::Real = 0.5, avr_Ta::Real = 0.002,
+                      cc_scale::Real = 1.0, gfl_Xf::Real = 0.05)
     tier in (:swing, :classical, :sauer_pai, :sauer_pai_avr) || throw(ArgumentError(
         "build_oracle: tier must be :swing, :classical, :sauer_pai or " *
         ":sauer_pai_avr, got :$tier."))
@@ -319,10 +327,11 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # what `DetailedEngine` builds (m7-context.md D3) — and nowhere else: the swing
     # tier's inverter has its own exact oracle (the converted machine, step 3), and
     # `:sauer_pai_avr` is about the exciter. Grid-following waits for step 5.
-    GridSim._assert_no_grid_following(net, "build_oracle"; unbuilt =
-        "(M7 step 5 maps it onto SimpleGFL.)")
+    # Step 5 maps the grid-following kind onto `SimpleGFL`, at the same tier only.
     tier === :sauer_pai || GridSim._assert_no_inverters(net, "build_oracle(tier = :$tier)";
-        unbuilt = "(M7 step 4 maps the grid-forming inverter at tier = :sauer_pai only.)")
+        unbuilt = "(M7 steps 4 and 5 map inverters at tier = :sauer_pai only.)")
+    cc_scale > 0 && gfl_Xf > 0 || throw(ArgumentError(
+        "build_oracle: cc_scale ($cc_scale) and gfl_Xf ($gfl_Xf) must be > 0."))
 
     # The two detailed tiers share every mapping but the injector: `:sauer_pai` puts
     # the machine on the bus with its field voltage HELD, `:sauer_pai_avr` wraps it
@@ -432,9 +441,25 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     la = load_arrays(net)
     load_of_bus = zeros(Int, nb)
     for j in eachindex(la.bus); load_of_bus[la.bus[j]] = j; end
+    # M7 step 5 — a grid-following inverter is an injector ON its bus (it has no
+    # internal voltage to put behind a reactance), `SimpleGFL` with everything passed
+    # explicitly: `Rf = 0` (our model is lossless; their filter resistance sits inside
+    # the source and would change its internal voltage, not its terminal current),
+    # `Xf` a builder constant like `X_ls` — the filter inductor is Hurdle 12's gap and
+    # we have none — the PLL from the inverter's own fields, and the current loop's
+    # gains at their defaults times `cc_scale`. `F = Fcoupl = 0` are their defaults,
+    # passed because a default is not a guarantee.
+    gfl_inv = [i for i in net.inverters if i.mode === :grid_following]
+    gfl_of_bus = Dict(net.bus_index[i.bus] => i for i in gfl_inv)
     for v in 1:nb
         k = mach_of_bus[v]
-        inj = k == 0 ? nothing : if detailed
+        inj = haskey(gfl_of_bus, v) ?
+            Library.ComposableInverter.SimpleGFL(; name = :gfl, Rf = 0.0, Xf = gfl_Xf,
+                PLL_Kp = gfl_of_bus[v].K_pll_p, PLL_Ki = gfl_of_bus[v].K_pll_i,
+                PLL_τ_lpf = gfl_of_bus[v].τ_pll,
+                CC1_KP = 0.6 * cc_scale, CC1_KI = 565.5 * cc_scale,
+                CC1_F = 0.0, CC1_Fcoupl = 0.0) :
+            k == 0 ? nothing : if detailed
             # `SauerPaiMachine` is SIXTH order; ours is fourth. The mapping is its
             # `X″ = X′` degeneration, where `γ_1 = 1` and `γ_2 = 0` EXACTLY, and
             # every remaining line collapses onto `m5-prestudy.md` §2 with nothing
@@ -583,6 +608,7 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     if detailed
         _seed_sauer_pai!(s0, net, ma, mach_bus, X_ls, mpfx, regulated)
         _seed_droop!(s0, net, inv_vertex)
+        _seed_gfl!(s0, net, Float64(gfl_Xf), Float64(cc_scale))
     else
         eng = SwingEngine(net)
         δ0 = collect(current_state(eng).δ)
@@ -594,7 +620,51 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
 
     return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips,
                       bus_ids, mach_bus, X_ls, mpfx, regulated, Float64(avr_Ta),
-                      Symbol[i.id for i in gfm_inv], inv_vertex, inv_H)
+                      Symbol[i.id for i in gfm_inv], inv_vertex, inv_H,
+                      Symbol[i.id for i in gfl_inv], Int[net.bus_index[i.bus] for i in gfl_inv],
+                      Float64(cc_scale))
+end
+
+"""
+    _seed_gfl!(s0, net, Xf, cc_scale)
+
+Seed each `SimpleGFL` from OUR detailed fixpoint (M7 step 5), so their flat run
+checks our operating point and the band is solver tolerance alone.
+
+  - The PLL: their `θ`, `Δω_rad_s`, `Δω_i_rad_s` are ours one for one (D12 took
+    `PLL_LPF` exactly), at lock.
+  - The filter current IS our injected current `(i_d + j·i_q)·e^{jθ}`, and their
+    current setpoint `iset_d/q` is our `(i_d, i_q)` — the same frame, d along θ.
+  - The current loop's integrators hold the voltage the loop must apply at rest:
+    their filter at steady state (`ωframe = 1`) needs `V_I = u + (Rf + jXf)·i`, their
+    `CC1` then reads `V_I = KI·γ` (zero error, `F = Fcoupl = 0`), so
+    `γ = dq(V_I)/KI` in the PLL frame. Computed here from their own equations, which
+    were read before this was written.
+"""
+function _seed_gfl!(s0, net::NetworkModel, Xf::Float64, cc_scale::Float64)
+    any(i -> i.mode === :grid_following, net.inverters) || return s0
+    eng = init!(DetailedEngine, net)
+    u, g = eng.integrator.u, eng.gfl
+    KI = 565.5 * cc_scale
+    for j in eachindex(g.ids)
+        v = g.bus[j]
+        θ = u[g.θ_idx[j]]
+        i_d, i_q = eng.params[g.id_pidx[j]], eng.params[g.iq_pidx[j]]
+        I = complex(i_d, i_q) * cis(θ)
+        V = complex(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
+        V_I = V + complex(0.0, Xf) * I              # Rf = 0 (see `build_oracle`)
+        VId = V_I * cis(-θ)
+        s0.v[v, :gfl₊pll₊θ]          = θ
+        s0.v[v, :gfl₊pll₊Δω_rad_s]   = u[g.Δω_idx[j]]
+        s0.v[v, :gfl₊pll₊Δω_i_rad_s] = u[g.Δωi_idx[j]]
+        s0.v[v, :gfl₊filter₊i_f_r]   = real(I)
+        s0.v[v, :gfl₊filter₊i_f_i]   = imag(I)
+        s0.v[v, :gfl₊cc1₊γ_d]        = real(VId) / KI
+        s0.v[v, :gfl₊cc1₊γ_q]        = imag(VId) / KI
+        s0.p.v[v, :gfl₊iset_d]       = i_d
+        s0.p.v[v, :gfl₊iset_q]       = i_q
+    end
+    return s0
 end
 
 """
@@ -1031,6 +1101,16 @@ function oracle_solve(case::OracleCase, tspan; saveat,
         for j in 1:ni; push!(names, Symbol(:δ_, case.inv_ids[j])); push!(vals, δi[j]); end
         for j in 1:ni; push!(names, Symbol(:ω_, case.inv_ids[j])); push!(vals, ωi[j]); end
         for j in 1:ni; push!(names, Symbol(:E_, case.inv_ids[j])); push!(vals, Ei[j]); end
+        # …and the grid-following inverters' PLL angle and frequency (pu deviation;
+        # their `ω` is absolute), after them — `state_series`' order.
+        for (j, v) in pairs(case.gfl_bus)
+            push!(names, Symbol(:θpll_, case.gfl_ids[j]))
+            push!(vals, take(sol[VIndex(v, :gfl₊pll₊θ)]))
+        end
+        for (j, v) in pairs(case.gfl_bus)
+            push!(names, Symbol(:ωpll_, case.gfl_ids[j]))
+            push!(vals, take(sol[VIndex(v, :gfl₊pll₊ω)]) .- 1.0)
+        end
         for v in eachindex(case.bus_ids)
             ur = take(sol[VIndex(v, :busbar₊u_r)])
             ui = take(sol[VIndex(v, :busbar₊u_i)])

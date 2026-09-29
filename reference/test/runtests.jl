@@ -2171,13 +2171,13 @@ end # M6 step 4 oracle B
     names_it(f) = try; f(); false; catch e; e isa ArgumentError && occursin("INV", e.msg); end
     @test names_it(() -> build_oracle(net))
     @test names_it(() -> to_powersystems(net))
-    # M7 step 4 maps the grid-forming kind at `:sauer_pai` (its own testset below);
-    # grid-following is still refused there, by name, until step 5.
+    # M7 steps 4 and 5 map both kinds at `:sauer_pai` (their own testsets below); at
+    # the classical tiers an inverter of either kind is still refused by name.
     gfl = NetworkModel(100.0, 50.0, buses, [Branch(:L, :B1, :B2, 0.2, 500.0)],
                        [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, -30.0),
                         Machine(:G2, :B2, 200.0, 5.0, 2.0, 0.3, 1.0, 0.0)];
                        inverters = [Inverter(:INV, :B2, :grid_following, 50.0, 30.0)])
-    @test names_it(() -> build_oracle(gfl; tier = :sauer_pai))
+    @test names_it(() -> build_oracle(gfl; tier = :classical))
 end
 
 # ===========================================================================
@@ -2217,10 +2217,6 @@ m7_dδ(s) = s.δ_iB .- s.δ_iA
     # Virtual inertia τ_p/(2K_p) on the system base, BY HAND: 1 s · 150/100, · 120/100.
     @test case.inv_H ≈ [1.5, 1.2] atol = 1e-15
     @test occursin("iA", argerr_msg(() -> build_oracle(net; tier = :swing)))
-    gfl = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
-        [Branch(:AB, :A, :B, 0.2, 500.0)], [Machine(:G, :A, 100.0, 4.0, 1.0, 0.3, 1.0, 20.0)];
-        inverters = [Inverter(:pv, :B, :grid_following, 50.0, -20.0)])
-    @test occursin("step 5", argerr_msg(() -> build_oracle(gfl; tier = :sauer_pai)))
 end
 
 @testset "the flat run: PowerDynamics says our inverter's steady state is one" begin
@@ -2293,6 +2289,86 @@ end
                           reltol = 1.0e-9, abstol = 1.0e-12,
                           mutate = _ -> m7_all_gfm(X_c = 0.12))
     @test gap(ox, t9, :E_iB) > 100 * band
+end
+
+end
+
+# ===========================================================================
+# M7 step 5 — the grid-following inverter against SimpleGFL (Hurdle 12)
+# ===========================================================================
+#
+# OURS IS AN IDEAL CURRENT SOURCE; THEIRS HAS A FILTER INDUCTOR AND A PI CURRENT
+# LOOP. Everything else is the same by construction (their `PLL_LPF` taken exactly,
+# D12), so the gap is that fidelity difference and nothing else — and it is
+# IDENTIFIED BY ITS SIGNATURE rather than banded away: stiffen their current loop by
+# a factor k (both gains) and the gap must fall as 1/k. Pre-registered, with the
+# band stated first: each side's `convergence_band` must sit far below the SMALLEST
+# gap, because stiffening raises their own solver error, and a gap inside its band
+# would be noise, not a signature.
+#
+# No machine again (M5's stator-ω residual would sit on top): a grid-forming inverter
+# holds the voltage, the grid-following one follows it, a load draws.
+m7_gfl3(; k = 1.0) = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0), Bus(:C, 1.0)],
+    [Branch(:AC, :A, :C, 0.2, 500.0), Branch(:BC, :B, :C, 0.25, 500.0),
+     Branch(:AB, :A, :B, 0.3, 500.0)], Machine[], [Load(:D, :C, 100.0, 20.0)];
+    inverters = [Inverter(:gf, :A, :grid_forming, 200.0, 40.0; V_set = 1.02, K_q = 0.05),
+                 Inverter(:pv, :B, :grid_following, 150.0, 60.0; Q0 = 10.0)])
+function m7_gfl_run(grid, pert; k = 1.0, rt = 1e-9, at = 1e-12)
+    net = m7_gfl3()
+    eng = init!(DetailedEngine, net; reltol = rt, abstol = at)
+    case = build_oracle(net; tier = :sauer_pai, perturbations = pert, cc_scale = k)
+    o = solve!(eng, (grid[1], grid[end]); perturbations = pert, saveat = grid)
+    t = oracle_solve(case, (grid[1], grid[end]); saveat = grid, reltol = rt, abstol = at)
+    return o, t
+end
+
+@testset "M7 step 5 — the grid-following inverter against SimpleGFL" begin
+
+@testset "the flat run: PowerDynamics says our grid-following steady state is one" begin
+    # Their filter current, current-loop integrators and PLL, all seeded from ours
+    # through their own equations (read first): if any were wrong, their run would
+    # leave rest. Measured: every channel flat and in agreement to ~5e-15.
+    grid = collect(0.0:0.01:2.0)
+    o, t = m7_gfl_run(grid, ())
+    @test keys(o) == keys(t)
+    @test :θpll_pv in keys(o) && :ωpll_pv in keys(o)
+    for k in keys(o)
+        k === :t && continue
+        @test maximum(abs, getproperty(t, k) .- getproperty(t, k)[1]) < 1e-12
+        @test gap(o, t, k) < 1e-12
+    end
+end
+
+@testset "the gap is the current loop's, and it falls as 1/k (Hurdle 12)" begin
+    # MEASURED (k = 1, 4, 16; line trip A–B at 0.5 s):
+    #   V_B      0.0141  → 0.00367 → 0.000849     ratios 3.85, 4.32
+    #   θpll_pv  5.56e-4 → 1.26e-4 → 3.08e-5      ratios 4.42, 4.08
+    #   ω_gf     7.12e-6 → 1.75e-6 → 4.36e-7      ratios 4.07, 4.02
+    #   ωpll_pv  1.41e-3 → 9.24e-5 → 1.20e-5      ratios 15.3, 7.7 — FASTER than
+    #            1/k, which was not predicted: the PLL frequency reads the fast
+    #            current-loop transient at the trip through a derivative. Recorded
+    #            as measured, and asserted only as "at least 1/k".
+    # Bands: 1e-9 to 3e-11 on every channel at every k — ≥ 1e4 below the smallest gap.
+    # At their DEFAULT gains the gap on V_B is 0.014 against a 0.021 excursion: the
+    # ideal source is a coarse model of the first milliseconds after an event, and
+    # this is where the repo says so with a number.
+    grid = collect(0.0:0.001:1.5)
+    pert = [0.5 => TripLine(:A, :B)]
+    g = Dict{Tuple{Symbol,Float64},Float64}()
+    for k in (1.0, 4.0, 16.0)
+        o9, t9 = m7_gfl_run(grid, pert; k)
+        o6, t6 = m7_gfl_run(grid, pert; k, rt = 1e-6, at = 1e-9)
+        for ch in (:V_B, :θpll_pv, :ω_gf, :ωpll_pv)
+            g[(ch, k)] = gap(o9, t9, ch)
+            @test convergence_band(o6, o9, t6, t9; channel = chan(ch)) < g[(ch, k)] / 100
+        end
+    end
+    for ch in (:V_B, :θpll_pv, :ω_gf), (a, b) in ((1.0, 4.0), (4.0, 16.0))
+        @test 3.5 < g[(ch, a)] / g[(ch, b)] < 4.6
+    end
+    for (a, b) in ((1.0, 4.0), (4.0, 16.0))
+        @test g[(:ωpll_pv, a)] / g[(:ωpll_pv, b)] > 3.5
+    end
 end
 
 end
