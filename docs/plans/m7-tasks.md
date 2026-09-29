@@ -202,7 +202,7 @@ runs.
 - [x] `SPEC.md` §7.6 amended **after** the measurement: "no swing equation" is true
       of grid-following only. §9 item 7 marked taken.
 - [x] Gates: **3778 core**, M5 criterion **bit-identical**
-      (`W:	emp\claude\m7\criterion-STEP3.txt`), **1143 reference / 449 UI**.
+      (`W:\temp\claude\m7\criterion-STEP3.txt`), **1143 reference / 449 UI**.
 - **Found, not planned (1):** M2's `V5` tripwire — which counts every array the
   swing engine holds, to catch an all-pairs structure — moved by exactly `n`
   (1122 → 1162 at n = 40): the one new per-vertex `droop` vector. Accounted for in
