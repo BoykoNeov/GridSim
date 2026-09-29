@@ -808,6 +808,14 @@ function _assert_seed_is_this_dispatch(net::NetworkModel, sol::ACPowerFlow, ma)
         # a second one outright — see `_seed_from_powerflow`'s docstring.
         Vset[v] = net.machines[k].V_set
     end
+    # M7 step 4: a grid-forming inverter holds its P and V_set like a machine, and
+    # `_assert_detailed_tier` allows one source per bus counting it. Without this the
+    # `Qgen ≈ 0` check below would fire on every inverter bus (no machine there).
+    ia = _inverter_arrays(net)
+    for j in eachindex(ia.bus)
+        Pg[ia.bus[j]] += ia.P[j]
+        Vset[ia.bus[j]] = ia.V_set[j]
+    end
     Pl = zeros(Float64, nb); Ql = zeros(Float64, nb)
     ai = zeros(Float64, nb); ap = zeros(Float64, nb)
     la = load_arrays(net)
@@ -930,6 +938,22 @@ function _seed_from_powerflow(net::NetworkModel, sol::ACPowerFlow, ma)
         Iinj[k] = I
     end
     return V, δ, Pe, Iinj, sol.residual
+end
+
+"""
+    _seed_gfm_from_powerflow(sol::ACPowerFlow, v, V, X_c) -> (δ, E)
+
+A grid-forming inverter's formed voltage `E∠δ` from the power flow's own solved
+injection at its bus `v` (M7 step 4) — the machine's `Ẽ` construction in
+`_seed_from_powerflow` with `Ra = 0` and `X_c` for `Xq`: `I = conj(S/V)`,
+`E∠δ = V + jX_c·I`. From `S`, never from the fixpoint's own solve, for the reason
+that function gives. One source per bus (`_assert_detailed_tier`), so the bus's
+solved injection IS the inverter's.
+"""
+function _seed_gfm_from_powerflow(sol::ACPowerFlow, v::Int, V::ComplexF64, X_c::Float64)
+    I = conj(complex(sol.Pgen[v], sol.Qgen[v]) / V)
+    Ẽ = V + im * X_c * I
+    return angle(Ẽ), abs(Ẽ)
 end
 
 # The `powerflow` keyword is untyped in `init!`'s signature (see the comment there:

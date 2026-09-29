@@ -319,6 +319,59 @@ through a second copy of the same two lines.
 """
 @inline _dq(re, im, δ) = (re * sin(δ) - im * cos(δ), re * cos(δ) + im * sin(δ))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# The grid-forming inverter (M7 step 4, `docs/plans/m7-context.md` D3/D4/D11)
+#
+# THREE ONE-LINE LAWS, EACH WRITTEN ONCE. The dynamic vertex, the static vertex, the
+# initialisation's back-substitution and the read-outs all call these, so the step's
+# two anti-vacuity mutations (the `K_q` sign, the coupling reactance) change the
+# model CONSISTENTLY — initialisation included — and have to show up as a different
+# TRAJECTORY. A mutation that only broke the build-time residual check would go red
+# for a reason that proves nothing (M6's lesson).
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    _gfm_speed(K_p, P_filt, P_set) -> ω
+
+The droop law, `ω = −K_p·(P_filt − P_set)` (pu deviation, `K_p` on the system base).
+`ω` is not a state: it is read off the filtered power, which is why a setpoint step
+moves it instantly (Hurdle 11 claim 2) and a rotor's cannot.
+"""
+@inline _gfm_speed(K_p, P_filt, P_set) = -K_p * (P_filt - P_set)
+
+"""
+    _gfm_voltage(V_ref, K_q, Q_filt) -> E
+
+The voltage droop, `E = V_ref − K_q·Q_filt` — the magnitude of the voltage the
+inverter forms behind its coupling reactance. `V_ref` is the droop's intercept,
+`V_set + K_q·Q_set` in the component's own terms; only that combination enters the
+dynamics, so it is one DERIVED parameter (`init!`, D11), never two pieces of data.
+`K_q = 0` holds `E` at `V_ref` exactly and is the degeneration that makes this
+inverter a classical machine.
+"""
+@inline _gfm_voltage(V_ref, K_q, Q_filt) = V_ref - K_q * Q_filt
+
+"""
+    _gfm_current(Vre, Vim, δ, E, X) -> (Ire, Iim, P, Q)
+
+The current a voltage `E∠δ` behind a reactance `X` injects into a bus at `V`, and
+the power **at the source terminal**: `I = (E∠δ − V)/(jX)`, `P + jQ = E∠δ·conj(I)`.
+
+**Measured at the source, not at the bus, and that is a choice with a size.** `P` is
+the same at both ends of a lossless reactance; `Q` is not — the source sees
+`Q_bus + |I|²X`. This model is checked against PowerDynamics' `IdealDroopInverter`
+with an explicit line of reactance `X_c` (D3), and that component measures its power
+at its own terminal, which is this source. Measuring at the bus would put a
+`|I|²X_c` difference into `Q_filt` and, through `K_q`, into the voltage.
+"""
+@inline function _gfm_current(Vre, Vim, δ, E, X)
+    Ere, Eim = E * cos(δ), E * sin(δ)
+    dre, dim = Ere - Vre, Eim - Vim
+    Ire =  dim / X
+    Iim = -dre / X
+    return Ire, Iim, Ere * Ire + Eim * Iim, Eim * Ire - Ere * Iim
+end
+
 """
     _load_current(Vre, Vim, G, B, a_i, a_p) -> (Ire, Iim)
 
@@ -497,6 +550,84 @@ function _detailed_passive_bus!(dv, v, esum, p, t)
 end
 
 """
+    _detailed_gfm_bus!(dv, v, esum, p, t)
+
+A bus carrying one **grid-forming inverter** (M7 step 4). State
+`v = (V_re, V_im, δ, P_filt, Q_filt)`, mass matrix `Diagonal(0, 0, 1, 1, 1)`:
+
+    E          = V_ref − K_q·Q_filt              the voltage droop  (`_gfm_voltage`)
+    I, P, Q    = source E∠δ behind X_c           at the source      (`_gfm_current`)
+    dδ/dt      = ω₀·(−K_p·(P_filt − P_set))      the frequency droop (`_gfm_speed`)
+    τ_p·dP_filt/dt = P − P_filt
+    τ_q·dQ_filt/dt = Q − Q_filt
+
+plus the bus's Kirchhoff balance with any load on it. Built from the inverter's OWN
+states, never by converting it to a machine and calling `_detailed_machine_bus!`
+(D4): at `K_q = 0` it is algebraically the classical machine with `2H = τ_p/K_p`,
+`D = 1/K_p`, `X′d = X_c`, and that equivalence is a CHECK, which it could not be if
+the two shared a right-hand side. With `K_q > 0` the equivalence ends — the internal
+voltage moves with reactive output, which a classical machine's cannot.
+
+Every gain and the reactance are on the SYSTEM base, converted once in
+`_inverter_arrays`. No governor slot: this tier refuses `TripGenerator`, ladders and
+ramps on an inverter, so nothing indexes one (the swing tier's placeholder exists
+for its trip bookkeeping only).
+
+Parameters `p = (P_set, K_p, τ_p, ω₀, K_q, τ_q, V_ref, X_c, G, B, a_i, a_p)`.
+"""
+function _detailed_gfm_bus!(dv, v, esum, p, t)
+    Vre, Vim, δ, P_filt, Q_filt = v[1], v[2], v[3], v[4], v[5]
+    P_set, K_p, τ_p, ω₀         = p[1], p[2], p[3], p[4]
+    K_q, τ_q, V_ref, X_c        = p[5], p[6], p[7], p[8]
+    G, B, a_i, a_p              = p[9], p[10], p[11], p[12]
+    E = _gfm_voltage(V_ref, K_q, Q_filt)
+    Ire, Iim, P, Q = _gfm_current(Vre, Vim, δ, E, X_c)
+    Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
+    dv[1] = Ire - Lre + esum[1]                 # KCL, real
+    dv[2] = Iim - Lim + esum[2]                 # KCL, imaginary
+    dv[3] = ω₀ * _gfm_speed(K_p, P_filt, P_set)
+    dv[4] = (P - P_filt) / τ_p
+    dv[5] = (Q - Q_filt) / τ_q
+    return nothing
+end
+
+"""
+    _static_gfm_bus!(dv, v, esum, p, t)
+
+The power-flow counterpart of `_detailed_gfm_bus!`: state `(V_re, V_im, δ, E)`,
+fully algebraic — one unknown more than the machine's static vertex, because the
+inverter holds its **bus** voltage and the magnitude it forms behind `X_c` is what
+that costs (D11). The machine's static vertex holds `|E| = E′` instead, which is why
+it needs no fourth unknown; the inverter's `V_set` means the same thing here as in
+`ac_powerflow` and in the swing tier (the magnitude at the bus), and one field does
+not get two meanings.
+
+Two residuals are Kirchhoff's; the other two are switched by `mode`, with the
+machine's codes:
+
+  - `_PF_SOLVE` — `P − P_set` and `|V| − V_set`: a PV bus.
+  - `_PF_PIN`   — `δ − δ_target` and `|V| − V_set`: the slack, whose power is free.
+  - `_PF_HOLD`  — `δ − δ_target` and `E − E_held`: the post-event re-initialisation,
+                  which holds the differential states (the angle, and the voltage the
+                  filtered reactive power sets) and restores the algebraic ones.
+
+Parameters `p = (P_set, V_set, X_c, G, B, a_i, a_p, mode, δ_target, E_held)`.
+"""
+function _static_gfm_bus!(dv, v, esum, p, t)
+    Vre, Vim, δ, E       = v[1], v[2], v[3], v[4]
+    P_set, V_set, X_c    = p[1], p[2], p[3]
+    G, B, a_i, a_p       = p[4], p[5], p[6], p[7]
+    mode, δ_target, E_held = p[8], p[9], p[10]
+    Ire, Iim, P, _ = _gfm_current(Vre, Vim, δ, E, X_c)
+    Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
+    dv[1] = Ire - Lre + esum[1]
+    dv[2] = Iim - Lim + esum[2]
+    dv[3] = mode > 0.5 ? (δ - δ_target) : (P - P_set)
+    dv[4] = mode > 1.5 ? (E - E_held) : (hypot(Vre, Vim) - V_set)
+    return nothing
+end
+
+"""
     _static_machine_bus!(dv, v, esum, p, t)
 
 The power-flow counterpart of `_detailed_machine_bus!`: state `(V_re, V_im, δ)`,
@@ -591,14 +722,23 @@ Each rejection names the step that lifts it, so a boundary is never mistaken for
 bug.
 """
 function _assert_detailed_tier(net::NetworkModel)
+    # M7 step 1 refused every inverter; step 4 builds the grid-forming kind. The
+    # grid-following refusal goes FIRST (m7-context.md D2): an inverter's bus usually
+    # carries no machine, and a later per-bus guard would report the symptom.
+    _assert_no_grid_following(net, "DetailedEngine"; unbuilt =
+        "(M7 step 5 builds it at this tier.)")
     # M6 step 1. `Branch.R` exists in the model and this tier's edge current is
     # `(Vf − Vt)/(jX)`, so a lossy branch would be silently simulated as a lossless
     # one. Refused here until M6 step 3's power flow reads it.
     _assert_lossless_branches(net, "DetailedEngine")
-    # M7 step 1 — refused until steps 4 (grid-forming) and 5 (grid-following).
-    _assert_no_inverters(net, "DetailedEngine"; unbuilt =
-        "(M7 steps 4 and 5 build the two inverter kinds at this tier.)")
     for (v, ks) in pairs(net.machines_at_bus)
+        # M7 step 4: a grid-forming inverter is a source too, and a vertex model holds
+        # exactly one. Without inverters this is the pre-M7 check, message for message.
+        n_inv = length(net.inverters_at_bus[v])
+        n_inv == 0 || length(ks) + n_inv <= 1 || throw(ArgumentError(
+            "DetailedEngine: bus $(net.buses[v].id) carries $(length(ks) + n_inv) " *
+            "sources (machines and grid-forming inverters together). A vertex model " *
+            "holds exactly one; more is unbuilt work, not a tier boundary."))
         length(ks) <= 1 || throw(ArgumentError(
             "DetailedEngine: bus $(net.buses[v].id) carries $(length(ks)) machines " *
             "($(join([net.machines[k].id for k in ks], ", "))). The canonical model " *
@@ -659,9 +799,14 @@ function _bus_load(net::NetworkModel)
     return G, B, a_i, a_p
 end
 
-# The dynamic (DAE) network: a machine vertex where there is a machine, a passive
-# vertex where there is not. Heterogeneous vertex vectors and zero mass-matrix
-# rows were both measured to work before any of this was written.
+# Whether vertex `v` carries a grid-forming inverter. After `_assert_detailed_tier`
+# a bus carries at most one source, and every inverter left is grid-forming.
+_has_gfm(net::NetworkModel, v::Integer) = !isempty(net.inverters_at_bus[v])
+
+# The dynamic (DAE) network: a machine vertex where there is a machine, a
+# grid-forming vertex where there is an inverter (M7 step 4), a passive vertex where
+# there is neither. Heterogeneous vertex vectors and zero mass-matrix rows were both
+# measured to work before any of this was written.
 function _dynamic_network(net::NetworkModel, g)
     vmachine = NetworkDynamics.VertexModel(
         f = _detailed_machine_bus!, g = NetworkDynamics.StateMask(1:2),
@@ -676,8 +821,14 @@ function _dynamic_network(net::NetworkModel, g)
         f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
         sym = [:V_re, :V_im], psym = [:G, :B, :a_i, :a_p],
         mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0]), name = :passive_bus)
-    verts = [isempty(net.machines_at_bus[v]) ? vpassive : vmachine
-             for v in 1:length(net.buses)]
+    vgfm = NetworkDynamics.VertexModel(
+        f = _detailed_gfm_bus!, g = NetworkDynamics.StateMask(1:2),
+        sym = [:V_re, :V_im, :δ, :P_filt, :Q_filt],
+        psym = [:P_set, :K_p, :τ_p, :ω₀, :K_q, :τ_q, :V_ref, :X_c, :G, :B, :a_i, :a_p],
+        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0]),
+        name = :gfm_bus)
+    verts = [!isempty(net.machines_at_bus[v]) ? vmachine :
+             _has_gfm(net, v) ? vgfm : vpassive for v in 1:length(net.buses)]
     return NetworkDynamics.Network(g, verts, [_detailed_edge() for _ in 1:Graphs.ne(g)])
 end
 
@@ -694,8 +845,13 @@ function _static_network(net::NetworkModel, g)
         f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
         sym = [:V_re, :V_im], psym = [:G, :B, :a_i, :a_p],
         mass_matrix = LinearAlgebra.Diagonal(zeros(2)), name = :pf_passive_bus)
-    verts = [isempty(net.machines_at_bus[v]) ? vpassive : vmachine
-             for v in 1:length(net.buses)]
+    vgfm = NetworkDynamics.VertexModel(
+        f = _static_gfm_bus!, g = NetworkDynamics.StateMask(1:2),
+        sym = [:V_re, :V_im, :δ, :E],
+        psym = [:P_set, :V_set, :X_c, :G, :B, :a_i, :a_p, :mode, :δ_target, :E_held],
+        mass_matrix = LinearAlgebra.Diagonal(zeros(4)), name = :pf_gfm_bus)
+    verts = [!isempty(net.machines_at_bus[v]) ? vmachine :
+             _has_gfm(net, v) ? vgfm : vpassive for v in 1:length(net.buses)]
     return NetworkDynamics.Network(g, verts, [_detailed_edge() for _ in 1:Graphs.ne(g)])
 end
 
@@ -883,6 +1039,34 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 """
+    _GFMIndex
+
+Where the detailed tier keeps each grid-forming inverter (M7 step 4), in model (bus)
+order: its flat state and parameter indices in both networks, and the system-base
+numbers the read-outs need (`K_p` for the droop speed, `K_q` for the formed voltage,
+`H` for the virtual-inertia COI weight). One concretely typed record rather than
+fourteen more engine fields, and empty on every model without inverters — which is
+what keeps every pre-M7 read-out the arithmetic it was.
+"""
+struct _GFMIndex
+    ids::Vector{Symbol}
+    bus::Vector{Int}
+    δ_idx::Vector{Int}
+    Pf_idx::Vector{Int}
+    Qf_idx::Vector{Int}
+    Pset_pidx::Vector{Int}
+    Vref_pidx::Vector{Int}
+    K_p::Vector{Float64}
+    K_q::Vector{Float64}
+    H::Vector{Float64}
+    sδ_idx::Vector{Int}
+    sE_idx::Vector{Int}
+    smode_pidx::Vector{Int}
+    sδtarget_pidx::Vector{Int}
+    sEheld_pidx::Vector{Int}
+end
+
+"""
     DetailedEngine{NW,SW,I,R} <: SimulationEngine
 
 The detailed (DAE) tier's engine: bus voltages as algebraic states, machines on
@@ -954,6 +1138,9 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     ladders::Vector{ShedLadder}
     relays::Vector{OutOfStepRelay}
     ramps::Vector{Pair{Symbol,GenerationRamp}}
+    # M7 step 4 — the grid-forming inverters. `H`/`w` above stay machine-only; `Σw`
+    # counts the inverters' virtual inertia too.
+    gfm::_GFMIndex
 end
 
 # Run the static network to convergence from the seeds in `u`, and read the answer
@@ -1072,9 +1259,23 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                capacity::Integer = _TRAJ_CAPACITY)
     _assert_detailed_tier(net)
     _assert_shed_denomination(net, shed)
-    isempty(net.machines) && throw(ArgumentError(
-        "DetailedEngine: the model has no machines, so there is no angle reference " *
-        "and no differential state at all."))
+    ia = _inverter_arrays(net)
+    isempty(net.machines) && isempty(ia.id) && throw(ArgumentError(
+        "DetailedEngine: the model has no machines and no grid-forming inverters, so " *
+        "there is no voltage source, no angle reference and no differential state at " *
+        "all."))
+    # M7 step 4. A ladder or a ramp acts on a MACHINE's mechanical power; on a droop
+    # inverter's setpoint neither has a meaning anybody has validated. Refused by
+    # name, as `SwingEngine` does, rather than as an unknown machine.
+    let inv_ids = Set(ia.id)
+        for (what, arg) in (("shed", shed), ("ramp", ramp)), pr in arg
+            first(pr) in inv_ids && throw(ArgumentError(
+                "DetailedEngine: $what is armed on `:$(first(pr))`, which is a " *
+                "grid-forming inverter. Load shedding and generation ramps act on a " *
+                "machine's power; on an inverter's droop setpoint they are an " *
+                "unvalidated model (M7)."))
+        end
+    end
 
     ma = machine_arrays(net)
     g, bt = _detailed_graph(net)
@@ -1090,21 +1291,31 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     # came first". On every pre-M6 model those are the same machine to the bit:
     # `NetworkModel` defaults `slack` to `machines[1].bus` after the bus sort, so
     # its first machine is `net.machines[1]`, which is what `ids[1]` was.
+    #
+    # M7 step 4: a grid-forming inverter holds an angle too (the one it forms), so it
+    # may be the slack — and with no machine in the model it is the model's default
+    # reference bus (m7-context.md D2). With a machine on the slack bus nothing here
+    # changes.
     slack_id = slack
     if slack_id === nothing
-        ks = net.machines_at_bus[net.bus_index[net.slack]]
-        isempty(ks) && throw(ArgumentError(
-            "DetailedEngine: the model's slack bus :$(net.slack) carries no machine. " *
-            "The slack supplies the angle reference, so it must be a machine — a " *
-            "passive bus has no rotor angle to pin. Declare a slack bus that carries " *
-            "one, or pass `slack = <machine id>` explicitly."))
-        slack_id = net.machines[ks[1]].id
+        vs = net.bus_index[net.slack]
+        ks = net.machines_at_bus[vs]
+        js = findall(==(vs), ia.bus)
+        isempty(ks) && isempty(js) && throw(ArgumentError(
+            "DetailedEngine: the model's slack bus :$(net.slack) carries no machine " *
+            "and no grid-forming inverter. The slack supplies the angle reference, so " *
+            "it must hold one — a passive bus has no rotor angle to pin, nor a formed " *
+            "one. Declare a slack bus " *
+            "that carries a source, or pass `slack = <id>` explicitly."))
+        slack_id = isempty(ks) ? ia.id[js[1]] : net.machines[ks[1]].id
     end
     k_slack = findfirst(==(slack_id), ids)
-    k_slack === nothing && throw(ArgumentError(
-        "DetailedEngine: slack = :$slack_id is not a machine in this model " *
-        "(machines: $(join(ids, ", "))). The slack supplies the angle reference; " *
-        "it must be a machine, because a passive bus has no rotor angle to pin."))
+    j_slack = findfirst(==(slack_id), ia.id)
+    k_slack === nothing && j_slack === nothing && throw(ArgumentError(
+        "DetailedEngine: slack = :$slack_id is not a machine in this model, nor a " *
+        "grid-forming inverter (machines: $(join(ids, ", ")); grid-forming " *
+        "inverters: $(join(ia.id, ", "))). The slack supplies the angle reference; " *
+        "it must be a source, because a passive bus has no angle to pin."))
 
     nw  = _dynamic_network(net, g)
     nws = _static_network(net, g)
@@ -1112,25 +1323,39 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
 
     # Flat indices, resolved once through the symbolic interface — nothing here
     # assumes a stride or an ordering, the discipline `SwingEngine` established.
-    Vre_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
-    Vim_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
-    δ_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :δ)) for k in 1:nm]
-    ω_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :ω)) for k in 1:nm]
-    ΔPm_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :ΔPm)) for k in 1:nm]
-    E′q_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′q)) for k in 1:nm]
-    E′d_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′d)) for k in 1:nm]
-    Efd_idx = [SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :Efd)) for k in 1:nm]
-    Pm_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Pm)) for k in 1:nm]
-    Vref_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Vref)) for k in 1:nm]
+    Vre_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
+    Vim_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
+    δ_idx   = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :δ)) for k in 1:nm]
+    ω_idx   = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :ω)) for k in 1:nm]
+    ΔPm_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :ΔPm)) for k in 1:nm]
+    E′q_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′q)) for k in 1:nm]
+    E′d_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :E′d)) for k in 1:nm]
+    Efd_idx = Int[SII.variable_index(nw, NetworkDynamics.VIndex(ma.bus[k], :Efd)) for k in 1:nm]
+    Pm_pidx = Int[SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Pm)) for k in 1:nm]
+    Vref_pidx = Int[SII.parameter_index(nw, NetworkDynamics.VPIndex(ma.bus[k], :Vref)) for k in 1:nm]
 
-    sVre_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
-    sVim_idx = [SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
-    sδ_idx   = [SII.variable_index(nws, NetworkDynamics.VIndex(ma.bus[k], :δ)) for k in 1:nm]
-    sPset_pidx    = [SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :Pset)) for k in 1:nm]
-    smode_pidx    = [SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :mode)) for k in 1:nm]
-    sδtarget_pidx = [SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :δ_target)) for k in 1:nm]
-    sE′q_pidx     = [SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :E′q)) for k in 1:nm]
-    sE′d_pidx     = [SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :E′d)) for k in 1:nm]
+    sVre_idx = Int[SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_re)) for v in 1:nb]
+    sVim_idx = Int[SII.variable_index(nws, NetworkDynamics.VIndex(v, :V_im)) for v in 1:nb]
+    sδ_idx   = Int[SII.variable_index(nws, NetworkDynamics.VIndex(ma.bus[k], :δ)) for k in 1:nm]
+    sPset_pidx    = Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :Pset)) for k in 1:nm]
+    smode_pidx    = Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :mode)) for k in 1:nm]
+    sδtarget_pidx = Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :δ_target)) for k in 1:nm]
+    sE′q_pidx     = Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :E′q)) for k in 1:nm]
+    sE′d_pidx     = Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(ma.bus[k], :E′d)) for k in 1:nm]
+
+    # M7 step 4 — the grid-forming inverters' indices, same discipline. Empty on a
+    # model without them.
+    ni = length(ia.id)
+    vidx(nwk, j, s) = SII.variable_index(nwk, NetworkDynamics.VIndex(ia.bus[j], s))
+    pidx(nwk, j, s) = SII.parameter_index(nwk, NetworkDynamics.VPIndex(ia.bus[j], s))
+    gfm = _GFMIndex(copy(ia.id), copy(ia.bus),
+                    [vidx(nw, j, :δ) for j in 1:ni], [vidx(nw, j, :P_filt) for j in 1:ni],
+                    [vidx(nw, j, :Q_filt) for j in 1:ni],
+                    [pidx(nw, j, :P_set) for j in 1:ni], [pidx(nw, j, :V_ref) for j in 1:ni],
+                    copy(ia.K_p), copy(ia.K_q), copy(ia.H),
+                    [vidx(nws, j, :δ) for j in 1:ni], [vidx(nws, j, :E) for j in 1:ni],
+                    [pidx(nws, j, :mode) for j in 1:ni], [pidx(nws, j, :δ_target) for j in 1:ni],
+                    [pidx(nws, j, :E_held) for j in 1:ni])
 
     # Branch ⇒ graph edge, through the UNORDERED vertex pair, so there is no
     # positional correspondence to get wrong (`SwingEngine`'s argument, unchanged).
@@ -1170,6 +1395,17 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         sp[sE′q_pidx[k]]     = 0.0
         sp[sE′d_pidx[k]]     = 0.0
     end
+    # The grid-forming inverters: a PV bus holding its BUS voltage (D11), the formed
+    # magnitude seeded at `V_set` and solved for. `E_held` is read only in `_PF_HOLD`.
+    for j in 1:ni
+        su[gfm.sδ_idx[j]] = 0.0
+        su[gfm.sE_idx[j]] = ia.V_set[j]
+        for (sym, val) in ((:P_set, ia.P[j]), (:V_set, ia.V_set[j]), (:X_c, ia.X_c[j]),
+                           (:δ_target, 0.0), (:E_held, 0.0))
+            sp[pidx(nws, j, sym)] = val
+        end
+        sp[gfm.smode_pidx[j]] = j == j_slack ? _PF_PIN : _PF_SOLVE
+    end
     for e in 1:ne
         sp[sX_pidx[e]]      = bt.X[e]
         sp[sstatus_pidx[e]] = 1.0
@@ -1202,6 +1438,41 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         what = "DetailedEngine power flow (seeded from ac_powerflow)"
     end
     _check_power_flow(net, V, flows, res, what)
+
+    # --- the grid-forming inverters' operating point (M7 step 4) --------------
+    # The formed voltage `E∠δ` behind `X_c`: from the static solve on the fixpoint
+    # path, from the power flow's own `S` on the seeded one (`I = conj(S/V)`,
+    # `E∠δ = V + jX_c·I` — the machine's `Ẽ` construction with `Ra = 0`). Then the
+    # power AT THE SOURCE through `_gfm_current`, the function the RHS calls.
+    iδ = Vector{Float64}(undef, ni); iE = Vector{Float64}(undef, ni)
+    iP = Vector{Float64}(undef, ni); iQ = Vector{Float64}(undef, ni)
+    for j in 1:ni
+        vb = ia.bus[j]
+        iδ[j], iE[j] = powerflow === nothing ?
+            (su[gfm.sδ_idx[j]], su[gfm.sE_idx[j]]) :
+            _seed_gfm_from_powerflow(powerflow, vb, V[vb], ia.X_c[j])
+        Ire, Iim, iP[j], iQ[j] = _gfm_current(real(V[vb]), imag(V[vb]), iδ[j], iE[j],
+                                              ia.X_c[j])
+        # `E∠δ` and `(−E)∠(δ + π)` are the same phasor, so the static solve could in
+        # principle land on the second — and there the droop `E = V_ref − K_q·Q`
+        # would push the MAGNITUDE the wrong way. Refused rather than normalised.
+        iE[j] > 0 || throw(ErrorException(
+            "DetailedEngine: grid-forming inverter $(ia.id[j]) solved to a formed " *
+            "voltage E = $(iE[j]) ≤ 0 — the same phasor as a positive E at δ + π, but " *
+            "a droop that would push its magnitude the wrong way. A spurious branch " *
+            "of the static solve, refused rather than integrated."))
+        # D10, at this tier: the rating, on the BUS side (as `ac_powerflow` caps it).
+        # This path holds `|V| = V_set` with no reactive limit, so it can ask for more
+        # than the inverter has; `powerflow = ac_powerflow(net)` caps it instead.
+        Sbus = abs(V[vb] * conj(complex(Ire, Iim)))
+        Sbus <= ia.S[j] * (1 + 1e-9) || throw(ArgumentError(
+            "DetailedEngine: grid-forming inverter $(ia.id[j]) is dispatched at " *
+            "$(Sbus * net.S_base) MVA against a rating of $(ia.S[j] * net.S_base) MVA. " *
+            "An inverter has no short-term overload. This tier's own steady state " *
+            "holds the bus at V_set with no reactive limit; " *
+            "`init!(DetailedEngine, net; powerflow = ac_powerflow(net))` starts from " *
+            "the power flow, which caps its reactive output at the rating (D10)."))
+    end
 
     # --- back-substitution ----------------------------------------------------
     # `Pm` from the POWER FLOW, not from `Machine.P0` — see the header. On a model
@@ -1303,6 +1574,24 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         "— the two-axis bracket E′d·Id + E′q·Iq + (X′q−X′d)·Id·Iq and the phasor " *
         "Re(Ẽ·conj(I)) — so a gap here is the rotor-frame rotation disagreeing with " *
         "the stator inversion, not a solve that did not converge."))
+    # THE GRID-FORMING INVERTERS, IN CLOSED FORM (M7 step 4). Both filters start at
+    # the power they filter; `P_set` is the solved power (the slack's is free, like
+    # a slack machine's `Pm`); and the droop's intercept is DERIVED (D11) — only
+    # `V_set + K_q·Q_set` enters the dynamics, so it is one number, backed out
+    # through `_gfm_voltage` itself: `E = V_ref − K_q·Q` ⇔ `V_ref = E − (0 − K_q·Q)`.
+    # Written through the helper so a change to the droop law moves the derivation
+    # with it, and the residual check below cannot be what catches it.
+    for j in 1:ni
+        u0[gfm.δ_idx[j]]  = iδ[j]
+        u0[gfm.Pf_idx[j]] = iP[j]
+        u0[gfm.Qf_idx[j]] = iQ[j]
+        p0[gfm.Pset_pidx[j]] = iP[j]
+        p0[gfm.Vref_pidx[j]] = iE[j] - _gfm_voltage(0.0, ia.K_q[j], iQ[j])
+        for (sym, val) in ((:K_p, ia.K_p[j]), (:τ_p, ia.τ_p[j]), (:ω₀, ω₀),
+                           (:K_q, ia.K_q[j]), (:τ_q, ia.τ_q[j]), (:X_c, ia.X_c[j]))
+            p0[pidx(nw, j, sym)] = val
+        end
+    end
     for e in 1:ne
         p0[X_pidx[e]]      = bt.X[e]
         p0[status_pidx[e]] = 1.0
@@ -1361,8 +1650,27 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     # `bt` and not `branch_arrays(net)`: only `src`/`dst` are wanted, and `K` is
     # UNCOMPUTABLE on this tier's own models (there is no `E′` at a machine-free
     # bus — `network_model.jl`'s note on the guard that moved).
+    #
+    # THE ANGLE IS LOOKED UP BY BUS (M7 step 4, found, not planned). The binder reads
+    # `δ_idx[bt.src[b]]` — a VERTEX index into what, until this step, was the
+    # MACHINE-indexed `δ_idx`. The two orders agree only when every bus carries a
+    # machine, which every relay fixture did; on a model with a passive bus the relay
+    # read another machine's angle, or indexed past the end. `δ_of_bus` is the
+    # vertex-indexed view it always assumed: a machine's rotor angle, a grid-forming
+    # inverter's formed angle, and 0 at a passive bus — refused by name there,
+    # because a bus with no source has no angle for the relay to watch.
+    δ_of_bus = zeros(Int, nb)
+    for k in 1:nm; δ_of_bus[ma.bus[k]] = δ_idx[k]; end
+    for j in 1:ni; δ_of_bus[ia.bus[j]] = gfm.δ_idx[j]; end
+    for (buspair, _) in out_of_step, bus in buspair
+        v = get(net.bus_index, bus, 0)
+        (v == 0 || δ_of_bus[v] != 0) || throw(ArgumentError(
+            "DetailedEngine: out_of_step on $(buspair[1])–$(buspair[2]): bus $bus " *
+            "carries no machine and no grid-forming inverter, so there is no angle " *
+            "there for the relay to watch. Arm it on a branch between two sources."))
+    end
     relays, bound_oos =
-        _bind_out_of_step(DetailedEngine, out_of_step, net, bt, δ_idx,
+        _bind_out_of_step(DetailedEngine, out_of_step, net, bt, δ_of_bus,
                           branch_of_buses, eng_box)
     _guard_out_of_step_start(bound_oos, u0)
 
@@ -1376,14 +1684,24 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 
+    # M7 step 4: a grid-forming inverter's three channels — its formed angle, its
+    # droop frequency and the magnitude it forms — after the machines' and before
+    # the buses'. None on a model without inverters, so every pre-M7 channel list is
+    # the list it was.
     channels = vcat([Symbol("δ_", id) for id in ids],
                     [Symbol("ω_", id) for id in ids],
                     [Symbol("E′q_", id) for id in ids],
                     [Symbol("E′d_", id) for id in ids],
                     [Symbol("Efd_", id) for id in ids],
+                    [Symbol("δ_", id) for id in ia.id],
+                    [Symbol("ω_", id) for id in ia.id],
+                    [Symbol("E_", id) for id in ia.id],
                     [Symbol("V_", b.id) for b in net.buses], [:δ_coi, :f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
 
+    # The COI weight counts the inverters' virtual inertia `τ_p/(2K_p)` (D6); with
+    # none present it is the machine sum it always was, to the bit.
+    Σw = ni == 0 ? sum(ma.H) : sum(ma.H) + sum(ia.H)
     eng = DetailedEngine(net, nw, nws, slack_id, Set(1:ne), integrator.p, sp, su,
                          Float64(dt), integrator, net.f0, ω₀, ids, copy(ma.bus),
                          δ_idx, ω_idx, ΔPm_idx, E′q_idx, E′d_idx, Efd_idx,
@@ -1391,9 +1709,9 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          sVre_idx, sVim_idx, sδ_idx, sPset_pidx, smode_pidx,
                          sδtarget_pidx, sstatus_pidx, sE′q_pidx, sE′d_pidx,
                          branch_to_edge, branch_of_buses,
-                         copy(ma.H), copy(ma.H), sum(ma.H), traj,
+                         copy(ma.H), copy(ma.H), Σw, traj,
                          Vector{Float64}(undef, length(channels)),
-                         EngineEvent[], 0, net.f0, ladders, relays, ramps)
+                         EngineEvent[], 0, net.f0, ladders, relays, ramps, gfm)
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -1409,15 +1727,30 @@ end
 # Inertia-weighted aggregate over the machines, the same gauge-fixing device
 # `SwingEngine` uses: an individual rotor angle means nothing on its own, only its
 # difference from the aggregate does.
-@inline function _coi(eng::DetailedEngine, u, idx::Vector{Int})
+#
+# M7 step 4 (D6): a grid-forming inverter enters at its virtual inertia, with its
+# formed angle and its DROOP frequency — `ω` is not one of its states, so it is read
+# through `_gfm_speed`, the law the RHS integrates. `ginv` is the per-inverter value
+# being averaged; with no inverters the second loop is empty and this is the pre-M7
+# sum, term for term.
+@inline function _coi(eng::DetailedEngine, u, idx::Vector{Int}, ginv)
     acc = 0.0
     @inbounds for k in eachindex(idx)
         acc += eng.w[k] * u[idx[k]]
     end
+    g = eng.gfm
+    @inbounds for j in eachindex(g.ids)
+        acc += g.H[j] * ginv(j)
+    end
     return acc / eng.Σw
 end
-@inline _ω_coi(eng::DetailedEngine, u) = _coi(eng, u, eng.ω_idx)
-@inline _δ_coi(eng::DetailedEngine, u) = _coi(eng, u, eng.δ_idx)
+@inline _gfm_ω(eng::DetailedEngine, u, j::Int) =
+    @inbounds _gfm_speed(eng.gfm.K_p[j], u[eng.gfm.Pf_idx[j]], eng.params[eng.gfm.Pset_pidx[j]])
+@inline _gfm_E(eng::DetailedEngine, u, j::Int) =
+    @inbounds _gfm_voltage(eng.params[eng.gfm.Vref_pidx[j]], eng.gfm.K_q[j], u[eng.gfm.Qf_idx[j]])
+@inline _ω_coi(eng::DetailedEngine, u) = _coi(eng, u, eng.ω_idx, j -> _gfm_ω(eng, u, j))
+@inline _δ_coi(eng::DetailedEngine, u) =
+    _coi(eng, u, eng.δ_idx, j -> @inbounds u[eng.gfm.δ_idx[j]])
 
 """
     current_state(eng::DetailedEngine) -> NamedTuple
@@ -1430,14 +1763,22 @@ not carry a bus voltage as an unknown.
 `E′q`/`E′d` are the transient flux states, machine-indexed. At the classical
 degeneration they are constants (`E′q = Machine.E′`, `E′d = 0`) and reading them is
 how a test tells that the degeneration actually took.
+
+`δ_inv`, `ω_inv`, `E_inv` (M7 step 4) are the grid-forming inverters', in model
+order: the angle each forms, its droop frequency (read through the droop law — it is
+not a state), and the magnitude it forms behind `X_c`. Empty vectors on a model
+without inverters. `δ`/`ω` stay machine-indexed, so no existing reader moves.
 """
 function current_state(eng::DetailedEngine)
     u = eng.integrator.u
     ω_coi = _ω_coi(eng, u)
     V = Float64[hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]]) for v in eachindex(eng.Vre_idx)]
+    ni = length(eng.gfm.ids)
     return (t = eng.integrator.t, δ = u[eng.δ_idx], ω = u[eng.ω_idx],
             ΔPm = u[eng.ΔPm_idx], E′q = u[eng.E′q_idx], E′d = u[eng.E′d_idx],
             Efd = u[eng.Efd_idx], V = V,
+            δ_inv = u[eng.gfm.δ_idx], ω_inv = Float64[_gfm_ω(eng, u, j) for j in 1:ni],
+            E_inv = Float64[_gfm_E(eng, u, j) for j in 1:ni],
             δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
 
@@ -1462,12 +1803,21 @@ function _record_at!(eng::DetailedEngine, t::Real, u::AbstractVector{<:Real})
         eng.sample[3n + k] = u[eng.E′d_idx[k]]
         eng.sample[4n + k] = u[eng.Efd_idx[k]]
     end
+    # M7 step 4 — the grid-forming inverters' three channels; `ni = 0` on every
+    # pre-M7 model, which leaves every offset below the one it was.
+    ni = length(eng.gfm.ids)
+    @inbounds for j in 1:ni
+        eng.sample[5n + j]          = u[eng.gfm.δ_idx[j]]
+        eng.sample[5n + ni + j]     = _gfm_ω(eng, u, j)
+        eng.sample[5n + 2ni + j]    = _gfm_E(eng, u, j)
+    end
+    o = 5n + 3ni
     @inbounds for v in 1:nb
-        eng.sample[5n + v] = hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
+        eng.sample[o + v] = hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
     end
     f_coi = eng.f0 * (1 + _ω_coi(eng, u))
-    eng.sample[5n + nb + 1] = _δ_coi(eng, u)
-    eng.sample[5n + nb + 2] = f_coi
+    eng.sample[o + nb + 1] = _δ_coi(eng, u)
+    eng.sample[o + nb + 2] = f_coi
     record!(eng.traj, t, eng.sample)
     f_coi < eng.nadir && (eng.nadir = f_coi)
     return nothing
@@ -1676,6 +2026,19 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
         eng.p_static[eng.sE′d_pidx[k]]     = u[eng.E′d_idx[k]]
         eng.u_static[eng.sδ_idx[k]]        = u[eng.δ_idx[k]]
     end
+    # M7 step 4 — a grid-forming inverter's differential states are its angle and the
+    # two filters; the voltage it forms is a function of `Q_filt` alone, so holding
+    # `(δ, E)` is exactly "hold the differential states". Its static vertex's
+    # `_PF_HOLD` mode pins both.
+    g = eng.gfm
+    for j in eachindex(g.ids)
+        E = _gfm_E(eng, u, j)
+        eng.p_static[g.smode_pidx[j]]    = _PF_HOLD
+        eng.p_static[g.sδtarget_pidx[j]] = u[g.δ_idx[j]]
+        eng.p_static[g.sEheld_pidx[j]]   = E
+        eng.u_static[g.sδ_idx[j]]        = u[g.δ_idx[j]]
+        eng.u_static[g.sE_idx[j]]        = E
+    end
     # Seed from where the network is, never from flat — the spurious basin is
     # within 2.5 rad (see the header).
     for v in eachindex(eng.Vre_idx)
@@ -1741,7 +2104,7 @@ harmlessly, plus the swing equation released from a power it no longer produces.
 function inject!(eng::DetailedEngine, ev::TripGenerator)
     throw(ArgumentError(
         "DetailedEngine: inject!(::TripGenerator) is not built at this tier yet " *
-        "(machine $(ev.id)). A tripped machine makes its bus a passive node, which " *
+        "(unit $(ev.id)). A tripped source makes its bus a passive node, which " *
         "changes the vertex's equations, and a compiled vertex model cannot change " *
         "shape at run time. Setting E = 0 would leave X′d as a shunt to ground — a " *
         "different network that converges and looks plausible. Use TripLine, or " *

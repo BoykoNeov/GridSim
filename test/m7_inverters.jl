@@ -141,10 +141,11 @@ end
             # Step 3 built the grid-forming vertex; grid-following stays refused here
             # for good (a tier boundary) — its own testset checks the message.
             mode === :grid_following && @test refuses(() -> SwingEngine(net))
-            @test refuses(() -> init!(DetailedEngine, net))
-            # Step 4 taught the power flows the grid-forming kind (its own testset
-            # checks what they do with it); grid-following waits for step 5.
+            # Step 4 taught the detailed tier and the power flows the grid-forming
+            # kind (their own testsets check what they do with it); grid-following
+            # waits for step 5.
             if mode === :grid_following
+                @test refuses(() -> init!(DetailedEngine, net))
                 @test refuses(() -> ac_powerflow(net))
                 @test refuses(() -> dc_powerflow(net))
                 @test refuses(() -> bus_injections(net))   # exported on its own
@@ -585,17 +586,26 @@ end
 # capability at its dispatch as the machine's Q limits, converted BY HAND here from
 # the rating: √(S_rated² − P0²)/S_base. `capped = false` drops them, which is the
 # anti-vacuity twin: it shows what the inverter would have been asked for.
-function _m7_pf_ring(src::Symbol; S_inv = _S_INV, V_set = 1.01, capped = true)
+#
+# The twin is ALSO the detailed tier's equivalence oracle (step 4's second half), so
+# it carries the rest of Hurdle 11's conversion, by hand, on the inverter's own base:
+# `H = τ_p/(2K_p)`, `D = 1/K_p`, and `X′d = X_c` — the classical detailed machine is
+# a constant voltage behind `X′d`, which is the grid-forming inverter at `K_q = 0`.
+# Its `E′` (1.0) is unread: both are started from `ac_powerflow`, which derives it.
+const _XC = 0.1
+function _m7_pf_ring(src::Symbol; S_inv = _S_INV, V_set = 1.01, capped = true,
+                     K_q = 0.0)
     buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
     br = [Branch(:L12, :B1, :B2, 0.2, 900.0), Branch(:L23, :B2, :B3, 0.25, 900.0),
           Branch(:L13, :B1, :B3, 0.3, 900.0)]
     ms = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.02, 80.0),
           Machine(:G3, :B3, 400.0, 3.0, 1.0, 0.3, 1.0, -140.0)]
     src === :inverter && return NetworkModel(100.0, 50.0, buses, br, ms;
-        inverters = [Inverter(:S2, :B2, :grid_forming, S_inv, 60.0; V_set = V_set)])
+        inverters = [Inverter(:S2, :B2, :grid_forming, S_inv, 60.0; V_set = V_set,
+                              K_p = _KP, τ_p = _TP, K_q = K_q, X_c = _XC)])
     q = sqrt(S_inv^2 - 60.0^2) / 100
-    push!(ms, Machine(:S2, :B2, S_inv, 1.0, 20.0, 0.3, 1.0, 60.0; V_set = V_set,
-                      Q_min = capped ? -q : -Inf, Q_max = capped ? q : Inf))
+    push!(ms, Machine(:S2, :B2, S_inv, _TP / (2 * _KP), 1 / _KP, _XC, 1.0, 60.0;
+                      V_set = V_set, Q_min = capped ? -q : -Inf, Q_max = capped ? q : Inf))
     return NetworkModel(100.0, 50.0, buses, br, ms)
 end
 
@@ -666,5 +676,192 @@ _m7_same(a::ACPowerFlow, b::ACPowerFlow) =
             msg = try; f(net); ""; catch e; e.msg; end
             @test occursin("I2", msg) && occursin("step 5", msg)
         end
+    end
+end
+
+# The equivalence run: inverter and hand-converted machine twin, BOTH started from
+# `ac_powerflow` (bit-identical flows, the previous testset), a line trip, one grid.
+function _m7_det_gap(; reltol, abstol, K_q = 0.0, T = 5.0)
+    a = init!(DetailedEngine, _m7_pf_ring(:inverter; K_q);
+              powerflow = ac_powerflow(_m7_pf_ring(:inverter; K_q)), reltol, abstol)
+    b = init!(DetailedEngine, _m7_pf_ring(:machine);
+              powerflow = ac_powerflow(_m7_pf_ring(:machine)), reltol, abstol)
+    sa, sb = current_state(a), current_state(b)
+    # At t = 0: the same voltages and the same source angle, EXACTLY — the two start
+    # from bit-identical flows through the same `E∠δ = V + jX·I` construction.
+    t0 = max(maximum(abs, sa.V .- sb.V),
+             abs((sa.δ_inv[1] - sa.δ[1]) - (sb.δ[2] - sb.δ[1])))
+    grid = 0.0:0.01:T
+    for e in (a, b)
+        solve!(e, (0.0, T); perturbations = [1.0 => TripLine(:B1, :B2)], saveat = grid)
+    end
+    A, B = state_series(a), state_series(b)
+    gδ = maximum(abs, (A.δ_S2 .- A.δ_G1) .- (B.δ_S2 .- B.δ_G1))
+    gω = maximum(abs, A.ω_S2 .- B.ω_S2)
+    gV = maximum(maximum(abs, getproperty(A, s) .- getproperty(B, s))
+                 for s in (:V_B1, :V_B2, :V_B3))
+    return (; t0, gδ, gω, gV, exc = maximum(abs, A.ω_S2))
+end
+
+@testset "M7 step 4 — grid-forming in the detailed tier, voltage droop live" begin
+
+    @testset "it builds on its own steady state, holds V_set at the bus, sits flat" begin
+        eng = init!(DetailedEngine, _m7_pf_ring(:inverter))
+        s = current_state(eng)
+        @test s.V[2] ≈ 1.01 atol = 1e-12          # V_set is the BUS voltage (D11)
+        @test s.E_inv[1] > s.V[2]                  # it forms more behind X_c to export Q
+        @test abs(s.ω_inv[1]) < 1e-15
+        # Channels: the machines', then the inverter's three, then the buses'.
+        @test collect(keys(state_series(eng))) ==
+            [:t, :δ_G1, :δ_G3, :ω_G1, :ω_G3, :E′q_G1, :E′q_G3, :E′d_G1, :E′d_G3,
+             :Efd_G1, :Efd_G3, :δ_S2, :ω_S2, :E_S2, :V_B1, :V_B2, :V_B3, :δ_coi, :f_coi]
+        solve!(eng, (0.0, 2.0))
+        ss = state_series(eng)
+        @test maximum(abs, ss.ω_S2) < 1e-12
+        @test maximum(abs, ss.V_B2 .- s.V[2]) < 1e-12
+        # Its COI weight is the virtual inertia, by hand: (4·300 + 3·400)/100 machines
+        # + τ_p/(2K_p)·150/100 = 1.5 for the inverter.
+        @test system_inertia(eng) ≈ 24.0 + 1.5 atol = 1e-12
+        @test machine_ids(eng) == [:G1, :G3]      # machines only, as before
+    end
+
+    @testset "its steady state agrees with ac_powerflow where both hold the bus voltage" begin
+        # Every source a grid-forming inverter, so the engine's own static solve and
+        # the separately written power flow hold THE SAME unknowns: two independent
+        # solves of one schedule. (With a machine they differ by design — the
+        # machine's static vertex holds E′, the power flow its V_set.) The gauge
+        # differs — the engine pins the slack inverter's formed angle, the power flow
+        # its bus angle — so angles are compared as differences.
+        net = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0), Bus(:C, 1.0)],
+            [Branch(:AC, :A, :C, 0.2, 500.0), Branch(:BC, :B, :C, 0.25, 500.0),
+             Branch(:AB, :A, :B, 0.3, 500.0)], Machine[], [Load(:D, :C, 90.0, 20.0)];
+            inverters = [Inverter(:iA, :A, :grid_forming, 150.0, 50.0; V_set = 1.02),
+                         Inverter(:iB, :B, :grid_forming, 100.0, 40.0)])
+        eng = init!(DetailedEngine, net)             # no machine at all: iA is the slack
+        pf = ac_powerflow(net)
+        u = eng.integrator.u
+        V = [complex(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]]) for v in 1:3]
+        @test maximum(abs, abs.(V) .- pf.Vm) < 1e-11
+        @test maximum(abs, (angle.(V) .- angle(V[1])) .- pf.θ) < 1e-11
+        # …and the seeded engine is the same operating point.
+        eng2 = init!(DetailedEngine, net; powerflow = pf)
+        @test maximum(abs, current_state(eng2).V .- current_state(eng).V) < 1e-11
+        @test maximum(abs, current_state(eng2).E_inv .- current_state(eng).E_inv) < 1e-11
+    end
+
+    @testset "equivalence at K_q = 0: exact at t = 0, solver error after (Hurdle 11)" begin
+        # Pre-registered from step 3: the two integrate different states, so the gap
+        # after the trip is the SOLVER's, and the check is that it falls with the
+        # tolerance. Measured: 6.1e-8 / 9.8e-10 / 9.3e-12 rad at reltol 1e-6/1e-8/1e-10.
+        loose = _m7_det_gap(; reltol = 1e-6, abstol = 1e-8)
+        tight = _m7_det_gap(; reltol = 1e-10, abstol = 1e-12)
+        @test tight.t0 == 0.0 && loose.t0 == 0.0
+        @test tight.exc > 1e-3                        # the trip is not vacuous
+        @test tight.gδ < 1e-10 && tight.gω < 1e-11 && tight.gV < 1e-9
+        @test tight.gδ < loose.gδ / 100 && tight.gV < loose.gV / 100
+    end
+
+    @testset "K_q live: the equivalence ends, and the voltage droops by hand's gain" begin
+        g = _m7_det_gap(; reltol = 1e-10, abstol = 1e-12, K_q = 0.05)
+        @test g.gδ > 1e-5 && g.gV > 1e-4             # ~4e7 × the K_q = 0 gap
+        # E = V_ref − K_q·Q_filt at every instant, with K_q converted BY HAND to the
+        # system base (0.05·100/150). Read against the Q_filt STATE, so a flipped sign
+        # or an unconverted gain in the droop law cannot agree with itself here.
+        net = _m7_pf_ring(:inverter; K_q = 0.05)
+        eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net),
+                    reltol = 1e-10, abstol = 1e-12)
+        E0 = current_state(eng).E_inv[1]; Q0 = eng.integrator.u[eng.gfm.Qf_idx[1]]
+        solve!(eng, (0.0, 3.0); perturbations = [0.5 => TripLine(:B1, :B2)])
+        E1 = current_state(eng).E_inv[1]; Q1 = eng.integrator.u[eng.gfm.Qf_idx[1]]
+        @test abs(E1 - E0) > 1e-4
+        @test E1 - E0 ≈ -(0.05 * 100 / 150) * (Q1 - Q0) rtol = 1e-9
+    end
+
+    @testset "a setpoint step moves its frequency instantly (Hurdle 11 claim 2)" begin
+        eng = init!(DetailedEngine, _m7_pf_ring(:inverter))
+        before = current_state(eng)
+        eng.params[eng.gfm.Pset_pidx[1]] += 0.1
+        after = current_state(eng)
+        @test after.ω_inv[1] - before.ω_inv[1] ≈ 0.05 * 100 / 150 * 0.1 atol = 1e-15
+        # …and the COI frequency sees it at its virtual-inertia weight, machines at rest.
+        @test after.ω_coi ≈ 1.5 * after.ω_inv[1] / 25.5 atol = 1e-15
+    end
+
+    @testset "a line trip re-solves the network and HOLDS the inverter's states" begin
+        eng = init!(DetailedEngine, _m7_pf_ring(:inverter; K_q = 0.05))
+        s0 = current_state(eng)
+        inject!(eng, TripLine(:B1, :B2))
+        s1 = current_state(eng)
+        @test s1.δ_inv == s0.δ_inv && s1.E_inv == s0.E_inv   # differential: held
+        @test abs(s1.V[2] - s0.V[2]) > 1e-4                  # algebraic: re-solved (9.3e-4)
+        du = similar(eng.integrator.u)
+        eng.nw(du, eng.integrator.u, eng.params, eng.integrator.t)
+        @test maximum(abs, du[eng.Vre_idx]) < 1e-10          # on the post-trip network
+        @test maximum(abs, du[eng.Vim_idx]) < 1e-10
+    end
+
+    @testset "the rating at this tier: the own steady state refuses, the power flow caps (D10)" begin
+        # 65 MVA at 60 MW, V_set = 1.05: holding the bus there needs 0.539 pu of Q
+        # against a 0.25 pu capability. The engine's own solve has no reactive limit,
+        # so it refuses by name and points at the capped path — which builds, sits
+        # exactly at the rating, and is flat.
+        net = _m7_pf_ring(:inverter; S_inv = 65.0, V_set = 1.05)
+        msg = try; init!(DetailedEngine, net); ""; catch e; e.msg; end
+        @test occursin("S2", msg) && occursin("powerflow = ac_powerflow", msg)
+        eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net))
+        u = eng.integrator.u
+        V = complex(u[eng.Vre_idx[2]], u[eng.Vim_idx[2]])
+        s = current_state(eng)
+        I = (s.E_inv[1] * cis(s.δ_inv[1]) - V) / (im * 0.1 * 100 / 65)   # X_c by hand
+        @test abs(V * conj(I)) ≈ 0.65 rtol = 1e-9
+        solve!(eng, (0.0, 1.0))
+        @test maximum(abs, state_series(eng).ω_S2) < 1e-12
+    end
+
+    @testset "refusals, each by name" begin
+        msg = try; init!(DetailedEngine, _m7_pair(mode = :grid_following)); ""; catch e; e.msg; end
+        @test occursin("I2", msg) && occursin("step 5", msg)
+        buses = [Bus(:A, 1.0), Bus(:B, 1.0)]
+        br = [Branch(:AB, :A, :B, 0.2, 500.0)]
+        g = [Machine(:G, :A, 100.0, 4.0, 1.0, 0.3, 1.0, 20.0)]
+        two = NetworkModel(100.0, 50.0, buses, br,
+            [g; Machine(:G2, :B, 100.0, 4.0, 1.0, 0.3, 1.0, -30.0)];
+            inverters = [Inverter(:gf, :B, :grid_forming, 50.0, 10.0)])
+        @test occursin("carries 2 sources",
+                       try; init!(DetailedEngine, two); ""; catch e; e.msg; end)
+        net = _m7_pf_ring(:inverter)
+        for kw in ((; shed = [:S2 => [LoadShedStage(49.0, 10.0)]]),
+                   (; ramp = [:S2 => GenerationRamp(0.1, 1.0, 1.0)]))
+            m = try; init!(DetailedEngine, net; kw...); ""; catch e; e.msg; end
+            @test occursin("grid-forming inverter", m) && occursin("S2", m)
+        end
+        # A relay between a machine and an inverter WATCHES THE INVERTER'S ANGLE: its
+        # start guard fires exactly when the threshold is below |δ_G1 − δ_S2|.
+        s = current_state(init!(DetailedEngine, net))
+        d = abs(s.δ[1] - s.δ_inv[1])
+        @test_throws ArgumentError init!(DetailedEngine, net;
+                                         out_of_step = [(:B1, :B2) => 0.99d])
+        @test init!(DetailedEngine, net; out_of_step = [(:B1, :B2) => 1.01d]) isa DetailedEngine
+    end
+
+    @testset "found, not planned: the relay read a machine's angle by BUS number" begin
+        # M5 step 7's binder indexed the machine-indexed δ by a bus vertex. On a model
+        # whose middle bus carries no machine, a relay on B1–B2 read G3's rotor angle as
+        # B2's (measured: its start guard fired at 0.99·|δ_G1 − δ_G3| and its message
+        # called that number "the angle across that branch"), and one on B2–B3 threw a
+        # BoundsError. Every relay fixture had a machine on every bus. Now: refused by
+        # name, because a bus with no source has no angle to watch.
+        net = NetworkModel(100.0, 50.0, [Bus(:B1, 400.0), Bus(:B2, 400.0), Bus(:B3, 400.0)],
+            [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0),
+             Branch(:L13, :B1, :B3, 0.25, 500.0)],
+            [Machine(:G1, :B1, 250.0, 4.0, 2.0, 0.25, 1.05, 80.0),
+             Machine(:G3, :B3, 400.0, 5.0, 2.0, 0.30, 1.04, 30.0)],
+            [Load(:D2, :B2, 110.0, 30.0)])
+        for pr in ((:B1, :B2), (:B2, :B3))
+            m = try; init!(DetailedEngine, net; out_of_step = [pr => 1.0]); ""; catch e; e.msg; end
+            @test occursin("bus B2 carries no machine", m)
+        end
+        # A relay between the two machines is untouched.
+        @test init!(DetailedEngine, net; out_of_step = [(:B1, :B3) => 1.0]) isa DetailedEngine
     end
 end

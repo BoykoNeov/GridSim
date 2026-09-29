@@ -386,3 +386,48 @@ the M6 lesson about running claims on the default, met in the other direction.
 The DC flow needs no decision: it has no reactive power, and a grid-forming
 inverter is an injection there exactly like a machine's.
 
+## D11 — `V_set` is the BUS voltage at every tier, and the droop's intercept is derived (taken in step 4)
+
+**The question.** The detailed tier puts the grid-forming inverter's voltage behind
+`X_c` (D3). So "the magnitude it holds" could mean the magnitude it FORMS behind the
+reactance — the way a machine's static vertex holds `|E| = Machine.E′` — or the
+magnitude at its BUS. The first reading makes the static vertex one unknown shorter
+and mirrors the machine; it would also give `Inverter.V_set` three meanings across
+three consumers (the swing tier and `ac_powerflow` already read it at the bus). That
+is M5 step 8's "one field serving two denominations" trap, which there produced a
+pre-event offset between tiers LARGER than the disturbance — and a machine at least
+has two fields for its two meanings; the inverter has one.
+
+**Taken: the bus voltage, as the plan's own sentence says ("the inverter's bus a
+voltage-controlled bus").** The static vertex carries `(V_re, V_im, δ, E)` — the
+formed magnitude is the fourth unknown and `|V| − V_set` the fourth residual
+(`E − E_held` on a re-initialisation). Rejected argument, recorded because it
+sounded decisive: "PowerDynamics' `Vset` is the source magnitude, so the other
+reading keeps the external check to model data." It does not — `build_oracle` seeds
+PowerDynamics from OUR fixpoint, so their check never sees which reading was taken.
+
+What this bought, measured: on a model where every source is a grid-forming
+inverter, the engine's own static solve and the separately written `ac_powerflow`
+hold the same unknowns, and they agree to 1e-11 — an independent check of the new
+static vertex that the machine reading could not have had.
+
+**The droop's intercept is ONE derived number.** `IdealDroopInverter` writes
+`V = V_set − K_q·(Q_filt − Q_set)`; only `V_set + K_q·Q_set` enters the dynamics, so
+two setpoints cannot be data without one of them being redundant. The engine derives
+`V_ref = E + K_q·Q` at the solved operating point (M5's `Vref` precedent: a setpoint
+that does not match the dispatch turns the flat run into a startup transient), and
+it derives it THROUGH `_gfm_voltage`, the law the right-hand side integrates, so a
+change to the droop law moves the derivation with it and the build-time residual
+check cannot be what catches a sabotage of it. Consequence, stated in the
+`Inverter` docstring: `Q0` is read by no consumer of a grid-forming inverter — the
+power flow solves its `Q` (it is a PV bus) and the detailed tier derives the
+intercept. It is still checked by the constructor's rating guard.
+
+**Power measured at the source, not the bus.** `P` is the same at both ends of a
+lossless reactance; `Q` is not — the source sees `Q_bus + |I|²X_c`. Taken at the
+source because the component this is checked against measures at its own terminal,
+which is the source (D3). Executed as a mutation: moving the measurement to the bus
+is INVISIBLE to every in-house check (both the flat run and the droop-gain check
+follow the mutated `Q` consistently), and only the PowerDynamics comparison can see
+it — which is what that comparison is for.
+

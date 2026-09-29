@@ -224,8 +224,32 @@ runs.
       and not; the slack's rating checked after the solve.
 - [x] Mutations A1–A4 executed, each red: cap not added, inverter `P` not injected,
       slack check skipped, `V_set` not held. Core **3796** green.
-- [ ] Vertex behind `X_c`, `K_q` live, initialised through the static network.
-- [ ] Equivalence at `K_q = 0` against a classical detailed machine, `X′d = X_c`.
+- [x] Vertex behind `X_c`, `K_q` live, initialised through the static network
+      (commit B). **D11 taken**: `V_set` is the BUS voltage at every tier — the static
+      vertex carries the formed magnitude as a fourth unknown — and the droop's
+      intercept is one derived number. Power measured at the source (as
+      `IdealDroopInverter` does). On an all-inverter model the engine's own steady
+      state and `ac_powerflow` agree to 1e-11.
+- [x] Equivalence at `K_q = 0` against a classical detailed machine, `X′d = X_c`,
+      both started from `ac_powerflow`: **exactly zero gap at t = 0**, then solver
+      error falling with the tolerance (6.1e-8 / 9.8e-10 / 9.3e-12 rad at reltol
+      1e-6 / 1e-8 / 1e-10) — not round-off, as pre-registered from step 3. `K_q = 0.05`
+      opens 3.7e-4 rad; the droop is checked against the `Q_filt` state with the gain
+      converted by hand.
+- [x] The rating at this tier (D10): the engine's own steady state refuses an
+      inverter asked beyond its rating and points at `powerflow = ac_powerflow(net)`,
+      which caps it; the capped start sits exactly at the rating and is flat.
+- [x] **Found, not planned:** M5 step 7's out-of-step binder looked up rotor angles
+      by BUS number in a MACHINE-indexed list. Measured on committed code: with a
+      load-only middle bus, a relay on B1–B2 read G3's angle as B2's (its start
+      guard fired at 0.99·|δ_G1 − δ_G3| and called that "the angle across that
+      branch"); one on B2–B3 threw a BoundsError. Every relay fixture had a machine on
+      every bus. Now looked up by bus, and refused by name at a bus with no source.
+- [x] Mutations B1–B7 executed: six red (`K_q` sign, `X_c` nearly dropped, `X_c` on
+      its own base, virtual inertia out of the COI weight, re-init re-solving `E`,
+      relay lookup by machine index); **B7, `Q` measured at the bus, GREEN in-house as
+      pre-registered** — only the PowerDynamics comparison can see it.
+- [x] Gates: core **3832**, M5 criterion **bit-identical** (`W:	emp\claude\m7\criterion-STEP4.txt`).
 - [ ] PowerDynamics `IdealDroopInverter` + line `X_c`, `K_q` live, band stated
       before the gap is seen.
 - [ ] Mutations: `K_q` sign; `X_c` dropped.

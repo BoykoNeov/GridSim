@@ -660,8 +660,11 @@ Fields — dispatch and rating, read by both modes:
     converted to the system base in the compiled views only, as `Machine.H` is.
   - `P0` — MW, active power **injected** (negative = absorbing, e.g. a charging
     battery). Same sign convention as `Machine.P0`, opposite to `Load.P0`.
-  - `Q0` — MVAr, reactive power injected. The grid-following schedule, and the
-    grid-forming inverter's `Q_set` for its voltage droop.
+  - `Q0` — MVAr, reactive power injected: the grid-following schedule. **Read by no
+    consumer of a grid-forming inverter** (M7 step 4, `m7-context.md` D11): the power
+    flow solves its `Q` (it holds a voltage), and the detailed tier DERIVES the
+    droop's intercept `V_set + K_q·Q_set` at the solved operating point, because
+    only that combination enters the dynamics. Still checked by the rating guard.
 
 Grid-forming only (unread by `:grid_following`):
 
@@ -671,7 +674,9 @@ Grid-forming only (unread by `:grid_following`):
     inertia `τ_p/(2K_p)` (1 s on the inverter's own base at the defaults).
   - `K_q` — pu voltage per pu reactive power, own base. `0` holds the voltage.
   - `τ_q` — s, the reactive-power measurement filter.
-  - `V_set` — pu, the voltage magnitude setpoint.
+  - `V_set` — pu, the voltage magnitude setpoint, **at the bus** in every tier and
+    in the power flow (D11) — not the magnitude formed behind `X_c`, which the
+    detailed tier solves for.
   - `X_c` — pu, own base, the coupling reactance (output filter plus transformer)
     the detailed tier puts the voltage behind. **Unread by the swing tier**, which
     puts every source at its bus (`m7-context.md` D3) — the same asymmetry
