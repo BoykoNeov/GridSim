@@ -365,6 +365,10 @@ runs.
 
 ## Step 7 — the low-inertia study
 
+- [ ] **First: a source trip in the detailed tier (D15, the user's choice)** — machines,
+      grid-forming and grid-following; weights leave with the unit; zero-inertia trip
+      refused; `coi_rocof` at `t⁺` against the aggregate `RoCoF₀` per kind.
+
 - [ ] `scripts/low_inertia.jl`, both displacement kinds, per-share table.
 - [ ] Zero share reproduces M1's recorded values.
 - [ ] Second topology (cut-first #2), claim written after both tables.

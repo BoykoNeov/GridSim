@@ -606,3 +606,29 @@ detailed tier. So step 7's "largest-unit trip at each share" cannot run as the p
 writes it. Available: the machine vertex already multiplies its stator current by a
 status parameter (`mstat`, always 1.0 today) — the hook for a source-status trip path;
 or a load step located at a bus; or a different study event.
+
+## D15 — Step 7's event: a real source trip in the detailed tier (taken 2026-09-29, the user's choice)
+
+D14 found that "the largest-unit trip at each share" has no event at the tier step 7
+needs. Three options were put to the user — a source on/off switch in the detailed
+tier, a load step located at a bus, or a line trip instead — with the consequence of
+each: the switch keeps the study as planned and is the most work; a load step asks a
+different question ("load jumps", not "the biggest unit is lost"); a line trip is
+the event on which step 6 measured the instantaneous centre-of-inertia RoCoF as the
+SMALLEST of the three read-outs, so the study would say something else entirely.
+
+**Taken: build the trip.** Its scope, stated before any code so step 7 cannot shrink
+it quietly:
+- **All three source kinds**, not only machines: at high inverter share the largest
+  unit is likely an inverter (D9's argument). The machine vertex already multiplies its
+  stator current by `mstat` (always 1.0 so far); the grid-forming and grid-following
+  vertices need the equivalent.
+- **The centre-of-inertia bookkeeping drops the tripped unit's weight** (`w`, `Σw`,
+  `gfm.H`), as the swing tier does — and a trip that would leave no inertia online is
+  refused, as the aggregate engine's is (step 2).
+- **The re-initialisation after a trip** must solve the network the right-hand side
+  then integrates, with the tripped source injecting nothing — never `E = 0`, which
+  `inject!(::TripGenerator)`'s refusal text already names as the wrong shortcut.
+- Checked before the study uses it: `coi_rocof` at `t⁺` against the aggregate
+  `RoCoF₀` closed form, per source kind.
+
