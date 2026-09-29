@@ -488,3 +488,121 @@ of the first milliseconds after an event, which is exactly the time scale Hurdle
 says a phasor tier cannot hold. It is a fidelity boundary with a number on it, not a
 tolerance.
 
+## D14 — The read-outs: a bus meter, a live instantaneous RoCoF, and where zero weight lives (step 6)
+
+**A measurement-only PLL, `PLLMeter` — the user's choice, taken before the code.**
+Step 7's table has a "worst local RoCoF as a PLL measures it" column, and a PLL
+existed only inside a grid-following inverter — so in the sweep that displaces
+machines by GRID-FORMING inverters there would have been no PLL anywhere and that
+column would have been empty, or filled by a different instrument than in the other
+sweep. Put to the user in those words; taken: a meter at any named bus, the SAME
+loop (`_pll_rhs`, the one copy of `PLL_LPF`, now shared with the grid-following
+vertex) injecting nothing. An **engine keyword** (`DetailedEngine(…; meters)`), like a
+relay or a shed ladder — an instrument armed on a case, not network data — so the
+scenario file does not change. Channels `θmeter_<bus>`/`ωmeter_<bus>`, a prefix of
+their own because a bus id and an inverter id may be the same symbol. Built as a
+wrapper (`_Metered`) that appends three states and three gains to whatever vertex
+kind the bus already is and leaves that kind's equations untouched; with no meter
+armed the network is the four vertex models it was, and a captured step-5
+grid-following run is `==` before and after the refactor
+(`W:\temp\claude\m7\step6\gfl_capture.jl`).
+
+How it is checked: (a) INJECTS NOTHING, structurally — kick every meter state far off
+and every other row of the right-hand side is `==` unchanged; (b) the positive
+control — a meter with an inverter's gains at that inverter's bus reads the
+inverter's own PLL. Predicted bit for bit, and **that was wrong**: the Rosenbrock step
+solves one linear system over the whole state, so two identical row blocks at
+different positions pick up different round-off — 6.5e-17 / 6.2e-17 / 4.3e-17 at
+reltol 1e-8 / 1e-10 / 1e-12, NOT falling with the tolerance, so round-off rather than
+solver error, on a 2.0e-3 excursion. A meter on the neighbouring bus is off by ~1e-3.
+
+**The instantaneous centre-of-inertia RoCoF is a LIVE read (`coi_rocof`), not a
+recorded channel.** It comes off the model's right-hand side — never from differencing
+recorded samples, which is the windowed read with the window set to the sample step
+and would have made "three ways" two. A recorded channel was considered for the
+detailed tier (playback-only, so the per-sample cost is irrelevant, and re-evaluating
+the RHS on saved states after the run is WRONG — `inject!(::TripLine)` writes the
+line's status into the parameters, so pre-event samples would be read against the
+post-event network). Refused because `reference/src/oracle.jl` rebuilds
+`state_series(::DetailedEngine)` channel for channel and the reference suite asserts
+the key sets equal: a right-hand-side derivative has no counterpart on the
+PowerDynamics side, so the channel would have forced a fabricated one there. On the
+aggregate tier the read is the `RoCoF` field `current_state` has always carried.
+
+**The three, and their names.** `coi_rocof(engine)` (instantaneous, what the closed
+forms predict); `rocof_readouts(engine; window).coi` (`windowed_rocof` on `f_coi`);
+`rocof_readouts(…).pll` (the SAME `windowed_rocof`, same window, on each PLL's
+`f0·(1 + ω)`, keyed by channel name — so the only thing that differs between 2 and 3
+is the frequency differenced).
+
+**Zero weight — where it is reachable, path by path** (Hurdle 10 claim 3):
+- `coi_model` — refuses a model with nothing to follow (step 2).
+- `FrequencyResponseEngine` — refuses a zero-inertia model and a trip into zero
+  inertia, before anything moves (step 2).
+- `DetailedEngine` — unreachable: a model with no source is refused at `init!` (D5)
+  and a generator trip is refused outright at this tier.
+- `SwingEngine` with everything tripped — the live `f_coi` channel reads `NaN`. That is
+  M2's decision ("the honest answer, and one plotting skips"), pinned by the network
+  window's test; D6's "the read-out refuses" is honoured in the read-outs M7 ADDED:
+  `coi_rocof` and `rocof_readouts` both refuse by name. The live channel was not
+  flipped.
+
+"Per-bus PLL channels" are the step-5 `ωpll_<inverter>` channels: the detailed tier
+refuses two sources on one bus (machines and inverters together), so per inverter IS
+per bus there, and renaming would have broken two pinned key lists for nothing.
+
+### What step 6 measured
+
+**The phase-jump spike, closed form (Hurdle 10 claim 1), on a real network event.**
+Fixture built so NOTHING but a phase can move: one machine, a lossless triangle, a
+CONSTANT-POWER load and a ZERO-current grid-following inverter at B; trip A–B. B's
+angle falls by Δ = −0.0604 rad (sign pre-registered: the path to the load lengthens),
+|V_B| = 0.9325 after. Pre-registered closed form: with the PLL's output filter removed
+the estimate jumps at t⁺ to `K_p·|V|·Δ` (|V| because the error is not normalised,
+D12), and the filter's leftover must shrink as τ does. Measured leftover 0.0592 /
+0.0114 / 0.0022 at τ = τ₀, τ₀/10, τ₀/100 — 5.2× per decade, both decades (linear
+theory 5.4, 6.7; the difference at the smallest τ is the sin φ ≈ φ term, ~Δ²). A
+first-order correction `K_p|V|Δ·[1 − ε((1 − κ)ln(1/ε) − 1)]` (ε = K_p|V|τ,
+κ = K_i/(K_p²|V|)), derived by matching the filter's fast mode to the slow loop, holds
+to 1.1 % at the default gains. A 0.06 rad jump reads as −0.53 Hz. The PLL error
+normalised by |V| is the mutation this is built to catch (the leftover at the smallest
+τ would be ~7 %, not 0.2 %).
+
+**…and the centre of inertia does not move at all**: `coi_rocof` at t⁺ = 5.6e-17 Hz/s,
+and `f_coi` deviates from 50 Hz by exactly 0.0 over the run, while the PLL at B and
+the meter at C both dip. That is the anti-vacuity case for D6: averaging a PLL into
+`ω_coi` moves a channel that, here, must not move.
+
+**The phantom RoCoF — a 1/window law, from below.** A window longer than the spike
+reaches back to before the jump, so the windowed PLL RoCoF reaches spike/W — ~1.06
+Hz/s at 500 ms at B, from a line switching that moved no rotor. Predicted as an
+equality and measured not to be one at short windows: a window that starts ON the
+spike ends on the PLL's opposite-signed ringing, which adds 1.3e-3 of the spike at
+W = 0.25 s, 2e-8 at 0.5 s, nothing at 1 s. So it is spike/W as a lower bound,
+approached as the window outlasts the ringing.
+
+**The window's own cost on a known trajectory (claim 2).** One aggregate unit, no
+governor, H = 1 s, D = 2: after a load step the frequency is exactly first order with
+T = 2H/D = 1 s, so every windowed sample is a closed form, matched to 1e-7, and the
+windowed extreme is `RoCoF₀·T(1 − e^{−W/T})/W` — 0.94 / 0.88 / 0.79 / 0.63 of the
+true RoCoF₀ at W = 1/8 … 1 s. Binary-exact dt and W, so the lookup `tᵢ − W` is itself
+a sample and cannot land one early.
+
+**The three side by side — and the prediction written before the run was wrong.**
+On step 5's grid-following ring with a line trip, the test comment first said "the
+window under-reads the instantaneous value". Measured: instantaneous at t⁺ −1.5e-4
+Hz/s; 500 ms window on `f_coi` 0.066 Hz/s (~450× larger); 500 ms window on the PLLs
+0.22 (the inverter's), 0.91 and 0.69 (meters at the two machine buses) Hz/s. The
+imbalance BUILDS after t⁺: at the instant the inverter's current is where it was and
+barely moves P; then its PLL swings the held current round and |V| sags, and `f_coi`
+falls 0.045 Hz. So on this case "RoCoF₀", the quantity every closed form in the repo
+predicts, is the SMALLEST of the three. The meters at machine buses read the most:
+they see that machine's own swing on top of the jump.
+
+**Found, not planned — a step-7 blocker, recorded here and put to the user before
+step 7.** The detailed tier refuses `TripGenerator`, `StepLoad` exists only on the
+aggregate engine and has no bus, and grid-following inverters exist only in the
+detailed tier. So step 7's "largest-unit trip at each share" cannot run as the plan
+writes it. Available: the machine vertex already multiplies its stator current by a
+status parameter (`mstat`, always 1.0 today) — the hook for a source-status trip path;
+or a load step located at a bus; or a different study event.

@@ -191,6 +191,14 @@ the dependence of measured RoCoF on window length for a known trajectory — and
 claim 3's refusal. Anti-vacuity: a PLL read-out averaged into `ω_coi` must move the
 centre-of-inertia channel on a case where it should not move.
 
+*(As built — `m7-context.md` D14: a measurement-only `PLLMeter` was added at the
+user's choice, so step 7's grid-forming sweep has a PLL to read; the
+centre-of-inertia derivative is a live read (`coi_rocof`), not a recorded channel,
+because the reference oracle mirrors the detailed channel list; the zero-weight
+refusal lives in the new read-outs, while the swing tier's live channel keeps M2's
+`NaN`. Step 6 also found that step 7's event does not exist at the tier step 7
+needs — see D14's last paragraph.)*
+
 ### Step 7 — The low-inertia study
 
 One scenario, `scripts/low_inertia.jl`: a multi-machine case where synchronous

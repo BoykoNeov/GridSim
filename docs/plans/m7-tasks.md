@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0–3 done (2026-09-29)** — 3778 core / 1143 reference / 449 UI (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
+Status: **Steps 0–6 done (2026-09-29)** — 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -317,11 +317,51 @@ runs.
 
 ## Step 6 — frequency read-outs
 
-- [ ] Per-bus PLL channels; centre-of-inertia with virtual inertia; refusal at
-      zero weight.
-- [ ] RoCoF three ways side by side.
-- [ ] Closed forms for the phase-step spike and the window dependence.
-- [ ] Anti-vacuity: PLL averaged into `ω_coi` moves it where it must not.
+- [x] **Per-bus PLL channels**: step 5's `ωpll_<inverter>` ARE per bus (the detailed
+      tier refuses two sources on one bus), kept, not renamed. **Plus a
+      measurement-only `PLLMeter`** at any named bus (the user's choice, D14), so
+      step 7's grid-forming sweep has a PLL to read: an engine keyword, channels
+      `θmeter_<bus>`/`ωmeter_<bus>`, one PLL law (`_pll_rhs`) shared with the
+      grid-following vertex. Refactor gate: a captured step-5 grid-following run `==`
+      before and after (`W:\temp\claude\m7\step6\gfl_capture.jl`). Meter checks:
+      injects nothing (meter states kicked, every other RHS row `==`); the positive
+      control — `PLLMeter(inv)` at the inverter's bus reads `ωpll_` to round-off
+      (6e-17, NOT bit for bit as predicted: the Rosenbrock linear solve; does not fall
+      with the tolerance); guards and refusals (unknown bus, two on one bus).
+- [x] **Centre of inertia with virtual inertia** (built in step 4) and **the refusal at
+      zero weight**, path by path (D14): `coi_model` and the aggregate engine refuse
+      (step 2); the detailed tier cannot reach it (D5 + no generator trip); the swing
+      tier's live `f_coi` stays `NaN` (M2's decision, UI-pinned) and the NEW read-outs
+      `coi_rocof` and `rocof_readouts` refuse by name.
+- [x] **RoCoF three ways side by side**: `coi_rocof(engine)` (instantaneous, off the
+      right-hand side, all three tiers, a LIVE read — not a channel, because the
+      reference oracle mirrors the detailed channel list, D14), and
+      `rocof_readouts(engine; window)` → `coi` and `pll`, one `windowed_rocof`, one
+      window. `coi_rocof` checked against step 3's hand RHS arithmetic (`==`), the
+      aggregate `RoCoF₀` at two trips, and on the detailed tier against a closed form
+      read from the bus voltage alone (`0.4·(|V₁(0)|² − |V₁(t⁺)|²)/(2Σw)`), inverter
+      and machine twin agreeing to 1e-9. **Measured on the grid-following ring: the
+      instantaneous value is the SMALLEST of the three** (−1.5e-4 against 0.066
+      windowed and 0.22–0.91 PLL, Hz/s) — the prediction written before the run said
+      the opposite.
+- [x] **Closed forms**: the phase-jump spike `K_p·|V|·Δ` on a real network event, its
+      filter leftover 0.059 → 0.011 → 0.0022 as τ falls by decades (5.2× each, >4×
+      pre-registered), a first-order correction to 1.1 % at default gains, sign
+      pre-registered (a DIP); the phantom RoCoF spike/W from below (the PLL's ringing
+      adds 1.3e-3 at 250 ms, nothing at 1 s — equality predicted, bound measured); and
+      the window's cost on an exactly first-order aggregate trajectory,
+      `T(1 − e^{−W/T})/W`, every sample to 1e-7.
+- [x] **Anti-vacuity: a PLL averaged into `ω_coi`** moves the centre of inertia on the
+      phase-jump fixture, where it measurably does not move (`coi_rocof` 5.6e-17 Hz/s,
+      `f_coi` flat to exactly 0.0).
+- [x] **Mutations, eight executed, each red** (`W:\temp\claude\m7\step6\mutate6.py`,
+      log `mut6.log`): S6-1 a PLL averaged into `ω_coi` (4 failures — the flat `f_coi` and the zero windowed COI); S6-2 a meter re-seeded to the new bus angle at re-initialisation (7 — the spike vanishes); S6-3 a meter on the neighbouring bus (6); S6-4 the PLL error normalised by |V| (5 — the leftover at the smallest τ); S6-5 the detailed `coi_rocof`'s grid-forming term sign-flipped (2); S6-6 the swing `coi_rocof` reading an inverter's raw state rate (2); S6-7 `rocof_readouts`' zero-weight guard removed (1); S6-8 PLL frequency not converted to Hz (10).
+- [x] **Step 6 gates:** core **3950** (3868 + 82), reference **1251**, UI **449** (both unchanged — no meter is armed outside the new tests, so no channel list moved), M5 criterion **bit-identical** (`W:\temp\claude\m7\criterion-STEP6.txt`).
+- **Found, not planned — step 7 cannot run as written**: the detailed tier refuses
+  `TripGenerator`, `StepLoad` is aggregate-only and has no bus, and grid-following
+  inverters live only in the detailed tier, so "the largest-unit trip at each share"
+  has no event. Recorded in D14 and put to the user before step 7 (the machine vertex
+  already carries a stator-current status parameter, `mstat`, always 1.0 today).
 
 ## Step 7 — the low-inertia study
 
