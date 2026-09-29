@@ -475,6 +475,9 @@ type and the model's bookkeeping", "M7 step 1 — inverters in the scenario file
 | No consumer runs a model with an inverter silently absent | One test per consumer asserting the refusal names the inverter (swing, detailed, aggregate, both power flows, dispatch, both oracle builders, editor both ways in). Red when one consumer's refusal is removed | **structural** |
 | A rebuild carries inverters | `dispatch_schedule` on a model where carrying the inverter breaks the balance and dropping it would not. Red on the "drops inverters" mutation | **structural** |
 | The file round-trips every field | Field-by-field `===` after write/read, both modes; field list equals `fieldnames(Inverter)`. Red on the "writer skips `K_q`" mutation | **structural** |
+| Aggregate: grid-forming → `H = τ_p/(2K_p)`, unit damping `1/K_p`; grid-following → nothing (step 2) | `RoCoF₀` and settling closed forms computed by hand from the fixture's literals; a grid-following unit's contribution `===` zero; displacement factor over a four-machine sweep. Red on both wrong-base mutations | **closed form** — but the grid-forming mapping itself is the equivalence used as a view (D4), so what these check is the aggregation, not the equivalence |
+| A tripped grid-forming inverter's damping leaves with it (D9) | Settling after its trip matches `−0.6/(11 + 60)` and not the "stays" reading 56 % away. Red on the "damping stays" mutation | **closed form** |
+| No frequency is integrated with no inertia online | Engine refuses a zero-inertia model and a trip into one, before anything moves; `coi_model` refuses an all-grid-following model. Red with the trip refusal removed | **structural** |
 | Grid-forming droop ≡ swing machine (`2H = τ_p/K_p`, `D = 1/K_p`, `K_q = 0`) | **On PowerDynamics' own components only, so far** (step 0: 5.4e-11 rad; `K_q = 0.05` opens 1.1e-4). Ours is step 3 | **external** (outside model against itself); **un-oracled on our side until step 3** |
 
 ## Owed rows

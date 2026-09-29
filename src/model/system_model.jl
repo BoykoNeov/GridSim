@@ -16,6 +16,15 @@
 
 One aggregate generating unit. All powers in engineering units (MVA / MW);
 inertia `H` is on the unit's own base.
+
+`D` (M7 step 2, `docs/plans/m7-context.md` D9) is damping **carried by this unit**,
+pu on its own base, **default `0.0`** — added to `SystemModel.D` for as long as the
+unit is online and leaving with it when it trips. It exists for the grid-forming
+inverter, whose droop IS a damping of `1/K_p` (ten times a machine's at the
+defaults), so leaving it behind in the system constant would keep most of a tripped
+inverter's response. Every pre-M7 unit carries zero, so every M1/M2 number is
+unchanged; machines' damping still lives in `SystemModel.D`, a stated asymmetry
+(D9).
 """
 struct GeneratingUnit
     id::Symbol
@@ -24,15 +33,18 @@ struct GeneratingUnit
     P0::Float64        # MW  — initial output
     R::Float64         # pu  — governor droop (on unit base)
     Pmax::Float64      # MW  — max output; headroom = Pmax - P0
+    D::Float64         # pu  — damping carried by the unit, own base (M7 step 2)
 
     # Guard the headroom invariant at construction: Pmax < P0 is negative reserve,
     # which would silently poison the aggregate `headroom` (Σ(Pmax−P0)) rather than
     # fail loudly. Cheaper to reject the bad unit here than to debug a wrong ceiling.
     function GeneratingUnit(id::Symbol, S_rated::Real, H::Real, P0::Real, R::Real,
-                            Pmax::Real)
+                            Pmax::Real, D::Real = 0.0)
         Pmax ≥ P0 || throw(ArgumentError(
             "GeneratingUnit $id: Pmax ($Pmax) must be ≥ P0 ($P0) — headroom < 0."))
-        return new(id, S_rated, H, P0, R, Pmax)
+        D ≥ 0 || throw(ArgumentError(
+            "GeneratingUnit $id: D ($D) must be ≥ 0 — negative damping is anti-physical."))
+        return new(id, S_rated, H, P0, R, Pmax, D)
     end
 end
 

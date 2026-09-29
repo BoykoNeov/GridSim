@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0 and 1 done (2026-09-29)** — 3730 core / 1143 reference / 449 UI (3714 at the first step-1 commit; +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
+Status: **Steps 0–2 done (2026-09-29)** — 3753 core / 1143 reference / 449 UI (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -121,12 +121,48 @@ runs.
 
 ## Step 2 — the aggregate tier
 
-- [ ] `coi_model` counts grid-forming virtual inertia/damping, grid-following zero.
-- [ ] `RoCoF₀` and settling closed forms with both kinds present; grid-following
-      contribution exactly zero.
-- [ ] Displacement factor `H_sys/(H_sys − H·S/S_base)` over a sweep.
-- [ ] All-grid-following model refused by the aggregate read-out, by name.
-- [ ] Anti-vacuity: wrong-base `K_p` moves `RoCoF₀` by the predicted factor.
+- [x] `coi_model` compiles inverters (after the machines, bus order): grid-forming →
+      unit `H = τ_p/(2K_p)`, `R = Inf`, `Pmax = P0`, unit damping `1/K_p` (all on
+      the inverter's own base; `aggregates` weights them); grid-following → `H = 0`,
+      no response. The structural precondition, with inverters present, becomes one
+      generating element per bus (machine OR inverter); without them it is the
+      pre-M7 check, message for message.
+- [x] **D9 built:** `GeneratingUnit` gains a per-unit damping `D` (default `0.0`,
+      guarded `≥ 0`), added by `aggregates` for ONLINE units only, so a tripped
+      grid-forming inverter takes its `1/K_p` with it. Machines keep theirs in
+      `SystemModel.D` — the stated asymmetry.
+- [x] `RoCoF₀` closed form with both kinds present, expected values computed by
+      hand from the fixture's literals (`_m7_mixed`: H_sys 16.5 s all online, 14.5 s
+      after the grid-forming trip).
+- [x] **Settling closed form, and the damping leaving**: grid-following trip →
+      `Δω = −0.4/(11 + 40 + 60)`; grid-forming trip → `−0.6/(11 + 60)` at rtol 1e-6,
+      and asserted NOT to match the "damping stays" reading `−0.6/(11 + 40 + 60)`
+      (56 % apart). Unsaturated precondition asserted on the equilibrium.
+- [x] Grid-following contribution **exactly** zero: `aggregates` with and without it
+      online are `===` in every field.
+- [x] Displacement factor `H_sys/(H_sys − H·S/S_base)` over a four-machine sweep,
+      each machine in turn replaced by a grid-following inverter of the same
+      dispatch and rating; tripped unit inertia-free so the ratio is exact.
+- [x] **Hurdle 10 claim 3 / D5 refusals**: `coi_model` refuses a model with no
+      machine and no grid-forming inverter ("nothing to follow", names the
+      inverters); `FrequencyResponseEngine` refuses a zero-inertia model; and a
+      **trip into zero inertia is refused before anything moves** (the engine's
+      online set, `H_sys` and imbalance asserted unchanged). `aggregates` itself
+      still returns `H_sys = 0` for an empty or all-inverter set — it is a pure
+      function and M1's tests pin that corner; the refusal lives where the
+      integration is.
+- [x] **Four mutations executed, each red**: grid-forming damping on the wrong base
+      (2 failures); virtual inertia on the wrong base (3); a tripped unit's damping
+      staying (2); the zero-inertia trip refusal removed (2).
+- [x] Gates: **3753 core** (3730 − 2 retired step-1 refusal tests + 25), M5 criterion
+      **bit-identical** (`W:\temp\claude\m7\criterion-STEP2.txt`).
+- **Found, not planned:** `FrequencyResponseEngine` would have stepped on into
+  `Inf`/`NaN` after a trip that left no inertia online — dividing by `2·H_sys = 0`.
+  No pre-M7 fixture could reach it (every M1 system keeps a machine online); a
+  grid-forming inverter as the last inertia makes it one trip away. The plan named
+  the all-grid-following refusal at `coi_model` and missed the engine's.
+- Deferred to step 3, as planned: the cross-check of this aggregate against the swing
+  tier's run of the same model.
 
 ## Step 3 — grid-forming in the swing tier
 

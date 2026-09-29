@@ -140,7 +140,6 @@ end
             net = _m7_pair(mode = mode)
             @test refuses(() -> SwingEngine(net))
             @test refuses(() -> init!(DetailedEngine, net))
-            @test refuses(() -> coi_model(net))
             @test refuses(() -> ac_powerflow(net))
             @test refuses(() -> dc_powerflow(net))
             @test refuses(() -> bus_injections(net))   # exported on its own
@@ -162,6 +161,9 @@ end
         # that silently drops inverters fails here by not being on either list.
         views = Set([:branch_topology, :load_arrays, :machine_arrays, :cost_arrays,
                      :bus_roles, :branch_arrays])
+        # Consumers a later M7 step has TAUGHT inverters (their own testsets check
+        # what they do with them). Growing this set is how a step lifts a refusal.
+        learned = Set([:coi_model])
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)
@@ -177,7 +179,7 @@ end
                 e isa ArgumentError && occursin("I2", e.msg) ? :refused : :threw
             end
             walked += 1
-            @test r === :refused || n in views
+            @test r === :refused || n in views || n in learned
         end
         # Non-vacuity: a walk that matched nothing would pass everything. Eleven
         # exported functions take a model as their only argument today.
@@ -269,5 +271,145 @@ end
     @testset "a model with no inverters writes the file it always did" begin
         path = write_scenario(joinpath(dir, "none.toml"), two_machine_system())
         @test !occursin("inverters", read(path, String))
+    end
+end
+
+# ---------------------------------------------------------------------------------
+# Step 2 — the aggregate tier (m7-plan.md step 2, m7-context.md D4/D9)
+# ---------------------------------------------------------------------------------
+
+# A four-bus chain, one generating element per bus (the aggregate's precondition):
+# a governed machine, a grid-forming inverter, a load written as a negative-P0
+# machine (M2a's convention — `coi_model` refuses `Load`), and a grid-following
+# inverter. Every expected number below is computed BY HAND from these literals,
+# never through `aggregates`, so the checks cannot read their answer from the code.
+#
+#   H_sys (all online) = (4·300 + τ/(2K_p)·200 + 0.5·500 + 0·100)/100
+#                      = (1200 + 1·200 + 250)/100            = 16.5 s
+#   machine damping    = (2·300 + 1·500)/100                 = 11
+#   grid-forming 1/K_p = 20 on its own base → 20·200/100     = 40
+#   1/R_eq             = (1/0.05)·300/100                    = 60,  headroom 0.6 pu
+function _m7_mixed()
+    buses = [Bus(Symbol(:B, k), 230.0) for k in 1:4]
+    branches = [Branch(:L12, :B1, :B2, 0.1, 500.0), Branch(:L23, :B2, :B3, 0.1, 500.0),
+                Branch(:L34, :B3, :B4, 0.1, 500.0)]
+    machines = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.0, 100.0, 0.05, 160.0, 1.0),
+                Machine(:LD, :B3, 500.0, 0.5, 1.0, 0.3, 1.0, -200.0)]
+    inverters = [Inverter(:IF, :B2, :grid_forming, 200.0, 60.0),     # K_p 0.05, τ_p 0.1
+                 Inverter(:IL, :B4, :grid_following, 100.0, 40.0)]
+    return NetworkModel(100.0, 50.0, buses, branches, machines; inverters = inverters)
+end
+
+@testset "M7 step 2 — the aggregate tier: inertia that is there, and inertia that is not" begin
+    net = _m7_mixed()
+    sys = coi_model(net)
+
+    @testset "the compiled units" begin
+        u = Dict(x.id => x for x in sys.units)
+        @test Set(keys(u)) == Set([:G1, :LD, :IF, :IL])
+        # Grid-forming: the droop/swing equivalence used as the view (D4).
+        @test u[:IF].H == 0.1 / (2 * 0.05) && u[:IF].D == 1 / 0.05
+        @test u[:IF].R == Inf && u[:IF].Pmax == u[:IF].P0 == 60.0
+        # Grid-following: no rotor, no response — entsoe §1 (a)'s PV block.
+        @test u[:IL].H == 0.0 && u[:IL].D == 0.0 && u[:IL].R == Inf
+        # Machines keep their damping in the system constant (D9's asymmetry).
+        @test u[:G1].D == 0.0 && sys.D ≈ 11.0
+    end
+
+    @testset "RoCoF₀, closed form, with both kinds present" begin
+        # Trip the grid-following inverter: 40 MW lost, no inertia lost.
+        r = trip_and_run(sys, :IL)
+        @test r.RoCoF0 ≈ -50 * 0.4 / (2 * 16.5)
+        # Trip the grid-forming one: 60 MW lost AND its 1 s·(200/100) of virtual inertia.
+        r = trip_and_run(sys, :IF)
+        @test r.RoCoF0 ≈ -50 * 0.6 / (2 * 14.5)
+    end
+
+    @testset "settling, closed form — and the tripped inverter's damping LEAVES (D9)" begin
+        # Grid-following trip: every damping term stays online.
+        r = trip_and_run(sys, :IL)
+        Δω = -0.4 / (11 + 40 + 60)
+        @test r.ΔPm_end < 0.6 - 1e-3                      # precondition: unsaturated
+        @test isapprox(r.Δω_end, Δω; rtol = 1e-6)
+        # Grid-forming trip: its 40 of damping goes with it.
+        r = trip_and_run(sys, :IF)
+        Δω_leaves = -0.6 / (11 + 60)
+        Δω_stays  = -0.6 / (11 + 40 + 60)                 # what M2's constant-D would give
+        @test r.ΔPm_end < 0.6 - 1e-3
+        @test isapprox(r.Δω_end, Δω_leaves; rtol = 1e-6)
+        # The check discriminates: the two readings are 56 % apart, far outside rtol.
+        @test !isapprox(r.Δω_end, Δω_stays; rtol = 0.1)
+    end
+
+    @testset "a grid-following inverter's contribution is EXACTLY zero, not small" begin
+        all_on = Set(x.id for x in sys.units)
+        a = GridSim.aggregates(sys, all_on)
+        b = GridSim.aggregates(sys, setdiff(all_on, (:IL,)))
+        @test a.H_sys === b.H_sys && a.D === b.D && a.R_eq === b.R_eq &&
+              a.headroom === b.headroom
+    end
+
+    @testset "displacement: |RoCoF₀| rises by H_sys/(H_sys − H·S/S_base)" begin
+        # Four machines, a load, and a fixed 30 MW grid-following unit to trip. Each
+        # machine in turn is displaced by a grid-following inverter of the SAME
+        # dispatch and rating; the tripped unit carries no inertia, so the post-trip
+        # H_sys is the pre-trip one and the ratio is exactly the closed form.
+        specs = [(:M1, 300.0, 4.0, 120.0), (:M2, 200.0, 6.0, 80.0),
+                 (:M3, 150.0, 2.5, 60.0), (:M4, 400.0, 3.0, 110.0)]
+        function fleet(displaced::Union{Nothing,Symbol})
+            ids = [first.(specs); :LD; :T]
+            buses = [Bus(Symbol(:b, id), 230.0) for id in ids]
+            branches = [Branch(Symbol(:l, k), buses[k].id, buses[k+1].id, 0.1, 900.0)
+                        for k in 1:length(buses)-1]
+            ms = Machine[Machine(:LD, :bLD, 1000.0, 0.2, 0.0, 0.3, 1.0, -400.0)]
+            invs = Inverter[Inverter(:T, :bT, :grid_following, 50.0, 30.0)]
+            for (id, S, H, P) in specs
+                id === displaced ?
+                    push!(invs, Inverter(id, Symbol(:b, id), :grid_following, S, P)) :
+                    push!(ms, Machine(id, Symbol(:b, id), S, H, 0.0, 0.3, 1.0, P))
+            end
+            return coi_model(NetworkModel(100.0, 50.0, buses, branches, ms;
+                                          inverters = invs))
+        end
+        H_sys = (4.0 * 300 + 6.0 * 200 + 2.5 * 150 + 3.0 * 400 + 0.2 * 1000) / 100
+        base = trip_and_run(fleet(nothing), :T; T = 0.02).RoCoF0
+        @test base ≈ -50 * 0.3 / (2 * H_sys)
+        for (id, S, H, _) in specs
+            disp = trip_and_run(fleet(id), :T; T = 0.02).RoCoF0
+            @test disp / base ≈ H_sys / (H_sys - H * S / 100)
+        end
+    end
+
+    @testset "no inertia online is refused, never integrated (Hurdle 10, D5)" begin
+        # Only grid-following inverters: nothing to follow, no weights to average.
+        buses = [Bus(:A, 1.0), Bus(:B, 1.0)]
+        br = [Branch(:AB, :A, :B, 0.1, 1.0)]
+        gfl_only = NetworkModel(100.0, 50.0, buses, br, Machine[];
+            inverters = [Inverter(:pv, :A, :grid_following, 50.0, 20.0),
+                         Inverter(:bat, :B, :grid_following, 50.0, -20.0)])
+        msg = try; coi_model(gfl_only); ""; catch e; e.msg; end
+        @test occursin("nothing to follow", msg) && occursin("pv", msg)
+        # The engine refuses a zero-inertia model built directly.
+        z = SystemModel(100.0, 50.0, 1.0, 1.0,
+                        [GeneratingUnit(:pv, 50.0, 0.0, 20.0, Inf, 20.0),
+                         GeneratingUnit(:bat, 50.0, 0.0, -20.0, Inf, -20.0)])
+        @test_throws ArgumentError init!(FrequencyResponseEngine, z)
+        # A trip INTO zero inertia is refused and moves nothing.
+        one_gfm = coi_model(NetworkModel(100.0, 50.0, buses, br, Machine[];
+            inverters = [Inverter(:gf, :A, :grid_forming, 50.0, 20.0),
+                         Inverter(:bat, :B, :grid_following, 50.0, -20.0)]))
+        eng = init!(FrequencyResponseEngine, one_gfm; dt = 0.02)
+        before = (copy(eng.online), eng.params.H_sys, eng.params.ΔP_dist)
+        msg = try; inject!(eng, TripGenerator(:gf)); ""; catch e; e.msg; end
+        @test occursin("no inertia online", msg)
+        @test (eng.online, eng.params.H_sys, eng.params.ΔP_dist) == before
+        # The all-inverter model WITH a grid-forming unit is a legal aggregate.
+        @test sum(u.H for u in one_gfm.units) == 1.0
+    end
+
+    @testset "the pre-M7 unit is the unit it was" begin
+        u = GeneratingUnit(:X, 100.0, 3.0, 50.0, 0.05, 80.0)
+        @test u.D === 0.0
+        @test_throws ArgumentError GeneratingUnit(:X, 100.0, 3.0, 50.0, 0.05, 80.0, -1.0)
     end
 end

@@ -1944,6 +1944,29 @@ The mapping, machine by machine (in bus order):
 | `SystemModel.D`      | `sum(machine_arrays(net).D)` | **pre-weighted, system base** |
 | `SystemModel.Tg`     | droop-gain-weighted mean   | a choice with no oracle — below |
 
+**Inverters (M7 step 2, `docs/plans/m7-context.md` D4/D9)** compile to units after
+the machines, in bus order:
+
+| inverter mode     | `.H` (own base)  | `.R`  | `.Pmax` | unit `.D` (own base) |
+|:------------------|:-----------------|:------|:--------|:---------------------|
+| `:grid_forming`   | `τ_p / (2K_p)`   | `Inf` | `P0`    | `1/K_p`              |
+| `:grid_following` | `0.0`            | `Inf` | `P0`    | `0.0`                |
+
+The grid-forming row IS the droop/swing equivalence (Hurdle 11) used as a compiled
+view — correct here and only here, because this tier has no inverter state to
+integrate (D4); the swing and detailed tiers build the inverter from its own droop
+states instead, so that the equivalence can check them. Its damping rides on the
+UNIT, not in `SystemModel.D`, so a tripped grid-forming inverter takes its `1/K_p`
+with it (D9). A grid-following inverter is a constant-power source with no rotor
+and no response: exactly `entsoe-iberia-reproduction.md` §1 (a)'s PV block.
+
+With inverters present the structural precondition becomes **one generating
+element per bus** (a machine or an inverter), the classical tier's one-vertex-per-bus
+rule restated; without them it is the pre-M7 check, messages and all. And a model
+with **no machine and no grid-forming inverter** is refused: its centre-of-inertia
+weights sum to zero, so there is no system frequency to aggregate (Hurdle 10, claim
+3) — and nothing for its grid-following inverters to follow (D5).
+
 **The H/D asymmetry is deliberate and is the trap in this function.** `H` and
 `S_rated` go through *raw* on the machine's own base, because `aggregates`
 (engines/frequency_response.jl) applies `S_rated/S_base` itself. `SystemModel.D`
@@ -2024,11 +2047,31 @@ function coi_model(net::NetworkModel)
     #     inside the one derivation the repo points at to show reduced models are
     #     derived rather than hand-maintained. An aggregate view of the detailed tier
     #     is real work and is not this milestone's.
-    # M7 step 1 — first, for the reason `_assert_classical_tier` gives.
-    _assert_no_inverters(net, "coi_model"; unbuilt =
-        "(M7 step 2 teaches the aggregate: grid-forming as virtual inertia, " *
-        "grid-following as none.)")
-    _assert_one_machine_per_bus(net, "coi_model")
+    # M7 step 2. Without inverters this is the pre-M7 check, message for message.
+    # With them, the classical tier's one-vertex-per-bus rule is restated over
+    # machines AND inverters — an inverter's bus usually carries no machine.
+    if isempty(net.inverters)
+        _assert_one_machine_per_bus(net, "coi_model")
+    else
+        for v in eachindex(net.buses)
+            n = length(net.machines_at_bus[v]) + length(net.inverters_at_bus[v])
+            n == 1 || throw(ArgumentError(
+                "coi_model: bus $(net.buses[v].id) carries $n generating elements " *
+                "(machines and inverters together). The aggregate compiles the " *
+                "classical tier's view, which has exactly one per bus."))
+        end
+        # Hurdle 10 claim 3 / D5: with no machine and no grid-forming inverter the
+        # inertia weights sum to zero — no system frequency to aggregate, and
+        # nothing for the grid-following inverters to follow.
+        (isempty(net.machines) &&
+         !any(i -> i.mode === :grid_forming, net.inverters)) && throw(ArgumentError(
+            "coi_model: the model has no machine and no grid-forming inverter — only " *
+            "grid-following inverters ($(join([i.id for i in net.inverters], ", "))). " *
+            "Its centre-of-inertia weights sum to zero, so there is no system " *
+            "frequency to aggregate; and a grid-following inverter follows a voltage " *
+            "something else sets, so the grid has nothing to follow " *
+            "(m7-context.md D5, Hurdle 10)."))
+    end
     _assert_frozen_flux(net, "coi_model")
     isempty(net.loads) || throw(ArgumentError(
         "coi_model: the model carries $(length(net.loads)) Load(s) " *
@@ -2045,6 +2088,15 @@ function coi_model(net::NetworkModel)
         # in MW. A governor-free machine passes through as `R = Inf`, `Pmax = P0`,
         # which is exactly what M2 hard-coded here.
         units[v] = GeneratingUnit(m.id, m.S_rated, m.H, m.P0, m.R, m.Pmax)
+    end
+    # M7 step 2 — inverters, after the machines, as the docstring's second table.
+    # Raw on the inverter's own base, like the machines' `H`: `aggregates` applies
+    # `S_rated/S_base` to `H` and to the unit's `D` alike.
+    for inv in net.inverters
+        push!(units, inv.mode === :grid_forming ?
+            GeneratingUnit(inv.id, inv.S_rated, inv.τ_p / (2 * inv.K_p), inv.P0,
+                           Inf, inv.P0, 1 / inv.K_p) :
+            GeneratingUnit(inv.id, inv.S_rated, 0.0, inv.P0, Inf, inv.P0, 0.0))
     end
     # D pre-weighted onto the system base, because `SystemModel.D` is a system-base
     # scalar that nothing downstream re-weights. This is the asymmetry above.

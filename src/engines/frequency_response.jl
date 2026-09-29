@@ -38,7 +38,9 @@ Center-of-inertia aggregates for the units in `online`, on the system base
     reciprocal. With no online units (or no droop) `R_eq = Inf` (zero gain).
   - `headroom = Σ (Pmaxᵢ − P0ᵢ)/S_base` — aggregate up-reserve (pu on S_base);
     the ceiling at which `ΔPm` saturates (the governors can ramp no further).
-  - `D`, `Tg` are system-wide constants, passed through from `model`.
+  - `D = model.D + Σ Dᵢ·(Sᵢ/S_base)` — the system-wide constant plus the damping
+    each ONLINE unit carries itself (M7 step 2, `m7-context.md` D9; zero on every
+    pre-M7 unit, so this is `model.D` exactly there). `Tg` is passed through.
 
 Every one of these is recomputed after a `TripGenerator`: a tripped unit takes
 its inertia, its droop gain, **and its own headroom** out of the pool. Pure
@@ -50,15 +52,19 @@ function aggregates(model::SystemModel, online)
     H_sys = 0.0
     inv_R_eq = 0.0
     headroom = 0.0
+    D = model.D
     for u in model.units
         u.id in online || continue
         w = u.S_rated / S_base          # unit's MVA weight on the system base
         H_sys += u.H * w
         inv_R_eq += (1.0 / u.R) * w
         headroom += (u.Pmax - u.P0) / S_base   # up-reserve, pu on system base
+        # M7 step 2 (m7-context.md D9): damping the UNIT carries, leaving with it.
+        # Zero on every pre-M7 unit, and `x + 0.0` is `x`, so D = model.D exactly.
+        D += u.D * w
     end
     R_eq = inv_R_eq == 0.0 ? Inf : 1.0 / inv_R_eq
-    return (; H_sys, R_eq, D = model.D, Tg = model.Tg, headroom)
+    return (; H_sys, R_eq, D, Tg = model.Tg, headroom)
 end
 
 """
@@ -223,6 +229,12 @@ function FrequencyResponseEngine(model::SystemModel; t0::Real = 0.0,
                                  capacity::Integer = _TRAJ_CAPACITY)
     online = Set(u.id for u in model.units)
     a = aggregates(model, online)
+    # M7 step 2 — the same zero-weight refusal as a trip into it (Hurdle 10).
+    a.H_sys > 0 || throw(ArgumentError(
+        "FrequencyResponseEngine: the model has no inertia online (H_sys = 0 — " *
+        "every unit has H = 0). The aggregate's one state is a centre-of-inertia " *
+        "speed, whose weights sum to zero here, so there is no system frequency to " *
+        "integrate (m7-context.md Hurdle 10)."))
     params = FRParams(a.H_sys, a.R_eq, a.D, a.Tg, 0.0, a.headroom)
     t0f = Float64(t0)
     # Built BEFORE the integrator and shared with it: the callbacks close over
@@ -452,6 +464,18 @@ the error is reachable.
 function inject!(eng::FrequencyResponseEngine, ev::TripGenerator)
     unit = _find_unit(eng.model, ev.id)      # throws KeyError on unknown id
     ev.id in eng.online || return eng        # exists but already offline ⇒ no-op
+    # M7 step 2 (Hurdle 10, claim 3). A trip that leaves NO inertia online leaves
+    # this tier nothing to integrate: its one state is a centre-of-inertia speed,
+    # and `dΔω/dt` divides by `2·H_sys`. Refused BEFORE anything moves, so the
+    # engine is exactly as it was — rather than stepping on into `Inf`/`NaN`.
+    remaining = setdiff(eng.online, (ev.id,))
+    aggregates(eng.model, remaining).H_sys > 0 || throw(ArgumentError(
+        "inject!: tripping $(ev.id) would leave no inertia online " *
+        "($(isempty(remaining) ? "no units at all" :
+             "only " * join(sort!(collect(remaining)), ", ") * ", all with H = 0")). " *
+        "The aggregate's one state is a centre-of-inertia speed, whose weights would " *
+        "sum to zero — there is no system frequency left to integrate " *
+        "(m7-context.md Hurdle 10)."))
     delete!(eng.online, ev.id)
     a = aggregates(eng.model, eng.online)
     p = eng.params                            # === eng.integrator.p (shared object)
