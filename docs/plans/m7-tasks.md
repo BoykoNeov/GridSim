@@ -215,6 +215,15 @@ runs.
 
 ## Step 4 — grid-forming in the detailed tier
 
+- [x] **Power flows (commit A)**: `ac_powerflow` treats a grid-forming bus as a
+      source holding `P0` and `V_set`, `bus_injections`/`dc_powerflow` inject its
+      `P0`; grid-following still refused (step 5). One per-unit conversion point for
+      inverters, `_inverter_arrays`, now read by the swing tier too.
+- [x] **D10 decided with the measurement** (`m7-context.md` D10): the rating is a
+      switched reactive limit; bit-identical to the capped `Machine` twin binding
+      and not; the slack's rating checked after the solve.
+- [x] Mutations A1–A4 executed, each red: cap not added, inverter `P` not injected,
+      slack check skipped, `V_set` not held. Core **3796** green.
 - [ ] Vertex behind `X_c`, `K_q` live, initialised through the static network.
 - [ ] Equivalence at `K_q = 0` against a classical detailed machine, `X′d = X_c`.
 - [ ] PowerDynamics `IdealDroopInverter` + line `X_c`, `K_q` live, band stated

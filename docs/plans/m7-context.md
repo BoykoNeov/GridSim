@@ -355,3 +355,34 @@ constructor checks only the *dispatched* `Q0`. So step 4 either checks the
 **solved** reactive output at a grid-forming bus against the rating (refusing, or
 switching to a limit as M6 D12 does for machines), or names it as unchecked in the
 docstring and the ledger. Which one is decided in step 4, with the measurement.
+
+### What step 4 settled (the measurement first)
+
+Measured before choosing, on step 3's ring with the inverter's reactive output
+unlimited (a `Machine` twin with no `Q` limits, which the power flow cannot tell from
+the inverter): at the default 150 MVA rating and `V_set = 1.01` the inverter bus is
+asked for **0.158 pu against a capability of 1.375 pu**; at `V_set = 1.05` for
+0.539 pu. Cut the rating to 65 MVA at the same 60 MW and the capability falls to
+0.25 pu — well inside what an ordinary voltage schedule asks for.
+
+**Taken: the rating is a reactive limit, and it switches.** `ac_powerflow` gives a
+grid-forming bus `Q ∈ ±√(S_rated² − P0²)` through the same bind-only switch M6 D12
+built for machines. So on the power flow an inverter IS a machine with those limits,
+and the check is an `==`: the solved flow is bit-identical to the `Machine` twin
+carrying the same `P0`, `V_set` and hand-converted limits, both when nothing binds
+(where the unlimited twin is ALSO identical — one solve happened) and when the limit
+binds (the bus becomes a load bus at 0.25 pu and cannot hold 1.05).
+
+**The slack is the blind spot, and it is closed separately.** Switching never caps
+the slack, and a grid-forming inverter is the default slack of a model with no
+machine (step 7's all-inverter corner). There the solved `|P + jQ|` is checked
+against the rating after the solve and refused by name
+(`_ac_check_inverter_slack`); with a machine on the slack bus the split is not the
+solve's to decide and nothing is checked. The fixture that exercises it uses a
+CONSTANT-POWER load, because the default constant-impedance load draws `P0·|V|²` at
+the solved 0.97 pu and the hand estimate (51.6 MVA) turned into a measured 48.5 —
+the M6 lesson about running claims on the default, met in the other direction.
+
+The DC flow needs no decision: it has no reactive power, and a grid-forming
+inverter is an injection there exactly like a machine's.
+

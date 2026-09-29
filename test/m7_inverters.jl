@@ -142,9 +142,13 @@ end
             # for good (a tier boundary) — its own testset checks the message.
             mode === :grid_following && @test refuses(() -> SwingEngine(net))
             @test refuses(() -> init!(DetailedEngine, net))
-            @test refuses(() -> ac_powerflow(net))
-            @test refuses(() -> dc_powerflow(net))
-            @test refuses(() -> bus_injections(net))   # exported on its own
+            # Step 4 taught the power flows the grid-forming kind (its own testset
+            # checks what they do with it); grid-following waits for step 5.
+            if mode === :grid_following
+                @test refuses(() -> ac_powerflow(net))
+                @test refuses(() -> dc_powerflow(net))
+                @test refuses(() -> bus_injections(net))   # exported on its own
+            end
             @test refuses(() -> economic_dispatch(net))
         end
         # The swing tier's message says the grid-following refusal is a boundary,
@@ -569,5 +573,98 @@ end
         eng = SwingEngine(three_machine_ring())
         @test all(==(0.0), eng.droop)
         @test current_state(eng).ω == eng.integrator.u[eng.ω_idx]
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4 — the grid-forming inverter in the power flows and the detailed tier.
+#
+# The power flows' twin is step 3's ring with the inverter replaced by a Machine
+# carrying the same P0 and V_set — the only two numbers a power flow reads of either
+# — and, the ONE place the two differ (m7-context.md D10), the inverter's reactive
+# capability at its dispatch as the machine's Q limits, converted BY HAND here from
+# the rating: √(S_rated² − P0²)/S_base. `capped = false` drops them, which is the
+# anti-vacuity twin: it shows what the inverter would have been asked for.
+function _m7_pf_ring(src::Symbol; S_inv = _S_INV, V_set = 1.01, capped = true)
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
+    br = [Branch(:L12, :B1, :B2, 0.2, 900.0), Branch(:L23, :B2, :B3, 0.25, 900.0),
+          Branch(:L13, :B1, :B3, 0.3, 900.0)]
+    ms = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.02, 80.0),
+          Machine(:G3, :B3, 400.0, 3.0, 1.0, 0.3, 1.0, -140.0)]
+    src === :inverter && return NetworkModel(100.0, 50.0, buses, br, ms;
+        inverters = [Inverter(:S2, :B2, :grid_forming, S_inv, 60.0; V_set = V_set)])
+    q = sqrt(S_inv^2 - 60.0^2) / 100
+    push!(ms, Machine(:S2, :B2, S_inv, 1.0, 20.0, 0.3, 1.0, 60.0; V_set = V_set,
+                      Q_min = capped ? -q : -Inf, Q_max = capped ? q : Inf))
+    return NetworkModel(100.0, 50.0, buses, br, ms)
+end
+
+_m7_same(a::ACPowerFlow, b::ACPowerFlow) =
+    a.Vm == b.Vm && a.θ == b.θ && a.Pgen == b.Pgen && a.Qgen == b.Qgen &&
+    a.roles == b.roles && a.limited == b.limited && a.flow == b.flow
+
+@testset "M7 step 4 — the power flows learn the grid-forming inverter" begin
+
+    @testset "AC: bit-identical to the machine twin, and the cap far from binding" begin
+        a = ac_powerflow(_m7_pf_ring(:inverter))
+        @test _m7_same(a, ac_powerflow(_m7_pf_ring(:machine)))
+        # Nothing binds, so ONE solve happened on both sides, and the uncapped twin
+        # is the same answer again — the limit is present and not acting.
+        @test _m7_same(a, ac_powerflow(_m7_pf_ring(:machine; capped = false)))
+        @test isempty(a.limited) && a.roles[2] === :generator
+        @test bus_voltage(a, :B2) == 1.01                  # it holds its V_set
+        @test bus_generation(a, :B2).P ≈ 0.6 atol = 1e-12
+        # Measured (D10): 0.158 pu asked against a 1.375 pu capability.
+        @test abs(bus_generation(a, :B2).Q) < sqrt(1.5^2 - 0.6^2) / 5
+    end
+
+    @testset "AC: the rating binds, and the inverter is the CAPPED machine (D10)" begin
+        # 65 MVA at 60 MW leaves √(65² − 60²) = 25 MVAr; at V_set = 1.05 the bus is
+        # asked for 0.539 pu (measured on the uncapped twin), so the switch fires.
+        a = ac_powerflow(_m7_pf_ring(:inverter; S_inv = 65.0, V_set = 1.05))
+        @test a.limited == [:B2] && a.roles[2] === :load
+        @test bus_generation(a, :B2).Q ≈ 0.25 atol = 1e-9
+        @test bus_voltage(a, :B2) < 1.05                   # it could not hold V_set
+        @test _m7_same(a, ac_powerflow(_m7_pf_ring(:machine; S_inv = 65.0, V_set = 1.05)))
+        # Anti-vacuity: WITHOUT the rating the same bus takes 0.539 pu and holds 1.05.
+        u = ac_powerflow(_m7_pf_ring(:machine; S_inv = 65.0, V_set = 1.05, capped = false))
+        @test isempty(u.limited) && bus_generation(u, :B2).Q > 0.5
+    end
+
+    @testset "DC: the inverter is an injection like a machine's" begin
+        @test dc_powerflow(_m7_pf_ring(:inverter)).θ == dc_powerflow(_m7_pf_ring(:machine)).θ
+        P = bus_injections(_m7_pf_ring(:inverter))
+        @test P == bus_injections(_m7_pf_ring(:machine))
+        @test P[2] == 0.6 && abs(sum(P)) < 1e-15
+    end
+
+    @testset "AC: a grid-forming SLACK is checked against its rating (D10's blind spot)" begin
+        # No machine at all: the grid-forming inverter is the default reference, and
+        # the slack's reactive limit is not enforced by switching — so the rating is
+        # checked after the solve. A CONSTANT-POWER 40 MW + 30 MVAr load plus the
+        # line's I²X needs ~51.6 MVA (40 MW, 32.7 MVAr solved): a 60 MVA inverter holds
+        # it, a 50 MVA one is refused by name. (Constant power so the hand estimate is
+        # the load's own number: the default constant-impedance load draws P0·|V|² at
+        # the solved 0.97 pu and needs only 48.5 MVA — measured, and why it is not
+        # the fixture.)
+        mk(S) = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+                             [Branch(:AB, :A, :B, 0.1, 500.0)], Machine[],
+                             [Load(:D, :B, 40.0, 30.0, 0.0, 0.0, 1.0)];
+                             inverters = [Inverter(:gf, :A, :grid_forming, S, 40.0)])
+        @test mk(60.0).slack === :A
+        ok = ac_powerflow(mk(60.0))
+        g = bus_generation(ok, :A)
+        @test g.P ≈ 0.4 atol = 1e-12
+        @test 0.5 < hypot(g.P, g.Q) < 0.52
+        msg = try; ac_powerflow(mk(50.0)); ""; catch e; e.msg; end
+        @test occursin("slack bus A", msg) && occursin("rated 50.0 MVA", msg)
+    end
+
+    @testset "grid-following is still refused by the power flows (step 5)" begin
+        net = _m7_pair(mode = :grid_following)
+        for f in (ac_powerflow, dc_powerflow, bus_injections)
+            msg = try; f(net); ""; catch e; e.msg; end
+            @test occursin("I2", msg) && occursin("step 5", msg)
+        end
     end
 end

@@ -1349,6 +1349,68 @@ function _assert_no_inverters(net::NetworkModel, who::AbstractString;
 end
 
 """
+    _assert_no_grid_following(net::NetworkModel, who::AbstractString; unbuilt = "")
+
+`_assert_no_inverters` narrowed to the grid-following kind (M7 step 4), for the
+consumers that have learned the grid-forming inverter and not yet the other. Same
+reason, same message shape: a consumer that dropped the inverter would answer for a
+network whose generation does not meet its load.
+"""
+function _assert_no_grid_following(net::NetworkModel, who::AbstractString;
+                                   unbuilt::AbstractString = "")
+    gfl = [i.id for i in net.inverters if i.mode === :grid_following]
+    isempty(gfl) && return nothing
+    why = isempty(unbuilt) ? "" : " $unbuilt"
+    throw(ArgumentError(
+        "$who: the model carries grid-following inverter(s) ($(join(gfl, ", "))), " *
+        "which $who does not represent yet. Running it without them would describe a " *
+        "different network — one whose generation no longer meets its load.$why"))
+end
+
+"""
+    _inverter_arrays(net::NetworkModel) -> NamedTuple
+
+The **grid-forming** inverters' numbers on the SYSTEM base, in model (bus) order —
+the one place an inverter's per-unit conversion happens (M7 step 4), as
+`machine_arrays` is for machines. Every consumer that needs an inverter in per unit
+reads it here, so a conversion cannot come to differ between the swing tier, the
+detailed tier and the power flow.
+
+  - `id`, `bus` (vertex), `k` (index into `net.inverters`)
+  - `P`     — pu, `P0/S_base`
+  - `K_p`   — pu frequency per SYSTEM-base pu power, `K_p·S_base/S_rated` (a
+              system-base pu of power is `S_base/S_rated` own-base pu)
+  - `K_q`   — pu voltage per SYSTEM-base pu reactive power, the same conversion
+  - `X_c`   — pu on the system base, `X_c·S_base/S_rated` (impedance scales the
+              other way from power, as `Machine.Xd′` does)
+  - `H`     — s, the virtual inertia `τ_p/(2K_p)` on the system base
+              (`·S_rated/S_base`), which is `τ_p/(2·K_p_sys)` exactly
+  - `τ_p`, `τ_q`, `V_set` — unconverted (seconds, and a voltage ratio)
+  - `S`     — pu, the rating `S_rated/S_base`
+  - `Q_cap` — pu, the reactive capability at the dispatched real power,
+              `√(S_rated² − P0²)/S_base` (`m7-context.md` D10)
+
+Grid-following inverters are not here: they carry none of these, and the step that
+builds them (5) adds what they need.
+"""
+function _inverter_arrays(net::NetworkModel)
+    ks = [k for (k, i) in pairs(net.inverters) if i.mode === :grid_forming]
+    invs = net.inverters[ks]
+    Sb = net.S_base
+    return (; k = ks, id = Symbol[i.id for i in invs],
+            bus = Int[net.bus_index[i.bus] for i in invs],
+            P = Float64[i.P0 / Sb for i in invs],
+            K_p = Float64[i.K_p * Sb / i.S_rated for i in invs],
+            K_q = Float64[i.K_q * Sb / i.S_rated for i in invs],
+            X_c = Float64[i.X_c * Sb / i.S_rated for i in invs],
+            H = Float64[i.τ_p / (2 * i.K_p) * (i.S_rated / Sb) for i in invs],
+            τ_p = Float64[i.τ_p for i in invs], τ_q = Float64[i.τ_q for i in invs],
+            V_set = Float64[i.V_set for i in invs],
+            S = Float64[i.S_rated / Sb for i in invs],
+            Q_cap = Float64[sqrt(max(i.S_rated^2 - i.P0^2, 0.0)) / Sb for i in invs])
+end
+
+"""
     _assert_lossless_branches(net::NetworkModel, who::AbstractString)
 
 Refuse a branch carrying a series resistance, by name — the M6 step 1 half of the

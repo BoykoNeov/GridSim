@@ -50,15 +50,22 @@ can be constructed.
 """
 function bus_injections(net::NetworkModel)
     # M7 step 1. HERE, not only in `dc_powerflow`: this is exported on its own, and
-    # it sums machines and loads only, so on a model with an inverter it returned a
+    # it summed machines and loads only, so on a model with an inverter it returned a
     # vector that no longer summed to zero — with no error (found by walking every
     # exported `NetworkModel` method, not by the grep that built the first list).
-    _assert_no_inverters(net, "bus_injections"; unbuilt =
-        "(M7 step 4 teaches the power flow inverters.)")
+    # Step 4 lifts it for the grid-forming kind; step 5 teaches the other.
+    _assert_no_grid_following(net, "bus_injections"; unbuilt =
+        "(M7 step 5 teaches the power flow grid-following inverters.)")
     P = zeros(Float64, length(net.buses))
     ma = machine_arrays(net)
     for k in eachindex(ma.bus)
         P[ma.bus[k]] += ma.Pm[k]
+    end
+    # A grid-forming inverter injects its dispatch like a machine (M7 step 4). With
+    # none present this loop is empty and the vector is the one it always was.
+    ia = _inverter_arrays(net)
+    for j in eachindex(ia.bus)
+        P[ia.bus[j]] += ia.P[j]
     end
     la = load_arrays(net)
     for k in eachindex(la.bus)
@@ -162,10 +169,11 @@ the same thing (their `P`), and only the slack is distinguished — by having it
 angle pinned to zero. `bus_roles` starts mattering in step 3.
 """
 function dc_powerflow(net::NetworkModel)
-    # M7 step 1 — kept although `bus_injections` below now refuses too: this
-    # message names the function the caller actually called.
-    _assert_no_inverters(net, "dc_powerflow"; unbuilt =
-        "(M7 step 4 teaches the power flow inverters.)")
+    # M7 step 1 — kept although `bus_injections` below refuses too: this message
+    # names the function the caller actually called. Narrowed to grid-following at
+    # step 4, which teaches the grid-forming kind (an injection like a machine's).
+    _assert_no_grid_following(net, "dc_powerflow"; unbuilt =
+        "(M7 step 5 teaches the power flow grid-following inverters.)")
     n = length(net.buses)
     P = bus_injections(net)
     B = _dc_susceptance(net)

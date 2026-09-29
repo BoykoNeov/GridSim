@@ -125,6 +125,18 @@ reads travel with every integration.
 a bus has one terminal voltage, so two machines asking for different ones is a
 contradiction in the data and is refused by name rather than resolved by a rule
 nobody chose.
+
+**A grid-forming inverter is a source exactly like a machine** (M7 step 4): it holds
+its `P0` and its `V_set` at the bus, sums with anything else on the bus, and must
+agree with it on `V_set`. The ONE place the two differ is the reactive limit
+(`m7-context.md` D10): a machine has none unless `Q_min`/`Q_max` say so, and an
+inverter's is its rating at the dispatched real power, `±√(S_rated² − P0²)`
+(`_inverter_arrays`' `Q_cap`). It enters the same limit columns, so the same
+bind-only switching caps it — an inverter IS a machine with those limits here, and
+the test that says so is an `==`.
+
+`has_source` is true where a machine or a grid-forming inverter sits — the buses
+that hold a voltage, which is what `_holds_voltage` means by a generator bus.
 """
 function _ac_schedule(net::NetworkModel)
     n = length(net.buses)
@@ -132,24 +144,41 @@ function _ac_schedule(net::NetworkModel)
     V_set = fill(NaN, n)
     Q_min = zeros(Float64, n)
     Q_max = zeros(Float64, n)
-    has_machine = falses(n)
+    has_source = falses(n)
     ma = machine_arrays(net)
     for k in eachindex(ma.bus)
         v = ma.bus[k]
         m = net.machines[k]
-        if has_machine[v]
+        if has_source[v]
             m.V_set == V_set[v] || throw(ArgumentError(
                 "ac_powerflow: bus $(net.buses[v].id) carries machines with different " *
                 "V_set ($(V_set[v]) and $(m.V_set) pu, the latter on machine $(m.id)). " *
                 "A bus has ONE terminal voltage; two setpoints on it is a contradiction " *
                 "in the model, not a case for a tie-break rule."))
         else
-            has_machine[v] = true
+            has_source[v] = true
             V_set[v] = m.V_set
         end
         Pgen[v]  += ma.Pm[k]
         Q_min[v] += m.Q_min
         Q_max[v] += m.Q_max
+    end
+    ia = _inverter_arrays(net)
+    for j in eachindex(ia.bus)
+        v = ia.bus[j]
+        if has_source[v]
+            ia.V_set[j] == V_set[v] || throw(ArgumentError(
+                "ac_powerflow: bus $(net.buses[v].id) carries sources with different " *
+                "V_set ($(V_set[v]) and $(ia.V_set[j]) pu, the latter on inverter " *
+                "$(ia.id[j])). A bus has ONE terminal voltage; two setpoints on it is a " *
+                "contradiction in the model, not a case for a tie-break rule."))
+        else
+            has_source[v] = true
+            V_set[v] = ia.V_set[j]
+        end
+        Pgen[v]  += ia.P[j]
+        Q_min[v] -= ia.Q_cap[j]
+        Q_max[v] += ia.Q_cap[j]
     end
     Pl  = zeros(Float64, n)
     Ql  = zeros(Float64, n)
@@ -163,7 +192,7 @@ function _ac_schedule(net::NetworkModel)
         a_i[v] = la.a_i[k]
         a_p[v] = la.a_p[k]
     end
-    return (; Pgen, V_set, Q_min, Q_max, has_machine, Pl, Ql, a_i, a_p)
+    return (; Pgen, V_set, Q_min, Q_max, has_source, Pl, Ql, a_i, a_p)
 end
 
 """
@@ -313,6 +342,36 @@ function _ac_assert_no_backoff(net::NetworkModel, limited::Vector{Int},
 end
 
 """
+    _ac_check_inverter_slack(net, v_slack, P, Q)
+
+The rating check the slack cannot get from switching (M7 step 4, `m7-context.md`
+D10). Every other grid-forming bus is capped by `±√(S_rated² − P0²)` through the
+reactive-limit switch; the slack's limits are not enforced at all (see
+`ac_powerflow`), and with no machine in the model a grid-forming inverter IS the
+default slack — step 7's all-inverter corner. So there the solved output is checked
+against the rating after the solve, and a case that needs more is refused by name
+rather than returned as an operating point the inverter cannot hold.
+
+Applies only when the slack bus carries **no machine**: with one present, the split
+of the slack's output between machine and inverter is not something this solve
+decides, and the machine has the short-term overload the inverter lacks.
+"""
+function _ac_check_inverter_slack(net::NetworkModel, v_slack::Int, P::Float64, Q::Float64)
+    isempty(net.machines_at_bus[v_slack]) || return nothing
+    ia = _inverter_arrays(net)
+    S = sum((ia.S[j] for j in eachindex(ia.bus) if ia.bus[j] == v_slack); init = 0.0)
+    S > 0 || return nothing
+    hypot(P, Q) <= S * (1 + 1e-12) || throw(ErrorException(
+        "ac_powerflow: the slack bus $(net.slack) is held by grid-forming inverter(s) " *
+        "rated $(S * net.S_base) MVA, and the solve needs $(hypot(P, Q) * net.S_base) " *
+        "MVA from them (P = $(P * net.S_base) MW, Q = $(Q * net.S_base) MVAr). The " *
+        "slack's reactive limit is not enforced by switching, so this is checked " *
+        "here: an inverter has no short-term overload, and a power flow that needs " *
+        "one describes an operating point it cannot hold."))
+    return nothing
+end
+
+"""
     ACPowerFlow
 
 A solved nonlinear power flow — the answer detached from the model it came from,
@@ -416,33 +475,46 @@ for, and it is refused by name rather than returned (D12).
 injection is whatever the network needs; limiting it needs a distributed or area
 slack, which no type in this repo expresses. Named here rather than discovered.
 
+## Grid-forming inverters (M7 step 4)
+
+A grid-forming inverter holds its `P0` and `V_set` like a machine, and its reactive
+output is capped by its rating, `±√(S_rated² − P0²)`, through the same switching
+(`m7-context.md` D10). **At the slack that cap cannot be enforced** (above), and a
+grid-forming inverter is the default slack of a model with no machine at all — so
+there the solved `|P + jQ|` is CHECKED against the inverter's rating after the solve
+and refused by name if it exceeds it. An inverter has no short-term overload
+(`Inverter`'s own constructor makes the same argument about the dispatch).
+
 ## What it refuses
 
-  - a slack bus with no machine on it — the model allows this so a half-built
-    editor draft stays constructible (M5 D3's precedent), and the tier that has to
-    put a voltage source there refuses it by name;
-  - two machines on one bus asking for different `V_set`;
+  - a slack bus with no voltage source on it (a machine or a grid-forming
+    inverter) — the model allows this so a half-built editor draft stays
+    constructible (M5 D3's precedent), and the tier that has to put a voltage source
+    there refuses it by name;
+  - two sources on one bus asking for different `V_set`;
+  - a grid-forming slack whose solved output exceeds its rating;
+  - a grid-following inverter (M7 step 5 teaches it);
   - a solve that does not converge, or converges outside the checks above.
 """
 function ac_powerflow(net::NetworkModel;
                       abstol::Real = 1.0e-12,
                       maxiters::Integer = 200,
                       max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
-    # M7 step 1 — refused until steps 4 and 5 teach the solve both inverter kinds.
-    _assert_no_inverters(net, "ac_powerflow"; unbuilt =
-        "(M7 steps 4 and 5: grid-forming as a voltage-controlled bus, grid-following " *
-        "as a scheduled injection.)")
+    # M7 step 1 refused every inverter; step 4 lifts the grid-forming kind.
+    _assert_no_grid_following(net, "ac_powerflow"; unbuilt =
+        "(M7 step 5: grid-following as a scheduled injection.)")
     n = length(net.buses)
     v_slack = net.bus_index[net.slack]           # the constructor guarantees this resolves
     sch = _ac_schedule(net)
-    sch.has_machine[v_slack] || throw(ArgumentError(
-        "ac_powerflow: the declared slack bus :$(net.slack) carries no machine. " *
+    sch.has_source[v_slack] || throw(ArgumentError(
+        "ac_powerflow: the declared slack bus :$(net.slack) carries no machine and no " *
+        "grid-forming inverter — no voltage source. " *
         "NetworkModel accepts that — a half-built model with buses placed and no " *
         "machines yet must stay constructible — but a power flow needs a voltage " *
         "source at the reference bus, and there is nothing there to be one."))
 
     Y = _ac_admittance(net)
-    gen_buses = [v for v in 1:n if sch.has_machine[v] && v != v_slack]
+    gen_buses = [v for v in 1:n if sch.has_source[v] && v != v_slack]
     nonslack = [v for v in 1:n if v != v_slack]
 
     limited = Int[]                      # generator buses switched to a limit
@@ -456,8 +528,8 @@ function ac_powerflow(net::NetworkModel;
     round = 0
     while true
         held = Set(limited)
-        pq = [v for v in nonslack if !sch.has_machine[v] || v in held]
-        Vm_held = [sch.has_machine[v] && !(v in held) ? sch.V_set[v] : 1.0 for v in 1:n]
+        pq = [v for v in nonslack if !sch.has_source[v] || v in held]
+        Vm_held = [sch.has_source[v] && !(v in held) ? sch.V_set[v] : 1.0 for v in 1:n]
         c = _ACContext(n, Y, v_slack, nonslack, pq, Vm_held,
                        sch.Pgen, Qheld, sch.Pl, sch.Ql, sch.a_i, sch.a_p)
         # Flat start on the first round; on a later one, the previous answer with
@@ -544,10 +616,11 @@ function ac_powerflow(net::NetworkModel;
     _check_voltage_band(net, Vm, what)
     _check_branch_ratings(net, mva, what)
     _check_residual(res, what)
+    _ac_check_inverter_slack(net, v_slack, Pgen[v_slack], Qgen[v_slack])
 
     held = Set(limited)
     roles = [v == v_slack ? :slack :
-             (sch.has_machine[v] && !(v in held)) ? :generator : :load for v in 1:n]
+             (sch.has_source[v] && !(v in held)) ? :generator : :load for v in 1:n]
 
     return ACPowerFlow(net.slack,
                        Symbol[b.id for b in net.buses], Vm, θ,

@@ -709,7 +709,8 @@ end
 # `machine_arrays`/`branch_arrays` exactly as it did, so no existing number can move.
 #
 # A machine vertex takes `machine_arrays`' row (the one per-unit converter). A
-# grid-forming vertex converts its own gains here, ONCE, from its own rating:
+# grid-forming vertex takes `_inverter_arrays`' row (its counterpart since M7 step 4,
+# which moved these conversions there when the detailed tier needed them too):
 #   - `K_p` is pu frequency per pu power on the inverter's base; per pu power on the
 #     SYSTEM base it is `K_p·S_base/S_rated` (a system-base pu of power is
 #     `S_base/S_rated` own-base pu). This is the wrong-base mutation's target.
@@ -730,13 +731,16 @@ function _swing_vertices(net::NetworkModel)
         D[v] = ma.D[k]; Pm[v] = ma.Pm[k]; invR[v] = ma.invR[k]
         headroom[v] = ma.headroom[k]; Tg[v] = ma.Tg[k]
     end
-    for inv in net.inverters
-        v = net.bus_index[inv.bus]
-        kind[v] = :grid_forming; ids[v] = inv.id; E[v] = inv.V_set
-        K_p[v] = inv.K_p * net.S_base / inv.S_rated
-        τ_p[v] = inv.τ_p
-        H[v] = inv.τ_p / (2 * inv.K_p) * (inv.S_rated / net.S_base)
-        Pm[v] = inv.P0 / net.S_base
+    # Converted in `_inverter_arrays`, the one place an inverter's per-unit numbers are
+    # made (M7 step 4) — the same expressions this loop used to write inline.
+    ia = _inverter_arrays(net)
+    for j in eachindex(ia.id)
+        v = ia.bus[j]
+        kind[v] = :grid_forming; ids[v] = ia.id[j]; E[v] = ia.V_set[j]
+        K_p[v] = ia.K_p[j]
+        τ_p[v] = ia.τ_p[j]
+        H[v] = ia.H[j]
+        Pm[v] = ia.P[j]
     end
     src = Int[]; dst = Int[]; K = Float64[]
     reach = zeros(nb)
