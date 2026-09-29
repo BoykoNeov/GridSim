@@ -281,10 +281,24 @@ runs.
       first round, always on the high branch. The plan's single scan was unreachable.
 - [x] D5: a model with nothing to follow is refused naming the inverters.
 - [x] Mutations C1–C4 executed, each red. Core **3848**.
-- [ ] Ideal current source in its PLL frame; PLL form chosen and recorded.
-- [ ] Existence limit `P = |V_g|²/(2X)` located by a scan.
-- [ ] PLL closed-form phase-step response, peak predicted before the run.
-- [ ] No-voltage-source model refused by name (D5).
+- [x] Ideal current source in its PLL frame (commit B): `I = (i_d + j·i_q)·e^{jθ_pll}`,
+      d-axis along the PLL angle (PowerDynamics' `_dq_to_ri`, not the machine's `_dq`);
+      PLL = `PLL_LPF` exactly (D12). Static vertex: constant POWER at start-up,
+      constant CURRENT at the held PLL angle on a re-initialisation — what the RHS
+      injects. Channels `θpll_`/`ωpll_`, weight zero (D6).
+- [x] Existence limit — in two halves, commit A (D13).
+- [x] PLL phase-step peak predicted before the run from the linearised 3×3 loop's
+      matrix exponential, on a ZERO-CURRENT inverter (an exactly stiff bus): relative
+      error 3.4e-4 / 8.4e-5 / 2.1e-5 at Δ = 0.05 / 0.025 / 0.0125 rad — ratio 4.0 per
+      halving, the Δ² signature of sin φ ≈ φ. A 0.05 rad step reads as −0.47 Hz.
+- [x] No-voltage-source model refused by name (D5), FIRST in `init!`.
+- [x] **The wrong-frame check the plan did not have**: the injected current, read
+      from the branches and rotated into the PLL frame, stays at dispatch to < 1e-10
+      through a line trip while the PLL is up to 0.0105 rad off the bus angle.
+- [x] Mutations D1–D4, each red: PLL error sign; current in the BUS frame (caught
+      ONLY by the network-side check, as pre-registered); output filter removed;
+      re-init at constant power.
+- [x] Gates (commit B): core **3868**, M5 criterion bit-identical.
 - [ ] PowerDynamics `SimpleGFL`: gap shrinks as their current loop stiffens.
 - [ ] Mutations: PLL error sign; wrong current frame.
 

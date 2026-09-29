@@ -142,10 +142,8 @@ end
             # Step 3 built the grid-forming vertex; grid-following stays refused here
             # for good (a tier boundary) — its own testset checks the message.
             mode === :grid_following && @test refuses(() -> SwingEngine(net))
-            # Step 4 taught the detailed tier and the power flows the grid-forming
-            # kind, step 5 taught the power flows the grid-following one (their own
-            # testsets check what they do with them).
-            mode === :grid_following && @test refuses(() -> init!(DetailedEngine, net))
+            # Steps 4 and 5 taught the detailed tier and the power flows both kinds
+            # (their own testsets check what they do with them).
             @test refuses(() -> economic_dispatch(net))
         end
         # The swing tier's message says the grid-following refusal is a boundary,
@@ -809,8 +807,7 @@ end
     end
 
     @testset "refusals, each by name" begin
-        msg = try; init!(DetailedEngine, _m7_pair(mode = :grid_following)); ""; catch e; e.msg; end
-        @test occursin("I2", msg) && occursin("step 5", msg)
+        # (The grid-following refusal that stood here was lifted by step 5.)
         buses = [Bus(:A, 1.0), Bus(:B, 1.0)]
         br = [Branch(:AB, :A, :B, 0.2, 500.0)]
         g = [Machine(:G, :A, 100.0, 4.0, 1.0, 0.3, 1.0, 20.0)]
@@ -927,5 +924,140 @@ _m7_Vt(P; V_g = 1.0) = sqrt((V_g^2 + sqrt(V_g^4 - 4 * _X5^2 * P^2)) / 2)
             inverters = [Inverter(:pv, :A, :grid_following, 50.0, 30.0)])
         msg = try; ac_powerflow(net); ""; catch e; e.msg; end
         @test occursin("pv", msg) && occursin("nothing to follow", msg)
+    end
+end
+
+# Step 3's ring with a GRID-FOLLOWING inverter at B2 (60 MW, 10 MVAr): it holds
+# nothing, the machines hold the voltage, and its PLL follows.
+_m7_gfl_ring() = NetworkModel(100.0, 50.0, [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)],
+    [Branch(:L12, :B1, :B2, 0.2, 900.0), Branch(:L23, :B2, :B3, 0.25, 900.0),
+     Branch(:L13, :B1, :B3, 0.3, 900.0)],
+    [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.02, 80.0),
+     Machine(:G3, :B3, 400.0, 3.0, 1.0, 0.3, 1.0, -140.0)];
+    inverters = [Inverter(:S2, :B2, :grid_following, 150.0, 60.0; Q0 = 10.0)])
+
+# The current bus `b` receives from its inverter, read from the NETWORK side — the
+# branch currents leaving it (this fixture carries no load) — never from the
+# inverter's own parameters, so a current injected in the wrong frame cannot agree
+# with itself here.
+function _m7_injected(eng, u, b)
+    bt = GridSim.branch_topology(eng.model)
+    V(v) = complex(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
+    I = 0.0im
+    for e in eachindex(bt.src)
+        st = eng.params[eng.status_pidx[e]]
+        bt.src[e] == b && (I += st * (V(b) - V(bt.dst[e])) / (im * bt.X[e]))
+        bt.dst[e] == b && (I += st * (V(b) - V(bt.src[e])) / (im * bt.X[e]))
+    end
+    return I
+end
+
+@testset "M7 step 5 — grid-following in the detailed tier" begin
+
+    @testset "it builds locked, sits flat, and weighs nothing in the COI (D6)" begin
+        eng = init!(DetailedEngine, _m7_gfl_ring())
+        s = current_state(eng)
+        u = eng.integrator.u
+        @test s.θ_pll[1] == angle(complex(u[eng.Vre_idx[2]], u[eng.Vim_idx[2]]))
+        @test s.ω_pll == [0.0]
+        @test collect(keys(state_series(eng))) ==
+            [:t, :δ_G1, :δ_G3, :ω_G1, :ω_G3, :E′q_G1, :E′q_G3, :E′d_G1, :E′d_G3,
+             :Efd_G1, :Efd_G3, :θpll_S2, :ωpll_S2, :V_B1, :V_B2, :V_B3, :δ_coi, :f_coi]
+        # Its dispatch in its own frame: P = |V|·i_d, Q = −|V|·i_q.
+        Vm = s.V[2]
+        @test eng.params[eng.gfl.id_pidx[1]] * Vm ≈ 0.6 atol = 1e-15
+        @test -eng.params[eng.gfl.iq_pidx[1]] * Vm ≈ 0.1 atol = 1e-15
+        @test system_inertia(eng) == 24.0          # the machines' only, by hand
+        solve!(eng, (0.0, 1.0))
+        ss = state_series(eng)
+        @test maximum(abs, ss.ωpll_S2) < 1e-15
+        @test maximum(abs, ss.V_B2 .- Vm) < 1e-14
+        # …and from the power flow, which holds its P + jQ just the same.
+        e2 = init!(DetailedEngine, _m7_gfl_ring(); powerflow = ac_powerflow(_m7_gfl_ring()))
+        solve!(e2, (0.0, 1.0))
+        @test maximum(abs, state_series(e2).ωpll_S2) < 1e-15
+    end
+
+    @testset "the PLL's phase-step peak, predicted before the run (Hurdle 10 claim 1)" begin
+        # A ZERO-CURRENT inverter: it cannot move its own bus, which is therefore
+        # exactly stiff. Its PLL angle is pushed off the bus angle by Δ and the
+        # frequency estimate it reports is read. PREDICTION, by hand, from D12's loop
+        # linearised in φ = θ − θ_V (sin φ ≈ φ, |V| = 1 here):
+        #     φ̇ = Δω,  τ·Δω̇ = Δω_i − K_p·φ − Δω,  Δω̇_i = −K_i·φ
+        # — THIRD order (the plan said second; the output filter is the third state),
+        # so the peak is read off the matrix exponential of that 3×3 system. The one
+        # approximation is sin φ ≈ φ, so the relative error must scale as Δ²:
+        # measured 3.4e-4 / 8.4e-5 / 2.1e-5 at Δ = 0.05 / 0.025 / 0.0125.
+        Kp, Ki, τ = 2π * 10, (2π * 10)^2 / 4, 1 / (2π * 300)
+        A = [0.0 1.0 0.0; -Kp/τ -1/τ 1/τ; -Ki 0.0 0.0]
+        function rel_err(Δ)
+            net = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+                [Branch(:AB, :A, :B, 0.2, 500.0)],
+                [Machine(:G, :A, 100.0, 5.0, 1.0, 0.3, 1.0, 0.0)];
+                inverters = [Inverter(:pv, :B, :grid_following, 50.0, 0.0)])
+            e = init!(DetailedEngine, net; reltol = 1e-12, abstol = 1e-14)
+            @test current_state(e).V[2] == 1.0       # no current: the bus is at V_g
+            e.integrator.u[e.gfl.θ_idx[1]] += Δ
+            GridSim.SciMLBase.u_modified!(e.integrator, true)
+            solve!(e, (0.0, 0.05); saveat = 0.0:1e-5:0.05)
+            got = minimum(state_series(e).ωpll_pv) * 2π * 50        # rad/s
+            pred = minimum((exp(A * t) * [Δ, 0.0, 0.0])[2] for t in 0.0:1e-6:0.05)
+            return (got - pred) / pred, got
+        end
+        r1, g1 = rel_err(0.05)
+        r2, _  = rel_err(0.025)
+        @test abs(r1) < 1e-3
+        @test g1 / (2π) < -0.4                        # a 0.05 rad step reads as −0.47 Hz
+        @test r1 / r2 ≈ 4.0 rtol = 0.02               # the Δ² signature of sin φ ≈ φ
+    end
+
+    @testset "the current stays in the PLL's frame, read from the network (a transient)" begin
+        # A line trip moves the bus angle and the PLL chases it: the two differ by up
+        # to 0.0105 rad. The current, read from the branches and rotated into the PLL
+        # frame, must stay at the dispatch through all of it — the one check a current
+        # injected in the BUS frame would fail (it agrees at rest, where θ = ∠V).
+        eng = init!(DetailedEngine, _m7_gfl_ring(); reltol = 1e-10, abstol = 1e-12)
+        id0, iq0 = eng.params[eng.gfl.id_pidx[1]], eng.params[eng.gfl.iq_pidx[1]]
+        solve!(eng, (0.0, 1.5); perturbations = [0.5 => TripLine(:B1, :B3)],
+               saveat = 0.0:0.001:1.5)
+        sol = eng.integrator.sol
+        worst, chase = 0.0, 0.0
+        for k in eachindex(sol.t)
+            sol.t[k] < 0.5 && continue                # the post-trip network only
+            u = sol.u[k]; θ = u[eng.gfl.θ_idx[1]]
+            I = _m7_injected(eng, u, 2) * cis(-θ)
+            worst = max(worst, abs(real(I) - id0), abs(imag(I) - iq0))
+            chase = max(chase, abs(θ - angle(complex(u[eng.Vre_idx[2]], u[eng.Vim_idx[2]]))))
+        end
+        @test chase > 5e-3                            # the PLL really was off the bus angle
+        @test worst < 1e-10                           # …and the current never left its frame
+    end
+
+    @testset "a line trip holds the PLL and re-solves at CONSTANT CURRENT" begin
+        eng = init!(DetailedEngine, _m7_gfl_ring())
+        θ0 = current_state(eng).θ_pll
+        inject!(eng, TripLine(:B1, :B3))
+        @test current_state(eng).θ_pll == θ0
+        I = _m7_injected(eng, eng.integrator.u, 2) * cis(-θ0[1])
+        @test real(I) ≈ eng.params[eng.gfl.id_pidx[1]] atol = 1e-10
+        @test imag(I) ≈ eng.params[eng.gfl.iq_pidx[1]] atol = 1e-10
+    end
+
+    @testset "refusals: nothing to follow (D5, first), and no angle for a relay" begin
+        net = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0)],
+            [Branch(:AB, :A, :B, 0.2, 500.0)], Machine[], [Load(:D, :B, 30.0, 0.0)];
+            inverters = [Inverter(:pv, :A, :grid_following, 50.0, 30.0)])
+        msg = try; init!(DetailedEngine, net); ""; catch e; e.msg; end
+        @test occursin("pv", msg) && occursin("nothing to follow", msg)
+        m = try; init!(DetailedEngine, _m7_gfl_ring(); out_of_step = [(:B1, :B2) => 1.0]); "";
+            catch e; e.msg; end
+        @test occursin("bus B2 carries no machine", m)
+        # Past the band edge and short of the nose, the engine's own solve refuses
+        # with the D13 wording. At THIS tier the machine holds E′ behind its X′d (0.03
+        # pu on the system base), not V_g at its bus, so the effective reactance is
+        # 0.23: band edge 0.9·√0.19/0.23 = 1.71 pu, nose 1/(2·0.23) = 2.17 pu.
+        # (At 2.5 pu — past the nose — there is no solution and the fixpoint stalls.)
+        m = try; init!(DetailedEngine, _m7_gfl_pair(205.0)); ""; catch e; e.msg; end
+        @test occursin("REAL operating point", m)
     end
 end

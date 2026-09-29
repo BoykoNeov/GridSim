@@ -869,6 +869,15 @@ function _assert_seed_is_this_dispatch(net::NetworkModel, sol::ACPowerFlow, ma)
         Pg[ia.bus[j]] += ia.P[j]
         Vset[ia.bus[j]] = ia.V_set[j]
     end
+    # M7 step 5: a grid-following inverter injects its schedule, so its P is held and
+    # its bus's generation carries its Q — the `Qgen ≈ 0` check below becomes
+    # `Qgen ≈ Q0` there rather than misfiring.
+    fa = _gfl_arrays(net)
+    Qexp = zeros(Float64, nb)
+    for j in eachindex(fa.bus)
+        Pg[fa.bus[j]] += fa.P[j]
+        Qexp[fa.bus[j]] += fa.Q[j]
+    end
     Pl = zeros(Float64, nb); Ql = zeros(Float64, nb)
     ai = zeros(Float64, nb); ap = zeros(Float64, nb)
     la = load_arrays(net)
@@ -883,7 +892,7 @@ function _assert_seed_is_this_dispatch(net::NetworkModel, sol::ACPowerFlow, ma)
         z = _zip_scale(sol.Vm[v], ai[v], ap[v])
         _seed_agree(sol.Pload[v], Pl[v] * z, id, "the load's P draw")
         _seed_agree(sol.Qload[v], Ql[v] * z, id, "the load's Q draw")
-        isnan(Vset[v]) && _seed_agree(sol.Qgen[v], 0.0, id, "the reactive generation")
+        isnan(Vset[v]) && _seed_agree(sol.Qgen[v], Qexp[v], id, "the reactive generation")
         v == v_slack && continue
         _seed_agree(sol.Pgen[v], Pg[v], id, "the scheduled P")
         sol.roles[v] === :generator &&
