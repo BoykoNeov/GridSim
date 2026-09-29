@@ -508,3 +508,7 @@ function inject!(eng::FrequencyResponseEngine, ev::StepLoad)
     SciMLBase.derivative_discontinuity!(eng.integrator, true)  # params jumped ⇒ drop stale FSAL cache
     return eng
 end
+
+# M7 step 6 — the aggregate's instantaneous RoCoF IS its one state's derivative, the
+# `RoCoF` field `current_state` already reports (named plainly since M1). One source.
+coi_rocof(eng::FrequencyResponseEngine) = current_state(eng).RoCoF

@@ -703,6 +703,16 @@ no frequency response on the grid-following mode. The one rating check the
 constructor makes is the dispatch's own: `|P0 + jQ0| ≤ S_rated`, because unlike a
 machine an inverter has no short-term overload to lean on.
 """
+# The PLL defaults — `SimpleGFL`'s 10 Hz critically damped loop and `PLL_LPF`'s 300 Hz
+# output filter. Named once because two things carry a PLL: a grid-following
+# `Inverter`, and a measurement-only `PLLMeter` (M7 step 6). A meter built with no
+# arguments must be the SAME instrument an inverter carries by default, or the
+# "meter at the inverter's bus reads what the inverter's own PLL reads" check would
+# compare two different loops.
+const _PLL_KP  = 2π * 10
+const _PLL_KI  = (2π * 10)^2 / 4
+const _PLL_TAU = 1 / (2π * 300)
+
 struct Inverter
     id::Symbol
     bus::Symbol
@@ -726,8 +736,8 @@ struct Inverter
                       Q0::Real = 0.0,
                       K_p::Real = 0.05, τ_p::Real = 0.1, K_q::Real = 0.0,
                       τ_q::Real = 0.1, V_set::Real = 1.0, X_c::Real = 0.1,
-                      K_pll_p::Real = 2π * 10, K_pll_i::Real = (2π * 10)^2 / 4,
-                      τ_pll::Real = 1 / (2π * 300))
+                      K_pll_p::Real = _PLL_KP, K_pll_i::Real = _PLL_KI,
+                      τ_pll::Real = _PLL_TAU)
         mode in (:grid_forming, :grid_following) || throw(ArgumentError(
             "Inverter $id: mode must be :grid_forming or :grid_following, got :$mode. " *
             "They are different physics — one sets a voltage, the other follows one."))

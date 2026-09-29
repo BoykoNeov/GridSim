@@ -576,6 +576,90 @@ leads the rotor angle). At lock `θ = arg V`, so `P = |V|·i_d` and `Q = −|V|�
                                      sin(θ) * i_d + cos(θ) * i_q)
 
 """
+    _pll_rhs(Vre, Vim, θ, Δω, Δω_i, K_p, K_i, τ) -> (dθ, dΔω, dΔω_i)
+
+The PLL's three derivatives — `PLL_LPF` (D12), the ONE copy of the law. Two things
+carry a PLL: a grid-following inverter (which injects a current phased by it) and a
+[`PLLMeter`](@ref) (which injects nothing, M7 step 6). Both call this, so a meter
+with an inverter's gains at that inverter's bus is the same loop on the same voltage,
+and `test/` asserts it reads the inverter's own channel to the bit.
+
+    e          = −sin θ·V_re + cos θ·V_im       (`_pll_error`, NOT divided by |V|)
+    dθ/dt      = Δω                             rad/s against the synchronous frame
+    τ·dΔω/dt   = Δω_i + K_p·e − Δω              the PI, through the output filter
+    dΔω_i/dt   = K_i·e
+"""
+@inline function _pll_rhs(Vre, Vim, θ, Δω, Δω_i, K_p, K_i, τ)
+    e = _pll_error(Vre, Vim, θ)
+    return Δω, (Δω_i + K_p * e - Δω) / τ, K_i * e
+end
+
+"""
+    PLLMeter(bus; K_p = 2π·10, K_i = (2π·10)²/4, τ = 1/(2π·300))
+    PLLMeter(inv::Inverter)
+
+A **measurement-only** phase-locked loop at a bus (M7 step 6): the instrument a
+frequency or RoCoF relay actually reads, attached to `DetailedEngine` through its
+`meters` keyword. It locks onto its bus voltage with the same law a grid-following
+inverter uses (`PLL_LPF`, D12 — `_pll_rhs`, the one copy) and **injects nothing**:
+its three states read the bus voltage and nothing reads them back.
+
+Why it exists: every frequency this repo reported before M7 was a rotor speed or an
+inertia-weighted mean of them. What a relay at a bus sees is neither — it is a PLL's
+estimate, and in this tier a bus angle JUMPS at every event, so the estimate spikes
+where no rotor speed moved (Hurdle 10). A grid-following inverter carries one such
+loop for its own control; a meter puts the same loop at any bus, so a study that
+displaces machines by GRID-FORMING inverters (which carry no PLL) can still report
+what a relay there would read, measured the same way as in the grid-following sweep.
+
+The defaults are the grid-following `Inverter`'s — a 10 Hz loop, critically damped
+without its filter, and a 300 Hz output filter. `PLLMeter(inv)` copies an inverter's
+own gains and bus, which is how `test/` shows a meter reads that inverter's PLL
+channel bit for bit.
+
+An engine option, not model data — like a relay or a shed ladder, it is an
+instrument armed on a case, not part of the network — so the scenario file does not
+carry it.
+"""
+struct PLLMeter
+    bus::Symbol
+    K_p::Float64    # 1/s
+    K_i::Float64    # 1/s²
+    τ::Float64      # s
+    function PLLMeter(bus::Symbol; K_p::Real = _PLL_KP, K_i::Real = _PLL_KI,
+                      τ::Real = _PLL_TAU)
+        K_p > 0 || throw(ArgumentError("PLLMeter at $bus: K_p ($K_p) must be > 0 1/s."))
+        K_i > 0 || throw(ArgumentError("PLLMeter at $bus: K_i ($K_i) must be > 0 1/s²."))
+        τ > 0 || throw(ArgumentError(
+            "PLLMeter at $bus: τ ($τ) must be > 0 s — it divides the frequency filter; " *
+            "zero would remove a state, not set a value."))
+        return new(bus, Float64(K_p), Float64(K_i), Float64(τ))
+    end
+end
+PLLMeter(inv::Inverter) =
+    PLLMeter(inv.bus; K_p = inv.K_pll_p, K_i = inv.K_pll_i, τ = inv.τ_pll)
+
+# A bus vertex with a meter on it: the bus's own model on the first `nv` states and
+# `np` parameters, untouched, and the meter's three states `(θ, Δω, Δω_i)` and three
+# gains after them. The meter reads `v[1], v[2]` — THIS vertex's voltage — and writes
+# only its own three rows, so it cannot inject into the Kirchhoff sum; `test/` checks
+# that structurally (perturb the meter's states, every other row of the right-hand
+# side is `==` unchanged) rather than by comparing runs, which differ in their
+# adaptive steps whenever the state vector grows.
+struct _Metered{F}
+    f::F
+    nv::Int
+    np::Int
+end
+function (m::_Metered)(dv, v, esum, p, t)
+    nv, np = m.nv, m.np
+    m.f(view(dv, 1:nv), view(v, 1:nv), esum, view(p, 1:np), t)
+    dv[nv + 1], dv[nv + 2], dv[nv + 3] =
+        _pll_rhs(v[1], v[2], v[nv + 1], v[nv + 2], v[nv + 3], p[np + 1], p[np + 2], p[np + 3])
+    return nothing
+end
+
+"""
     _detailed_gfl_bus!(dv, v, esum, p, t)
 
 A bus carrying one **grid-following inverter** (M7 step 5): an IDEAL current source
@@ -600,14 +684,11 @@ function _detailed_gfl_bus!(dv, v, esum, p, t)
     Vre, Vim, θ, Δω, Δω_i = v[1], v[2], v[3], v[4], v[5]
     i_d, i_q, K_p, K_i, τ = p[1], p[2], p[3], p[4], p[5]
     G, B, a_i, a_p        = p[6], p[7], p[8], p[9]
-    e = _pll_error(Vre, Vim, θ)
     Ire, Iim = _gfl_current(i_d, i_q, θ)
     Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]
     dv[2] = Iim - Lim + esum[2]
-    dv[3] = Δω
-    dv[4] = (Δω_i + K_p * e - Δω) / τ
-    dv[5] = K_i * e
+    dv[3], dv[4], dv[5] = _pll_rhs(Vre, Vim, θ, Δω, Δω_i, K_p, K_i, τ)
     return nothing
 end
 
@@ -899,36 +980,50 @@ _inv_kind(net::NetworkModel, v::Integer) =
 # grid-forming vertex where there is an inverter (M7 step 4), a passive vertex where
 # there is neither. Heterogeneous vertex vectors and zero mass-matrix rows were both
 # measured to work before any of this was written.
-function _dynamic_network(net::NetworkModel, g)
-    vmachine = NetworkDynamics.VertexModel(
-        f = _detailed_machine_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d, :Efd],
-        psym = [:Pm, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
-                :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :a_i, :a_p, :mstat,
-                :K_A, :T_E, :Efd_min, :Efd_max, :Vref,
-                :rate, :t_start, :duration],
-        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
-        name = :machine_bus)
-    vpassive = NetworkDynamics.VertexModel(
-        f = _detailed_passive_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im], psym = [:G, :B, :a_i, :a_p],
-        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0]), name = :passive_bus)
-    vgfm = NetworkDynamics.VertexModel(
-        f = _detailed_gfm_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im, :δ, :P_filt, :Q_filt],
-        psym = [:P_set, :K_p, :τ_p, :ω₀, :K_q, :τ_q, :V_ref, :X_c, :G, :B, :a_i, :a_p],
-        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0]),
-        name = :gfm_bus)
-    vgfl = NetworkDynamics.VertexModel(
-        f = _detailed_gfl_bus!, g = NetworkDynamics.StateMask(1:2),
-        sym = [:V_re, :V_im, :θ_pll, :Δω, :Δω_i],
-        psym = [:i_d, :i_q, :K_pll_p, :K_pll_i, :τ_pll, :G, :B, :a_i, :a_p],
-        mass_matrix = LinearAlgebra.Diagonal([0.0, 0.0, 1.0, 1.0, 1.0]),
-        name = :gfl_bus)
-    verts = [!isempty(net.machines_at_bus[v]) ? vmachine :
-             _inv_kind(net, v) === :grid_forming ? vgfm :
-             _inv_kind(net, v) === :grid_following ? vgfl : vpassive
-             for v in 1:length(net.buses)]
+# One vertex kind: its right-hand side, state and parameter names, and mass-matrix
+# diagonal. `metered = true` appends a `PLLMeter`'s three states and gains (M7 step 6)
+# through `_Metered`, which leaves the kind's own equations exactly as they were.
+function _detailed_vertex(f, sym, psym, mass, name; metered::Bool = false)
+    metered || return NetworkDynamics.VertexModel(
+        f = f, g = NetworkDynamics.StateMask(1:2), sym = sym, psym = psym,
+        mass_matrix = LinearAlgebra.Diagonal(mass), name = name)
+    return NetworkDynamics.VertexModel(
+        f = _Metered(f, length(sym), length(psym)), g = NetworkDynamics.StateMask(1:2),
+        sym = [sym; :θ_meter; :Δω_meter; :Δω_i_meter],
+        psym = [psym; :K_meter_p; :K_meter_i; :τ_meter],
+        mass_matrix = LinearAlgebra.Diagonal([mass; 1.0; 1.0; 1.0]),
+        name = Symbol(name, :_metered))
+end
+
+# `metered[v]` says whether bus `v` carries a `PLLMeter`. All `false` — the default —
+# builds exactly the four vertex models this function built before meters existed,
+# so every run without a meter is the network it was.
+function _dynamic_network(net::NetworkModel, g,
+                          metered::AbstractVector{Bool} = falses(length(net.buses)))
+    kinds = (
+        machine = (_detailed_machine_bus!,
+                   [:V_re, :V_im, :δ, :ω, :ΔPm, :E′q, :E′d, :Efd],
+                   [:Pm, :Xd, :Xq, :Xd′, :Xq′, :Td0′, :Tq0′, :Ra,
+                    :H, :D, :ω₀, :invR, :headroom, :Tg, :G, :B, :a_i, :a_p, :mstat,
+                    :K_A, :T_E, :Efd_min, :Efd_max, :Vref,
+                    :rate, :t_start, :duration],
+                   [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0], :machine_bus),
+        passive = (_detailed_passive_bus!, [:V_re, :V_im], [:G, :B, :a_i, :a_p],
+                   [0.0, 0.0], :passive_bus),
+        gfm = (_detailed_gfm_bus!, [:V_re, :V_im, :δ, :P_filt, :Q_filt],
+               [:P_set, :K_p, :τ_p, :ω₀, :K_q, :τ_q, :V_ref, :X_c, :G, :B, :a_i, :a_p],
+               [0.0, 0.0, 1.0, 1.0, 1.0], :gfm_bus),
+        gfl = (_detailed_gfl_bus!, [:V_re, :V_im, :θ_pll, :Δω, :Δω_i],
+               [:i_d, :i_q, :K_pll_p, :K_pll_i, :τ_pll, :G, :B, :a_i, :a_p],
+               [0.0, 0.0, 1.0, 1.0, 1.0], :gfl_bus))
+    # One model object per (kind, metered) pair actually used — NetworkDynamics
+    # batches vertices that share a model.
+    cache = Dict{Tuple{Symbol,Bool},Any}()
+    model(k, m) = get!(() -> _detailed_vertex(kinds[k]...; metered = m), cache, (k, m))
+    kind(v) = !isempty(net.machines_at_bus[v]) ? :machine :
+              _inv_kind(net, v) === :grid_forming ? :gfm :
+              _inv_kind(net, v) === :grid_following ? :gfl : :passive
+    verts = [model(kind(v), metered[v]) for v in 1:length(net.buses)]
     return NetworkDynamics.Network(g, verts, [_detailed_edge() for _ in 1:Graphs.ne(g)])
 end
 
@@ -1198,6 +1293,23 @@ struct _GFLIndex
 end
 
 """
+    _MeterIndex
+
+The `PLLMeter`s' places in the dynamic network (M7 step 6), in the order the caller
+armed them: the bus each reads, and its three states. The static network has no
+meter in it — a meter holds nothing, so a re-initialisation leaves its states where
+they are, which is exactly what makes a phase jump read as a spike. Empty when no
+meter is armed.
+"""
+struct _MeterIndex
+    buses::Vector{Symbol}
+    bus::Vector{Int}
+    θ_idx::Vector{Int}
+    Δω_idx::Vector{Int}
+    Δωi_idx::Vector{Int}
+end
+
+"""
     DetailedEngine{NW,SW,I,R} <: SimulationEngine
 
 The detailed (DAE) tier's engine: bus voltages as algebraic states, machines on
@@ -1275,6 +1387,8 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     # M7 step 5 — the grid-following inverters. Weight zero in every aggregate (D6):
     # a PLL's estimate is a measurement, never averaged into `ω_coi`.
     gfl::_GFLIndex
+    # M7 step 6 — measurement-only PLLs. Weight zero everywhere, for D6's reason.
+    meters::_MeterIndex
 end
 
 # Run the static network to convergence from the seeds in `u`, and read the answer
@@ -1390,6 +1504,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                # which would invert that ordering. The check is made below, by
                # name, at the one place it can be.
                powerflow = nothing,
+               # M7 step 6 — measurement-only PLLs, one bus each (`PLLMeter`).
+               meters::AbstractVector{PLLMeter} = PLLMeter[],
                capacity::Integer = _TRAJ_CAPACITY)
     # D5 FIRST (M7 step 5): with no machine and no grid-forming inverter there is no
     # voltage source — and a grid-following inverter has nothing to follow. Before
@@ -1455,7 +1571,22 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         "inverters: $(join(ia.id, ", "))). The slack supplies the angle reference; " *
         "it must be a source, because a passive bus has no angle to pin."))
 
-    nw  = _dynamic_network(net, g)
+    # M7 step 6 — where the meters sit. Refused by name on a bus the model does not
+    # have, and two on one bus: a vertex carries one meter's three states, and two
+    # identical instruments on one voltage would read the same number twice.
+    metered = falses(nb)
+    for m in meters
+        v = get(net.bus_index, m.bus, 0)
+        v == 0 && throw(ArgumentError(
+            "DetailedEngine: a PLLMeter is armed on bus :$(m.bus), which is not in the " *
+            "model (buses: $(join((b.id for b in net.buses), ", ")))."))
+        metered[v] && throw(ArgumentError(
+            "DetailedEngine: two PLLMeters are armed on bus :$(m.bus). A bus carries at " *
+            "most one — two meters on one voltage are one reading, twice."))
+        metered[v] = true
+    end
+
+    nw  = _dynamic_network(net, g, metered)
     nws = _static_network(net, g)
     SII = NetworkDynamics.SII
 
@@ -1494,6 +1625,12 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     Int[fvidx(nw, j, :Δω_i) for j in 1:nf],
                     Int[fpidx(nw, j, :i_d) for j in 1:nf], Int[fpidx(nw, j, :i_q) for j in 1:nf],
                     Int[fpidx(nws, j, :mode) for j in 1:nf], Int[fpidx(nws, j, :θ_held) for j in 1:nf])
+    mbus = Int[net.bus_index[m.bus] for m in meters]
+    mvidx(j, s) = SII.variable_index(nw, NetworkDynamics.VIndex(mbus[j], s))
+    mtr = _MeterIndex(Symbol[m.bus for m in meters], mbus,
+                      Int[mvidx(j, :θ_meter) for j in eachindex(meters)],
+                      Int[mvidx(j, :Δω_meter) for j in eachindex(meters)],
+                      Int[mvidx(j, :Δω_i_meter) for j in eachindex(meters)])
     gfm = _GFMIndex(copy(ia.id), copy(ia.bus),
                     [vidx(nw, j, :δ) for j in 1:ni], [vidx(nw, j, :P_filt) for j in 1:ni],
                     [vidx(nw, j, :Q_filt) for j in 1:ni],
@@ -1768,6 +1905,16 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         sp[fpidx(nws, j, :i_d)] = i_d
         sp[fpidx(nws, j, :i_q)] = i_q
     end
+    # THE METERS (M7 step 6): locked on their bus angle, at rest — a grid-following
+    # inverter's PLL at start-up, with nothing injected.
+    for (j, m) in enumerate(meters)
+        u0[mtr.θ_idx[j]]   = angle(V[mbus[j]])
+        u0[mtr.Δω_idx[j]]  = 0.0
+        u0[mtr.Δωi_idx[j]] = 0.0
+        for (sym, val) in ((:K_meter_p, m.K_p), (:K_meter_i, m.K_i), (:τ_meter, m.τ))
+            p0[SII.parameter_index(nw, NetworkDynamics.VPIndex(mbus[j], sym))] = val
+        end
+    end
     for e in 1:ne
         p0[X_pidx[e]]      = bt.X[e]
         p0[status_pidx[e]] = 1.0
@@ -1866,6 +2013,9 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     # PLL frequency (pu deviation), under names of their own — `ω_` means a speed
     # that is averaged into the COI, and a PLL's estimate never is (D6). None on a
     # model without inverters, so every pre-M7 channel list is the list it was.
+    # M7 step 6: each `PLLMeter`'s angle and frequency, named by its BUS under a
+    # prefix of its own (`θmeter_`/`ωmeter_`) — a bus id and an inverter id may be the
+    # same symbol, so sharing `ωpll_` could put two channels under one name.
     channels = vcat([Symbol("δ_", id) for id in ids],
                     [Symbol("ω_", id) for id in ids],
                     [Symbol("E′q_", id) for id in ids],
@@ -1876,6 +2026,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     [Symbol("E_", id) for id in ia.id],
                     [Symbol("θpll_", id) for id in fa.id],
                     [Symbol("ωpll_", id) for id in fa.id],
+                    [Symbol("θmeter_", b) for b in mtr.buses],
+                    [Symbol("ωmeter_", b) for b in mtr.buses],
                     [Symbol("V_", b.id) for b in net.buses], [:δ_coi, :f_coi])
     traj = TrajectoryRecorder(channels...; capacity = capacity)
 
@@ -1891,7 +2043,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          branch_to_edge, branch_of_buses,
                          copy(ma.H), copy(ma.H), Σw, traj,
                          Vector{Float64}(undef, length(channels)),
-                         EngineEvent[], 0, net.f0, ladders, relays, ramps, gfm, gfl)
+                         EngineEvent[], 0, net.f0, ladders, relays, ramps, gfm, gfl,
+                         mtr)
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -1948,8 +2101,9 @@ how a test tells that the degeneration actually took.
 order: the angle each forms, its droop frequency (read through the droop law — it is
 not a state), and the magnitude it forms behind `X_c`. `θ_pll`, `ω_pll` (M7 step 5)
 are the grid-following inverters' PLL angle and PLL frequency estimate (pu
-deviation) — measurements, weighted into nothing. Empty vectors on a model without
-them. `δ`/`ω` stay machine-indexed, so no existing reader moves.
+deviation) — measurements, weighted into nothing. `θ_meter`, `ω_meter` (M7 step 6)
+are the same two readings from each armed `PLLMeter`, in the order they were armed.
+Empty vectors on a model without them. `δ`/`ω` stay machine-indexed, so no existing reader moves.
 """
 function current_state(eng::DetailedEngine)
     u = eng.integrator.u
@@ -1962,6 +2116,7 @@ function current_state(eng::DetailedEngine)
             δ_inv = u[eng.gfm.δ_idx], ω_inv = Float64[_gfm_ω(eng, u, j) for j in 1:ni],
             E_inv = Float64[_gfm_E(eng, u, j) for j in 1:ni],
             θ_pll = u[eng.gfl.θ_idx], ω_pll = u[eng.gfl.Δω_idx] ./ eng.ω₀,
+            θ_meter = u[eng.meters.θ_idx], ω_meter = u[eng.meters.Δω_idx] ./ eng.ω₀,
             δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
 
@@ -2000,7 +2155,14 @@ function _record_at!(eng::DetailedEngine, t::Real, u::AbstractVector{<:Real})
         eng.sample[5n + 3ni + j]      = u[eng.gfl.θ_idx[j]]
         eng.sample[5n + 3ni + nf + j] = u[eng.gfl.Δω_idx[j]] / eng.ω₀
     end
+    # M7 step 6 — the meters' two.
+    nmt = length(eng.meters.buses)
     o = 5n + 3ni + 2nf
+    @inbounds for j in 1:nmt
+        eng.sample[o + j]       = u[eng.meters.θ_idx[j]]
+        eng.sample[o + nmt + j] = u[eng.meters.Δω_idx[j]] / eng.ω₀
+    end
+    o += 2nmt
     @inbounds for v in 1:nb
         eng.sample[o + v] = hypot(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
     end
@@ -2306,4 +2468,29 @@ function inject!(eng::DetailedEngine, ev::TripGenerator)
         "shape at run time. Setting E = 0 would leave X′d as a shunt to ground — a " *
         "different network that converges and looks plausible. Use TripLine, or " *
         "SwingEngine, until the machine-status path exists."))
+end
+
+# M7 step 6. A machine's `ω` row and a grid-forming inverter's `P_filt` row both have
+# unit mass, so `du` there IS the derivative. The inverter's speed is the droop law
+# `_gfm_speed`, linear in `P_filt` with the setpoint a parameter, so its rate is the
+# same law applied to the rate with the setpoint at zero — one copy of the law.
+# Unreachable at zero weight on this tier (D5 refuses a model with no source at
+# `init!` and a generator trip is refused outright), guarded anyway so the method
+# says what the others say.
+function coi_rocof(eng::DetailedEngine)
+    eng.Σw > 0 || throw(ArgumentError(
+        "coi_rocof: the inertia weights sum to zero, so there is no centre-of-inertia " *
+        "frequency to differentiate."))
+    u, p = eng.integrator.u, eng.integrator.p
+    du = similar(u)
+    eng.nw(du, u, p, eng.integrator.t)
+    acc = 0.0
+    @inbounds for k in eachindex(eng.ω_idx)
+        acc += eng.w[k] * du[eng.ω_idx[k]]
+    end
+    g = eng.gfm
+    @inbounds for j in eachindex(g.ids)
+        acc += g.H[j] * _gfm_speed(g.K_p[j], du[g.Pf_idx[j]], 0.0)
+    end
+    return eng.f0 * acc / eng.Σw
 end

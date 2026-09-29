@@ -762,6 +762,14 @@ end
                      -d * (u[eng.ω_idx[i]] - p[eng.Pm_pidx[i]])
 end
 
+# Its rate, given the right-hand side `du`: the state's own derivative for a machine,
+# `−K_p·dP_filt/dt` for a droop inverter (the setpoint is a parameter, constant
+# between events). Kept beside `_speed` so the two cannot come to read different laws.
+@inline function _speed_rate(eng, du, i::Int)
+    @inbounds d = eng.droop[i]
+    @inbounds return d == 0.0 ? du[eng.ω_idx[i]] : -d * du[eng.ω_idx[i]]
+end
+
 """
     SwingEngine(net::NetworkModel; t0=0.0, dt=0.02, solver=Tsit5(), shed=[],
                 out_of_step=[], ramp=[], capacity=200_000)
@@ -1774,4 +1782,21 @@ function inject!(eng::SwingEngine, ev::TripLine)
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return eng
+end
+
+# M7 step 6. `w` is zero for a tripped vertex, so a tripped machine's still-moving
+# state contributes nothing, as in `_ω_coi`.
+function coi_rocof(eng::SwingEngine)
+    eng.Σw > 0 || throw(ArgumentError(
+        "coi_rocof: no machine and no grid-forming inverter is online (the inertia " *
+        "weights sum to zero), so there is no centre-of-inertia frequency to " *
+        "differentiate. The live f_coi channel reads NaN here by design."))
+    u, p = eng.integrator.u, eng.integrator.p
+    du = similar(u)
+    eng.nw(du, u, p, eng.integrator.t)
+    acc = 0.0
+    @inbounds for i in eachindex(eng.w)
+        acc += eng.w[i] * _speed_rate(eng, du, i)
+    end
+    return eng.f0 * acc / eng.Σw
 end

@@ -48,6 +48,55 @@ end
 windowed_rocof(series::NamedTuple; window::Real = 0.5) =
     (; t = series.t, RoCoF = windowed_rocof(series.t, series.f; window = window))
 
+"""
+    rocof_readouts(series; f0, window = 0.5) -> (; t, window, coi, pll)
+    rocof_readouts(engine; window = 0.5)
+
+Two of the three RoCoFs (see [`coi_rocof`](@ref) for the third, the instantaneous
+one), **side by side, over ONE stated window**, and through ONE function —
+`windowed_rocof` — so the only thing that differs between them is the frequency
+being differenced (M7 step 6, Hurdle 10 claim 2):
+
+  - `coi` — the windowed centre-of-inertia RoCoF, on `system_frequency(series)`
+    (`f_coi`, or the aggregate tier's `f`). What an operator's report quotes.
+  - `pll` — a `NamedTuple` with one windowed RoCoF per PLL channel in the series, keyed
+    by the channel's own name: every `ωpll_<inverter>` (a grid-following inverter's
+    control PLL) and every `ωmeter_<bus>` (a [`PLLMeter`](@ref)), each converted to
+    Hz as `f0·(1 + ω)` first. What a relay at that bus reads. Empty when the series
+    has none — a caller that expects some should assert the count, so a read that
+    matched nothing cannot pass for a read that found nothing to report.
+
+All in Hz/s, all the same length as `t`, `NaN` where the window is not yet full.
+
+**A phase jump reads in `pll` and not in `coi`.** At an event the bus angles jump
+while every rotor speed is continuous; a PLL chases the jump and reports a frequency
+spike of height `≈ K_p·|V|·Δ` (rad/s, for a jump `Δ`), and a window longer than the
+spike turns that into a phantom RoCoF of `spike/window` — a `1/window` law, from an
+event that changed no frequency anywhere.
+
+**Refused**, by name, when the centre-of-inertia frequency is `NaN` anywhere in the
+series: that is a network run in which every source had tripped, the inertia weights
+summed to zero, and there is no system frequency to difference (Hurdle 10 claim 3).
+The engine method takes `f0` from the engine.
+"""
+function rocof_readouts(series::NamedTuple; f0::Real, window::Real = 0.5)
+    f = system_frequency(series)
+    k = findfirst(isnan, f)
+    k === nothing || throw(ArgumentError(
+        "rocof_readouts: the centre-of-inertia frequency is NaN from t = " *
+        "$(series.t[k]) s — every source had tripped, the inertia weights sum to " *
+        "zero, and there is no system frequency to difference."))
+    names = Tuple(c for c in keys(series)
+                  if startswith(String(c), "ωpll_") || startswith(String(c), "ωmeter_"))
+    pll = NamedTuple{names}(Tuple(
+        windowed_rocof(series.t, f0 .* (1 .+ getfield(series, c)); window = window)
+        for c in names))
+    return (; t = series.t, window = Float64(window),
+            coi = windowed_rocof(series.t, f; window = window), pll = pll)
+end
+rocof_readouts(eng::SimulationEngine; window::Real = 0.5) =
+    rocof_readouts(state_series(eng); f0 = eng.f0, window = window)
+
 # ---------------------------------------------------------------------------
 # M4 step 2 — the divergence read between two trajectories of one scenario.
 #

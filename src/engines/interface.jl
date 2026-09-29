@@ -106,3 +106,36 @@ continuous state is preserved across the event where the physics allows it
 (true for M1's COI model — only parameters change).
 """
 function inject! end
+
+# --- the frequency read-outs (M7 step 6) ------------------------------------
+
+"""
+    coi_rocof(engine) -> Float64
+
+The **instantaneous** centre-of-inertia RoCoF in Hz/s at the engine's current state,
+`f0·dω_coi/dt`, read off the model's OWN right-hand side — never differenced from
+recorded samples (a difference of samples is a windowed RoCoF with the window set to
+the sample step, which would quietly turn the three read-outs below into two).
+
+It is the first of the **three RoCoFs** this repo reports under three names, and
+never as "the" RoCoF (M7 Hurdle 10 claim 2):
+
+  1. `coi_rocof(engine)` — the derivative of the inertia-weighted system frequency.
+     What the closed forms predict (`RoCoF₀ = −f0·ΔP/(2·H_sys)` at an event). A
+     LIVE read: read it right after `inject!` for the value at `t⁺`.
+  2. the **windowed** centre-of-inertia RoCoF — `windowed_rocof` on `f_coi` over a
+     stated window, what an operator's report quotes (ENTSO-E's 500 ms).
+  3. the **PLL-measured** RoCoF — the same `windowed_rocof`, same window, on a PLL's
+     frequency estimate at a bus: what a relay there actually reads. A phase jump,
+     which changes no frequency anywhere, reads in it as a spike.
+
+2 and 3 are [`rocof_readouts`](@ref), side by side. 1 is not recorded as a channel,
+deliberately: the reference oracle mirrors `state_series(::DetailedEngine)` channel
+for channel, and a right-hand-side derivative has no counterpart there.
+
+Refuses by name when no inertia is online — the weights sum to zero and there is no
+system frequency to differentiate (Hurdle 10 claim 3). The live `f_coi` channel of a
+`SwingEngine` with everything tripped still reads `NaN`, the M2 decision the network
+window's test pins; the refusal lives in the read-outs M7 added.
+"""
+function coi_rocof end

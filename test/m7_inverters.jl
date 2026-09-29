@@ -1061,3 +1061,345 @@ end
         @test occursin("REAL operating point", m)
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M7 step 6 — frequency without a rotor: the read-outs (Hurdle 10)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# THE PURE PHASE JUMP. One machine at A, a lossless triangle A–B, A–C, C–B, a
+# CONSTANT-POWER load at B, and a ZERO-current grid-following inverter at B. Tripping
+# A–B lengthens the path to the load, so B's voltage angle falls further behind at
+# once — while NO power anywhere changes: the network is lossless and the load draws
+# the same P at any voltage, so the machine's electrical power is the load's before
+# and after, its speed never moves, and neither does the centre of inertia. A PLL at B
+# (or C) chases the jump and reports a frequency spike from an event that changed no
+# frequency anywhere.
+#
+# The nuisance causes are switched off BY CONSTRUCTION, never banded: a
+# constant-IMPEDANCE load (the repo's default) would draw less at the lower voltage
+# and move the machine; an inverter carrying current would move its own power with
+# |V| and with the PLL's lag. Do not generalise this fixture's "f_coi does not move" to
+# the default load — it is flat because it was built to be.
+#
+# `E′ = 0.96` puts B at 0.93 pu after the trip, far enough from 1 that the spike's
+# |V| scaling (the PLL error is NOT divided by |V|, D12) is visible above the
+# closed form's own leftover.
+_m7_jump(; τ = 1 / (2π * 300)) = NetworkModel(100.0, 50.0,
+    [Bus(:A, 1.0), Bus(:B, 1.0), Bus(:C, 1.0)],
+    [Branch(:AB, :A, :B, 0.2, 500.0), Branch(:AC, :A, :C, 0.2, 500.0),
+     Branch(:CB, :C, :B, 0.2, 500.0)],
+    [Machine(:G, :A, 1000.0, 5.0, 1.0, 0.3, 0.96, 20.0)],
+    [Load(:D, :B, 20.0, 5.0, 0.0, 0.0, 1.0)];
+    inverters = [Inverter(:pv, :B, :grid_following, 50.0, 0.0; τ_pll = τ)])
+
+_m7_angle(e, v) = angle(complex(e.integrator.u[e.Vre_idx[v]], e.integrator.u[e.Vim_idx[v]]))
+
+# The jump itself, read across `inject!` on an engine of its own: the bus angle
+# before and after, and the magnitude the PLL then sees.
+function _m7_jump_size(net, v)
+    e = init!(DetailedEngine, net)
+    a0 = _m7_angle(e, v)
+    inject!(e, TripLine(:A, :B))
+    return (; Δ = _m7_angle(e, v) - a0, V = current_state(e).V[v], rate = coi_rocof(e))
+end
+
+# The ring of step 4 with a constant-IMPEDANCE load at B1, so a line trip moves the
+# load's power and the centre of inertia genuinely accelerates. `:machine` is step 4's
+# hand-converted twin (X′d = X_c, H = τ_p/(2K_p), D = 1/K_p on the inverter's base).
+function _m7_loaded_ring(src::Symbol)
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
+    br = [Branch(:L12, :B1, :B2, 0.2, 900.0), Branch(:L23, :B2, :B3, 0.25, 900.0),
+          Branch(:L13, :B1, :B3, 0.3, 900.0)]
+    ms = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.02, 120.0),
+          Machine(:G3, :B3, 400.0, 3.0, 1.0, 0.3, 1.0, -140.0)]
+    ld = [Load(:L1, :B1, 40.0, 10.0)]
+    src === :inverter && return NetworkModel(100.0, 50.0, buses, br, ms, ld;
+        inverters = [Inverter(:S2, :B2, :grid_forming, _S_INV, 60.0; V_set = 1.01,
+                              K_p = _KP, τ_p = _TP, X_c = _XC)])
+    push!(ms, Machine(:S2, :B2, _S_INV, _TP / (2 * _KP), 1 / _KP, _XC, 1.0, 60.0;
+                      V_set = 1.01))
+    return NetworkModel(100.0, 50.0, buses, br, ms, ld)
+end
+
+@testset "M7 step 6 — frequency read-outs" begin
+
+    @testset "a PLLMeter: guards, one per bus, a known bus" begin
+        @test_throws ArgumentError PLLMeter(:B; K_p = 0.0)
+        @test_throws ArgumentError PLLMeter(:B; K_i = -1.0)
+        @test_throws ArgumentError PLLMeter(:B; τ = 0.0)
+        # The defaults ARE the inverter's — the same instrument, not a lookalike.
+        inv = Inverter(:x, :B, :grid_following, 10.0, 0.0)
+        m = PLLMeter(:B)
+        @test (m.K_p, m.K_i, m.τ) === (inv.K_pll_p, inv.K_pll_i, inv.τ_pll)
+        net = _m7_jump()
+        msg = try; init!(DetailedEngine, net; meters = [PLLMeter(:Z)]); ""; catch e; e.msg; end
+        @test occursin("bus :Z", msg) && occursin("not in the model", msg)
+        msg = try; init!(DetailedEngine, net; meters = [PLLMeter(:C), PLLMeter(:C)]); "";
+              catch e; e.msg; end
+        @test occursin("two PLLMeters", msg)
+    end
+
+    @testset "a meter reads its bus, injects nothing, and IS the inverter's PLL" begin
+        # Meters on both kinds of source bus this ring has: the machine buses B1 and B3,
+        # and the grid-following bus B2 with the inverter's own gains (`PLLMeter(inv)`).
+        # (A passive bus carries one in the phase-jump fixture below.)
+        net = _m7_gfl_ring()
+        mt = [PLLMeter(:B1), PLLMeter(net.inverters[1]), PLLMeter(:B3)]
+        eng = init!(DetailedEngine, net; meters = mt, reltol = 1e-10, abstol = 1e-12)
+        @test collect(keys(state_series(eng))) ==
+            [:t, :δ_G1, :δ_G3, :ω_G1, :ω_G3, :E′q_G1, :E′q_G3, :E′d_G1, :E′d_G3,
+             :Efd_G1, :Efd_G3, :θpll_S2, :ωpll_S2, :θmeter_B1, :θmeter_B2, :θmeter_B3,
+             :ωmeter_B1, :ωmeter_B2, :ωmeter_B3, :V_B1, :V_B2, :V_B3, :δ_coi, :f_coi]
+        s = current_state(eng)
+        @test s.θ_meter == [_m7_angle(eng, v) for v in 1:3]     # locked, at rest
+        @test s.ω_meter == [0.0, 0.0, 0.0]
+        # INJECTS NOTHING, structurally: kick every meter state far off and every row
+        # of the right-hand side that is not a meter's is unchanged to the bit.
+        u, p = copy(eng.integrator.u), eng.integrator.p
+        mrows = vcat(eng.meters.θ_idx, eng.meters.Δω_idx, eng.meters.Δωi_idx)
+        du0, du1 = similar(u), similar(u)
+        eng.nw(du0, u, p, 0.0)
+        u[eng.meters.θ_idx] .+= 1.0; u[eng.meters.Δω_idx] .+= 5.0; u[eng.meters.Δωi_idx] .-= 3.0
+        eng.nw(du1, u, p, 0.0)
+        others = setdiff(eachindex(u), mrows)
+        @test du1[others] == du0[others]
+        @test all(du1[mrows] .!= du0[mrows])                    # …while its own rows moved
+        # THE POSITIVE CONTROL: the meter with the inverter's gains at the inverter's
+        # bus is the inverter's own PLL — the same law on the same voltage. Predicted
+        # "bit for bit", and that was WRONG: the Rosenbrock step solves ONE linear
+        # system over the whole state vector, so two identical row blocks at different
+        # positions pick up different round-off. Measured 6.5e-17 / 6.2e-17 / 4.3e-17 on
+        # the frequency at reltol 1e-8 / 1e-10 / 1e-12 — it does NOT fall with the
+        # tolerance, so it is round-off, not solver error — against a 2.0e-3 excursion.
+        # A meter reading the wrong bus is off by ~1e-3.
+        solve!(eng, (0.0, 1.5); perturbations = [0.5 => TripLine(:B1, :B3)],
+               saveat = 0.0:0.001:1.5)
+        ss = state_series(eng)
+        @test maximum(abs, ss.ωmeter_B2 .- ss.ωpll_S2) < 1e-15
+        @test maximum(abs, ss.θmeter_B2 .- ss.θpll_S2) < 1e-14
+        @test maximum(abs, ss.ωpll_S2) > 1e-4                   # …and it did move
+        @test ss.ωmeter_B1 != ss.ωmeter_B2                      # different bus, different read
+    end
+
+    @testset "a phase jump reads as a frequency spike: the closed form (Hurdle 10 claim 1)" begin
+        # PRE-REGISTERED, before the run:
+        #  (i) SIGN. Tripping A–B lengthens the path to the load, so B's angle falls
+        #      further behind: Δ < 0, and the PLL — chasing it — reads a frequency DIP.
+        #      (Measured: Δ = −0.0604 rad at B, |V_B| = 0.9325 after.)
+        # (ii) THE CLOSED FORM. Linearise the loop about lock (φ = θ − θ_V, the jump
+        #      sets φ(0⁺) = −Δ). With the output filter removed (τ → 0) the PI's
+        #      proportional path passes the error straight through, so the frequency
+        #      estimate JUMPS at t⁺ to
+        #                    Δω_peak = K_p·|V|·Δ   (rad/s)
+        #      — |V| because the error is not normalised (D12). With τ > 0 the filter
+        #      rounds the corner and the reading under-shoots that by a leftover that
+        #      must SHRINK as τ does (scale ε = K_p|V|τ; the leading term is ε·ln(1/ε),
+        #      so > 4× per decade of τ — linear theory 5.4× and 6.7×). A first-order
+        #      correction, derived by matching the filter's fast mode to the slow loop,
+        #          Δω_peak ≈ K_p|V|Δ·[1 − ε·((1 − κ)·ln(1/ε) − 1)],  κ = K_i/(K_p²|V|),
+        #      must hold to 1.5 % at the DEFAULT gains (linear theory: 1.1 %).
+        # (iii) The one approximation beyond the filter is sin φ ≈ φ, of relative size
+        #      ~Δ² (step 5: 3.4e-4 at Δ = 0.05), below the smallest leftover asserted.
+        Kp, Ki = 2π * 10, (2π * 10)^2 / 4
+        τ0 = 1 / (2π * 300)
+        left = Float64[]
+        J = _m7_jump_size(_m7_jump(), 2)
+        @test J.Δ < -0.05                                      # (i), and it is sizeable
+        @test J.V < 0.95                                       # far enough from 1 to see |V|
+        for τ in (τ0, τ0 / 10, τ0 / 100)
+            # A grid fine enough to resolve a peak that arrives a few τ after the jump:
+            # τ/100 over 40τ, so the sampled maximum cannot fake the shrinkage.
+            grid = vcat(0.0:0.125:0.5, 0.5 .+ (1:4000) .* (τ / 100))
+            eng = init!(DetailedEngine, _m7_jump(; τ); reltol = 1e-12, abstol = 1e-14)
+            solve!(eng, (0.0, grid[end]); perturbations = [0.5 => TripLine(:A, :B)],
+                   saveat = grid)
+            w = state_series(eng).ωpll_pv .* (2π * 50)            # rad/s
+            pk = w[argmax(abs.(w))]
+            @test pk < 0                                       # (i) a DIP
+            push!(left, 1 - pk / (Kp * J.V * J.Δ))
+            if τ == τ0
+                ε, κ = Kp * J.V * τ, Ki / (Kp^2 * J.V)
+                first = Kp * J.V * J.Δ * (1 - ε * ((1 - κ) * log(1 / ε) - 1))
+                @test abs(pk - first) / abs(pk) < 0.015        # (ii) at the default gains
+                @test pk / (2π) < -0.5                         # a 0.06 rad jump reads −0.53 Hz
+            end
+        end
+        # Measured: 0.0592, 0.0114, 0.0022 — ratios 5.2, 5.2.
+        @test all(>(0), left)                                  # the filter under-reads
+        @test left[1] / left[2] > 4 && left[2] / left[3] > 4   # (ii) the signature
+        @test left[3] < 3e-3                                   # …to the |V|-scaled limit
+    end
+
+    @testset "…and where it must NOT show: the centre of inertia (D6, anti-vacuity)" begin
+        # The same jump, with a meter at C too. The machine's power is unchanged by
+        # construction, so the inertia-weighted frequency must not move AT ALL — its
+        # derivative at t⁺ is zero and its trace is flat — while both PLLs spike.
+        J = _m7_jump_size(_m7_jump(), 2)
+        @test abs(J.rate) < 1e-12                               # measured 5.6e-17 Hz/s
+        eng = init!(DetailedEngine, _m7_jump(); meters = [PLLMeter(:C)],
+                    reltol = 1e-12, abstol = 1e-14)
+        solve!(eng, (0.0, 2.0); perturbations = [0.5 => TripLine(:A, :B)],
+               saveat = 0.0:(1 / 4096):2.0)
+        ss = state_series(eng)
+        @test maximum(abs, ss.f_coi .- 50.0) < 1e-12            # measured exactly 0.0
+        @test minimum(ss.ωpll_pv) * 50 < -0.4                   # while the PLL at B dips…
+        @test minimum(ss.ωmeter_C) * 50 < -0.2                  # …and the meter at C
+    end
+
+    @testset "the phantom RoCoF: a 1/window law from a jump with no frequency in it" begin
+        # A window longer than the spike reaches back to before the jump, where the
+        # reading was exactly nominal, so the windowed PLL RoCoF reaches
+        # (spike height)/window. On a binary grid tᵢ − W is itself a sample, so that
+        # is exact — AS A LOWER BOUND. Predicted as an equality and measured not to be
+        # one at short windows: a window that starts ON the spike ends on the PLL's
+        # ringing, whose opposite-signed tail adds to the difference — 1.3e-3 of the
+        # spike at W = 0.25 s, 2e-8 at 0.5 s, nothing at 1 s. So the law is
+        # spike/W from below, approached as the window outlasts the ringing.
+        # The true RoCoF — the centre of inertia's — is zero throughout.
+        eng = init!(DetailedEngine, _m7_jump(); meters = [PLLMeter(:C)],
+                    reltol = 1e-12, abstol = 1e-14)
+        solve!(eng, (0.0, 2.0); perturbations = [0.5 => TripLine(:A, :B)],
+               saveat = 0.0:(1 / 4096):2.0)
+        ss = state_series(eng)
+        for W in (0.25, 0.5, 1.0)
+            r = rocof_readouts(eng; window = W)
+            @test keys(r.pll) == (:ωpll_pv, :ωmeter_C)          # found both, nothing else
+            @test r.window == W
+            @test maximum(abs, filter(!isnan, r.coi)) < 1e-12   # the true RoCoF: none
+            for (c, f) in ((:ωpll_pv, ss.ωpll_pv), (:ωmeter_C, ss.ωmeter_C))
+                spike = maximum(abs, f) * 50                     # Hz
+                read = maximum(abs, filter(!isnan, getfield(r.pll, c))) * W
+                @test spike * (1 - 1e-12) <= read < spike * (1 + 2e-3)  # 1e-12: the
+                # meter's pre-jump reading is round-off, not exactly zero
+                W == 1.0 && @test read ≈ spike rtol = 1e-12     # the ringing is over
+            end
+        end
+        # The number a 500 ms RoCoF relay at B would read: about 1 Hz/s, from a line
+        # switching that moved no rotor.
+        @test maximum(abs, filter(!isnan, rocof_readouts(eng; window = 0.5).pll.ωpll_pv)) > 1.0
+    end
+
+    @testset "the window's own effect on a known trajectory (Hurdle 10 claim 2)" begin
+        # ONE unit, no governor (R = Inf), damping D: after a load step ΔP the frequency
+        # is EXACTLY first order, f(t) = f0 + Δf_ss·(1 − e^{−(t−tₑ)/T}) with
+        # T = 2H/D and Δf_ss = −f0·ΔP/D. So every windowed sample is a closed form —
+        # (f(tᵢ) − f(tᵢ − W))/W, with f = f0 before the step — and its extreme, at
+        # tᵢ = tₑ + W, is Δf_ss·(1 − e^{−W/T})/W: the instantaneous RoCoF₀ = −f0·ΔP/(2H)
+        # times T·(1 − e^{−W/T})/W, which is what the window alone costs. H = 1 s,
+        # D = 2 ⇒ T = 1 s, so the costs are visible: 0.94 / 0.88 / 0.79 / 0.63 of the
+        # true RoCoF₀ at W = 1/8, 1/4, 1/2, 1 s. dt and W binary-exact, so tᵢ − W IS a
+        # sample and the lookup cannot land one sample early.
+        H, D, ΔP, f0, te = 1.0, 2.0, 0.1, 50.0, 0.5
+        T, Δf = 2H / D, -f0 * ΔP / D
+        sys = SystemModel(100.0, f0, D, 1.0, [GeneratingUnit(:U, 100.0, H, 50.0, Inf, 50.0)])
+        eng = init!(FrequencyResponseEngine, sys; reltol = 1e-11, abstol = 1e-13)
+        dt = 1 / 1024
+        for _ in 1:round(Int, te / dt); step!(eng, dt); end
+        inject!(eng, StepLoad(ΔP))
+        @test coi_rocof(eng) ≈ -f0 * ΔP / (2H) rtol = 1e-12     # way 1 at t⁺
+        for _ in 1:round(Int, 3.0 / dt); step!(eng, dt); end
+        fa(t) = t <= te ? f0 : f0 + Δf * (1 - exp(-(t - te) / T))
+        for W in (0.125, 0.25, 0.5, 1.0)
+            r = rocof_readouts(eng; window = W)
+            @test isempty(r.pll)                                 # the aggregate has none
+            k = findall(!isnan, r.coi)
+            exact = [(fa(t) - fa(t - W)) / W for t in r.t[k]]
+            @test maximum(abs, r.coi[k] .- exact) < 1e-7        # every sample
+            @test minimum(r.coi[k]) ≈ Δf * (1 - exp(-W / T)) / W rtol = 1e-7
+            @test minimum(r.coi[k]) / (-f0 * ΔP / (2H)) ≈ T * (1 - exp(-W / T)) / W rtol = 1e-7
+        end
+    end
+
+    @testset "the instantaneous centre-of-inertia RoCoF, three tiers" begin
+        # SWING: against step 3's hand arithmetic over the right-hand side (kept there,
+        # written out, as this function's independent oracle) and the aggregate's
+        # RoCoF₀ closed form, at a machine trip and a grid-forming trip.
+        for k in (:G1, :S2)
+            eng = SwingEngine(_m7_ring(:inverter); reltol = 1e-10, abstol = 1e-12)
+            inject!(eng, TripGenerator(k))
+            u, p = eng.integrator.u, eng.integrator.p
+            du = similar(u); eng.nw(du, u, p, eng.integrator.t)
+            rate = sum(eng.w[i] * (eng.droop[i] == 0 ? du[eng.ω_idx[i]] :
+                                   -eng.droop[i] * du[eng.ω_idx[i]])
+                       for i in eachindex(eng.w)) / eng.Σw
+            @test coi_rocof(eng) == 50 * rate
+            @test coi_rocof(eng) ≈ trip_and_run(coi_model(_m7_ring(:inverter)), k;
+                                                T = 0.02).RoCoF0 rtol = 1e-8
+        end
+        # DETAILED, a line trip on a ring with a constant-impedance load: the load's
+        # power moves with its voltage, and on a lossless network that is the ONLY
+        # imbalance, so 2·Σw·dω_coi/dt = P_load(0) − P_load(t⁺) = 0.4·(|V₁(0)|² − |V₁(t⁺)|²)
+        # — read from the bus voltage alone, not from any machine or inverter equation.
+        # The grid-forming inverter's share enters through its virtual inertia; its
+        # machine twin must agree.
+        rates = Float64[]
+        for src in (:inverter, :machine)
+            net = _m7_loaded_ring(src)
+            eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net))
+            V0 = current_state(eng).V[1]
+            inject!(eng, TripLine(:B1, :B2))
+            V1 = current_state(eng).V[1]
+            closed = 50 * 0.4 * (V0^2 - V1^2) / (2 * system_inertia(eng))
+            @test abs(closed) > 1e-3                            # it genuinely moves
+            @test coi_rocof(eng) ≈ closed rtol = 1e-9
+            push!(rates, coi_rocof(eng))
+        end
+        @test rates[1] ≈ rates[2] rtol = 1e-9                   # the twin agrees
+        # AGGREGATE: the `RoCoF` it has always reported, under this name too.
+        fr = init!(FrequencyResponseEngine, example_system())
+        inject!(fr, TripGenerator(:G1))
+        @test coi_rocof(fr) == current_state(fr).RoCoF
+    end
+
+    @testset "the three side by side, and which is largest is not the obvious one" begin
+        # The grid-following ring, a line trip, meters on the two machine buses. No
+        # loads, so the only power that can move is the inverter's — it holds CURRENT,
+        # not power. MEASURED FIRST, and it overturned the prediction written here
+        # before the run ("the window under-reads the instantaneous value"):
+        #   way 1, instantaneous at t⁺:   −1.5e-4 Hz/s — at the instant, the current is
+        #                                 still where it was and barely moves P;
+        #   way 2, 500 ms window on f_coi: 0.066 Hz/s — ~450× way 1, because the
+        #                                 imbalance BUILDS after t⁺ as the PLL swings
+        #                                 the held current round and |V| sags
+        #                                 (f_coi falls 0.045 Hz over the run);
+        #   way 3, 500 ms window on PLLs:  0.22 (the inverter's, B2), 0.91 (B1),
+        #                                 0.69 (B3) Hz/s — every one ≥ 3× way 2; the
+        #                                 machine buses read the most because their
+        #                                 meters see that machine's own swing on top
+        #                                 of the jump.
+        # So "RoCoF₀", the closed forms' quantity, is here the SMALLEST of the three.
+        net = _m7_gfl_ring()
+        eng = init!(DetailedEngine, net; meters = [PLLMeter(:B1), PLLMeter(:B3)],
+                    reltol = 1e-10, abstol = 1e-12)
+        e2 = init!(DetailedEngine, net)
+        inject!(e2, TripLine(:B1, :B3))
+        inst = coi_rocof(e2)                                     # way 1, at t⁺
+        solve!(eng, (0.0, 2.0); perturbations = [0.5 => TripLine(:B1, :B3)],
+               saveat = 0.0:(1 / 1024):2.0)
+        r = rocof_readouts(eng; window = 0.5)
+        @test length(r.pll) == 3                                 # ωpll_S2, ωmeter_B1, ωmeter_B3
+        coiW = maximum(abs, filter(!isnan, r.coi))
+        pllW = [maximum(abs, filter(!isnan, v)) for v in values(r.pll)]
+        @test abs(inst) < 1e-3 < 0.05 < coiW                     # way 1 ≪ way 2
+        @test all(>(3 * coiW), pllW)                             # way 3 ≥ 3× way 2, every bus
+    end
+
+    @testset "zero weight: every path to it refused or unreachable (Hurdle 10 claim 3)" begin
+        # SWING, everything tripped: the live channel reads NaN (the M2 decision the
+        # network window's test pins), and both M7 read-outs refuse by name.
+        eng = SwingEngine(two_machine_system())
+        for id in machine_ids(eng); inject!(eng, TripGenerator(id)); end
+        step!(eng)
+        @test isnan(current_state(eng).f_coi)
+        @test occursin("sum to zero", try; coi_rocof(eng); ""; catch e; e.msg; end)
+        @test occursin("NaN from t", try; rocof_readouts(eng); ""; catch e; e.msg; end)
+        # DETAILED: unreachable — no source at all is refused at `init!` (D5, step 5's
+        # test), and a generator trip is refused outright at this tier.
+        d = init!(DetailedEngine, _m7_gfl_ring())
+        @test_throws ArgumentError inject!(d, TripGenerator(:G1))
+        # AGGREGATE: refused before anything moves (step 2).
+        fr = init!(FrequencyResponseEngine, coi_model(_m7_ring(:inverter)))
+        inject!(fr, TripGenerator(:G1)); inject!(fr, TripGenerator(:G3))
+        @test_throws ArgumentError inject!(fr, TripGenerator(:S2))
+    end
+end

@@ -219,6 +219,8 @@ export GenerationRamp, generation_ramp
 # (2026-09-02, the session that merged step 2; it could not be run in the session
 # that wrote it).
 export windowed_rocof, divergence, system_frequency, tolerance_band
+# M7 step 6 — the three RoCoFs under three names, and the measurement-only PLL.
+export coi_rocof, rocof_readouts, PLLMeter
 # `convergence_band` moved here from `reference/src/oracle.jl` in M5 step 2, where it
 # was `oracle_band`: the derivation (each side's error estimated by its OWN
 # convergence, summed through the triangle inequality) has nothing to do with
