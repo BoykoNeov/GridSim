@@ -119,8 +119,10 @@ holds `|V|` by construction, and says so).
 The oracle (Hurdle 11 claim 1): the same network run twice, once with an
 `Inverter`, once with a `Machine` carrying `H = τ_p/(2K_p)`, `D = 1/K_p` (converted
 to the machine's own base by hand, in the test, from the formula — not through the
-code under test), `E′ = V_set`. **Agreement to round-off** on a network-side
-disturbance (a line trip). Anti-vacuity: `K_p` read on the wrong base; the filter
+code under test), `E′ = V_set`. **Agreement to within solver error, falling with the
+tolerance** on a network-side disturbance (a line trip). *(Written first as "to
+round-off"; corrected in step 3 — the two models integrate different state
+variables, so the adaptive steps differ and the gap is the solver's.)* Anti-vacuity: `K_p` read on the wrong base; the filter
 time constant dropped (`τ_p → 0`, which makes the inverter an inertia-free droop
 and must open a gap). Positive control: the pre-registered non-equivalence
 (claim 2) — under a `P_set` step the inverter's frequency jumps by exactly

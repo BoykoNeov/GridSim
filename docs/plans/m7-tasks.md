@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0–2 done (2026-09-29)** — 3753 core / 1143 reference / 449 UI (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
+Status: **Steps 0–3 done (2026-09-29)** — 3778 core / 1143 reference / 449 UI (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -166,12 +166,52 @@ runs.
 
 ## Step 3 — grid-forming in the swing tier
 
-- [ ] Vertex model from the inverter's own states.
-- [ ] Equivalence to the hand-converted machine, round-off, on a line trip.
-- [ ] Mutations: wrong base; `τ_p → 0`.
-- [ ] Positive control: `P_set` step — inverter frequency jumps by `K_p·ΔP_set` at
-      `t⁺`, machine's does not.
-- [ ] `SPEC.md` §7.6 corrected, after the measurement.
+- [x] **Vertex model from the inverter's own states** (`gfm_vertex!`: `δ`, `P_filt`,
+      and a structurally zero governor slot so every vertex exposes the layout the
+      engine's bookkeeping indexes). **The speed is READ, not stored**: `_speed`
+      returns the state for a machine and `−K_p·(P_filt − P_set)` for an inverter,
+      so the setpoint-step jump emerges from the physics rather than being written
+      into an event handler. With no inverters every `droop` is zero and the
+      read-out is the state itself — the pre-M7 path, bit for bit.
+- [x] Per-vertex compiled view `_swing_vertices` used ONLY when inverters are
+      present (`K_p` converted to the system base once, COI weight `τ_p/(2K_p)`
+      weighted by `S_rated/S_base`, bus voltage `V_set`); models without inverters
+      still read `machine_arrays`/`branch_arrays` unchanged.
+- [x] **Equivalence to a hand-converted machine** on a three-bus ring with a line
+      trip, the inverter on its own 150 MVA base: identical flat start (3e-17), then
+      max angle gap **6.5e-11 / 2.4e-12 / 5.3e-14 rad** at reltol 1e-6 / 1e-9 / 1e-11
+      on a 1.4e-3 speed excursion. **The plan's "to round-off" was wrong**: the two
+      integrate different state variables, so the gap is the solver's and the check
+      is that it falls with the tolerance (≥ 100× over the range) — the convergence
+      label, not "exact". Band 1e-12 stated in the test before the tight run.
+- [x] **Mutations, four executed, each red**: `K_p` left on the inverter's own base
+      (5 failures); the power filter made near-instant (4); speed read as the raw
+      state (5); virtual inertia not weighted to the system base (3). Plus an in-test
+      one needing no edit: a 10 % droop mismatch opens a gap > 1e-6.
+- [x] **Positive control, Hurdle 11 claim 2**: a 0.1 pu setpoint step moves the
+      inverter's speed by exactly `K_p_sys·ΔP = (0.05·100/150)·0.1` at the event
+      boundary, with no step taken; the machine's does not move at all.
+- [x] **Step 2's deferred cross-check**: at a trip instant the swing tier's COI
+      frequency derivative, read off the RHS, equals the aggregate's `RoCoF₀` to
+      1e-8 for both a machine trip and a grid-forming trip; after the grid-forming
+      trip both tiers settle on `Δω = −0.6/10` (the swing tier because the vertex
+      leaves, the aggregate because of D9). A machine trip is deliberately NOT
+      compared at settling — M2's recorded damping asymmetry.
+- [x] Refusals: grid-following (named a tier boundary), two sources on one bus, and
+      a shed ladder or generation ramp armed on an inverter.
+- [x] `SPEC.md` §7.6 amended **after** the measurement: "no swing equation" is true
+      of grid-following only. §9 item 7 marked taken.
+- [x] Gates: **3778 core**, M5 criterion **bit-identical**
+      (`W:	emp\claude\m7\criterion-STEP3.txt`), **1143 reference / 449 UI**.
+- **Found, not planned (1):** M2's `V5` tripwire — which counts every array the
+  swing engine holds, to catch an all-pairs structure — moved by exactly `n`
+  (1122 → 1162 at n = 40): the one new per-vertex `droop` vector. Accounted for in
+  the test's own running record (28n + 2 → 29n + 2) rather than re-pinned, as that
+  test asks; the slope assertion, which is the actual claim, never moved.
+- **Found, not planned (2):** step 1's refusal test asserted that `SwingEngine` refuses
+  every inverter; building the grid-forming vertex made that half of it wrong, and
+  it now asserts the grid-following half only — the lifted refusal showing up as a
+  failing test, which is the walked-surface design working as intended.
 
 ## Step 4 — grid-forming in the detailed tier
 

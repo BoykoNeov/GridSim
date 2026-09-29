@@ -138,7 +138,9 @@ end
         refuses(f) = try; f(); false; catch e; names_it(e); end
         for mode in (:grid_forming, :grid_following)
             net = _m7_pair(mode = mode)
-            @test refuses(() -> SwingEngine(net))
+            # Step 3 built the grid-forming vertex; grid-following stays refused here
+            # for good (a tier boundary) — its own testset checks the message.
+            mode === :grid_following && @test refuses(() -> SwingEngine(net))
             @test refuses(() -> init!(DetailedEngine, net))
             @test refuses(() -> ac_powerflow(net))
             @test refuses(() -> dc_powerflow(net))
@@ -411,5 +413,161 @@ end
         u = GeneratingUnit(:X, 100.0, 3.0, 50.0, 0.05, 80.0)
         @test u.D === 0.0
         @test_throws ArgumentError GeneratingUnit(:X, 100.0, 3.0, 50.0, 0.05, 80.0, -1.0)
+    end
+end
+
+# ---------------------------------------------------------------------------------
+# Step 3 — the grid-forming inverter in the swing tier (m7-plan.md step 3, Hurdle 11)
+# ---------------------------------------------------------------------------------
+
+# A three-bus ring: a machine, a grid-forming inverter, and a load written as a
+# negative-P0 machine. The inverter sits on its OWN 150 MVA base (≠ S_base) so that a
+# per-unit conversion left out would show. `:machine` builds the SAME network with
+# the inverter replaced by a machine whose numbers are converted BY HAND, here, from
+# the equivalence 2H = τ_p/K_p, D = 1/K_p on the inverter's own base — never through
+# the code under test.
+const _S_INV = 150.0
+const _KP, _TP = 0.05, 0.1
+function _m7_ring(src::Symbol; K_p = _KP)
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
+    br = [Branch(:L12, :B1, :B2, 0.2, 900.0), Branch(:L23, :B2, :B3, 0.25, 900.0),
+          Branch(:L13, :B1, :B3, 0.3, 900.0)]
+    ms = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.02, 80.0),
+          Machine(:G3, :B3, 400.0, 3.0, 1.0, 0.3, 1.0, -140.0)]
+    src === :inverter && return NetworkModel(100.0, 50.0, buses, br, ms;
+        inverters = [Inverter(:S2, :B2, :grid_forming, _S_INV, 60.0; K_p = K_p,
+                              τ_p = _TP, V_set = 1.01)])
+    push!(ms, Machine(:S2, :B2, _S_INV, _TP / (2 * K_p), 1 / K_p, 0.3, 1.01, 60.0))
+    return NetworkModel(100.0, 50.0, buses, br, ms)
+end
+
+# Largest gap over a line trip, angles taken against bus 1 (the fixpoint's gauge is
+# arbitrary, so only differences mean anything).
+function _m7_equiv_gap(; reltol, abstol, T = 5.0, dt = 0.01)
+    a = SwingEngine(_m7_ring(:inverter); reltol, abstol)
+    b = SwingEngine(_m7_ring(:machine); reltol, abstol)
+    inject!(a, TripLine(:B1, :B2)); inject!(b, TripLine(:B1, :B2))
+    gδ = 0.0; gω = 0.0; exc = 0.0
+    for _ in 1:round(Int, T / dt)
+        sa = step!(a, dt); sb = step!(b, dt)
+        gδ = max(gδ, maximum(abs, (sa.δ .- sa.δ[1]) .- (sb.δ .- sb.δ[1])))
+        gω = max(gω, maximum(abs, sa.ω .- sb.ω))
+        exc = max(exc, abs(sa.ω[2]))
+    end
+    return (; gδ, gω, exc)
+end
+
+@testset "M7 step 3 — grid-forming in the swing tier, checked by its exact equivalence" begin
+
+    @testset "it builds, sits flat, and names what it is" begin
+        eng = SwingEngine(_m7_ring(:inverter); reltol = 1e-9, abstol = 1e-12)
+        @test machine_ids(eng) == [:G1, :S2, :G3]
+        s0 = current_state(eng)
+        @test maximum(abs, s0.ω) < 1e-10          # on its fixpoint: no speed anywhere
+        for _ in 1:100; step!(eng, 0.01); end
+        @test maximum(abs, current_state(eng).ω) < 1e-9   # …and stays there
+        # Its COI weight is the virtual inertia τ_p/(2K_p) on its own base, weighted
+        # by S_rated/S_base: 1 s · 1.5.
+        @test eng.w[2] ≈ _TP / (2 * _KP) * _S_INV / 100
+    end
+
+    @testset "equivalence to the hand-converted machine: a gap that is solver error only" begin
+        # Measured (m7-tasks.md step 3): 6.5e-11 / 2.4e-12 / 5.3e-14 rad at reltol
+        # 1e-6 / 1e-9 / 1e-11, on a speed excursion of 1.4e-3. NOT round-off, as the
+        # plan said: the two models integrate different state variables, so the
+        # adaptive steps differ — the gap is the solver's, and the check is that it
+        # MOVES WITH THE TOLERANCE (the convergence rule), not that it is small once.
+        loose = _m7_equiv_gap(; reltol = 1e-6, abstol = 1e-9)
+        tight = _m7_equiv_gap(; reltol = 1e-11, abstol = 1e-13)
+        @test tight.exc > 1e-3                        # the disturbance is not vacuous
+        @test tight.gδ < 1e-12 && tight.gω < 1e-13    # band stated before measuring: 1e-12
+        @test tight.gδ < loose.gδ / 100               # …and it falls with the tolerance
+        @test tight.gω < loose.gω / 100
+    end
+
+    @testset "the check can read a disagreement (anti-vacuity in the test itself)" begin
+        # K_p on the inverter differs from the one the machine was converted with:
+        # the same network with a 10 % droop error must open a gap far outside the
+        # band. (The executed source mutations — wrong base, filter removed — are
+        # recorded in m7-tasks.md; this one lives here because it needs no edit.)
+        a = SwingEngine(_m7_ring(:inverter; K_p = 0.055); reltol = 1e-11, abstol = 1e-13)
+        b = SwingEngine(_m7_ring(:machine); reltol = 1e-11, abstol = 1e-13)
+        inject!(a, TripLine(:B1, :B2)); inject!(b, TripLine(:B1, :B2))
+        g = 0.0
+        for _ in 1:500
+            sa = step!(a, 0.01); sb = step!(b, 0.01)
+            g = max(g, maximum(abs, sa.ω .- sb.ω))
+        end
+        @test g > 1e-6
+    end
+
+    @testset "where the equivalence breaks, predicted: a setpoint step (Hurdle 11 claim 2)" begin
+        # Raise the setpoint (inverter) / mechanical power (machine) by ΔP = 0.1 pu on
+        # the system base, at an event boundary, and read the speed WITHOUT stepping.
+        # The inverter's ω = −K_p·(P_filt − P_set) is not a state: it jumps by
+        # K_p_sys·ΔP = (0.05·100/150)·0.1. The machine's speed is a state: it cannot.
+        for (src, expected) in ((:inverter, _KP * 100 / _S_INV * 0.1), (:machine, 0.0))
+            eng = SwingEngine(_m7_ring(src); reltol = 1e-9, abstol = 1e-12)
+            before = current_state(eng).ω[2]
+            eng.params[eng.Pm_pidx[2]] += 0.1
+            GridSim.SciMLBase.derivative_discontinuity!(eng.integrator, true)
+            @test current_state(eng).ω[2] - before ≈ expected atol = 1e-12
+        end
+    end
+
+    @testset "cross-check against the aggregate (step 2's deferred check)" begin
+        # At a trip instant the swing tier's COI frequency derivative is an exact
+        # identity: −f0·P_k/(2·H_sys_post), with the grid-forming inverter weighted at
+        # its virtual inertia. Read off the RHS at the event boundary, no step taken.
+        for (k, P_k) in ((:G1, 0.8), (:S2, 0.6))
+            eng = SwingEngine(_m7_ring(:inverter); reltol = 1e-10, abstol = 1e-12)
+            inject!(eng, TripGenerator(k))
+            u = eng.integrator.u; p = eng.integrator.p
+            du = similar(u); eng.nw(du, u, p, eng.integrator.t)
+            rate = sum(eng.w[i] * (eng.droop[i] == 0 ? du[eng.ω_idx[i]] :
+                                   -eng.droop[i] * du[eng.ω_idx[i]])
+                       for i in eachindex(eng.w)) / eng.Σw
+            agg = trip_and_run(coi_model(_m7_ring(:inverter)), k; T = 0.02).RoCoF0
+            @test 50 * rate ≈ agg rtol = 1e-8
+            @test agg ≈ -50 * P_k / (2 * eng.Σw)     # and the closed form both obey
+        end
+        # Settling after the grid-forming trip: both tiers drop its damping (the swing
+        # tier because the vertex leaves, the aggregate because D9 makes it), so both
+        # land on Δω = −0.6/(2·3 + 1·4). (A MACHINE trip would not agree — M2's
+        # recorded asymmetry — which is why only this trip is compared.)
+        eng = SwingEngine(_m7_ring(:inverter); reltol = 1e-8, abstol = 1e-10)
+        inject!(eng, TripGenerator(:S2))
+        for _ in 1:3000; step!(eng, 0.02); end
+        agg = trip_and_run(coi_model(_m7_ring(:inverter)), :S2)
+        @test current_state(eng).ω_coi ≈ -0.6 / 10 rtol = 1e-4
+        @test agg.Δω_end ≈ -0.6 / 10 rtol = 1e-6
+    end
+
+    @testset "refusals: grid-following, two sources on a bus, shed/ramp on an inverter" begin
+        buses = [Bus(:A, 1.0), Bus(:B, 1.0)]
+        br = [Branch(:AB, :A, :B, 0.2, 1.0)]
+        g = [Machine(:G, :A, 100.0, 4.0, 1.0, 0.3, 1.0, 20.0)]
+        gfl = NetworkModel(100.0, 50.0, buses, br, g;
+                           inverters = [Inverter(:pv, :B, :grid_following, 50.0, -20.0)])
+        msg = try; SwingEngine(gfl); ""; catch e; e.msg; end
+        @test occursin("pv", msg) && occursin("tier boundary", msg)
+        two = NetworkModel(100.0, 50.0, buses, br,
+            [g; Machine(:G2, :B, 100.0, 4.0, 1.0, 0.3, 1.0, -30.0)];
+            inverters = [Inverter(:gf, :B, :grid_forming, 50.0, 10.0)])
+        @test occursin("carries 2 sources", try; SwingEngine(two); ""; catch e; e.msg; end)
+        net = _m7_ring(:inverter)
+        @test_throws ArgumentError SwingEngine(net;
+            shed = [:S2 => [LoadShedStage(49.0, 10.0)]])
+        @test_throws ArgumentError SwingEngine(net;
+            ramp = [:S2 => GenerationRamp(0.1, 1.0, 1.0)])
+    end
+
+    @testset "no pre-M7 model changes path" begin
+        # Every model without inverters takes the old branch: droop all zero, so the
+        # speed read-out is the state itself, and the recorded channels are the old
+        # ones. (The rest of the suite plus M5's criterion capture are the real gate.)
+        eng = SwingEngine(three_machine_ring())
+        @test all(==(0.0), eng.droop)
+        @test current_state(eng).ω == eng.integrator.u[eng.ω_idx]
     end
 end

@@ -241,6 +241,49 @@ function swing_vertex!(dv, v, esum, p, t)
 end
 
 """
+    gfm_vertex!(dv, v, esum, p, t)
+
+One **grid-forming inverter's** RHS (M7 step 3, `docs/plans/m7-context.md` D3/D4).
+Built from the inverter's OWN droop states — never by converting it to a machine
+and calling `swing_vertex!`, which would make step 3's equivalence check compare a
+machine with itself. State `v = (δ, P_filt, ΔPm)`:
+
+    ω        = −K_p·(P_filt − P_set)          the droop law (pu deviation)
+    dδ/dt    = ω₀·ω
+    dP_filt/dt = (P_meas − P_filt)/τ_p        the power-measurement filter
+
+`P_meas` is the electrical power the inverter exports into the network, which is
+`−esum` by this file's sign convention (see `swing_vertex!`). The voltage magnitude
+is held at the bus, which is this tier's convention for every source and exactly
+`IdealDroopInverter` with `K_q = 0`; `K_q` is therefore not read here, and neither
+is `X_c` (D3).
+
+With `2H = τ_p/K_p`, `D = 1/K_p` this is algebraically `swing_vertex!` with no
+governor (Hurdle 11) — which is why the engine can COMPARE the two, not why this
+function exists. Where they part is a setpoint step: `P_set` moves `ω` instantly,
+because `ω` is not a state here, while a machine's speed cannot jump.
+
+`ΔPm` is a **structurally zero placeholder**: an inverter has no governor, and the
+third slot exists only so every vertex exposes the `(δ, ·, ΔPm)` layout the
+engine's bookkeeping (the headroom guard, a trip's re-seat) indexes. `dΔPm/dt = −ΔPm`
+holds it at the zero it starts at.
+
+Parameters `p = (P_set, K_p, τ_p, ω₀, invR, headroom, rate)`, `K_p` on the SYSTEM
+base (converted once, in the engine). The last three are never read by this RHS;
+they are present so a generator trip can zero them exactly as it does a machine's.
+"""
+function gfm_vertex!(dv, v, esum, p, t)
+    δ, P_filt, ΔPm = v[1], v[2], v[3]
+    P_set, K_p, τ_p, ω₀ = p[1], p[2], p[3], p[4]
+    P_meas = -esum[1]
+    ω = -K_p * (P_filt - P_set)
+    dv[1] = ω₀ * ω
+    dv[2] = (P_meas - P_filt) / τ_p
+    dv[3] = -ΔPm
+    return nothing
+end
+
+"""
     swing_edge!(e, v_src, v_dst, p, t)
 
 One branch's transferred power `P = K·sin(δ_src − δ_dst)`, wrapped by the caller in
@@ -308,6 +351,11 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     ladders::Vector{ShedLadder}
     relays::Vector{OutOfStepRelay}
     ramps::Vector{Pair{Symbol,GenerationRamp}}
+    # M7 step 3 — how each vertex's SPEED is read (see `_speed`). `0.0` for a
+    # machine, whose speed is the state at `ω_idx`; the system-base droop gain
+    # `K_p` for a grid-forming inverter, whose `ω_idx` points at `P_filt` and whose
+    # speed is `−K_p·(P_filt − P_set)`. All zero on every pre-M7 model.
+    droop::Vector{Float64}
 end
 
 # `isoutofdomain` predicate, built per engine because it has to close over the
@@ -581,16 +629,32 @@ Passing does not prove an equilibrium exists, it only rules out one that provabl
 cannot.
 """
 function _assert_classical_tier(net::NetworkModel)
-    # M7 step 1. Until step 3 builds the grid-forming vertex, an inverter here would
-    # be silently absent; a grid-following one stays refused for good, because this
-    # tier has no bus voltage for a current source to inject into (m7-context.md D3).
-    # FIRST, because an inverter's bus usually carries no machine, and the
+    # M7. A grid-following inverter is refused for good: it is a current source, and
+    # this tier has no bus voltage for a current to be injected into (m7-context.md
+    # D3). FIRST, because an inverter's bus usually carries no machine, and the
     # one-machine-per-bus refusal below would otherwise report the symptom (a bus
-    # with nothing on it) instead of the cause (an inverter this tier cannot hold).
-    _assert_no_inverters(net, "SwingEngine"; unbuilt =
-        "(M7 step 3 builds the grid-forming inverter at this tier; a grid-following " *
-        "one is a tier boundary here, not unbuilt work — m7-context.md D3.)")
-    _assert_one_machine_per_bus(net, "SwingEngine")
+    # with nothing on it) instead of the cause.
+    gfl = [i.id for i in net.inverters if i.mode === :grid_following]
+    isempty(gfl) || throw(ArgumentError(
+        "SwingEngine: the model carries grid-following inverter(s) " *
+        "($(join(gfl, ", "))). A grid-following inverter injects a current phased to " *
+        "a voltage it measures, and this tier holds a constant voltage at every bus " *
+        "with no algebraic unknown for that current to act on — a tier boundary, not " *
+        "unbuilt work (m7-context.md D3). Use the detailed tier."))
+    # With grid-forming inverters present (M7 step 3), the one-vertex-per-bus rule
+    # counts machines AND inverters; without them it is the pre-M7 check, message for
+    # message.
+    if isempty(net.inverters)
+        _assert_one_machine_per_bus(net, "SwingEngine")
+    else
+        for v in eachindex(net.buses)
+            n = length(net.machines_at_bus[v]) + length(net.inverters_at_bus[v])
+            n == 1 || throw(ArgumentError(
+                "SwingEngine: bus $(net.buses[v].id) carries $n sources (machines and " *
+                "grid-forming inverters together). This tier has exactly one per " *
+                "bus: a constant-magnitude voltage whose angle is that source's."))
+        end
+    end
     _assert_frozen_flux(net, "SwingEngine")
     _assert_lossless_branches(net, "SwingEngine")   # M6 step 1 — R is validated, not read
     isempty(net.loads) || throw(ArgumentError(
@@ -602,6 +666,20 @@ function _assert_classical_tier(net::NetworkModel)
         "negative P0."))
     # Only reached once one-machine-per-bus holds, which is what makes the vertex
     # index and the machine index the same number here.
+    #
+    # M7 step 3: with grid-forming inverters the vertex arrays come from
+    # `_swing_vertices`, and the reachability test below reads them instead. The
+    # machine-index identity is a pre-M7 statement, checked on the pre-M7 path.
+    if !isempty(net.inverters)
+        sv = _swing_vertices(net)
+        for v in eachindex(net.buses)
+            abs(sv.Pm[v]) ≤ sv.reach[v] || throw(ArgumentError(
+                "SwingEngine: $(sv.ids[v]) injects $(abs(sv.Pm[v])) pu, which exceeds " *
+                "the total coupling of its incident branches ($(sv.reach[v]) pu). " *
+                "Since P = Σ K·sin(Δδ), no steady state exists."))
+        end
+        return nothing
+    end
     ma = machine_arrays(net)
     ba = branch_arrays(net)
     ma.bus == collect(1:length(net.buses)) || throw(ArgumentError(
@@ -624,6 +702,60 @@ function _assert_classical_tier(net::NetworkModel)
             "Strengthen the network, lower the injection, or raise E′."))
     end
     return nothing
+end
+
+# M7 step 3 — the per-VERTEX view of a model carrying grid-forming inverters, in bus
+# order. Only called when inverters are present; the pre-M7 path keeps reading
+# `machine_arrays`/`branch_arrays` exactly as it did, so no existing number can move.
+#
+# A machine vertex takes `machine_arrays`' row (the one per-unit converter). A
+# grid-forming vertex converts its own gains here, ONCE, from its own rating:
+#   - `K_p` is pu frequency per pu power on the inverter's base; per pu power on the
+#     SYSTEM base it is `K_p·S_base/S_rated` (a system-base pu of power is
+#     `S_base/S_rated` own-base pu). This is the wrong-base mutation's target.
+#   - the COI weight is the virtual inertia `τ_p/(2K_p)`, weighted by `S_rated/S_base`
+#     like a machine's `H` — and it is `τ_p/(2·K_p_sys)` exactly, the same number.
+#   - the bus voltage is `V_set` (this tier holds it; `K_q` and `X_c` are unread).
+# The coupling is `E_i·E_j/X`, the same arithmetic as `_coupling`.
+function _swing_vertices(net::NetworkModel)
+    nb = length(net.buses)
+    ma = machine_arrays(net)
+    kind = Vector{Symbol}(undef, nb); ids = Vector{Symbol}(undef, nb)
+    E = zeros(nb); H = zeros(nb); D = zeros(nb); Pm = zeros(nb)
+    invR = zeros(nb); headroom = zeros(nb); Tg = ones(nb)
+    K_p = zeros(nb); τ_p = ones(nb)
+    for (k, m) in pairs(net.machines)
+        v = ma.bus[k]
+        kind[v] = :machine; ids[v] = m.id; E[v] = ma.E[k]; H[v] = ma.H[k]
+        D[v] = ma.D[k]; Pm[v] = ma.Pm[k]; invR[v] = ma.invR[k]
+        headroom[v] = ma.headroom[k]; Tg[v] = ma.Tg[k]
+    end
+    for inv in net.inverters
+        v = net.bus_index[inv.bus]
+        kind[v] = :grid_forming; ids[v] = inv.id; E[v] = inv.V_set
+        K_p[v] = inv.K_p * net.S_base / inv.S_rated
+        τ_p[v] = inv.τ_p
+        H[v] = inv.τ_p / (2 * inv.K_p) * (inv.S_rated / net.S_base)
+        Pm[v] = inv.P0 / net.S_base
+    end
+    src = Int[]; dst = Int[]; K = Float64[]
+    reach = zeros(nb)
+    for br in net.branches
+        i, j = net.bus_index[br.from], net.bus_index[br.to]
+        k = E[i] * E[j] / br.X
+        push!(src, i); push!(dst, j); push!(K, k)
+        reach[i] += k; reach[j] += k
+    end
+    return (; kind, ids, E, H, D, Pm, invR, headroom, Tg, K_p, τ_p, src, dst, K, reach)
+end
+
+# A vertex's SPEED (pu deviation) from the flat state and parameters (M7 step 3). A
+# machine's is the state itself; a grid-forming inverter's is its droop law. On every
+# pre-M7 model `droop` is all zeros and this is `u[ω_idx[i]]`, bit for bit.
+@inline function _speed(eng, u, p, i::Int)
+    @inbounds d = eng.droop[i]
+    @inbounds return d == 0.0 ? u[eng.ω_idx[i]] :
+                     -d * (u[eng.ω_idx[i]] - p[eng.Pm_pidx[i]])
 end
 
 """
@@ -687,12 +819,29 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # The tier boundary, first thing — before any array is derived from a model
     # this engine may turn out not to be able to represent (m5-context.md D3).
     _assert_classical_tier(net)
-    ma = machine_arrays(net)
-    ba = branch_arrays(net)
     nb = length(net.buses)
-    # Machine ids in bus order, by construction. Resolved at the top because the
-    # shed ladders below are bound by id and their guard messages list them.
-    ids0 = Symbol[m.id for m in net.machines]
+    # M7 step 3. Without inverters this is the pre-M7 path, unchanged: the machine
+    # arrays ARE the vertex arrays. With grid-forming inverters, `_swing_vertices`
+    # builds the vertex arrays and `ma`/`ba` become that view — same field names, so
+    # everything below reads one thing.
+    has_inv = !isempty(net.inverters)
+    sv = has_inv ? _swing_vertices(net) : nothing
+    ma = has_inv ? sv : machine_arrays(net)
+    ba = has_inv ? (; src = sv.src, dst = sv.dst, K = sv.K) : branch_arrays(net)
+    # Generating-element ids in bus order, by construction. Resolved at the top
+    # because the shed ladders below are bound by id and their guard messages list
+    # them. (Machine ids on every pre-M7 model.)
+    ids0 = has_inv ? copy(sv.ids) : Symbol[m.id for m in net.machines]
+    inv_ids = Set(i.id for i in net.inverters)
+    # A shed ladder or a scheduled ramp acts on a MACHINE's power; neither has a
+    # meaning on a droop inverter's setpoint that anybody has validated. Refused by
+    # name rather than bound to a vertex whose `Pm` means something else.
+    for (what, arg) in (("shed", shed), ("ramp", ramp)), pr in arg
+        first(pr) in inv_ids && throw(ArgumentError(
+            "SwingEngine: $what is armed on `:$(first(pr))`, which is a grid-forming " *
+            "inverter. Load shedding and generation ramps act on a machine's power; " *
+            "on an inverter's droop setpoint they are an unvalidated model (M7)."))
+    end
 
     # The same graph the model validated itself against (one edge per bus pair,
     # connected — both already enforced by the `NetworkModel` constructor).
@@ -713,7 +862,20 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                                          name = :machine)
     edge = NetworkDynamics.EdgeModel(g = NetworkDynamics.AntiSymmetric(swing_edge!),
                                      outsym = [:P], psym = [:K], name = :branch)
-    nw = NetworkDynamics.Network(g, [vertex for _ in 1:nb], [edge for _ in 1:ne])
+    # M7 step 3 — the grid-forming vertex, built from its own droop states. Its
+    # parameter list carries `invR`, `headroom` and `rate` unread, so a generator
+    # trip zeroes them through the same flat indices as a machine's (`gfm_vertex!`).
+    gfm = NetworkDynamics.VertexModel(f = gfm_vertex!,
+                                      g = NetworkDynamics.StateMask(1:1),
+                                      sym = [:δ, :P_filt, :ΔPm],
+                                      psym = [:Pm, :K_p, :τ_p, :ω₀, :invR, :headroom,
+                                              :rate],
+                                      name = :grid_forming)
+    nw = has_inv ?
+        NetworkDynamics.Network(g, [ma.kind[i] === :machine ? vertex : gfm for i in 1:nb],
+                                [edge for _ in 1:ne]) :
+        NetworkDynamics.Network(g, [vertex for _ in 1:nb], [edge for _ in 1:ne])
+    is_gfm(i) = has_inv && ma.kind[i] === :grid_forming
 
     # --- parameters, and the edge mapping that cannot be permuted ---------------
     # Both dictionaries are keyed by the *unordered* vertex pair, and the fill loop
@@ -733,6 +895,22 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     s = NetworkDynamics.NWState(nw)
     ω₀ = 2π * net.f0
     for i in 1:nb
+        if is_gfm(i)
+            # Seeded ON its equilibrium in `P_filt` (the filter settles on the power
+            # it exports, which at the fixpoint is its setpoint); `δ` is the solver's
+            # to find, exactly as for a machine.
+            s.v[i, :δ] = 0.0
+            s.v[i, :P_filt] = ma.Pm[i]
+            s.v[i, :ΔPm] = 0.0
+            s.p.v[i, :Pm]  = ma.Pm[i]
+            s.p.v[i, :K_p] = ma.K_p[i]
+            s.p.v[i, :τ_p] = ma.τ_p[i]
+            s.p.v[i, :ω₀]  = ω₀
+            s.p.v[i, :invR] = 0.0
+            s.p.v[i, :headroom] = 0.0
+            s.p.v[i, :rate] = 0.0
+            continue
+        end
         s.v[i, :δ] = 0.0                 # only the fixpoint solver's starting guess
         s.v[i, :ω] = 0.0
         # `ΔPm` is a deviation, so the pre-disturbance value is zero — and it is a
@@ -790,7 +968,10 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # off `nw` alone, so nothing about the ordering here depends on the integrator.
     SII = NetworkDynamics.SII
     δ_idx     = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :δ)) for i in 1:nb]
-    ω_idx     = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :ω)) for i in 1:nb]
+    # For a grid-forming vertex this is `P_filt`, the state its speed is READ from
+    # (`_speed`); `droop` below says which reading applies.
+    ω_idx     = [SII.variable_index(nw, NetworkDynamics.VIndex(i, is_gfm(i) ? :P_filt : :ω))
+                 for i in 1:nb]
     ΔPm_idx   = [SII.variable_index(nw, NetworkDynamics.VIndex(i, :ΔPm)) for i in 1:nb]
     Pm_pidx   = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :Pm)) for i in 1:nb]
     K_pidx    = [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, :K)) for e in 1:ne]
@@ -911,7 +1092,8 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                       invR_pidx, hr_pidx, rate_pidx,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
-                      EngineEvent[], 0, net.f0, ladders, relays, ramps)
+                      EngineEvent[], 0, net.f0, ladders, relays, ramps,
+                      Float64[is_gfm(i) ? ma.K_p[i] : 0.0 for i in 1:nb])
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -949,7 +1131,17 @@ init!(::Type{SwingEngine}, net::NetworkModel; kwargs...) = SwingEngine(net; kwar
     return acc / eng.Σw
 end
 
-@inline _ω_coi(eng::SwingEngine, u) = _coi(eng, u, eng.ω_idx)
+# The aggregate SPEED reads each vertex through `_speed` (M7 step 3), so a
+# grid-forming inverter enters at its droop frequency with its virtual-inertia
+# weight. With every `droop` zero this is the pre-M7 sum term for term.
+@inline function _ω_coi(eng::SwingEngine, u, p = eng.integrator.p)
+    eng.Σw > 0 || return NaN
+    acc = 0.0
+    @inbounds for i in eachindex(eng.w)
+        acc += eng.w[i] * _speed(eng, u, p, i)
+    end
+    return acc / eng.Σw
+end
 
 # The aggregate ANGLE — a plain linear mean, deliberately not a circular one.
 # `δ` here is the *unwrapped* rotor angle NetworkDynamics integrates, which after a
@@ -986,7 +1178,9 @@ scalars are the cheap read for a live indicator.
 function current_state(eng::SwingEngine)
     u = eng.integrator.u
     ω_coi = _ω_coi(eng, u)
-    return (t = eng.integrator.t, δ = u[eng.δ_idx], ω = u[eng.ω_idx],
+    p = eng.integrator.p
+    return (t = eng.integrator.t, δ = u[eng.δ_idx],
+            ω = Float64[_speed(eng, u, p, i) for i in eachindex(eng.ω_idx)],
             ΔPm = u[eng.ΔPm_idx],
             δ_coi = _δ_coi(eng, u), ω_coi = ω_coi, f_coi = eng.f0 * (1 + ω_coi))
 end
@@ -1016,9 +1210,10 @@ end
 # from the wrong side of a trip.
 function _record_at!(eng::SwingEngine, t::Real, u::AbstractVector{<:Real})
     n = length(eng.ids)
+    p = eng.integrator.p
     @inbounds for i in 1:n
         eng.sample[i]     = u[eng.δ_idx[i]]
-        eng.sample[n + i] = u[eng.ω_idx[i]]
+        eng.sample[n + i] = _speed(eng, u, p, i)
     end
     f_coi = eng.f0 * (1 + _ω_coi(eng, u))
     eng.sample[2n + 1] = _δ_coi(eng, u)

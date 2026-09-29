@@ -368,6 +368,20 @@ end
     this line does not deliver it either. It is named here as owed and
     unplanned, not as implied by the voltage work (`m5-context.md` D12).
 
+    **Amended in M7 step 3 (2026-09-29), after measuring it.** The bullet above is
+    now **scheduled** (M7, `docs/plans/m7-*.md`), and one sentence in it is true
+    of only one kind of inverter. "It has no swing equation, so it is not a machine
+    with different numbers" holds for a **grid-following** inverter, which
+    injects a current phased by a PLL and has no frequency of its own. It is
+    **false for a droop grid-forming inverter** with a power-measurement filter:
+    that inverter is algebraically a swing machine with `2H = τ_p/K_p` and
+    `D = 1/K_p` while its voltage is held. Measured on PowerDynamics' own
+    components (5.4e-11 rad) and then on ours, where it is built from its own
+    droop states and agrees with a hand-converted machine to within solver error
+    that falls with the tolerance (6.5e-11 → 5.3e-14 rad). The one place the two
+    part is a setpoint step, where the inverter's frequency jumps and a rotor's
+    cannot (`m7-context.md` Hurdle 11).
+
 ### 7.7 UI (separate `ui/` package, `using GLMakie`)
 
 - Live line plot of `f(t)` (Hz) using an `Observable`; horizontal reference at `f0`.
@@ -465,6 +479,8 @@ end
    D7's criterion 4, because `PowerModels` does not resolve against our stack.
 6. Wider protection (M3 builds the first two schemes: per-area load shedding and
    out-of-step tripping), then **markets/OPF** (`PowerSimulations.jl`, `JuMP`).
-7. Renewables / low-inertia studies (the M1 lesson, scaled up).
+7. Renewables / low-inertia studies (the M1 lesson, scaled up). **Taken as M7**
+   (2026-09-29), together with §7.6's inverter lesson — and chosen against the
+   hurdle list rather than this numbering: `docs/plans/m7-context.md` D0.
 8. National scale: geographic map (`GeoMakie`/`Tyler.jl` or web `maplibre`+`deck.gl`),
    batched/GPU contingency & time-series.

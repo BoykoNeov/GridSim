@@ -660,7 +660,13 @@ end
     # handle to something with no writer. 24n + 2 → 28n + 2. `eng.ramps` is a
     # vector too, but it holds one entry per *armed* ramp and these rings arm
     # none, so it contributes zero here and cannot scale with n at all.
-    @test counts == [114, 282, 1122]               # exactly 28n + 2
+    #
+    # And again at M7 step 3, by exactly n: ONE new per-vertex vector, `droop`,
+    # which says how each vertex's speed is read (the state itself for a machine,
+    # the droop law for a grid-forming inverter). No parameter and no index vector
+    # moved — the inverter vertex reuses the machine's flat-index vectors. 28n + 2
+    # → 29n + 2.
+    @test counts == [118, 292, 1162]               # exactly 29n + 2
 
     # Linear, asserted as such: equal slope over both intervals. A dense n×n
     # anywhere would make the second slope 30× the first.
@@ -671,7 +677,8 @@ end
     # the ramp — which is the honest reading: a linear model with a bigger
     # constant is still linear, and the slope assertion above is what actually
     # rules out the n² structure. It is also worth saying that this control
-    # expires: at n = 40 the gap to 1600 is 478 elements, i.e. about twelve more
+    # expires: at n = 40 the gap to 1600 is 438 elements (478 before M7 step 3's
+    # `droop`), i.e. about eleven more
     # per-machine terms — six more parameters each carrying its own index vector
     # — would put the count past 40² while the model stayed perfectly linear. So
     # the slope is the claim and this line is a sanity check with a known shelf
