@@ -49,6 +49,12 @@ is an exact statement about this approximation, not a simplification of it.
 can be constructed.
 """
 function bus_injections(net::NetworkModel)
+    # M7 step 1. HERE, not only in `dc_powerflow`: this is exported on its own, and
+    # it sums machines and loads only, so on a model with an inverter it returned a
+    # vector that no longer summed to zero — with no error (found by walking every
+    # exported `NetworkModel` method, not by the grep that built the first list).
+    _assert_no_inverters(net, "bus_injections"; unbuilt =
+        "(M7 step 4 teaches the power flow inverters.)")
     P = zeros(Float64, length(net.buses))
     ma = machine_arrays(net)
     for k in eachindex(ma.bus)
@@ -156,7 +162,8 @@ the same thing (their `P`), and only the slack is distinguished — by having it
 angle pinned to zero. `bus_roles` starts mattering in step 3.
 """
 function dc_powerflow(net::NetworkModel)
-    # M7 step 1 — `bus_injections` sums machines and loads only.
+    # M7 step 1 — kept although `bus_injections` below now refuses too: this
+    # message names the function the caller actually called.
     _assert_no_inverters(net, "dc_powerflow"; unbuilt =
         "(M7 step 4 teaches the power flow inverters.)")
     n = length(net.buses)

@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0 and 1 done (2026-09-29)** — 3714 core / 1143 reference / 449 UI. Entered at `372fd35` (M6 closed) with
+Status: **Steps 0 and 1 done (2026-09-29)** — 3730 core / 1143 reference / 449 UI (3714 at the first step-1 commit; +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -78,6 +78,20 @@ runs.
         `branch_topology`, `load_arrays`, `machine_at`/`machines_at` (views of the
         machines only; every engine that reads them refuses first), and
         `scripts/iberia_two_area.jl` (builds its own inverter-free model).
+      - **Found by review after the first step-1 commit:** `bus_injections`, which
+        is exported on its own, sums machines and loads only and returned
+        `[0.5, −1.0]` on the two-bus inverter model — a vector that no longer sums
+        to zero, and no error. The grep for `net.machines` that built the list did
+        not reach it (it reads through `machine_arrays`). Now refuses itself; and
+        the list is now **walked, not grepped**: a test calls every exported
+        function with a one-argument `NetworkModel` method on an inverter model and
+        requires a refusal naming the inverter, or membership of a named list of
+        machine/load/branch views (with a count so the walk cannot pass by matching
+        nothing). Mutation: removing `bus_injections`' refusal turns it red (3
+        failures). First draft of the walk used `hasmethod`, which matched three
+        TYPES through Julia's generic `convert` fallback (`Layout`, `StepLoad`,
+        `TripGenerator`) — the walk now requires the signature to name
+        `NetworkModel`.
       - **Found while writing the tests:** in `SwingEngine` and `coi_model` the
         one-machine-per-bus guard ran BEFORE the inverter check, so the refusal
         named the symptom (a bus with nothing on it) instead of the inverter. Both

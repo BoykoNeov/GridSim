@@ -143,12 +143,48 @@ end
             @test refuses(() -> coi_model(net))
             @test refuses(() -> ac_powerflow(net))
             @test refuses(() -> dc_powerflow(net))
+            @test refuses(() -> bus_injections(net))   # exported on its own
             @test refuses(() -> economic_dispatch(net))
         end
         # The swing tier's message says the grid-following refusal is a boundary,
         # not unbuilt work (m7-context.md D3).
         msg = try; SwingEngine(_m7_pair()); ""; catch e; e.msg; end
         @test occursin("tier boundary", msg)
+    end
+
+    @testset "the exported surface, walked rather than grepped" begin
+        # The first consumer list was built by grepping for `net.machines`; it
+        # missed `bus_injections`, which returned a non-balancing vector without an
+        # error. So the surface is walked: every EXPORTED function with a
+        # one-argument `NetworkModel` method is called on an inverter model and
+        # must either refuse naming the inverter or be on the list of views that
+        # are about machines, loads or branches only by definition. A new export
+        # that silently drops inverters fails here by not being on either list.
+        views = Set([:branch_topology, :load_arrays, :machine_arrays, :cost_arrays,
+                     :bus_roles, :branch_arrays])
+        net = _m7_pair()
+        walked = 0
+        for n in names(GridSim)
+            f = getfield(GridSim, n)
+            (f isa Function || f isa Type) || continue
+            # A method that NAMES `NetworkModel` in its signature — not `hasmethod`,
+            # which also matches every type's generic `convert` fallback
+            # (`TripGenerator(net)` "has a method" and throws a MethodError).
+            any(m -> (s = Base.unwrap_unionall(m.sig);
+                      length(s.parameters) == 2 && s.parameters[2] === NetworkModel),
+                methods(f)) || continue
+            r = try; f(net); :returned; catch e
+                e isa ArgumentError && occursin("I2", e.msg) ? :refused : :threw
+            end
+            walked += 1
+            @test r === :refused || n in views
+        end
+        # Non-vacuity: a walk that matched nothing would pass everything. Eleven
+        # exported functions take a model as their only argument today.
+        @test walked >= 11
+        # `bus_roles` is on the view list because it DOES count inverters, not
+        # because it ignores them.
+        @test bus_roles(net) == [:slack, :load]
     end
 
     @testset "a rebuild carries the inverters through" begin

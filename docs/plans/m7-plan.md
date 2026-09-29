@@ -95,7 +95,9 @@ counted is accepted, and one with it dropped is rejected).
 `coi_model` compiles inverters into the aggregate: a grid-forming inverter
 contributes virtual inertia `τ_p/(2K_p)` and damping `1/K_p` (converted to the
 system base once), a grid-following one contributes zero inertia and zero
-response. That is D4's "the equivalence is the compiled view here".
+response. **The inverter's damping rides on its own unit and leaves with it when
+it trips** (D9) — `GeneratingUnit` gains a per-unit damping field defaulting to
+zero, so no existing number moves. That is D4's "the equivalence is the compiled view here".
 
 Checks (closed forms, the M1 pair): `RoCoF₀ = −f0·ΔP/(2·(H_sync + H_virt))` and
 `Δω_ss = ΔP/(D + 1/R_eq + Σ 1/K_p)` on a model where both kinds are present, with
@@ -138,7 +140,9 @@ The power flow learns the same inverter here: `ac_powerflow` and `dc_powerflow`
 treat a grid-forming bus as voltage-controlled (`P0`, `V_set`), and the check is
 exact — the solved state is **bit-identical** to the same model with a `Machine`
 of the same `P0` and `V_set` in its place, since the power flow reads nothing
-else of either.
+else of either. **The rating is where the two differ** (D10): the solved reactive
+output at a grid-forming bus is either checked against `√(S_rated² − P0²)` or
+named as unchecked — decided here, with the measurement.
 
 Checks: (i) the equivalence again, at `K_q = 0`, against a classical detailed
 machine with `X′d = X_c` — round-off; (ii) **PowerDynamics**, at matched

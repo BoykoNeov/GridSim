@@ -313,3 +313,45 @@ claim to reproduce an Iberian mechanism that depends on them.
   inertia drawn from it).
 - **No network OPF.** Still owed from M6 (`m6-context.md` D7 criterion 4).
 - **No AGC.** Out of scope since M3.
+
+---
+
+## D9 — A grid-forming inverter's damping leaves with it in the aggregate (taken before step 2)
+
+Raised by review after step 1. The aggregate model (`SystemModel`) carries damping
+as ONE system-wide constant `D`, so a tripped unit's damping stays behind — M2
+recorded that for machines, where it was a small error (a machine's `D` is ~2 on
+its own rating). A grid-forming inverter's equivalent damping is `1/K_p` = **20** on
+its own rating at the defaults, ten times larger. Folded into the system constant,
+a grid-forming trip in the aggregate would keep most of the departed inverter's
+response, and step 7's "largest-unit trip" makes that case likely rather than
+exotic: at high inverter share the largest unit may be an inverter.
+
+Two options were on the table — refuse `TripGenerator` on a grid-forming unit in
+the aggregate, or make its damping leave with it. **Taken: it leaves.**
+`GeneratingUnit` gains a per-unit damping field, **default `0.0`**, and
+`aggregates` adds the online units' share to the system constant. Every existing
+unit carries zero, so every M1/M2 number is the number it was (`x + 0.0`). A
+grid-forming inverter's `1/K_p` goes on its unit; a machine's `D` stays where M2
+put it.
+
+That leaves a **stated asymmetry**: in the aggregate, a tripped machine's damping
+still stays behind and a tripped grid-forming inverter's does not. Moving machines
+onto the per-unit field would fix the old error and move M2's recorded
+cross-fidelity gap, which is a finding with tests pinned to it — so it is named
+here as available and not taken in M7. The settling closed form
+`Δω_ss = ΔP/(D_sys + Σ_online D_unit + 1/R_eq)` is asserted only where it is exact:
+on trips of grid-forming inverters and grid-following ones, and on machine trips
+only with the old system-wide reading of `D`.
+
+## D10 — An inverter's reactive output against its rating is named in step 4, not assumed
+
+Also from review. Step 4's check "the power flow of a grid-forming bus is
+bit-identical to the same model with a `Machine` in its place" is exact only
+because the power flow reads `P0` and `V_set` from both — and the rating is where
+the two really differ: a machine has no reactive cap unless `Q_min`/`Q_max` say
+so, an inverter's reactive output is bounded near `√(S_rated² − P0²)`. The
+constructor checks only the *dispatched* `Q0`. So step 4 either checks the
+**solved** reactive output at a grid-forming bus against the rating (refusing, or
+switching to a limit as M6 D12 does for machines), or names it as unchecked in the
+docstring and the ledger. Which one is decided in step 4, with the measurement.
