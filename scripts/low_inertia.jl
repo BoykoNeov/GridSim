@@ -185,16 +185,32 @@ function _reason(err)
 end
 
 """
-    study_cell(topology, event, kind, n; loads, τ_p, T) -> NamedTuple
+    study_cell(topology, event, kind, n; loads, τ_p, T, keep = false) -> NamedTuple
 
 Displace the first `n` units of `displacement_order(event)` by `kind`, trip `event` at
 `T_TRIP`, run to `T`. `status` is `:ok` or `:refused` (with `reason`); a refused cell
 carries `NaN` in every number rather than a value from a run that did not happen.
+
+`keep = true` (M7 step 8, for the window that draws this study) adds one field,
+`series` — the run's `state_series`, or `nothing` when there was no run — and changes
+nothing else: the numbers are computed by the same lines from the same samples, so the
+window's read-out and this table are one computation, not two.
 """
 function study_cell(topology::Symbol, event::Symbol, kind::Symbol, n::Integer;
                     loads::Symbol = :default, τ_p::Real = 0.1, T::Real = T_END,
                     reltol::Real = RELTOL, abstol::Real = ABSTOL,
-                    match = matched_dispatch(topology; loads, slack = _slack(event)))
+                    match = matched_dispatch(topology; loads, slack = _slack(event)),
+                    keep::Bool = false)
+    r = _study_cell(topology, event, kind, n; loads, τ_p, T, reltol, abstol, match)
+    keep || return r.row
+    return merge(r.row, (; series = r.eng === nothing ? nothing : state_series(r.eng)))
+end
+
+# The cell itself, returning the engine beside the row so `keep` can read the samples
+# the row was computed from. A cell refused at construction or initialisation has no
+# engine; one refused during the run keeps its engine, and `keep` draws what it recorded.
+function _study_cell(topology::Symbol, event::Symbol, kind::Symbol, n::Integer;
+                     loads, τ_p, T, reltol, abstol, match)
     order = displacement_order(event)
     kinds = Dict(id => kind for id in order[1:n])
     share = sum((u[5] for u in UNITS if u[1] in keys(kinds)); init = 0.0) / GEN_MW
@@ -206,12 +222,12 @@ function study_cell(topology::Symbol, event::Symbol, kind::Symbol, n::Integer;
     net = try
         study_network(topology; kinds, match, loads, τ_p, slack = _slack(event))
     catch err
-        return merge(nan, (; reason = _reason(err)))
+        return (; row = merge(nan, (; reason = _reason(err))), eng = nothing)
     end
     eng = try
         init!(DetailedEngine, net; reltol, abstol, meters = [PLLMeter(b.id) for b in net.buses])
     catch err
-        return merge(nan, (; reason = _reason(err)))
+        return (; row = merge(nan, (; reason = _reason(err))), eng = nothing)
     end
     V_pre = copy(current_state(eng).V)
     try
@@ -228,9 +244,10 @@ function study_cell(topology::Symbol, event::Symbol, kind::Symbol, n::Integer;
         acct = (; relief = load⁻ - load⁺, ΔP_gfl = gfl⁺ - gfl⁻,
                 imbalance = rocof_inst * 2 * H_post / F0)
         solve!(eng, (T_TRIP, Float64(T)))
-        return merge(nan, _read(eng, net, event, P_lost, H_post, rocof_inst), acct, (; V_pre))
+        return (; row = merge(nan, _read(eng, net, event, P_lost, H_post, rocof_inst), acct,
+                              (; V_pre)), eng)
     catch err
-        return merge(nan, (; reason = _reason(err), V_pre))
+        return (; row = merge(nan, (; reason = _reason(err), V_pre)), eng)
     end
 end
 

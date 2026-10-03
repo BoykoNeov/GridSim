@@ -134,6 +134,7 @@ include("playback_window.jl")
 include("voltage_window.jl")
 include("editor.jl")
 include("editor_window.jl")
+include("low_inertia_window.jl")
 
 export launch, smoke_render, wait_for_close
 # M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
@@ -159,6 +160,10 @@ export editor, editor_render, ScenarioEditor,
        set_slack!, effective_slack,
        # M7 step 8 — an inverter tool, and the one-rebuild edit the panel's apply uses.
        add_inverter!, set_fields!
+# M7 step 8 — the low-inertia window: step 7's study, drawn and re-run per control. A
+# verb pair of its own, for M4's reason (the model type cannot say which window), and
+# it takes no model at all — its scenario IS the study's (`scripts/low_inertia.jl`).
+export low_inertia_playback, low_inertia_render
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

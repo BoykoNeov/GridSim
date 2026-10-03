@@ -792,3 +792,68 @@ text says so and its test reads it (the advisor's final-review check).
 **Not done, and said so:** the aggregate tier's NADIR is not overlaid — `coi_model`
 refuses any model carrying a `Load` (and any bus with no generating element), and widening
 it was rejected in D16; the overlay is the RoCoF₀ closed form only.
+
+## D17 — Step 8's window: the study drawn, re-run per control (taken 2026-10-03, the user's choices)
+
+**Built, not cut.** The plan marked the window cut-first; the user asked for it built.
+Two choices were put to the user before any of it was written, and both recommended
+options were taken: **one shared plot plus meter panels** — the three runs'
+centre-of-inertia frequency overlaid on top, and below it one panel per inverter kind
+with the per-bus PLL meters drawn behind that run's own centre of inertia — and **all
+three controls**: which generator trips (G1 150 MW / G4 60 MW), how many units are
+displaced (0–4, the study's order), and the layout (ring / chain).
+
+**"Live" means re-run, not animated.** The detailed tier is the only one that holds a
+grid-following inverter, and it has no real-time loop (`step!` is not implemented for
+it, m5-context.md D2). So a control change runs three simulations to completion and
+redraws; results are cached per (layout, event, kind, share).
+
+**The study is not copied.** `ui/src/low_inertia_window.jl` `include`s
+`scripts/low_inertia.jl` into a submodule, exactly as `test/runtests.jl` does — so the
+UI package now depends on a file outside `ui/src`, and the window header says so.
+`study_cell` gained `keep = true`, which adds the run's `state_series` and changes
+nothing else (the cell body moved into `_study_cell`, which returns the engine beside
+the row). Refactor gate: the whole core suite, the 119 study checks among it, green
+unchanged (4134 = 4113 + step 8's 21 helper checks). The window's read-out is the
+study's row; a test asserts `isequal` with `study_cell` at the window's tolerance.
+
+**The window's tolerance is NOT the study's — measured, then chosen.** Warm timings,
+one cell per kind, two settings (ring/G4, chain/G1, one unit displaced):
+
+| reltol | time per run | moves vs 1e-6 |
+|---|---|---|
+| 1e-6 (study) | 1.5–8 s; one cell **36 s** (chain, G1, grid-forming) | — |
+| 1e-5 | 0.6–4 s | nadir of the sinking cell by **4.5 mHz** |
+| 1e-4 | 0.2–2 s | RoCoF₀ and min \|V\| by nothing at 6 decimals; COI 500 ms ≤ 1e-6; PLL 500 ms ≤ 2.5e-4 Hz/s; nadir ≤ 1e-5 Hz except the sinking cell, **2.3 mHz** |
+
+Three runs per click at the study's tolerance is a 5–50 s wait. The window runs at
+1e-4 by default and names it in the read-out heading; `reltol = 1e-6, abstol = 1e-8`
+reproduces the study exactly. **Found, not planned:** in the one cell whose frequency
+sinks to the end of the run (the big trip, one grid-following swap) the nadir's third
+decimal is not converged at ANY tolerance tried — 1e-5 is further from 1e-6 than 1e-4
+is. The study's claim (d) quotes that value to two decimals (44.66 / 44.30 Hz), which
+holds; the table's third decimal there is noise. The 36 s cell (2.1 s at 1e-5) was not
+investigated.
+
+**The meter panels' scale is the centre of inertia's.** Autoscaled, the meters'
+spike at the trip sets the axis and flattens the trace the panel exists to compare
+against. Both panels share one y-range: the two runs' centre-of-inertia traces over the
+zoom window, padded by max(25 %, 0.1 Hz); any meter sample outside it is reported in the
+panel as a number ("meter peak … Hz at t = …, off scale") rather than drawn. A test
+asserts both halves — the limits are exactly that rule, and "a point off scale" ⇔ "a
+note" — because the second alone passes on an autoscaled axis too. **The first render
+zoomed 4 s after the trip**, and the grid-following run's 2 Hz fall set the shared scale
+so the meters' departure from the centre of inertia was a sliver at the edge; the meters
+rejoin it by ~1.5 s, so the zoom is 1.5 s.
+
+**Held from earlier milestones:** each run on its own time axis, overlaid and never
+subtracted (M4 — the three integrations' samples differ); a refused run draws what it
+recorded before the refusal and its reason in place of the rest, and nothing from the
+previous setting survives a change (the editor's solve-overlay rule); at zero share the
+two inverter runs are the same model built twice and are asserted `==` sample for
+sample, and different at one unit (the window's own anti-vacuity control).
+
+**Not in it, and said:** no time cursor (the read-out is the study's summary row, not a
+per-sample read); no aggregate-tier overlay (D16); no current limit on the grid-forming
+inverters (D8) — the caption says that `GFM S/S_rated` above 1 means the model ran them
+past their rating.

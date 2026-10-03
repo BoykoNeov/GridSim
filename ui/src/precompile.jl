@@ -69,6 +69,12 @@ using PrecompileTools
                                                              500.0, ring.machines[3].P0)])
                 editor_render(; path = tmp, net = inv_net, select = (:inverter, :I1))
 
+                # The low-inertia window (M7 step 8): matched dispatch, three detailed
+                # runs with inverters and meters, the three panels. A 1 s horizon past the
+                # trip — the workload compiles the code paths, and the first open of this
+                # window measured 57 s before it was here.
+                low_inertia_render(; path = tmp, T = 2.0)
+
                 rm(tmp; force = true)
             catch err
                 @warn "GridSimUI precompile workload skipped" exception = (err, catch_backtrace())

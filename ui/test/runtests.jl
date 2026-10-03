@@ -1090,4 +1090,7 @@ end
     # --- the scenario editor (its own file; see the header there) --------------
     include(joinpath(@__DIR__, "editor_tests.jl"))
 
+    # --- the low-inertia window (M7 step 8): step 7's study, drawn ---------------
+    include(joinpath(@__DIR__, "low_inertia_tests.jl"))
+
 end

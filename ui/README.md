@@ -431,6 +431,39 @@ a grid-following one at the load bus, solved), and:
 against a schedule of 70.0, because a constant-impedance load draws less at a
 lower voltage).
 
+## The low-inertia window — what replacing machines with inverters does to a trip
+
+```
+julia --project=ui -e "using GridSimUI; wait_for_close(low_inertia_playback())"
+```
+
+The M7 study (`scripts/low_inertia.jl`) drawn. One generator trips, and three runs start
+from the **same** operating point: every unit a machine; `n` units replaced by
+**grid-following** inverters (they follow the grid's voltage and inject a set current);
+the same `n` replaced by **grid-forming** inverters (they hold a voltage and droop their
+frequency with load). The top plot overlays the three runs' average frequency (the
+inertia-weighted centre of inertia). Below, one plot per inverter kind shows what a
+frequency **meter** at each bus reads (thin lines — what a protection relay sees) behind
+that run's average, for the first 1.5 s after the trip: at the trip the bus voltage
+angles jump, and the meters read that jump as a frequency swing no rotor made. A meter
+reading off the plot's scale is given as a number in the plot instead of setting the
+scale.
+
+Controls: which generator trips (**G1**, 150 MW, or **G4**, 60 MW), how many units are
+replaced (**0–4**, smallest of the others first, the tripped one last), and the network
+**layout** (a meshed ring or a long chain). Each change re-runs the three simulations —
+the inverter tier has no real-time loop — and caches them. The read-out is the study's
+own row for each run. A run the model refuses (the voltage falls below 0.9 pu at the
+trip, common for grid-following inverters on the large trip) shows its reason in place
+of its curve.
+
+It runs at solver tolerance `1e-4` by default (0.2–2 s a run) rather than the study's
+`1e-6` (1.5–36 s a run); the read-out heading says which. The difference was measured:
+nothing visible, and a few millihertz in the one case whose frequency is still sinking at
+30 s. `low_inertia_playback(; reltol = 1e-6, abstol = 1e-8)` gives the study's numbers
+exactly; `low_inertia_render(; path)` draws the window to a PNG. Design notes:
+`docs/plans/m7-context.md` D17. Figure: `../docs/images/fig-m7-low-inertia.png`.
+
 ## Tests
 
 ```

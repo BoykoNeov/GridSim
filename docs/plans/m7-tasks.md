@@ -5,7 +5,9 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0–6 done (2026-09-29)** — 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
+Status: **Steps 0–8 done (2026-10-03)** — 4134 core / 565 UI at step 8 (reference not
+re-run in step 8: no code it reads moved beyond one added helper; step 9 re-measures all
+three on re-resolved manifests). Step 7 closed at 4113 / 1251 / 449. Step 6 closed at 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -464,7 +466,42 @@ runs.
       `_inverter_with` drops `τ_pll`; S8-6 open does not carry inverters; S8-7 apply
       field by field; S8-8 mode switch without a panel rebuild; S8-9 solve's schedule
       ignores inverters; S8-10 no inverter trip button.
-- [ ] Window, or its cut recorded.
+- [x] **Window — BUILT, not cut** (the user's call; layout and controls the user's too,
+      `m7-context.md` D17): `low_inertia_playback` / `low_inertia_render`
+      (`ui/src/low_inertia_window.jl`). Top: the three runs' centre-of-inertia frequency;
+      below, per inverter kind, the per-bus PLL meters behind that run's own centre of
+      inertia; controls for the tripped unit, the share (0–4) and the layout; the
+      read-out is the study's row. Re-run per control (the detailed tier has no
+      real-time loop), cached.
+- [x] **No second copy of the study**: the script is `include`d into a UI submodule;
+      `study_cell(…; keep = true)` adds the samples and changes nothing else. Refactor
+      gate: core **4134** green with the change in (the 119 study checks unchanged).
+- [x] **Tolerance measured, then chosen** (D17): the study's 1e-6 costs 1.5–36 s a run;
+      the window defaults to 1e-4 (0.2–2 s) and names it; `reltol = 1e-6` is the study
+      exactly. Found: the sinking cell's nadir third decimal is unconverged at every
+      tolerance tried.
+- [x] Window checks: read-out `isequal` the study's row; at zero share the two inverter
+      runs `==` sample for sample, different at one; a refusal at the trip AND one
+      before the run (no samples at all) both leave nothing of the previous setting;
+      the meter scale IS the centre-of-inertia rule; an off-scale meter is reported, and
+      its number is the most extreme reading.
+- [x] **Sabotages, eight, all red in the end — two were GREEN first** (`mutate8w.py`,
+      `mut8w*.log`): W8-2 (previous curves not cleared) passed because the refusal tested
+      was one at the trip, whose pre-trip samples overwrite the old curve anyway; W8-5
+      (off-scale note suppressed) passed because no meter left the scale in the tested
+      setting. A sweep of every setting found the two paths (all four units
+      grid-following; chain/G4 at three or four) — and **a real bug**: the off-scale note
+      printed "meter peak 0.000 Hz" (the extreme-reading search was seeded with 0.0, so
+      nothing near 50 Hz could beat it). W8-8 reintroduces it and is red. The others:
+      W8-1 tolerance ignored, W8-3 share off by one, W8-4 autoscaled meters, W8-6
+      refusal reason dropped, W8-7 columns swapped.
+- [x] **Rendered and looked at**, three times: the 4 s zoom flattened the meters'
+      departure (now 1.5 s); a refused run's reason now names it in the status line; the
+      off-scale note ran off the panel AND attributed the reading to the phase jump —
+      which D16 withdrew for the chain — so it now gives the number only.
+      `docs/images/fig-m7-low-inertia.png` (chain, G4, one unit): the grid-following
+      meters dip to ~49.3 Hz at the trip while the centre of inertia barely moves.
+- [x] Precompile workload renders the window (its first open measured 57 s before).
 
 ## Step 9 — close
 
