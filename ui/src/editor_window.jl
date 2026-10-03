@@ -384,8 +384,17 @@ function _build_editor_window_impl(ed::ScenarioEditor;
                 v === nothing && throw(ArgumentError("`$f`: \"$s\" is not a number."))
                 v
             end
-            set_fields!(ed, kind, id, NamedTuple{fs}(vals))
+            # The id is checked BEFORE the fields are written, so a taken or empty id
+            # refuses the whole apply rather than landing after the numbers did — which
+            # is what "the whole panel or nothing" means, and what the first one-rebuild
+            # version still got wrong (review, M7 step 8). After this check the rename
+            # cannot fail.
             new_id = Symbol(strip(pboxes[:id].displayed_string[]))
+            if new_id !== id
+                isempty(String(new_id)) && throw(ArgumentError("editor: an id cannot be empty."))
+                _assert_fresh(ed, new_id)
+            end
+            set_fields!(ed, kind, id, NamedTuple{fs}(vals))
             new_id === id || rename!(ed, kind, id, new_id)
             status[] = "applied to $kind $(ed.selection[2])"
         catch err

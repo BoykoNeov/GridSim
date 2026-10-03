@@ -184,9 +184,10 @@ function _build_low_inertia_window_impl(; topology::Symbol = :ring, event::Symbo
     # How to read it — the three things the picture cannot say by itself (D17).
     Label(gc[11, 1], "All three runs start from the same operating point: a displaced " *
           "machine becomes an inverter at its bus with the same output. Thin lines are " *
-          "what a PLL meter at each bus reads — what a relay sees. At the trip the bus " *
-          "voltage angles jump, and a meter reads that as a frequency swing no rotor " *
-          "made. The grid-forming inverters have no current limit: GFM S/S_rated above " *
+          "what a PLL meter at each bus reads — what a relay sees. A meter reads its " *
+          "bus voltage's phase, so it shows both the phase step at the trip (a swing " *
+          "no rotor made) and the swings of the machines near it; this study does not " *
+          "separate the two. The grid-forming inverters have no current limit: GFM S/S_rated above " *
           "1 means the model ran them past their rating.";
           halign = :left, tellwidth = false, fontsize = 11, color = C_MUTED,
           word_wrap = true, justification = :left)

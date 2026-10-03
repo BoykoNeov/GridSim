@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0–8 done (2026-10-03)** — 4134 core / 565 UI at step 8 (reference not
+Status: **Steps 0–8 done (2026-10-03)** — 4134 core / 568 UI at step 8 (reference not
 re-run in step 8: no code it reads moved beyond one added helper; step 9 re-measures all
 three on re-resolved manifests). Step 7 closed at 4113 / 1251 / 449. Step 6 closed at 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
@@ -460,12 +460,15 @@ runs.
       grid-forming inverter's trace with NO trip button and counted it as a machine —
       it now has one, under **trip a source**, and the status counts inverters.
 - [x] Precompile workload renders the editor with an inverter selected.
-- [x] **Sabotages, ten, each red** (`W:\temp\claude\m7\step8\mutate8.py`, logs `mut8*.log`):
+- [x] **Sabotages, eleven, each red** (`W:\temp\claude\m7\step8\mutate8.py`, logs `mut8*.log`):
       S8-1 balance ignores inverters; S8-2 derived slack in insertion order; S8-3
       deleting a bus keeps its inverters; S8-4 renaming a bus strands them; S8-5
       `_inverter_with` drops `τ_pll`; S8-6 open does not carry inverters; S8-7 apply
       field by field; S8-8 mode switch without a panel rebuild; S8-9 solve's schedule
-      ignores inverters; S8-10 no inverter trip button.
+      ignores inverters; S8-10 no inverter trip button; S8-11 (after the advisor's
+      final review) a taken id checked only AFTER the fields are written — apply wrote the
+      numbers, failed the rename, and said "not applied" over a changed record. The id is
+      now validated before anything is written.
 - [x] **Window — BUILT, not cut** (the user's call; layout and controls the user's too,
       `m7-context.md` D17): `low_inertia_playback` / `low_inertia_render`
       (`ui/src/low_inertia_window.jl`). Top: the three runs' centre-of-inertia frequency;

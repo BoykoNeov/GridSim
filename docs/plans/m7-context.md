@@ -856,4 +856,10 @@ sample, and different at one unit (the window's own anti-vacuity control).
 **Not in it, and said:** no time cursor (the read-out is the study's summary row, not a
 per-sample read); no aggregate-tier overlay (D16); no current limit on the grid-forming
 inverters (D8) — the caption says that `GFM S/S_rated` above 1 means the model ran them
-past their rating.
+past their rating. **And the window blocks while it runs**: the three runs happen inside the
+click handler, so the live window does not redraw for up to ~6 s per click at 1e-4
+(far longer at the study's 1e-6); offscreen tests cannot show it, so `ui/README.md`
+says it. The caption and README first explained the meters' departure as "a swing no
+rotor made" outright — the cause D16 withdrew for the chain, moved from the off-scale
+note into the caption rather than removed (the advisor's final review); both now say a
+meter shows the phase step AND nearby machines' swings, unseparated here.

@@ -382,6 +382,16 @@ end
     boxes[:H].displayed_string[] = "six"
     click!(win.widgets.panel_buttons[:apply])
     @test occursin("not a number", win.status[])
+    # A taken id refuses the WHOLE apply: the number in the same panel does not land
+    # either. (The first one-rebuild apply wrote the numbers, then failed the rename,
+    # and said "not applied" over a changed record — M7 step 8's review.)
+    boxes[:H].displayed_string[] = "7"
+    boxes[:id].displayed_string[] = "G2"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("not applied", win.status[]) && occursin("already in use", win.status[])
+    @test element(win.ed, :machine, :Gen1).H == 6.5
+    @test win.ed.selection == (:machine, :Gen1)
+    boxes[:id].displayed_string[] = "Gen1"; boxes[:H].displayed_string[] = "6.5"
     # Nothing selected: the panel says so and has no boxes.
     click!(win.widgets.panel_buttons[:delete])
     @test win.ed.selection === nothing

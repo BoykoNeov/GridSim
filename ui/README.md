@@ -444,10 +444,17 @@ the same `n` replaced by **grid-forming** inverters (they hold a voltage and dro
 frequency with load). The top plot overlays the three runs' average frequency (the
 inertia-weighted centre of inertia). Below, one plot per inverter kind shows what a
 frequency **meter** at each bus reads (thin lines — what a protection relay sees) behind
-that run's average, for the first 1.5 s after the trip: at the trip the bus voltage
-angles jump, and the meters read that jump as a frequency swing no rotor made. A meter
-reading off the plot's scale is given as a number in the plot instead of setting the
-scale.
+that run's average, for the first 1.5 s after the trip. A meter reads its bus voltage's
+phase, so what it shows mixes two things: the step in that phase at the trip (a swing no
+rotor made — measured on its own in M7 step 6) and the swings of the machines near it.
+This study does not separate the two, so the window draws the difference and does not
+label its cause. A meter reading off the plot's scale is given as a number in the plot
+instead of setting the scale.
+
+**One limitation you will notice:** a control change runs all three simulations before
+the window can redraw, so the window does not respond for up to about 6 s per click at
+the default tolerance (longer for the large trip on the chain, and much longer at the
+study's `1e-6`). Settings already visited come back instantly from the cache.
 
 Controls: which generator trips (**G1**, 150 MW, or **G4**, 60 MW), how many units are
 replaced (**0–4**, smallest of the others first, the tripped one last), and the network

@@ -26,6 +26,13 @@ window's own caption says its pair can never show voltage, because neither of it
 tiers carries one as an unknown. The inverter half of that promise is *not* kept
 and does not become kept by proximity (`m5-context.md` D12).
 
+A **sixth** (`low_inertia_window.jl`, M7 step 8) draws one study rather than one model:
+the same generator trip with no inverters, with units displaced by grid-following
+inverters and with the same units displaced by grid-forming ones, re-run whenever a
+control changes (the inverter tier has no real-time loop). Its scenario is the study
+script's own (`scripts/low_inertia.jl`, included here), so it takes no model. (The
+fifth is the scenario editor, `editor_window.jl`, which has no engine at all.)
+
 The first two are siblings rather than one window with a runtime switch, because
 the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
