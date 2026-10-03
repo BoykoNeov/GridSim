@@ -113,8 +113,14 @@ function _build_network_window_impl(net::NetworkModel;
     n = length(ids)
     s0 = current_state(engine)
     state = Observable(s0)
-    status = Observable(@sprintf("armed — %d machines, %d lines in service",
-                                 n, length(net.branches)))
+    # `n` counts every vertex, and since M7 step 3 a grid-forming inverter is one; the
+    # status line says which is which rather than calling an inverter a machine.
+    status = Observable(isempty(net.inverters) ?
+                        @sprintf("armed — %d machines, %d lines in service",
+                                 n, length(net.branches)) :
+                        @sprintf("armed — %d machines, %d inverters, %d lines in service",
+                                 length(net.machines), length(net.inverters),
+                                 length(net.branches)))
 
     f0 = net.f0
     w = Float64(window_seconds)
@@ -243,16 +249,22 @@ function _build_network_window_impl(net::NetworkModel;
     # rather than inject: events are applied at a step boundary by the loop, so a
     # click can never land mid-integration.
     gm = gc[4, 1] = GridLayout()
-    section_label!(gm[1, 1], "trip a machine")
+    # M7 step 8 — a grid-forming inverter is a vertex of this engine (M7 step 3) and
+    # `TripGenerator` takes it out like a machine, its virtual inertia and its damping
+    # leaving with it; it gets a button beside the machines', labelled as what it is.
+    # (A grid-following one never reaches this window: the engine refuses it.)
+    section_label!(gm[1, 1], isempty(net.inverters) ? "trip a machine" : "trip a source")
     machine_buttons = Tuple{Symbol,Button}[]
-    for (i, m) in enumerate(net.machines)
-        b = Button(gm[i + 1, 1]; label = @sprintf("%s  —  %+.0f MW", m.id, m.P0),
-                   tellwidth = false)
+    sources = [[(m.id, @sprintf("%s  —  %+.0f MW", m.id, m.P0)) for m in net.machines];
+               [(i.id, @sprintf("%s  —  %+.0f MW  (inverter)", i.id, i.P0))
+                for i in net.inverters]]
+    for (i, (id, label)) in enumerate(sources)
+        b = Button(gm[i + 1, 1]; label = label, tellwidth = false)
         on(b.clicks) do _
-            push!(queue, TripGenerator(m.id))
-            status[] = string("queued: trip ", m.id)
+            push!(queue, TripGenerator(id))
+            status[] = string("queued: trip ", id)
         end
-        push!(machine_buttons, (m.id, b))
+        push!(machine_buttons, (id, b))
     end
 
     gl = gc[5, 1] = GridLayout()

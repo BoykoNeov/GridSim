@@ -790,6 +790,25 @@ end
 const _INVERTER_NUMERIC = (:S_rated, :P0, :Q0, :K_p, :τ_p, :K_q, :τ_q, :V_set, :X_c,
                            :K_pll_p, :K_pll_i, :τ_pll)
 
+# `inv` with the named fields changed, rebuilt THROUGH THE CONSTRUCTOR (M7 step 8, the
+# editor's need) — `_machine_with`'s twin, and for its reason: each mode leaves half the
+# fields unread, so an editor panel showing one mode's fields must not drop the other
+# mode's on the next edit or on a mode switch. Walks `fieldnames(Inverter)`, so a field
+# added later is carried without anyone remembering to; several changes are applied in
+# ONE rebuild, because the rating guard ties `S_rated`, `P0` and `Q0` together and a
+# field-at-a-time edit can be refused half-way through a change that is valid as a whole.
+const _INVERTER_POSITIONAL = (:id, :bus, :mode, :S_rated, :P0)
+
+function _inverter_with(inv::Inverter; changes...)
+    for k in keys(changes)
+        k in fieldnames(Inverter) || throw(ArgumentError(
+            "_inverter_with: Inverter has no field `$k`."))
+    end
+    g(n) = haskey(changes, n) ? changes[n] : getfield(inv, n)
+    kw = (n => g(n) for n in fieldnames(Inverter) if !(n in _INVERTER_POSITIONAL))
+    return Inverter((g(n) for n in _INVERTER_POSITIONAL)...; kw...)
+end
+
 """
     NetworkModel(S_base, f0, buses, branches, machines, loads = Load[]; slack = nothing)
 

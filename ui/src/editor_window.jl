@@ -40,11 +40,19 @@
 # hand-drawn scenario — leaves the drawing exactly as it was, with the solver's own
 # words in the status line.
 
-const EDITOR_TOOLS = (:select, :bus, :machine, :load, :branch, :delete)
+const EDITOR_TOOLS = (:select, :bus, :machine, :inverter, :load, :branch, :delete)
 
-# Bus, machine and load glyph positions from the layout. Machines sit above their
-# bus (spread sideways when a bus has several), the load below, at an offset that
-# scales with the picture so a compact layout and a country-sized one both read.
+# M7 step 8 — an inverter's glyph says its MODE, because the two modes are different
+# physics (`Inverter`'s docstring): filled for grid-forming, which sets a voltage as a
+# machine does, hollow for grid-following, which only follows one. The colour is the
+# same so the eye groups them as one kind of thing; the label spells the mode out.
+const C_INVERTER = RGBf(0.55, 0.30, 0.75)
+
+# Bus, source and load glyph positions from the layout. SOURCES — machines and
+# inverters together — sit above their bus, spread sideways as one row when a bus
+# carries several (the model allows a machine and an inverter on one bus, and two
+# separate rows would draw them on top of each other); the load sits below. The
+# offset scales with the picture so a compact layout and a country-sized one both read.
 function _glyph_offset(ed::ScenarioEditor)
     isempty(ed.layout) && return 0.08
     xs = [xy[1] for xy in values(ed.layout)]; ys = [xy[2] for xy in values(ed.layout)]
@@ -55,20 +63,28 @@ function _glyph_positions(ed::ScenarioEditor)
     off = _glyph_offset(ed)
     buses = Dict{Symbol,Point2f}(id => Point2f(xy[1], xy[2]) for (id, xy) in ed.layout)
     machines = Dict{Symbol,Point2f}()
-    per_bus = Dict{Symbol,Vector{Symbol}}()
+    inverters = Dict{Symbol,Point2f}()
+    per_bus = Dict{Symbol,Vector{Tuple{Symbol,Symbol}}}()
     for m in ed.machines
-        push!(get!(per_bus, m.bus, Symbol[]), m.id)
+        push!(get!(per_bus, m.bus, Tuple{Symbol,Symbol}[]), (:machine, m.id))
     end
-    for (bus, ids) in per_bus
-        n = length(ids)
-        for (k, id) in enumerate(ids)
+    for i in ed.inverters
+        push!(get!(per_bus, i.bus, Tuple{Symbol,Symbol}[]), (:inverter, i.id))
+    end
+    for (bus, items) in per_bus
+        n = length(items)
+        # 1.9 offsets apart, not the 0.9 the machines-only row used: the first render
+        # with a machine and an inverter on one bus wrote "G2 +0 MW" and "IF GFM +40 MW"
+        # through each other. A label is wider than a glyph, and the label is what reads.
+        for (k, (kind, id)) in enumerate(items)
             p = buses[bus]
-            machines[id] = Point2f(p[1] + (k - (n + 1) / 2) * 0.9off, p[2] + off)
+            q = Point2f(p[1] + (k - (n + 1) / 2) * 1.9off, p[2] + off)
+            kind === :machine ? (machines[id] = q) : (inverters[id] = q)
         end
     end
     loads = Dict{Symbol,Point2f}(l.id => Point2f(buses[l.bus][1], buses[l.bus][2] - off)
                                  for l in ed.loads)
-    return (; buses, machines, loads, off)
+    return (; buses, machines, inverters, loads, off)
 end
 
 # Nearest element within `radius` of `(x, y)`, small glyphs first so a machine
@@ -77,8 +93,11 @@ function _hit(ed::ScenarioEditor, x::Real, y::Real, radius::Real)
     g = _glyph_positions(ed)
     p = Point2f(x, y)
     best = nothing; bestd = Float64(radius)
-    for (kind, tbl) in ((:machine, g.machines), (:load, g.loads), (:bus, g.buses))
-        for (id, q) in tbl
+    # Machines and inverters in ONE pass: they share a row above the bus, so the
+    # nearer of the two must win, not whichever table happened to be searched first.
+    for tier in (((:machine, g.machines), (:inverter, g.inverters)),
+                 ((:load, g.loads),), ((:bus, g.buses),))
+        for (kind, tbl) in tier, (id, q) in tbl
             d = hypot(q[1] - p[1], q[2] - p[2])
             if d < bestd
                 best = (kind, id); bestd = d
@@ -130,6 +149,9 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     bus_labels = Observable(Tuple{String,Point2f}[])
     mach_pts = Observable(Point2f[])
     mach_labels = Observable(Tuple{String,Point2f}[])
+    inv_pts = Observable(Point2f[])
+    inv_fill = Observable(RGBAf[])
+    inv_labels = Observable(Tuple{String,Point2f}[])
     load_pts = Observable(Point2f[])
     load_labels = Observable(Tuple{String,Point2f}[])
     sel_pts = Observable(Point2f[])
@@ -171,10 +193,13 @@ function _build_editor_window_impl(ed::ScenarioEditor;
              strokecolor = :black, strokewidth = 1)
     scatter!(ax, load_pts; marker = :dtriangle, markersize = 20, color = C_AGGREGATE,
              strokecolor = :black, strokewidth = 1)
+    scatter!(ax, inv_pts; marker = :hexagon, markersize = 21, color = inv_fill,
+             strokecolor = C_INVERTER, strokewidth = 2)
     text!(ax, bus_labels; offset = (10, 6), align = (:left, :bottom), fontsize = 13,
           font = :bold)
     text!(ax, mach_labels; offset = (0, 13), align = (:center, :bottom), fontsize = 11)
     text!(ax, load_labels; offset = (0, -13), align = (:center, :top), fontsize = 11)
+    text!(ax, inv_labels; offset = (0, 13), align = (:center, :bottom), fontsize = 11)
     text!(ax, branch_labels; align = (:center, :bottom), offset = (0, 4), fontsize = 10,
           color = C_MUTED)
     text!(ax, slack_labels; offset = (0, -20), align = (:center, :top), fontsize = 11,
@@ -202,7 +227,8 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     gt = gc[2, 1] = GridLayout()
     tool_buttons = Dict{Symbol,Button}()
     for (i, t) in enumerate(EDITOR_TOOLS)
-        b = Button(gt[(i - 1) ÷ 3 + 1, (i - 1) % 3 + 1]; label = String(t))
+        # Four to a row: seven tools in rows of three left `delete` alone on a third.
+        b = Button(gt[(i - 1) ÷ 4 + 1, (i - 1) % 4 + 1]; label = String(t))
         on(b.clicks) do _
             tool[] = t
         end
@@ -216,6 +242,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         hint[] = t === :select ? "click to select, drag a bus to move it" :
                  t === :bus ? "click the map to place a bus" :
                  t === :machine ? "click a bus to attach a machine" :
+                 t === :inverter ? "click a bus to attach an inverter (grid-forming; switch in the panel)" :
                  t === :load ? "click a bus to attach a load" :
                  t === :branch ? "click two buses to connect them" :
                  "click an element to delete it"
@@ -244,6 +271,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         x = element(ed, kind, id)
         where = kind === :bus ? "" :
                 kind === :branch ? @sprintf("%s – %s", x.from, x.to) : "at bus $(x.bus)"
+        kind === :inverter && (where *= "  — " * replace(String(x.mode), '_' => '-'))
         push!(prows, Label(panel[1, 1:4], @sprintf("%s  %s  %s", kind, id, where);
                            halign = :left, tellwidth = false, font = :bold))
         # TWO FIELDS PER ROW, not one. A machine has twelve numbers since M6 step 5,
@@ -267,7 +295,8 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         # a rename sitting beside a reactance reads as one more parameter.
         pboxes[:id] = row!("id", String(id))
         col == 1 || (col = 1; r += 1)
-        for f in editable_fields(kind)
+        # By ELEMENT, not kind: an inverter's fields are its mode's (M7 step 8).
+        for f in editable_fields(x)
             pboxes[f] = row!(String(f), _fmt(getfield(x, f)))
         end
         col == 1 || (col = 1; r += 1)
@@ -303,6 +332,31 @@ function _build_editor_window_impl(ed::ScenarioEditor;
             push!(prows, b_slack); pbuttons[:slack] = b_slack
             r += 1
         end
+        # M7 step 8. The mode is not a number, so it is a button and not a box, and
+        # switching it is a rebuild like any other edit: the fields the new mode reads
+        # come back with whatever they held, because the rebuild walks every field.
+        if kind === :inverter
+            other = x.mode === :grid_forming ? :grid_following : :grid_forming
+            b_mode = Button(panel[r, 1:4];
+                            label = "switch to " * replace(String(other), '_' => '-'))
+            on(b_mode.clicks) do _
+                s = ed.selection
+                (s === nothing || s[1] !== :inverter) && return
+                cur = element(ed, :inverter, s[2]).mode
+                new = cur === :grid_forming ? :grid_following : :grid_forming
+                try
+                    set_field!(ed, :inverter, s[2], :mode, new)
+                    status[] = "inverter $(s[2]) is now " * replace(String(new), '_' => '-')
+                catch err
+                    err isa ArgumentError || rethrow()
+                    status[] = "not switched — " * err.msg
+                end
+                last_sel[] = :unset          # the panel's fields are the other mode's now
+                refresh![]()
+            end
+            push!(prows, b_mode); pbuttons[:mode] = b_mode
+            r += 1
+        end
         b_del = Button(panel[r, 1:4]; label = "delete")
         on(b_del.clicks) do _
             s = ed.selection
@@ -319,12 +373,18 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         sel === nothing && return
         kind, id = sel
         try
-            for f in editable_fields(kind)
+            # Every box parsed FIRST, then ONE rebuild (`set_fields!`): either the whole
+            # panel lands or none of it does. Field by field, an inverter's rating and
+            # dispatch lowered together were refused at the first box — after the boxes
+            # before it had already been written (M7 step 8).
+            fs = editable_fields(element(ed, kind, id))
+            vals = map(fs) do f
                 s = strip(pboxes[f].displayed_string[])
                 v = tryparse(Float64, s)
                 v === nothing && throw(ArgumentError("`$f`: \"$s\" is not a number."))
-                set_field!(ed, kind, id, f, v)
+                v
             end
+            set_fields!(ed, kind, id, NamedTuple{fs}(vals))
             new_id = Symbol(strip(pboxes[:id].displayed_string[]))
             new_id === id || rename!(ed, kind, id, new_id)
             status[] = "applied to $kind $(ed.selection[2])"
@@ -429,7 +489,8 @@ function _build_editor_window_impl(ed::ScenarioEditor;
             take_bases!()
             net = build_model(ed)
             last_run[] = runner(net)
-            status[] = @sprintf("running — %d machines, %d lines", length(net.machines),
+            status[] = @sprintf("running — %d machines, %d inverters, %d lines",
+                                length(net.machines), length(net.inverters),
                                 length(net.branches))
         catch err
             err isa ArgumentError || rethrow()
@@ -485,7 +546,10 @@ function _build_editor_window_impl(ed::ScenarioEditor;
                             for (v, b) in pairs(s.buses)]
 
             gen = bus_generation(s, s.slack)
-            sched = sum((m.P0 for m in ed.machines if m.bus === s.slack); init = 0.0)
+            # Machines AND inverters on the slack bus: a draft whose reference is a
+            # grid-forming inverter otherwise reads "against a schedule of +0.0 MW".
+            sched = sum((m.P0 for m in ed.machines if m.bus === s.slack); init = 0.0) +
+                    sum((i.P0 for i in ed.inverters if i.bus === s.slack); init = 0.0)
             # A lossless network sums to about -1e-16 pu, which `%.2f` prints as
             # "-0.00 MW" — a minus sign in front of a quantity that cannot be
             # negative. Anything under a milliwatt is zero at this precision, and
@@ -540,6 +604,9 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         for m in ed.machines
             push!(stubs, g.buses[m.bus], g.machines[m.id])
         end
+        for i in ed.inverters
+            push!(stubs, g.buses[i.bus], g.inverters[i.id])
+        end
         for l in ed.loads
             push!(stubs, g.buses[l.bus], g.loads[l.id])
         end
@@ -549,6 +616,12 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         mach_pts[] = [g.machines[m.id] for m in ed.machines]
         mach_labels[] = [(@sprintf("%s %+.0f MW", m.id, m.P0), g.machines[m.id])
                          for m in ed.machines]
+        inv_pts[] = [g.inverters[i.id] for i in ed.inverters]
+        inv_fill[] = [i.mode === :grid_forming ? RGBAf(C_INVERTER, 1.0) : RGBAf(1, 1, 1, 1)
+                      for i in ed.inverters]
+        inv_labels[] = [(@sprintf("%s %s %+.0f MW", i.id,
+                                  i.mode === :grid_forming ? "GFM" : "GFL", i.P0),
+                         g.inverters[i.id]) for i in ed.inverters]
         load_pts[] = [g.loads[l.id] for l in ed.loads]
         load_labels[] = [(@sprintf("%s %.0f MW", l.id, l.P0), g.loads[l.id])
                          for l in ed.loads]
@@ -557,6 +630,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
         sel_pts[] = sel === nothing ? Point2f[] :
                     sel[1] === :bus ? [g.buses[sel[2]]] :
                     sel[1] === :machine ? [g.machines[sel[2]]] :
+                    sel[1] === :inverter ? [g.inverters[sel[2]]] :
                     sel[1] === :load ? [g.loads[sel[2]]] : Point2f[]
         if sel !== nothing && sel[1] === :branch
             br = element(ed, :branch, sel[2])
@@ -608,11 +682,12 @@ function _build_editor_window_impl(ed::ScenarioEditor;
                 id = add_bus!(ed, x, y)
                 ed.selection = (:bus, id)
                 status[] = "placed bus $id"
-            elseif t === :machine || t === :load
+            elseif t === :machine || t === :load || t === :inverter
                 if hit === nothing || hit[1] !== :bus
-                    status[] = "click a bus to attach a $(t)"
+                    status[] = "click a bus to attach a$(t === :inverter ? "n" : "") $(t)"
                 else
-                    id = t === :machine ? add_machine!(ed, hit[2]) : add_load!(ed, hit[2])
+                    id = t === :machine ? add_machine!(ed, hit[2]) :
+                         t === :inverter ? add_inverter!(ed, hit[2]) : add_load!(ed, hit[2])
                     ed.selection = (t, id)
                     status[] = "attached $t $id to bus $(hit[2])"
                 end
@@ -688,7 +763,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     # The canvas's observables, so a test can ask what the picture holds rather
     # than what the state holds — the two are meant to agree, and only reading
     # both can say so.
-    plots = (; bus_pts, mach_pts, load_pts, branch_segs, stub_segs, sel_pts, sel_segs,
+    plots = (; bus_pts, mach_pts, inv_pts, inv_fill, inv_labels, load_pts, branch_segs, stub_segs, sel_pts, sel_segs,
                pend_pts, slack_pts, slack_labels, bus_labels, branch_labels,
                solved_pts, solved_V, flow_pts, flow_dirs)
     return (; fig, ax, ed, tool, pending, status, validation_text, solve_text, widgets,

@@ -223,6 +223,29 @@ end
               Set((:id, :bus, :mode, GridSim._INVERTER_NUMERIC...))
     end
 
+    @testset "_inverter_with rebuilds through the constructor and carries every field (M7 step 8)" begin
+        # Every field away from its default, so a dropped one shows as a difference.
+        inv = Inverter(:I, :A, :grid_forming, 120.0, 40.0; Q0 = 5.0, K_p = 0.03,
+                       τ_p = 0.2, K_q = 0.02, τ_q = 0.05, V_set = 1.02, X_c = 0.12,
+                       K_pll_p = 50.0, K_pll_i = 700.0, τ_pll = 0.002)
+        @test GridSim._inverter_with(inv) === inv
+        # A mode switch keeps the fields the new mode does not read: they come back
+        # unchanged when it is switched back (the editor's panel hides them).
+        gfl = GridSim._inverter_with(inv; mode = :grid_following)
+        @test gfl.mode === :grid_following
+        @test GridSim._inverter_with(gfl; mode = :grid_forming) === inv
+        for f in fieldnames(Inverter)
+            f === :mode || @test getfield(gfl, f) === getfield(inv, f)
+        end
+        # Several changes in ONE rebuild: lowering the rating and the dispatch together
+        # is valid as a whole, and a field-at-a-time edit would be refused at the rating.
+        @test_throws ArgumentError GridSim._inverter_with(inv; S_rated = 30.0)
+        both = GridSim._inverter_with(inv; S_rated = 30.0, P0 = 20.0, Q0 = 0.0)
+        @test (both.S_rated, both.P0, both.Q0, both.X_c) === (30.0, 20.0, 0.0, 0.12)
+        @test_throws ArgumentError GridSim._inverter_with(inv; nonsense = 1.0)
+        @test_throws ArgumentError GridSim._inverter_with(inv; mode = :grid_supporting)
+    end
+
     @testset "round trip, both kinds, every field" begin
         buses = [Bus(:A, 400.0), Bus(:B, 400.0), Bus(:C, 400.0)]
         br = [Branch(:AB, :A, :B, 0.1, 1.0), Branch(:BC, :B, :C, 0.15, 1.0)]

@@ -114,6 +114,10 @@ using GridSim: Bus, Branch, Machine, Load, Layout, write_scenario, read_scenario
 # field the editor does not show (a cost, a minimum) survives an edit. Private, and
 # not exported, so no GLMakie check applies.
 using GridSim: _machine_with
+# M7 step 8 — the editor holds inverters: the record type, and core's field-walking
+# rebuild for it (`_machine_with`'s twin, private like it). `Inverter` checked clear
+# against GLMakie's exports by the core's standing test.
+using GridSim: Inverter, _inverter_with
 # M6 step 5 — the editor's **solve** action. The steady state is a function of a
 # model and not an engine (`m6-tasks.md` step 2), so the editor calls it directly
 # rather than through the mode router; `bus_generation` is how the slack's pickup
@@ -152,7 +156,9 @@ export editor, editor_render, ScenarioEditor,
        # M6 step 5 — the reference bus becomes something a user says rather than
        # something a save discovers, so it needs a verb of its own and a way to ask
        # what a draft would use when nobody has said.
-       set_slack!, effective_slack
+       set_slack!, effective_slack,
+       # M7 step 8 — an inverter tool, and the one-rebuild edit the panel's apply uses.
+       add_inverter!, set_fields!
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

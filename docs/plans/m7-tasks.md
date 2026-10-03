@@ -427,7 +427,43 @@ runs.
 
 ## Step 8 — editor (not cut) and window (cut-first #1)
 
-- [ ] Editor: inverter tool, panel fields, save/open round-trip, render looked at.
+- [x] **Editor: step 1's refusal lifted, on purpose** — `ScenarioEditor(net)` and `load!`
+      now carry inverters; step 1's UI refusal test is rewritten into the round trip
+      (every field away from its default, both modes, layout and slack kept).
+- [x] **Core `_inverter_with`** (beside `_machine_with`): walks `fieldnames(Inverter)`,
+      several changes in ONE rebuild; tested in `test/m7_inverters.jl` (a mode switch
+      and back is `===` the original; rating + dispatch lowered together accepted,
+      either alone refused).
+- [x] Editor state: `inverters` (insertion order), `add_inverter!` (grid-forming by
+      default), every walk of the collections (`_collection`, `all_ids`/`fresh_id`,
+      `remove!(:bus)`, `rename!(:bus)`), `power_balance` counting inverter `P0`,
+      `build_model`/`load!`/`validation` carrying them, and `effective_slack` following
+      the widened rule — first grid-forming inverter in BUS order with no machine.
+      Its agreement test now builds drafts with inverters added out of bus order, only
+      grid-following, mixed, and a mode switch moving it.
+- [x] **Panel: fields by ELEMENT** (`editable_fields(::Inverter)` is the mode's set), a
+      **switch to …** button that rebuilds the panel, and **apply as ONE rebuild**
+      (`set_fields!`). Found while planning (advisor): field-by-field apply refused an
+      inverter's rating and dispatch lowered together at the first box, after earlier
+      boxes had been written — D4's "nothing half-applied" was broken for every kind.
+- [x] Window: inverter tool (tools four to a row), hexagon glyph filled for
+      grid-forming and hollow for grid-following, label `GFM`/`GFL`, highlight, sources
+      sharing one row above a bus, solve's schedule counting an inverter on the slack
+      bus, run's status counting inverters and catching the swing tier's
+      grid-following refusal (an `ArgumentError`, already caught).
+- [x] **Rendered and looked at** (`W:\temp\claude\m7\step8\ed-*.png`). Found: a machine's and an
+      inverter's labels on one bus written through each other (spacing 0.9 → 1.9
+      offsets); the first fixture REFUSED by solve (two `V_set`s on one bus — the
+      refusal path, working); and the multi-machine window that **run ▶** opens drew a
+      grid-forming inverter's trace with NO trip button and counted it as a machine —
+      it now has one, under **trip a source**, and the status counts inverters.
+- [x] Precompile workload renders the editor with an inverter selected.
+- [x] **Sabotages, ten, each red** (`W:\temp\claude\m7\step8\mutate8.py`, logs `mut8*.log`):
+      S8-1 balance ignores inverters; S8-2 derived slack in insertion order; S8-3
+      deleting a bus keeps its inverters; S8-4 renaming a bus strands them; S8-5
+      `_inverter_with` drops `τ_pll`; S8-6 open does not carry inverters; S8-7 apply
+      field by field; S8-8 mode switch without a panel rebuild; S8-9 solve's schedule
+      ignores inverters; S8-10 no inverter trip button.
 - [ ] Window, or its cut recorded.
 
 ## Step 9 — close

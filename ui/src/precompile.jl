@@ -59,6 +59,15 @@ using PrecompileTools
                 # The scenario editor, with the property panel open on a machine
                 # (the branch of the builder with the most widgets in it).
                 editor_render(; path = tmp, select = (:machine, :G1))
+                # ...and on an inverter (M7 step 8): the hexagon glyph with its
+                # per-mode fill, and the panel's mode button. Grid-forming at a
+                # machine-free bus, the shape a user draws first.
+                ring = three_machine_ring()
+                inv_net = NetworkModel(ring.S_base, ring.f0, ring.buses, ring.branches,
+                                       ring.machines[1:2], Load[];
+                                       inverters = [Inverter(:I1, :B3, :grid_forming,
+                                                             500.0, ring.machines[3].P0)])
+                editor_render(; path = tmp, net = inv_net, select = (:inverter, :I1))
 
                 rm(tmp; force = true)
             catch err

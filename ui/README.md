@@ -353,9 +353,10 @@ julia --project=ui -e "using GridSimUI, GridSim; wait_for_close(editor(three_mac
 
 A canvas on the left, tools and the selected element's properties on the right,
 the scenario's name, bases and file along the bottom. Pick a tool and click the
-canvas: **bus** places one where you click; **machine** and **load** attach to
-the bus you click; **branch** connects the two buses you click in turn; **delete**
-removes what you click (a bus takes its machines, load and lines with it);
+canvas: **bus** places one where you click; **machine**, **inverter** and **load**
+attach to the bus you click; **branch** connects the two buses you click in turn;
+**delete** removes what you click (a bus takes its machines, inverters, load and
+lines with it);
 **select** picks an element for the panel and drags a bus to move it. Right-drag
 pans, the wheel zooms, **fit view** frames everything.
 
@@ -365,7 +366,20 @@ constructors, so a value the model refuses (`H = 0`, a self-loop) is refused at
 offers twelve numbers — the classical and governor set, plus the voltage setpoint
 and the two reactive limits a steady-state solve reads — and a branch three,
 including its series resistance. The status line under the bar always says whether
-the drawing is currently a valid model and what Σ P is.
+the drawing is currently a valid model and what Σ P is. **Apply takes the whole
+panel at once**: every box is read, then the record is rebuilt once, so a change
+that is valid only as a whole (an inverter's rating lowered together with its
+output) is accepted, and a refused one changes nothing.
+
+**Inverters** (M7) are hexagons, **filled** when grid-forming (it sets a voltage, as
+a machine does) and **hollow** when grid-following (it follows one); the label says
+`GFM` or `GFL`. A new one is grid-forming; the panel's **switch to …** button
+changes the mode. The panel shows the fields the current mode reads — the droop
+(`V_set`, `X_c`, `K_p`, `τ_p`, `K_q`, `τ_q`) or the schedule and PLL (`Q0`,
+`K_pll_p`, `K_pll_i`, `τ_pll`) — and keeps the other mode's values, so switching back
+finds them as they were. **run ▶** opens the multi-machine window, which takes
+grid-forming inverters (with a trip button each) and refuses a grid-following one by
+name: that window's tier has no bus voltage for a current to follow.
 
 **The reference (slack) bus** is drawn on the map as a green diamond and chosen
 from a selected bus's panel: **make slack** declares it, **release slack** hands
@@ -400,14 +414,17 @@ editor(; background = "iberia.png", extent = (-10.0, 4.5, 35.5, 44.0))   # lon/l
 ```
 
 Every editing operation is also a function — `add_bus!`, `add_machine!`,
-`add_load!`, `add_branch!`, `move_bus!`, `remove!`, `rename!`, `set_field!`,
+`add_inverter!`, `add_load!`, `add_branch!`, `move_bus!`, `remove!`, `rename!`,
+`set_field!`, `set_fields!`,
 `set_slack!`, `effective_slack`, `build_model`, `validation`, `save!`, `load!` on a
 `ScenarioEditor` — because those are what the mouse handlers call, and a script
 should not need a figure to build a scenario. `editor_render(; path)` draws the
 window offscreen to a PNG, and `editor_render(; path, solve = true)` draws it with
 the solve already run.
 Design notes, what the build found, and the known Makie text-box glitch:
-`docs/plans/scenario-editor.md`. Two rendered figures:
+`docs/plans/scenario-editor.md`. Three rendered figures —
+`../docs/images/fig-editor-inverters.png` (M7: a grid-forming inverter beside a machine,
+a grid-following one at the load bus, solved), and:
 `../docs/images/fig-editor-three-machine-ring.png` (the window) and
 `../docs/images/fig-editor-solved.png` (with **solve** run — a load bus at
 0.955 pu while both generator buses hold 1.000, and a slack picking up 60.42 MW

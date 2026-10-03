@@ -12,6 +12,14 @@ reference bus (D10 below), the panel edits the fields a power flow reads, the
 reference bus is drawn on the map and chosen from the panel, and **solve** puts
 `ac_powerflow`'s answer on the drawing (D11).
 
+**Extended 2026-10-03 by M7 step 8** (`docs/plans/m7-tasks.md`): the editor holds
+**inverters** (D12 below). Step 1 of M7 had made it refuse a model carrying them —
+holding none, it would have dropped them on the next save — and this step lifts that
+refusal: an inverter tool, a hexagon glyph whose fill says the mode, a panel whose
+fields are the mode's, a **switch to …** button, and save/open carrying every field.
+The panel's **apply** became one rebuild instead of one per box, and the multi-machine
+window that **run ▶** opens gained a trip button for a grid-forming inverter.
+
 Cross-cutting rather than a milestone, like `ui-visuals-performance.md`: the
 editor produces the `NetworkModel` the windows and engines already consume, and
 nothing downstream knows it exists.
@@ -130,6 +138,42 @@ Two properties are load-bearing:
   at a fixed height, because those refusals are several sentences long and the
   editor's other messages are half a line.
 
+**D12 — An inverter is a fifth record, its fields are its MODE's, and an edit is
+one rebuild.** (M7 step 8.) `ScenarioEditor` gains `inverters`, held in insertion
+order like the machines; the inverter tool attaches one, grid-forming by default
+(it holds a voltage, so a draft of inverters alone still has a reference bus).
+Three choices carry the weight:
+
+- **The panel shows the mode's fields and carries the others.** A grid-forming
+  inverter reads its droop (`V_set`, `X_c`, `K_p`, `τ_p`, `K_q`, `τ_q`), a
+  grid-following one its schedule `Q0` and its PLL (`K_pll_p`, `K_pll_i`, `τ_pll`);
+  each mode leaves the other's half unread (`Inverter`'s docstring). So
+  `editable_fields` is asked by ELEMENT, not kind, and the rebuild goes through
+  core's `_inverter_with`, which walks `fieldnames(Inverter)` — the hidden half
+  survives an edit and a mode switch bit for bit (asserted), which a hand-listed
+  rebuild would not (the cost-dropping bug M6 step 7 removed for machines). The mode
+  is a button, not a box, and switching it rebuilds the panel.
+- **Apply is ONE rebuild of the whole panel** (`set_fields!`), not one per box. The
+  inverter's rating guard ties `S_rated`, `P0` and `Q0` together, so lowering the
+  rating and the dispatch is valid as a pair and refused as either half alone; field
+  by field, the panel refused it at the first box — after the boxes before it had
+  been written. That broke D4's "nothing half-applied" for every kind, not only
+  inverters (a machine's `Pmax` and `P0` lowered together had the same shape), and
+  the fix is for all of them: every box parsed first, then one constructor call.
+- **`effective_slack` follows the widened rule** — no machine, then the first
+  grid-forming inverter in **bus** order, never a grid-following one. The model
+  sorts its inverters by bus before it picks, so walking `ed.inverters` would point
+  the map at the wrong bus whenever inverters were added out of order; the agreement
+  test now builds exactly those drafts.
+
+Sources share one row above their bus: a machine and an inverter on one bus are
+spread together (the model allows it; the detailed tier refuses it by name, the power
+flow refuses it when their setpoints disagree, and both refusals reach the status
+line). **solve**'s read-out counts an inverter on the slack bus in the schedule.
+**run ▶** still opens the swing-tier window, which takes grid-forming inverters (M7
+step 3) and refuses grid-following ones as a tier boundary, verbatim in the status
+line.
+
 ## What the build found
 
 - **The first render clipped the file and run controls off the frame.** With
@@ -202,6 +246,19 @@ Two properties are load-bearing:
   Cosmetic: the value in the box is intact (the tests read it), and a click
   into the box redraws it. Not chased further here; worth an upstream issue.
 
+- **(M7 step 8) A machine and an inverter on one bus wrote their labels through
+  each other** ("G2 +0 MW" over "IF GFM +40 MW") at the machines-only row's 0.9-offset
+  spacing. A label is wider than a glyph; sources are now 1.9 offsets apart.
+- **(M7 step 8) The first render with an inverter selected was REFUSED by solve** —
+  the fixture put a machine (`V_set = 1.0`) and a grid-forming inverter
+  (`V_set = 1.02`) on one bus, and `ac_powerflow` refuses two setpoints on one
+  terminal voltage. The refusal reached the status line whole, which is the path
+  working; the figure uses a consistent fixture.
+- **(M7 step 8) The multi-machine window drew a grid-forming inverter's trace but
+  offered no button to trip it,** and its status line counted it among the machines.
+  The swing tier has tripped grid-forming inverters since M7 step 3; the window now
+  lists it under **trip a source** as `(inverter)` and counts it as one.
+
 ## Limitations, stated
 
 - **No invalid save.** D5. A half-drawn scenario with Σ P ≠ 0 cannot be written;
@@ -214,8 +271,9 @@ Two properties are load-bearing:
   beside a map, and the tier they belong to has no real-time window to open.
 - **One process, one window at a time for `run`.** `run ▶` opens the
   multi-machine window on the swing tier (`launch(net)`), which requires exactly
-  one machine per bus and no loads; a model the swing engine refuses says so in
-  the status line, verbatim. The detailed tier has no real-time window yet
+  one source (machine or grid-forming inverter) per bus, no loads and no
+  grid-following inverter; a model the swing engine refuses says so in the status
+  line, verbatim. The detailed tier has no real-time window yet
   (m5-context.md D2), so a load-bus scenario can be saved and used from a script
   but not run from the button.
 - **No undo.** Delete asks nothing. Save often.
@@ -241,3 +299,10 @@ Two properties are load-bearing:
   sides, and the read-out says the slack picks up **60.42 MW against a schedule of
   70.0** — a constant-impedance load drawing less at a lower voltage. On the ring
   every bus solves to exactly 1.000 and the picture has nothing on it.
+  **Both regenerated at M7 step 8**, for the seven-tool grid; the solved read-out is
+  unchanged (60.42 against 70.0).
+- `docs/images/fig-editor-inverters.png` (M7 step 8) — a grid-forming inverter (filled)
+  beside a machine on B2, a grid-following one (hollow) at the load bus B3 with its
+  panel open on the PLL fields, solved: the reference machine picks up 39.76 MW
+  against a schedule of 40.0, the same constant-impedance load shift at a smaller
+  sag.

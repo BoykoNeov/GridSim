@@ -140,19 +140,142 @@ end
     @test ed2.name == "ring" && ed2.S_base == 100.0 && ed2.f0 == 50.0
 end
 
-@testset "editor: a model with inverters is refused, both ways in (M7 step 1)" begin
-    # The editor holds no inverters until M7 step 8; opening one and saving would
-    # drop them silently. Refused from a model and from a file, by name, and a
-    # refused open leaves the editor exactly as it was.
-    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0)]
-    net = NetworkModel(100.0, 50.0, buses, [Branch(:L, :B1, :B2, 0.2, 500.0)],
-                       [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, 0.0)];
-                       inverters = [Inverter(:INV, :B2, :grid_forming, 50.0, 0.0)])
-    @test occursin("INV", emsg(() -> ScenarioEditor(net)))
-    path = write_scenario(joinpath(mktempdir(), "inv.toml"), net)
-    ed = ScenarioEditor(three_machine_ring(); name = "kept")
-    @test occursin("INV", emsg(() -> load!(ed, path)))
-    @test ed.name == "kept" && build_model(ed).machines == three_machine_ring().machines
+# ---- inverters (M7 step 8) ----------------------------------------------------------
+#
+# Step 1 made the editor REFUSE a model with inverters, both ways in, because holding
+# none it would have dropped them on the next save. This step lifts that refusal, and
+# the tests that pinned it are rewritten on purpose into the round trip below — the
+# lifted refusal showing up as failing tests, which is what it was there for.
+
+# Every field away from its default, both modes, so a field dropped anywhere on the
+# way through the editor shows up as a difference rather than as a default.
+function _inv_fixture()
+    gfm = Inverter(:IF, :B2, :grid_forming, 120.0, 40.0; Q0 = 5.0, K_p = 0.03,
+                   τ_p = 0.2, K_q = 0.02, τ_q = 0.05, V_set = 1.02, X_c = 0.12,
+                   K_pll_p = 51.0, K_pll_i = 701.0, τ_pll = 0.0021)
+    gfl = Inverter(:IL, :B3, :grid_following, 80.0, 20.0; Q0 = -3.0, K_p = 0.04,
+                   τ_p = 0.3, K_q = 0.01, τ_q = 0.07, V_set = 0.98, X_c = 0.09,
+                   K_pll_p = 50.0, K_pll_i = 700.0, τ_pll = 0.002)
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
+    br = [Branch(:L12, :B1, :B2, 0.1, 500.0), Branch(:L23, :B2, :B3, 0.15, 500.0)]
+    return NetworkModel(100.0, 50.0, buses, br,
+                        [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, 40.0)],
+                        [Load(:D3, :B3, 100.0, 10.0)];
+                        inverters = [gfl, gfm], slack = :B1)
+end
+_same_inverter(a, b) = all(getfield(a, f) === getfield(b, f) for f in fieldnames(Inverter))
+
+@testset "editor: a model with inverters opens, saves and reopens with every field (M7 step 8)" begin
+    net = _inv_fixture()
+    ed = ScenarioEditor(net; name = "inv")
+    @test [i.id for i in ed.inverters] == [i.id for i in net.inverters]
+    back = build_model(ed)
+    @test all(_same_inverter(a, b) for (a, b) in zip(net.inverters, back.inverters))
+    move_bus!(ed, :B3, 2.0, -1.0)
+    path = save!(ed, joinpath(mktempdir(), "inv.toml"))
+    ed2 = load!(ScenarioEditor(three_machine_ring(); name = "overwritten"), path)
+    @test ed2.name == "inv" && ed2.layout == ed.layout && ed2.slack === :B1
+    @test length(ed2.inverters) == 2
+    @test all(_same_inverter(a, b) for (a, b) in zip(net.inverters, build_model(ed2).inverters))
+    @test validation(ed2).ok && occursin("1 machines, 1 loads, 2 inverters", validation(ed2).message)
+end
+
+@testset "editor: inverters are attached, renamed, carried and removed like machines" begin
+    ed = ScenarioEditor()
+    add_bus!(ed, 0.0, 0.0); add_bus!(ed, 1.0, 0.0)
+    @test add_inverter!(ed, :B1) === :I1
+    @test element(ed, :inverter, :I1).mode === :grid_forming       # the default
+    @test add_inverter!(ed, :B2; mode = :grid_following) === :I2
+    @test add_machine!(ed, :B2) === :G1
+    @test occursin("already in use", emsg(() -> add_bus!(ed, 2.0, 0.0; id = :I1)))
+    @test occursin("no bus", emsg(() -> add_inverter!(ed, :B9)))
+    # The constructor's own refusal, its words.
+    @test occursin("exceeds", emsg(() -> add_inverter!(ed, :B1; S_rated = 10.0, P0 = 20.0)))
+    @test occursin("mode must be", emsg(() -> add_inverter!(ed, :B1; mode = :grid_supporting)))
+    rename!(ed, :bus, :B2, :East)
+    @test element(ed, :inverter, :I2).bus === :East
+    rename!(ed, :inverter, :I2, :Solar)
+    @test element(ed, :inverter, :Solar).mode === :grid_following
+    ed.selection = (:inverter, :Solar)
+    remove!(ed, :bus, :East)
+    @test [i.id for i in ed.inverters] == [:I1] && ed.selection === nothing
+    @test isempty(ed.machines)
+    remove!(ed, :inverter, :I1)
+    @test isempty(ed.inverters)
+end
+
+@testset "editor: the balance counts inverters, with a machine's sign" begin
+    ed = ScenarioEditor()
+    add_bus!(ed, 0.0, 0.0; id = :A); add_bus!(ed, 1.0, 0.0; id = :B)
+    add_branch!(ed, :A, :B)
+    add_machine!(ed, :A; P0 = 0.0)
+    add_load!(ed, :B; P0 = 30.0)
+    @test power_balance(ed) == -30.0 && !validation(ed).ok
+    # Balanced ONLY by the inverter: the status line and the model's guard agree.
+    add_inverter!(ed, :B; mode = :grid_following, P0 = 30.0)
+    @test power_balance(ed) == 0.0
+    @test validation(ed).ok
+end
+
+@testset "editor: the derived reference bus with inverters agrees with the model" begin
+    # `effective_slack` is a second copy of `NetworkModel`'s rule, and M7 widened the
+    # rule: no machine → the first GRID-FORMING inverter's bus, in BUS order — never a
+    # grid-following one. Each draft below is one way the copy could drift.
+    function draft(specs)               # (bus, mode) per inverter, added in this order
+        ed = ScenarioEditor()
+        for (k, b) in enumerate((:A, :B, :C))
+            add_bus!(ed, Float64(k), 0.0; id = b)
+        end
+        add_branch!(ed, :A, :B); add_branch!(ed, :B, :C)
+        for (bus, mode) in specs
+            add_inverter!(ed, bus; mode)
+        end
+        return ed
+    end
+    agree(ed) = effective_slack(ed) === build_model(ed).slack
+    # Grid-forming inverters added OUT of bus order: the model sorts, so must the map.
+    ed = draft([(:C, :grid_forming), (:B, :grid_forming)])
+    @test effective_slack(ed) === :B && agree(ed)
+    # A grid-following inverter on an earlier bus is never the reference.
+    ed = draft([(:C, :grid_forming), (:A, :grid_following)])
+    @test effective_slack(ed) === :C && agree(ed)
+    # Only grid-following: nothing holds a voltage, so the first bus (the model's
+    # fallback for a half-built draft; a solve then refuses it, by name).
+    ed = draft([(:B, :grid_following), (:C, :grid_following)])
+    @test effective_slack(ed) === :A && agree(ed)
+    # A machine wins over any inverter, wherever it is.
+    ed = draft([(:A, :grid_forming)]); add_machine!(ed, :C)
+    @test effective_slack(ed) === :C && agree(ed)
+    # A mode switch moves it.
+    ed = draft([(:B, :grid_following), (:C, :grid_forming)])
+    @test effective_slack(ed) === :C
+    set_field!(ed, :inverter, :I1, :mode, :grid_forming)
+    @test effective_slack(ed) === :B && agree(ed)
+end
+
+@testset "editor: an inverter's fields are its mode's, and an edit lands whole or not at all" begin
+    ed = ScenarioEditor(_inv_fixture())
+    gfm = element(ed, :inverter, :IF); gfl = element(ed, :inverter, :IL)
+    @test GridSimUI.editable_fields(gfm) == (:S_rated, :P0, :V_set, :X_c, :K_p, :τ_p, :K_q, :τ_q)
+    @test GridSimUI.editable_fields(gfl) == (:S_rated, :P0, :Q0, :K_pll_p, :K_pll_i, :τ_pll)
+    @test occursin("depend on its mode", emsg(() -> GridSimUI.editable_fields(:inverter)))
+    # A mode switch and back: the hidden half survives both rebuilds, bit for bit.
+    set_field!(ed, :inverter, :IF, :mode, :grid_following)
+    @test GridSimUI.editable_fields(element(ed, :inverter, :IF)) == GridSimUI.editable_fields(gfl)
+    set_field!(ed, :inverter, :IF, :mode, :grid_forming)
+    @test _same_inverter(element(ed, :inverter, :IF), gfm)
+    # The rating ties S_rated, P0 and Q0 together: lowering the rating alone is refused
+    # and leaves the record exactly as it was...
+    @test occursin("exceeds", emsg(() -> set_field!(ed, :inverter, :IF, :S_rated, 30.0)))
+    @test _same_inverter(element(ed, :inverter, :IF), gfm)
+    # ...and lowering it WITH the dispatch, in one edit, is accepted. (`Q0 = 5` is
+    # hidden on a grid-forming panel but still checked by the rating, and 30 MVA covers
+    # √(20² + 5²) = 20.6.)
+    set_fields!(ed, :inverter, :IF, (; S_rated = 30.0, P0 = 20.0))
+    @test (element(ed, :inverter, :IF).S_rated, element(ed, :inverter, :IF).P0) == (30.0, 20.0)
+    @test element(ed, :inverter, :IF).X_c == 0.12                    # the rest untouched
+    @test occursin("not editable", emsg(() -> set_fields!(ed, :inverter, :IF, (; bus = :B1))))
+    @test occursin("no field", emsg(() -> set_fields!(ed, :inverter, :IF, (; H = 1.0))))
 end
 
 # ---- the window -------------------------------------------------------------------
@@ -469,6 +592,126 @@ end
     win.widgets.tb_sbase.displayed_string[] = "hundred"
     click!(win.widgets.b_run)
     @test occursin("not a number", win.status[]) && win.ed.S_base == 100.0
+end
+
+@testset "editor window: the inverter tool, its glyph, its panel and its mode button" begin
+    win = EBUILD(ScenarioEditor())
+    tb = win.widgets.tool_buttons
+    @test haskey(tb, :inverter)
+    click!(tb[:bus]); win.canvas_press!(0.0, 0.0); win.canvas_press!(1.0, 0.0)
+    click!(tb[:inverter])
+    @test win.tool[] === :inverter
+    win.canvas_press!(0.5, 0.5)                                       # nowhere near a bus
+    @test isempty(win.ed.inverters) && occursin("click a bus to attach an inverter", win.status[])
+    win.canvas_press!(0.0, 0.0)
+    @test element(win.ed, :inverter, :I1).bus === :B1
+    @test win.ed.selection == (:inverter, :I1)
+    @test length(win.plots.inv_pts[]) == 1 && length(win.plots.sel_pts[]) == 1
+    g = GridSimUI._glyph_positions(win.ed)
+    @test win.plots.sel_pts[] == [g.inverters[:I1]]                    # highlighted
+    @test occursin("GFM", only(win.plots.inv_labels[])[1])
+    @test only(win.plots.inv_fill[]) != RGBAf(1, 1, 1, 1)             # filled: sets a voltage
+
+    # A machine on the SAME bus shares the row above it: two glyphs, two places, and a
+    # click on each selects that one.
+    click!(tb[:machine]); win.canvas_press!(0.0, 0.0)
+    g = GridSimUI._glyph_positions(win.ed)
+    @test g.machines[:G1] != g.inverters[:I1]
+    @test hypot((g.machines[:G1] - g.inverters[:I1])...) > 0.5 * g.off
+    click!(tb[:select])
+    p = g.inverters[:I1]; win.canvas_press!(p[1], p[2])
+    @test win.ed.selection == (:inverter, :I1)
+    p = g.machines[:G1]; win.canvas_press!(p[1], p[2])
+    @test win.ed.selection == (:machine, :G1)
+
+    # The panel offers the grid-forming fields and a mode button.
+    win.ed.selection = (:inverter, :I1); win.refresh!()
+    boxes = win.widgets.panel_boxes
+    @test Set(keys(boxes)) == Set((:id, GridSimUI.editable_fields(element(win.ed, :inverter, :I1))...))
+    @test haskey(boxes, :K_p) && !haskey(boxes, :K_pll_p)
+    @test win.widgets.panel_buttons[:mode].label[] == "switch to grid-following"
+    click!(win.widgets.panel_buttons[:mode])
+    @test element(win.ed, :inverter, :I1).mode === :grid_following
+    # ...and the panel was REBUILT for the new mode, not left showing the old fields.
+    boxes = win.widgets.panel_boxes
+    @test haskey(boxes, :K_pll_p) && !haskey(boxes, :K_p)
+    @test win.widgets.panel_buttons[:mode].label[] == "switch to grid-forming"
+    @test occursin("GFL", only(win.plots.inv_labels[])[1])
+    @test only(win.plots.inv_fill[]) == RGBAf(1, 1, 1, 1)             # hollow: follows one
+
+    # Apply lowers the rating and the dispatch TOGETHER, which only a one-rebuild apply
+    # can accept; and a refused apply leaves every field as it was.
+    set_fields!(win.ed, :inverter, :I1, (; P0 = 80.0))
+    win.ed.selection = nothing; win.refresh!(); win.ed.selection = (:inverter, :I1); win.refresh!()
+    boxes = win.widgets.panel_boxes
+    @test boxes[:P0].displayed_string[] == "80"
+    boxes[:S_rated].displayed_string[] = "30"
+    boxes[:P0].displayed_string[] = "25"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("applied to inverter I1", win.status[])
+    @test (element(win.ed, :inverter, :I1).S_rated, element(win.ed, :inverter, :I1).P0) == (30.0, 25.0)
+    boxes = win.widgets.panel_boxes
+    boxes[:S_rated].displayed_string[] = "10"
+    boxes[:τ_pll].displayed_string[] = "0.5"
+    click!(win.widgets.panel_buttons[:apply])
+    @test occursin("not applied", win.status[]) && occursin("exceeds", win.status[])
+    @test element(win.ed, :inverter, :I1).S_rated == 30.0
+    @test element(win.ed, :inverter, :I1).τ_pll != 0.5                 # nothing half-applied
+end
+
+@testset "editor window: solve and run on a draft with inverters" begin
+    # The reference bus is a grid-forming inverter's: the read-out's schedule is ITS
+    # dispatch, not the "+0.0 MW" a machines-only sum printed.
+    ed = ScenarioEditor()
+    add_bus!(ed, 0.0, 0.0; id = :A); add_bus!(ed, 1.0, 0.0; id = :B)
+    add_branch!(ed, :A, :B; X = 0.1)
+    add_inverter!(ed, :A; id = :IF, P0 = 30.0)
+    add_load!(ed, :B; P0 = 50.0, Q0 = 5.0)
+    add_inverter!(ed, :B; id = :IL, mode = :grid_following, P0 = 20.0)
+    win = EBUILD(ed)
+    @test validation(win.ed).ok
+    click!(win.widgets.b_solve)
+    @test win.last_solve[] !== nothing
+    @test occursin("slack A", win.solve_text[]) && occursin("schedule of +30.0 MW", win.solve_text[])
+    # Run: the multi-machine window's engine refuses a grid-following inverter as a
+    # tier boundary, and the refusal reaches the status line instead of the REPL. A
+    # draft with NO load, because that tier refuses a load too, for its own reason —
+    # and the inverter refusal is checked first, so it is the one a user sees.
+    ed2 = ScenarioEditor()
+    add_bus!(ed2, 0.0, 0.0; id = :A); add_bus!(ed2, 1.0, 0.0; id = :B)
+    add_branch!(ed2, :A, :B; X = 0.1)
+    add_inverter!(ed2, :A; id = :IF, P0 = 30.0)
+    add_inverter!(ed2, :B; id = :IL, mode = :grid_following, P0 = -30.0)
+    win2 = EBUILD(ed2; runner = net -> init!(SwingEngine, net))
+    click!(win2.widgets.b_run)
+    @test occursin("cannot run", win2.status[]) && occursin("tier boundary", win2.status[])
+    # With the grid-following one switched to grid-forming the same runner accepts it,
+    # and the status counts the inverters.
+    set_field!(win2.ed, :inverter, :IL, :mode, :grid_forming); win2.refresh!()
+    click!(win2.widgets.b_run)
+    @test occursin("running — 0 machines, 2 inverters", win2.status[])
+end
+
+@testset "the multi-machine window a run opens: a grid-forming inverter is tripped as itself" begin
+    # What `run ▶` hands a grid-forming draft to. The first render drew the inverter's
+    # trace but offered no button to trip it and counted it among "3 machines".
+    buses = [Bus(:B1, 230.0), Bus(:B2, 230.0), Bus(:B3, 230.0)]
+    br = [Branch(:L12, :B1, :B2, 0.1, 500.0), Branch(:L23, :B2, :B3, 0.15, 500.0),
+          Branch(:L31, :B3, :B1, 0.12, 500.0)]
+    net = NetworkModel(100.0, 50.0, buses, br,
+                       [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, 30.0),
+                        Machine(:G3, :B3, 100.0, 3.0, 2.0, 0.3, 1.0, 0.0)], Load[];
+                       inverters = [Inverter(:IF, :B2, :grid_forming, 120.0, -30.0)])
+    win = GridSimUI._build_network_window(net; window_seconds = 10.0, rtf = Inf)
+    @test occursin("2 machines, 1 inverters", win.status[])
+    @test [id for (id, _) in win.widgets.machine_buttons] == [:G1, :G3, :IF]
+    @test occursin("(inverter)", win.widgets.machine_buttons[3][2].label[])
+    click!(win.widgets.machine_buttons[3][2])
+    run_realtime!(win.engine, win.state; control = win.control, queue = win.queue,
+                  duration = 1.0)
+    win.refresh!(; force = true)
+    @test !is_online(win.engine, :IF) && is_online(win.engine, :G1)
+    @test occursin("offline", win.widgets.machine_buttons[3][2].label[])
 end
 
 @testset "editor window: save file and open file go through the bar" begin
