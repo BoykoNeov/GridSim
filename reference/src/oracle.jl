@@ -414,12 +414,17 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
             e = _branch_between(net, ev.from, ev.to)
             push!(line_off_times[e], t)
         else                                            # TripGenerator
+            # Refused since M5 because our detailed engine could not trip a source; kept
+            # at M7 step 7, which built that trip, for a different reason: the two
+            # sides would run DIFFERENT events (m7-context.md D15).
             detailed && throw(ArgumentError(
-                "build_oracle(tier = :$tier): TripGenerator has no counterpart to " *
-                "compare against — `inject!(::DetailedEngine, ::TripGenerator)` refuses " *
-                "by name (a tripped machine turns its bus into a passive algebraic node, " *
-                "which is unbuilt at this tier). An oracle case our own engine cannot " *
-                "run is worse than no case: it would be read as a fidelity finding."))
+                "build_oracle(tier = :$tier): TripGenerator is not mapped at the detailed " *
+                "tiers. `inject!(::DetailedEngine, ::TripGenerator)` switches the source's " *
+                "CURRENT off and leaves its bus — and any load on it — connected (M7 step " *
+                "7); this mapping deactivates every incident line, which disconnects the " *
+                "bus. That is a different event, and a comparison of two different events " *
+                "would be read as a fidelity finding. A status-switch mapping on the " *
+                "PowerDynamics side is unbuilt."))
             v = _machine_vertex(net, ev.id)
             push!(gen_trip_times[v], t)
             push!(trips, t => v)

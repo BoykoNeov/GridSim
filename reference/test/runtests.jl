@@ -566,12 +566,13 @@ chan(k) = s -> getproperty(s, k)
     @test all(build_oracle(ring; tier = :sauer_pai).X_ls .<
               min.(machine_arrays(ring).Xd′, machine_arrays(ring).Xq′))
 
-    # `TripGenerator` has no counterpart our own engine can run, so a case
-    # carrying one is refused at build time. An oracle case GridSim cannot run is
-    # worse than no case: the missing side would be read as a fidelity finding.
-    @test occursin("TripGenerator",
-                   argerr_msg(() -> build_oracle(ring; tier = :sauer_pai,
-                                                 perturbations = [1.0 => TripGenerator(:G1)])))
+    # `TripGenerator` at the detailed tiers is refused at build time. Until M7 step 7
+    # our own engine could not run it; since then it can, but it switches the source's
+    # current off with the bus left connected, while this mapping would disconnect
+    # the bus — two different events, whose gap would read as a fidelity finding.
+    msg = argerr_msg(() -> build_oracle(ring; tier = :sauer_pai,
+                                        perturbations = [1.0 => TripGenerator(:G1)]))
+    @test occursin("TripGenerator", msg) && occursin("different event", msg)
 
     # THE HOLE M5 STEP 2 NAMED AND LEFT OPEN. `SwingEngine` and `coi_model` refuse
     # a machine carrying detailed data; this builder — a third consumer of the same

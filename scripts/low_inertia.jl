@@ -298,12 +298,15 @@ function _read(eng, net, event, P_lost, H_post, rocof_inst)
                                          (s.f_coi[end] / F0 - 1)))
         δmax = max(δmax, maximum(abs, getfield(s, Symbol("δ_", id))[post] .- s.δ_coi[post]))
     end
-    # A minimum that is the LAST sample is not a nadir — the frequency is still falling
-    # when the run ends (reserve exhausted, damping alone left to stop it). Flagged, and
-    # printed as "≤", rather than presented as the bottom of a dip.
+    # A frequency still FALLING when the run ends has no nadir yet — flagged, and printed
+    # as "≤", rather than presented as the bottom of a dip. Judged by the slope over the
+    # last second, NOT by "the minimum is the last sample": a monotone approach to a
+    # settled value also ends on its minimum, and the first version of this flag called
+    # that "still falling" (the big-trip grid-following cell, which in fact sits within
+    # 3 mHz of its 240 s value at 30 s — m7-context.md D16).
     f = s.f_coi[post]
     k_end = findfirst(>=(s.t[end] - 1.0), s.t[post])
-    falling = argmin(f) == length(f) || (f[end] - f[k_end]) < -1e-3
+    falling = (f[end] - f[k_end]) < -1e-3
     return (; status = :ok, H_post, P_lost, rocof_cf = -F0 * P_lost / (2 * H_post), rocof_inst,
             rocof_coi = maximum(abs, coi; init = 0.0), rocof_pll = maximum(pll; init = 0.0),
             nadir = minimum(f), f_end = s.f_coi[end], V_min = Vmin, falling,
@@ -424,13 +427,16 @@ function print_claims()
     about 1 % once none do.
  d. Grid-following displacement deepens the nadir in every cell that ran, and on the
     big trip it stops being a frequency question at a third of the generation: the
-    voltage at t⁺ leaves the band on both layouts. Where it is still a frequency
-    question the reserve is gone and the frequency is still falling at 30 s (≤).
+    voltage at t⁺ leaves the band on both layouts. At one swap the reserve is gone and
+    the frequency sinks with NO recovery to 44.30 Hz (ring) / 44.66 Hz (chain) —
+    measured at 240 s, and already within 3 mHz of it at 30 s.
  e. The layout matters most to VOLTAGE: at 46 % grid-following share on the small
     trip the ring holds 0.963 pu and the chain falls below 0.9 (0.899 at t⁺ — a
     refusal that sits on the band edge, so the robust statement is the gap, not the
     refusal). On the chain the PLL meters read up to twice the centre-of-inertia
-    RoCoF: the trip's own phase jump, which no rotor felt (Hurdle 10).
+    RoCoF over the same window. Where that excess comes from — the trip's own phase
+    jump, or a machine's own swing at its bus (step 6 measured both) — is not
+    separated here.
 """)
 end
 

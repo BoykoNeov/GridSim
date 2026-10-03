@@ -413,9 +413,15 @@ runs.
       inverter (the anti-vacuity block). Rows 3 and 4 of a grid-forming sweep coincide —
       a consistency check of the two trip paths, its after-t⁺ gap shown to be solver
       error falling with the tolerance.
-- [x] **Step 7 gates:** core **4108** (3994 + 114 study checks), reference **1251**
-      (unchanged — nothing in `reference/` reads the trip), UI **449** (two stale
-      comments in the voltage window corrected, no code moved).
+- [x] **Step 7 gates:** core **4113** (3994 + 119 study checks), reference **1251**
+      (the oracle's detailed-tier trip refusal kept, its reason rewritten — the two sides
+      would now run different events — and its test reads the reason), UI **449** (two
+      stale comments in the voltage window corrected, no code moved).
+- [x] **Final review (advisor) fixed three things before close:** a "~39 Hz" settle
+      estimate (measured: 44.30 / 44.66 Hz, within 3 mHz at 30 s) and the still-falling
+      flag that mistook a monotone settle for a fall; a phase-jump explanation of the
+      chain's PLL excess that nothing measured (cut to the measured fact); and a test that
+      pinned the chain's 0.899-against-0.9 refusal (now asserts the voltage gap).
 - **Not done, and said:** the aggregate tier's NADIR overlay (`coi_model` refuses a
   `Load`; widening it rejected in D16) — the overlay is the RoCoF₀ formula only.
 

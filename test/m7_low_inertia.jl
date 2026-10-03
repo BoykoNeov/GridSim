@@ -133,9 +133,15 @@ const _T_PLUS = _LI.T_TRIP + 0.1
         # The robust layout contrast is a VOLTAGE, not the chain's refusal (which sits at
         # 0.899 against the 0.9 band and flips on a thousandth): the same 46 % grid-
         # following share holds the ring at 0.963 pu and drops the chain below 0.9.
+        # Asserted as the GAP, never as the refusal: pinning `:refused` at 0.899 against
+        # 0.9 would turn red on a thousandth of a pu moved by a solver or a manifest.
         ring = _LI.study_cell(:ring, :G4, :grid_following, 2)
-        @test ring.status === :ok && ring.V_min > 0.95
-        @test _LI.study_cell(:chain, :G4, :grid_following, 2; T = _T_PLUS).status === :refused
+        @test ring.status === :ok
+        chain = _LI.study_cell(:chain, :G4, :grid_following, 2; T = _T_PLUS)
+        m = match(r"= ([0-9.]+) pu at t⁺", chain.reason)
+        V_chain = m === nothing ? chain.V_min : parse(Float64, m[1])
+        @test V_chain < 0.91
+        @test ring.V_min - V_chain > 0.05
     end
 
     @testset "the claims, on the printed tables (both layouts, both events)" begin
@@ -156,14 +162,14 @@ const _T_PLUS = _LI.T_TRIP + 0.1
             @test 3.5 < g3.rocof_inst / z.rocof_inst < 5.0
             @test -0.20 < g3.rocof_coi / z.rocof_coi - 1 < 0.05
             # (d) grid-following: nadir DEEPER in every cell that ran; on the big trip
-            # the second swap leaves the band, and the first is still falling at 30 s.
+            # the second swap leaves the band, and the first settles with no recovery.
             for n in 1:2
                 r = row(:grid_following, n)
                 r.status === :ok && @test r.nadir < z.nadir
             end
             if event === :G1
                 @test occursin("band", row(:grid_following, 2).reason)
-                @test row(:grid_following, 1).falling
+                @test !row(:grid_following, 1).falling   # a settle, not a fall (see below)
             end
         end
     end
@@ -177,13 +183,21 @@ const _T_PLUS = _LI.T_TRIP + 0.1
         end
     end
 
-    @testset "a minimum at the end of the run is flagged, never reported as a nadir" begin
-        # Big trip with one grid-following swap: the reserve is gone and the frequency is
-        # still falling at 30 s, on both layouts.
-        for topology in (:ring, :chain)
+    @testset "a monotone settle is not 'still falling', and its 30 s value is its settle" begin
+        # Big trip with one grid-following swap: the reserve is gone and the frequency
+        # sinks with no recovery. The first version of the flag called this "still
+        # falling" because the minimum was the last sample; run on it SETTLES — 44.30 Hz
+        # on the ring, 44.66 on the chain, the same at 120 s and at 240 s — and the 30 s
+        # value is within a few mHz of it. The flag now reads the slope over the last
+        # second.
+        for (topology, f_settle) in ((:ring, 44.30), (:chain, 44.66))
             r = _LI.study_cell(topology, :G1, :grid_following, 1)
-            @test r.status === :ok && r.falling
+            long = _LI.study_cell(topology, :G1, :grid_following, 1; T = 120.0)
+            @test r.status === :ok && !r.falling && !long.falling
+            @test abs(long.f_end - f_settle) < 0.01
+            @test abs(r.f_end - long.f_end) < 0.005
         end
-        @test !_LI.study_cell(:ring, :G4, :machine, 0).falling
+        # …and the flag can fire: the same cell cut off at 3 s IS still falling.
+        @test _LI.study_cell(:ring, :G1, :grid_following, 1; T = 3.0).falling
     end
 end

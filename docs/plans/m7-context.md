@@ -758,14 +758,22 @@ the instantaneous number is mostly made of on default loads.
   5–15 % while machines remain and ~1 % once none do.
 - (d) **Grid-following displacement deepens the nadir in every cell that ran**, and on the
   big trip stops being a frequency question at a third of the generation: |V| at t⁺ =
-  0.863 (ring) and 0.874 (chain) pu, below the band. Its one running big-trip cell is
-  still falling at 30 s on both layouts (printed `≤`, never as a nadir — reserve gone,
-  heading for ~39 Hz on damping alone).
+  0.863 (ring) and 0.874 (chain) pu, below the band. In its one running big-trip cell
+  the reserve is gone and the frequency sinks with no recovery to 44.30 Hz (ring) /
+  44.66 Hz (chain) — measured at 120 and 240 s, and within 3 mHz of that at 30 s. **Two
+  corrections from the final review:** a "~39 Hz on damping alone" estimate written here
+  ignored the constant-impedance loads' relief and was wrong by 5 Hz; and the
+  still-falling flag first fired on "the minimum is the last sample", which a monotone
+  settle also satisfies — it now reads the slope over the last second, and a test shows
+  it fires on the same cell cut off at 3 s.
 - (e) **The layout matters most to voltage**: at 46 % grid-following share on the small
   trip the ring's lowest voltage is 0.963 pu and the chain's t⁺ voltage is 0.899 — a
-  refusal ON the band edge, so the claim is the gap, not the refusal. On the chain the PLL
-  meters read up to twice the centre-of-inertia RoCoF (1.45 against 0.685 Hz/s at one
-  grid-following swap): the trip's own phase jump, which no rotor felt (Hurdle 10).
+  refusal ON the band edge, so the claim is the gap (ring − chain > 0.05 pu, asserted),
+  never the refusal. On the chain the PLL meters read up to twice the centre-of-inertia
+  RoCoF (1.45 against 0.685 Hz/s at one grid-following swap). WHERE that excess comes
+  from — the trip's phase jump or a machine's own swing at its bus, both of which step 6
+  measured — is not separated here, and the first draft's "the phase jump, which no
+  rotor felt" was a story, not a measurement.
 
 **Drafted before the tables and wrong** (M3 step 6's lesson, met again): "grid-forming
 steepens RoCoF₀ less than grid-following" (true of the formula, false of the network on
@@ -774,6 +782,12 @@ first on three of four tables, and ends higher on one); "removing the virtual in
 barely moves the 500 ms reading" (5–15 %). Also: the n = 3 and n = 4 grid-forming rows
 coincide — the tripped unit's kind cannot matter once it is gone — which is a consistency
 check of the machine and inverter trip paths, not a finding.
+
+**The reference oracle's generator-trip mapping stays refused at the detailed tiers,
+for a new reason.** It was refused because our engine could not trip; now it can, but
+ours switches the source's current off with the bus (and its load) connected, while the
+oracle's mapping deactivates every incident line — two different events. The refusal
+text says so and its test reads it (the advisor's final-review check).
 
 **Not done, and said so:** the aggregate tier's NADIR is not overlaid — `coi_model`
 refuses any model carrying a `Load` (and any bus with no generating element), and widening
