@@ -632,3 +632,80 @@ it quietly:
 - Checked before the study uses it: `coi_rocof` at `t⁺` against the aggregate
   `RoCoF₀` closed form, per source kind.
 
+
+### What step 7 measured about the trip itself (built first, as D15 said)
+
+**How it switches a unit off.** One in-service flag per source, multiplying its
+CURRENT and written into BOTH networks: the machine's `mstat` (carried since M5,
+never written before), a new `istat` on both grid-forming vertices, and, for a
+grid-following inverter, its current setpoint itself. Also zeroed: a machine's `Pm`,
+governor gain, reserve and ramp (with `ΔPm` re-seated), a grid-forming inverter's
+`P_set` (so its idle droop settles at zero speed instead of drifting at `K_p·P_set`),
+the unit's inertia weight, and every relay at its bus and ladder on it. A trip that
+would leave no machine and no grid-forming inverter online is refused before anything
+moves (D5), at this tier as at the aggregate one. `is_online(eng, id)` reads it back.
+
+**The re-initialisation now checks the network it hands to the integrator.** Before
+step 7 only the STATIC solve was checked, and the two networks agree only because every
+event writes the same change into both parameter vectors. A trip writes four such
+pairs. So after every re-solve the DYNAMIC network's Kirchhoff rows are evaluated at
+the new state and must be below `1e-10` — the advisor's addition, and the only check
+that can see a status written on one side only (sabotages T7-3, T7-4, T7-7).
+
+**The closed form at t⁺, per kind, exact** (`test/m7_inverters.jl`): on a lossless
+ring with `Ra = 0` and a CONSTANT-POWER load, `coi_rocof` just after the trip equals
+`−f0·P_lost/(2·H_post)` to `rtol 1e-8` for a machine (slack and non-slack), a
+grid-forming inverter and a grid-following one, with `P_lost` read from the NETWORK
+side and `H_post` written by hand from the formula. The one further condition is that
+**no grid-following inverter survives the trip**: it holds its current, so its power
+at t⁺ moves with |V|. With one surviving, the balance is still exact once that change
+is counted (`Σ 2Hω̇ = ΔP_pv − P_lost`), and without it the formula misses by more than
+1 %.
+
+**Gates:** M5's criterion values bit-identical to the capture at HEAD before the first
+edit (`W:\temp\claude\m7\step7\criterion-HEAD7.txt` / `criterion-TRIP.txt`); step 6's
+captured grid-following run `==` after the new `istat` parameter.
+
+## D16 — Step 7's study: TWO events, default loads, and an exact control (taken 2026-10-03, the user's choice)
+
+**What was measured before asking.** The study fixture is M1's `example_system()`
+units on a seven-bus network (four unit buses, three load buses), so its zero-share
+row has M1's own number to hit. Three findings, in the order they arrived:
+
+1. **The planned event leaves the tier's voltage band.** M1's largest unit, G1, is 150
+   of 390 MW — 38 % of the generation in one step. With the machines at `E′ = 1.05`
+   the trip leaves G1's own bus at 0.874 pu at t⁺, below the 0.9 band every
+   re-initialisation enforces (the discriminator against the collapsed solution, never
+   a tolerance to loosen). Scanned rather than tuned: `E′ = 1.10` with `X = 0.05` pu
+   lines starts every bus at 1.018–1.034 and leaves 0.946–0.959 at t⁺.
+2. **On that network the zero-share control is exact**: `coi_rocof` at t⁺ =
+   −3.488372093022 Hz/s against M1's recorded −7500/2150 = −3.488372093023 (gap
+   1.3e-12), on constant-power loads.
+3. **Grid-following displacement turns the big trip into a voltage event.** Swapping
+   G4 alone for a grid-following inverter at matched dispatch drops B1 to 0.80 pu at
+   t⁺ (0.81–0.89 however stiff the lines were made, X = 0.05 → 0.01); swapping two
+   leaves the post-trip network with no solution at all. The inverter holds its
+   current, so it neither picks up any of the lost power nor holds a voltage; the
+   machines that remain must do both through their own reactance. Grid-forming
+   displacement runs at every share.
+
+**The choice put to the user, in those words:** trip the smallest unit (G4, 60 MW,
+15 % — the event M1 itself used for its "less inertia" lesson, because there the
+governors have the reserve to cover it), keep the largest as planned, or report both;
+and run the table on constant-power loads (the formula exact at every share, the
+grid-following sweep stopping after one swap) or on the repo's default loads with a
+separate exact control row.
+
+**Taken: both events, default loads, and the exact control as its own section.** The
+big trip is where grid-following displacement becomes a voltage story and the small
+one is where the frequency story can be told; the table runs on the default
+(constant-impedance) loads — M6's lesson that a claim made only on a convenient load
+model is a claim about the load model — and section 1 of the script repeats the
+zero-share trip on constant-power loads against M1's number.
+
+**Rejected, and why:** relaxing the 0.9 band (it is the discriminator, D13); moving
+`coi_model` to accept constant-power loads so the aggregate tier could draw the
+overlay (the advisor's objection: it also refuses every bus with no generating
+element, so the change would spread into the function SPEC §3.2 points at as the
+proof that reduced models are derived; the overlay is the closed form written from
+the model data instead).

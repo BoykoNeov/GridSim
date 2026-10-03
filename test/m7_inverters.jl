@@ -1394,12 +1394,157 @@ end
         @test occursin("sum to zero", try; coi_rocof(eng); ""; catch e; e.msg; end)
         @test occursin("NaN from t", try; rocof_readouts(eng); ""; catch e; e.msg; end)
         # DETAILED: unreachable — no source at all is refused at `init!` (D5, step 5's
-        # test), and a generator trip is refused outright at this tier.
+        # test), and since step 7 (D15) the trip that would take the LAST source is
+        # refused, so the ring's two machines can lose one and not the other.
         d = init!(DetailedEngine, _m7_gfl_ring())
-        @test_throws ArgumentError inject!(d, TripGenerator(:G1))
+        inject!(d, TripGenerator(:G1))
+        @test occursin("no machine and no grid-forming",
+                       try; inject!(d, TripGenerator(:G3)); ""; catch e; e.msg; end)
+        @test d.Σw > 0
         # AGGREGATE: refused before anything moves (step 2).
         fr = init!(FrequencyResponseEngine, coi_model(_m7_ring(:inverter)))
         inject!(fr, TripGenerator(:G1)); inject!(fr, TripGenerator(:G3))
         @test_throws ArgumentError inject!(fr, TripGenerator(:S2))
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M7 step 7 — a source trip in the detailed tier, all three kinds (D15)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Two machines, a grid-forming inverter, optionally a grid-following one, and ONE
+# constant-power load, on a lossless meshed ring. Built so the trip's instantaneous
+# closed form is EXACT, every nuisance switched off by construction: lossless, `Ra = 0`
+# and a load that draws the same P at any voltage make the survivors pick up exactly
+# what left, so `Σ 2Hᵢ·ω̇ᵢ = −P_lost` at t⁺. One more condition, and it is the one the
+# study then breaks on purpose: NO grid-following inverter may SURVIVE the trip — it
+# holds its current, so its power moves with |V| at t⁺ (`gfl = true` and a trip of
+# anything but `:pv`).
+function _m7_trip_net(; gfl::Bool = false)
+    buses = [Bus(b, 230.0) for b in (:B1, :B2, :B3, :B4, :B5)]
+    br = [Branch(:a, :B1, :B2, 0.05, 2000.0), Branch(:b, :B2, :B3, 0.05, 2000.0),
+          Branch(:c, :B3, :B4, 0.05, 2000.0), Branch(:d, :B4, :B5, 0.05, 2000.0),
+          Branch(:e, :B5, :B1, 0.05, 2000.0), Branch(:f, :B2, :B5, 0.08, 2000.0)]
+    ms = [Machine(:G1, :B1, 300.0, 4.0, 2.0, 0.3, 1.08, 80.0, 0.05, 120.0, 5.0),
+          Machine(:G2, :B2, 200.0, 3.0, 1.0, 0.3, 1.08, 50.0, 0.05, 80.0, 5.0)]
+    inv = [Inverter(:gf, :B3, :grid_forming, 150.0, 60.0; V_set = 1.02)]
+    gfl && push!(inv, Inverter(:pv, :B4, :grid_following, 100.0, 40.0))
+    loads = [Load(:D, :B5, gfl ? 230.0 : 190.0, 40.0, 0.0, 0.0, 1.0)]
+    return NetworkModel(100.0, 50.0, buses, br, ms, loads; inverters = inv)
+end
+
+# Each unit's inertia on S_base, BY HAND from the fixture's numbers and the formula —
+# never read back from the engine's weights, which are what is being checked.
+const _H7 = Dict(:G1 => 4.0 * 300 / 100, :G2 => 3.0 * 200 / 100,
+                 :gf => _TP / (2 * _KP) * 150 / 100, :pv => 0.0)
+const _BUS7 = Dict(:G1 => 1, :G2 => 2, :gf => 3, :pv => 4)
+
+# The active power a unit's bus exports into the network, read from the NETWORK side
+# (`_m7_injected`, the branch currents leaving it). Every unit bus here carries no load.
+function _m7_P(eng, b)
+    u = eng.integrator.u
+    return real(complex(u[eng.Vre_idx[b]], u[eng.Vim_idx[b]]) * conj(_m7_injected(eng, u, b)))
+end
+
+@testset "M7 step 7 — a source trip in the detailed tier (D15)" begin
+
+    @testset "RoCoF₀ at t⁺ is the closed form, for every kind of unit tripped" begin
+        for (id, gfl) in ((:G1, false), (:G2, false), (:gf, false), (:pv, true))
+            eng = init!(DetailedEngine, _m7_trip_net(; gfl))
+            P_lost = _m7_P(eng, _BUS7[id])
+            H_post = sum(_H7[k] for k in (:G1, :G2, :gf)) - _H7[id]
+            inject!(eng, TripGenerator(id))
+            @test isapprox(coi_rocof(eng), -50 * P_lost / (2 * H_post); rtol = 1e-8)
+            @test eng.Σw ≈ H_post                     # the weight left with the unit
+            @test !is_online(eng, id)
+            @test last(event_log(eng)).kind === :trip_generator
+            # The tripped bus exports NOTHING. `E = 0` would leave a shunt X′d (or X_c)
+            # there and the bus would draw −V/(jX) from the network.
+            @test abs(_m7_injected(eng, eng.integrator.u, _BUS7[id])) < 1e-10
+        end
+    end
+
+    @testset "a SURVIVING grid-following inverter breaks it — by exactly its own power change" begin
+        # It holds its current, so at t⁺ its power moves with |V|. The balance is
+        # still exact once that is counted: Σ 2Hω̇ = ΔP_pv − P_lost, with ΔP_pv read
+        # from the network side before and after.
+        eng = init!(DetailedEngine, _m7_trip_net(; gfl = true))
+        P_lost, P_pv0 = _m7_P(eng, 2), _m7_P(eng, 4)
+        H_post = _H7[:G1] + _H7[:gf]
+        inject!(eng, TripGenerator(:G2))
+        ΔP_pv = _m7_P(eng, 4) - P_pv0
+        @test isapprox(coi_rocof(eng), 50 * (ΔP_pv - P_lost) / (2 * H_post); rtol = 1e-8)
+        # …and the correction has content: without it the formula misses by > 1 %.
+        naive = -50 * P_lost / (2 * H_post)
+        @test abs(coi_rocof(eng) - naive) > 0.01 * abs(naive)
+        @test ΔP_pv < 0                               # the voltage dipped, so it gives LESS
+    end
+
+    @testset "what leaves with a machine, and what it no longer does" begin
+        eng = init!(DetailedEngine, _m7_trip_net())
+        solve!(eng, (0.0, 6.0); perturbations = [1.0 => TripGenerator(:G2)])
+        p, ps, u = eng.params, eng.p_static, eng.integrator.u
+        @test p[eng.mstat_pidx[2]] == 0.0 && ps[eng.smstat_pidx[2]] == 0.0
+        @test p[eng.Pm_pidx[2]] == p[eng.invR_pidx[2]] == p[eng.hr_pidx[2]] == p[eng.rate_pidx[2]] == 0.0
+        @test eng.w[2] == 0.0 && eng.w[1] == eng.H[1]
+        s = state_series(eng)
+        i = findfirst(>(1.0), s.t)
+        @test minimum(s.f_coi) < 50 - 0.05            # the survivors felt it
+        # The dead rotor, undriven and unloaded, only DECAYS on its own damping. A `Pm`
+        # left on it would accelerate it on a power nobody takes — invisible to the
+        # weights and the currents, visible here, on its own channel.
+        @test abs(s.ω_G2[end]) <= abs(s.ω_G2[i]) + 1e-12
+        @test abs(_m7_injected(eng, u, 2)) < 1e-9      # and it injects nothing, all run
+    end
+
+    @testset "what leaves with an inverter" begin
+        eng = init!(DetailedEngine, _m7_trip_net(; gfl = true))
+        solve!(eng, (0.0, 6.0);
+               perturbations = [1.0 => TripGenerator(:gf), 2.0 => TripGenerator(:pv)])
+        p, ps, u = eng.params, eng.p_static, eng.integrator.u
+        g, h = eng.gfm, eng.gfl
+        @test p[g.stat_pidx[1]] == ps[g.sstat_pidx[1]] == p[g.Pset_pidx[1]] == g.H[1] == 0.0
+        @test p[h.id_pidx[1]] == p[h.iq_pidx[1]] == ps[h.sid_pidx[1]] == ps[h.siq_pidx[1]] == 0.0
+        @test eng.Σw ≈ _H7[:G1] + _H7[:G2]
+        # A grid-forming inverter's idle droop settles at ZERO speed — with its setpoint
+        # left in place it would drift at K_p·P_set (0.02 pu here) for ever.
+        @test abs(state_series(eng).ω_gf[end]) < 1e-6
+        @test abs(_m7_injected(eng, u, 3)) < 1e-9 && abs(_m7_injected(eng, u, 4)) < 1e-9
+    end
+
+    @testset "refusals, and the no-op, before anything moves" begin
+        eng = init!(DetailedEngine, _m7_trip_net())
+        @test_throws KeyError inject!(eng, TripGenerator(:nope))
+        inject!(eng, TripGenerator(:G1)); inject!(eng, TripGenerator(:G2))
+        n = n_events(eng)
+        inject!(eng, TripGenerator(:G2))             # already out: nothing, not a re-solve
+        @test n_events(eng) == n
+        snap(e) = (copy(e.params), copy(e.p_static), copy(e.integrator.u), e.Σw,
+                   copy(e.online), copy(e.gfm.H))
+        before = snap(eng)
+        msg = try; inject!(eng, TripGenerator(:gf)); ""; catch e; e.msg; end
+        @test occursin("no machine and no grid-forming", msg) && occursin("nothing was changed", msg)
+        @test snap(eng) == before
+        @test n_events(eng) == n
+    end
+
+    @testset "protection on the tripped unit is latched, not fired" begin
+        eng = init!(DetailedEngine, _m7_trip_net();
+                    out_of_step = [(:B1, :B2) => OutOfStepTrip(2.5)])
+        inject!(eng, TripGenerator(:G2))
+        @test !out_of_step_relay(eng, :B1, :B2).armed
+        d = init!(DetailedEngine, governed_ring(); shed = [:G2 => [LoadShedStage(49.0, 0.1)]])
+        inject!(d, TripGenerator(:G2))
+        @test !any(shed_ladder(d, :G2).armed)
+        @test isempty(shed_log(shed_ladder(d, :G2)).t)
+    end
+
+    @testset "the re-initialisation checks the DYNAMIC network too (anti-vacuity)" begin
+        # A status written into one network only: the static solve converges onto a
+        # network the integrator is not integrating. Only the new check can see it.
+        eng = init!(DetailedEngine, _m7_trip_net())
+        eng.params[eng.mstat_pidx[2]] = 0.0
+        msg = try; GridSim._reinitialise_algebraic!(eng); ""; catch e; e.msg; end
+        @test occursin("DYNAMIC network's Kirchhoff rows", msg)
     end
 end

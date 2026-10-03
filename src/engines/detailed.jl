@@ -171,10 +171,9 @@
 # and removed. That measurement is the block above `_check_power_flow`.
 #
 # WHAT IS DELIBERATELY NOT HERE YET, each named rather than discovered later:
-#   - `inject!(::TripGenerator)` — a tripped machine turns its bus into a passive
-#     node, which changes that vertex's EQUATIONS, and a vertex model cannot
-#     change shape at run time. It needs a machine status that zeroes the injected
-#     current without turning `X′d` into a shunt to ground;
+#   - (`inject!(::TripGenerator)` was listed here until M7 step 7 built it: a tripped
+#     source turns its bus into a passive node through an in-service flag on its
+#     CURRENT, never `E = 0` — see that method;)
 #   - more than one machine on a bus. The canonical model expresses it (M5 step 1
 #     made sure of that); this engine's vertex models do not yet, and say so.
 #
@@ -292,8 +291,8 @@ check that runs there can see it.
 
 `status` is the machine's in-service flag. It multiplies the CURRENT, so an
 out-of-service machine injects nothing and produces no air-gap power while its
-rotor states drift harmlessly. It is carried for symmetry with the branch flag and
-is **not exercised** — `inject!(::TripGenerator)` still refuses by name below.
+rotor states drift harmlessly. Carried since M5 for symmetry with the branch flag;
+`inject!(::TripGenerator)` writes it as of M7 step 7.
 """
 @inline function _stator(Vre, Vim, δ, E′q, E′d, Ra, Xd′, Xq′, status)
     sδ, cδ = sin(δ), cos(δ)
@@ -743,19 +742,26 @@ the two shared a right-hand side. With `K_q > 0` the equivalence ends — the in
 voltage moves with reactive output, which a classical machine's cannot.
 
 Every gain and the reactance are on the SYSTEM base, converted once in
-`_inverter_arrays`. No governor slot: this tier refuses `TripGenerator`, ladders and
-ramps on an inverter, so nothing indexes one (the swing tier's placeholder exists
-for its trip bookkeeping only).
+`_inverter_arrays`. No governor slot: this tier refuses ladders and ramps on an
+inverter, so nothing indexes one (the swing tier's placeholder exists for its trip
+bookkeeping only).
 
-Parameters `p = (P_set, K_p, τ_p, ω₀, K_q, τ_q, V_ref, X_c, G, B, a_i, a_p)`.
+`istat` is the inverter's in-service flag (M7 step 7, D15) — the machine's `mstat`
+for this vertex. It multiplies the CURRENT and the two powers measured with it, so a
+tripped inverter injects nothing and its filters see nothing while its states drift
+harmlessly. `1.0` is the arithmetic this vertex always did, to the bit.
+
+Parameters `p = (P_set, K_p, τ_p, ω₀, K_q, τ_q, V_ref, X_c, G, B, a_i, a_p, istat)`.
 """
 function _detailed_gfm_bus!(dv, v, esum, p, t)
     Vre, Vim, δ, P_filt, Q_filt = v[1], v[2], v[3], v[4], v[5]
     P_set, K_p, τ_p, ω₀         = p[1], p[2], p[3], p[4]
     K_q, τ_q, V_ref, X_c        = p[5], p[6], p[7], p[8]
     G, B, a_i, a_p              = p[9], p[10], p[11], p[12]
+    istat                       = p[13]
     E = _gfm_voltage(V_ref, K_q, Q_filt)
     Ire, Iim, P, Q = _gfm_current(Vre, Vim, δ, E, X_c)
+    Ire, Iim, P, Q = istat * Ire, istat * Iim, istat * P, istat * Q
     Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]                 # KCL, real
     dv[2] = Iim - Lim + esum[2]                 # KCL, imaginary
@@ -785,14 +791,19 @@ machine's codes:
                   which holds the differential states (the angle, and the voltage the
                   filtered reactive power sets) and restores the algebraic ones.
 
-Parameters `p = (P_set, V_set, X_c, G, B, a_i, a_p, mode, δ_target, E_held)`.
+`istat` is the in-service flag, as in the dynamic vertex: a tripped inverter's
+static vertex injects nothing, and `_PF_HOLD` still pins its two unknowns.
+
+Parameters `p = (P_set, V_set, X_c, G, B, a_i, a_p, mode, δ_target, E_held, istat)`.
 """
 function _static_gfm_bus!(dv, v, esum, p, t)
     Vre, Vim, δ, E       = v[1], v[2], v[3], v[4]
     P_set, V_set, X_c    = p[1], p[2], p[3]
     G, B, a_i, a_p       = p[4], p[5], p[6], p[7]
     mode, δ_target, E_held = p[8], p[9], p[10]
+    istat                = p[11]
     Ire, Iim, P, _ = _gfm_current(Vre, Vim, δ, E, X_c)
+    Ire, Iim, P = istat * Ire, istat * Iim, istat * P
     Lre, Lim = _load_current(Vre, Vim, G, B, a_i, a_p)
     dv[1] = Ire - Lre + esum[1]
     dv[2] = Iim - Lim + esum[2]
@@ -1011,7 +1022,8 @@ function _dynamic_network(net::NetworkModel, g,
         passive = (_detailed_passive_bus!, [:V_re, :V_im], [:G, :B, :a_i, :a_p],
                    [0.0, 0.0], :passive_bus),
         gfm = (_detailed_gfm_bus!, [:V_re, :V_im, :δ, :P_filt, :Q_filt],
-               [:P_set, :K_p, :τ_p, :ω₀, :K_q, :τ_q, :V_ref, :X_c, :G, :B, :a_i, :a_p],
+               [:P_set, :K_p, :τ_p, :ω₀, :K_q, :τ_q, :V_ref, :X_c, :G, :B, :a_i, :a_p,
+                :istat],
                [0.0, 0.0, 1.0, 1.0, 1.0], :gfm_bus),
         gfl = (_detailed_gfl_bus!, [:V_re, :V_im, :θ_pll, :Δω, :Δω_i],
                [:i_d, :i_q, :K_pll_p, :K_pll_i, :τ_pll, :G, :B, :a_i, :a_p],
@@ -1043,7 +1055,8 @@ function _static_network(net::NetworkModel, g)
     vgfm = NetworkDynamics.VertexModel(
         f = _static_gfm_bus!, g = NetworkDynamics.StateMask(1:2),
         sym = [:V_re, :V_im, :δ, :E],
-        psym = [:P_set, :V_set, :X_c, :G, :B, :a_i, :a_p, :mode, :δ_target, :E_held],
+        psym = [:P_set, :V_set, :X_c, :G, :B, :a_i, :a_p, :mode, :δ_target, :E_held,
+                :istat],
         mass_matrix = LinearAlgebra.Diagonal(zeros(4)), name = :pf_gfm_bus)
     vgfl = NetworkDynamics.VertexModel(
         f = _static_gfl_bus!, g = NetworkDynamics.StateMask(1:2),
@@ -1271,6 +1284,11 @@ struct _GFMIndex
     smode_pidx::Vector{Int}
     sδtarget_pidx::Vector{Int}
     sEheld_pidx::Vector{Int}
+    # M7 step 7 — the in-service flag in each network. `H` above is ZEROED when the
+    # inverter trips (its virtual inertia leaves with it, D15), so it is the live
+    # weight rather than a property of the inverter.
+    stat_pidx::Vector{Int}
+    sstat_pidx::Vector{Int}
 end
 
 """
@@ -1290,6 +1308,10 @@ struct _GFLIndex
     iq_pidx::Vector{Int}
     smode_pidx::Vector{Int}
     sθheld_pidx::Vector{Int}
+    # M7 step 7 — the static vertex's copy of the current setpoint, which a trip
+    # zeroes alongside the dynamic one (`id_pidx`/`iq_pidx`).
+    sid_pidx::Vector{Int}
+    siq_pidx::Vector{Int}
 end
 
 """
@@ -1389,6 +1411,15 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     gfl::_GFLIndex
     # M7 step 6 — measurement-only PLLs. Weight zero everywhere, for D6's reason.
     meters::_MeterIndex
+    # M7 step 7 (D15) — the source trip. A machine's in-service flag in both networks
+    # and the three governor/ramp parameters a trip zeroes; `online` is every source
+    # (machines and both inverter kinds) still in service, the swing tier's `online`.
+    mstat_pidx::Vector{Int}
+    smstat_pidx::Vector{Int}
+    invR_pidx::Vector{Int}
+    hr_pidx::Vector{Int}
+    rate_pidx::Vector{Int}
+    online::Set{Symbol}
 end
 
 # Run the static network to convergence from the seeds in `u`, and read the answer
@@ -1629,7 +1660,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     Int[fvidx(nw, j, :θ_pll) for j in 1:nf], Int[fvidx(nw, j, :Δω) for j in 1:nf],
                     Int[fvidx(nw, j, :Δω_i) for j in 1:nf],
                     Int[fpidx(nw, j, :i_d) for j in 1:nf], Int[fpidx(nw, j, :i_q) for j in 1:nf],
-                    Int[fpidx(nws, j, :mode) for j in 1:nf], Int[fpidx(nws, j, :θ_held) for j in 1:nf])
+                    Int[fpidx(nws, j, :mode) for j in 1:nf], Int[fpidx(nws, j, :θ_held) for j in 1:nf],
+                    Int[fpidx(nws, j, :i_d) for j in 1:nf], Int[fpidx(nws, j, :i_q) for j in 1:nf])
     mbus = Int[net.bus_index[m.bus] for m in meters]
     mvidx(j, s) = SII.variable_index(nw, NetworkDynamics.VIndex(mbus[j], s))
     mtr = _MeterIndex(Symbol[m.bus for m in meters], mbus,
@@ -1643,7 +1675,15 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                     copy(ia.K_p), copy(ia.K_q), copy(ia.H),
                     [vidx(nws, j, :δ) for j in 1:ni], [vidx(nws, j, :E) for j in 1:ni],
                     [pidx(nws, j, :mode) for j in 1:ni], [pidx(nws, j, :δ_target) for j in 1:ni],
-                    [pidx(nws, j, :E_held) for j in 1:ni])
+                    [pidx(nws, j, :E_held) for j in 1:ni],
+                    [pidx(nw, j, :istat) for j in 1:ni], [pidx(nws, j, :istat) for j in 1:ni])
+    # M7 step 7 — what a machine trip writes (D15), resolved once like every index.
+    mpidx(nwk, k, s) = SII.parameter_index(nwk, NetworkDynamics.VPIndex(ma.bus[k], s))
+    mstat_pidx  = Int[mpidx(nw, k, :mstat) for k in 1:nm]
+    smstat_pidx = Int[mpidx(nws, k, :mstat) for k in 1:nm]
+    invR_pidx   = Int[mpidx(nw, k, :invR) for k in 1:nm]
+    hr_pidx     = Int[mpidx(nw, k, :headroom) for k in 1:nm]
+    rate_pidx   = Int[mpidx(nw, k, :rate) for k in 1:nm]
 
     # Branch ⇒ graph edge, through the UNORDERED vertex pair, so there is no
     # positional correspondence to get wrong (`SwingEngine`'s argument, unchanged).
@@ -1689,7 +1729,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         su[gfm.sδ_idx[j]] = 0.0
         su[gfm.sE_idx[j]] = ia.V_set[j]
         for (sym, val) in ((:P_set, ia.P[j]), (:V_set, ia.V_set[j]), (:X_c, ia.X_c[j]),
-                           (:δ_target, 0.0), (:E_held, 0.0))
+                           (:δ_target, 0.0), (:E_held, 0.0), (:istat, 1.0))
             sp[pidx(nws, j, sym)] = val
         end
         sp[gfm.smode_pidx[j]] = j == j_slack ? _PF_PIN : _PF_SOLVE
@@ -1886,7 +1926,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         p0[gfm.Pset_pidx[j]] = iP[j]
         p0[gfm.Vref_pidx[j]] = iE[j] - _gfm_voltage(0.0, ia.K_q[j], iQ[j])
         for (sym, val) in ((:K_p, ia.K_p[j]), (:τ_p, ia.τ_p[j]), (:ω₀, ω₀),
-                           (:K_q, ia.K_q[j]), (:τ_q, ia.τ_q[j]), (:X_c, ia.X_c[j]))
+                           (:K_q, ia.K_q[j]), (:τ_q, ia.τ_q[j]), (:X_c, ia.X_c[j]),
+                           (:istat, 1.0))
             p0[pidx(nw, j, sym)] = val
         end
     end
@@ -2049,7 +2090,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          copy(ma.H), copy(ma.H), Σw, traj,
                          Vector{Float64}(undef, length(channels)),
                          EngineEvent[], 0, net.f0, ladders, relays, ramps, gfm, gfl,
-                         mtr)
+                         mtr, mstat_pidx, smstat_pidx, invR_pidx, hr_pidx, rate_pidx,
+                         Set{Symbol}(vcat(ids, ia.id, fa.id)))
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -2431,6 +2473,26 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
         u[eng.Vre_idx[v]] = real(V[v])
         u[eng.Vim_idx[v]] = imag(V[v])
     end
+    # THE DYNAMIC NETWORK'S OWN KIRCHHOFF ROWS, AT THE STATE JUST WRITTEN (M7 step 7).
+    # Everything above checks the STATIC network's solve — a different set of
+    # equations, kept equal to the dynamic one only by every event writing the same
+    # change into both parameter vectors. A source trip writes FOUR such pairs (a
+    # machine's status, an inverter's status, a grid-following setpoint in each
+    # network), and one written on one side only would leave a static solve that
+    # converges beautifully onto a network the integrator is not integrating. This is
+    # the check that sees it: the algebraic rows of the right-hand side the solver
+    # actually steps, evaluated where it is about to start.
+    du = similar(u)
+    eng.nw(du, u, eng.params, eng.integrator.t)
+    kcl = 0.0
+    for v in eachindex(eng.Vre_idx)
+        kcl = max(kcl, abs(du[eng.Vre_idx[v]]), abs(du[eng.Vim_idx[v]]))
+    end
+    kcl < _PF_RESIDUAL || throw(ErrorException(
+        "DetailedEngine re-initialisation at t = $(eng.integrator.t): the static solve " *
+        "converged, but the DYNAMIC network's Kirchhoff rows are off by $kcl at the " *
+        "re-solved voltages. The two networks hold different parameters — an event " *
+        "wrote its change into one of them only."))
     # A STATE WRITTEN INTO THE INTEGRATOR IS DISCARDED BY THE NEXT STEP UNLESS THE
     # INTEGRATOR IS TOLD (the M3 finding, and the reason this is not a bare
     # assignment). `u_modified!` invalidates the cached derivative that a FSAL
@@ -2463,35 +2525,115 @@ function inject!(eng::DetailedEngine, ev::TripLine)
 end
 
 """
+    is_online(eng::DetailedEngine, id::Symbol) -> Bool
+
+Whether source `id` — a machine or an inverter of either kind — is still in service.
+An unknown id is `false`, the swing tier's contract.
+"""
+is_online(eng::DetailedEngine, id::Symbol) = id in eng.online
+
+"""
     inject!(eng::DetailedEngine, ev::TripGenerator)
 
-Not built yet, and refused by name rather than approximated.
+Take a source out of service (M7 step 7, `m7-context.md` D15): a machine, a
+grid-forming inverter or a grid-following one, looked up by id.
 
-A tripped machine turns its bus into a passive node, which changes that vertex's
-EQUATIONS — and a `VertexModel`'s state count is fixed when the network compiles.
-The obvious shortcut, setting `E = 0`, is **wrong**: it leaves `X′d` in place as a
-shunt reactance to ground rather than removing the machine, which is a different
-network and a plausible-looking wrong answer. What it needs is a machine status
-that zeroes the injected current while leaving the rotor's own states to drift
-harmlessly, plus the swing equation released from a power it no longer produces.
+**The bus becomes a passive node without the vertex changing shape.** A compiled
+vertex model's state count is fixed, so the source is switched off through an
+in-service flag that multiplies its CURRENT — `mstat` in `_stator`, `istat` in the
+grid-forming vertex, and the current setpoint itself for a grid-following inverter
+(which IS its current). The obvious shortcut, `E = 0`, is **wrong** and is not what
+this does: it would leave `X′d` (or `X_c`) in place as a shunt reactance to ground —
+a different network that converges and looks plausible. The flag is written into
+BOTH networks, the one integrated and the one the re-initialisation solves, and the
+re-initialisation checks that the two agree (`_reinitialise_algebraic!`).
+
+What leaves with the unit, each for the swing tier's reason (`inject!(::SwingEngine,
+::TripGenerator)` argues every one):
+
+  - **its inertia weight** — `w[k]` for a machine, the virtual inertia `gfm.H[j]` for
+    a grid-forming inverter; `Σw` is recomputed, so `f_coi` and `coi_rocof` average
+    over the units still online (a grid-following inverter weighed nothing);
+  - a machine's **mechanical power, governor, reserve and ramp** (`Pm`, `invR`,
+    `headroom`, `rate` to zero), with `ΔPm` re-seated to zero at the boundary — an
+    undriven rotor that kept its `Pm` would accelerate forever on a power nobody
+    takes, and one that kept `rate` would go on ramping;
+  - a grid-forming inverter's **setpoint** (`P_set` to zero), so its now-idle droop
+    settles at zero frequency instead of drifting its angle at `K_p·P_set`;
+  - every **shed ladder** on a tripped machine and every **out-of-step relay**
+    watching a branch that ends at its bus, latched without firing.
+
+**A trip that would leave no machine and no grid-forming inverter online is
+refused** before anything moves: the centre-of-inertia weights would sum to zero,
+and the grid-following inverters would be left with nothing to follow (Hurdle 10
+claim 3, D5) — the aggregate engine's refusal, at this tier.
+
+Then the algebraic states are re-solved with every differential state held (the
+same `_PF_HOLD` path a line trip takes). Tripping a unit already out is a no-op; an
+unknown id is a `KeyError`, and the lookup happens first so that error is reachable.
 """
 function inject!(eng::DetailedEngine, ev::TripGenerator)
-    throw(ArgumentError(
-        "DetailedEngine: inject!(::TripGenerator) is not built at this tier yet " *
-        "(unit $(ev.id)). A tripped source makes its bus a passive node, which " *
-        "changes the vertex's equations, and a compiled vertex model cannot change " *
-        "shape at run time. Setting E = 0 would leave X′d as a shunt to ground — a " *
-        "different network that converges and looks plausible. Use TripLine, or " *
-        "SwingEngine, until the machine-status path exists."))
+    id = ev.id
+    k = findfirst(==(id), eng.ids)
+    j = findfirst(==(id), eng.gfm.ids)
+    f = findfirst(==(id), eng.gfl.ids)
+    k === nothing && j === nothing && f === nothing && throw(KeyError(id))
+    id in eng.online || return nothing
+    # Refused BEFORE anything moves: is any voltage source left once this one goes?
+    any(x -> x != id && x in eng.online, eng.ids) ||
+        any(x -> x != id && x in eng.online, eng.gfm.ids) || throw(ArgumentError(
+        "DetailedEngine: tripping $id would leave no machine and no grid-forming " *
+        "inverter online — no inertia to weight a centre-of-inertia frequency, and " *
+        "nothing for the grid-following inverters to follow (m7-context.md D5, " *
+        "Hurdle 10 claim 3). Refused; nothing was changed."))
+    delete!(eng.online, id)
+    p, ps, u = eng.params, eng.p_static, eng.integrator.u
+    bus = Symbol("")
+    if k !== nothing
+        p[eng.mstat_pidx[k]]   = 0.0
+        ps[eng.smstat_pidx[k]] = 0.0
+        p[eng.Pm_pidx[k]]      = 0.0
+        p[eng.invR_pidx[k]]    = 0.0
+        p[eng.hr_pidx[k]]      = 0.0
+        p[eng.rate_pidx[k]]    = 0.0
+        u[eng.ΔPm_idx[k]]      = 0.0
+        eng.w[k] = 0.0
+        for l in eng.ladders
+            l.machine === id && disarm!(l)
+        end
+        bus = eng.model.machines[k].bus
+    elseif j !== nothing
+        g = eng.gfm
+        p[g.stat_pidx[j]]   = 0.0
+        ps[g.sstat_pidx[j]] = 0.0
+        p[g.Pset_pidx[j]]   = 0.0
+        g.H[j] = 0.0
+        bus = eng.model.buses[g.bus[j]].id
+    else
+        h = eng.gfl
+        p[h.id_pidx[f]]  = 0.0
+        p[h.iq_pidx[f]]  = 0.0
+        ps[h.sid_pidx[f]] = 0.0
+        ps[h.siq_pidx[f]] = 0.0
+        bus = eng.model.buses[h.bus[f]].id
+    end
+    for r in eng.relays
+        (r.from === bus || r.to === bus) && disarm!(r)
+    end
+    eng.Σw = isempty(eng.gfm.ids) ? sum(eng.w) : sum(eng.w) + sum(eng.gfm.H)
+    _reinitialise_algebraic!(eng)
+    _log_event!(eng, :trip_generator, id, Symbol(""))
+    return nothing
 end
 
 # M7 step 6. A machine's `ω` row and a grid-forming inverter's `P_filt` row both have
 # unit mass, so `du` there IS the derivative. The inverter's speed is the droop law
 # `_gfm_speed`, linear in `P_filt` with the setpoint a parameter, so its rate is the
 # same law applied to the rate with the setpoint at zero — one copy of the law.
-# Unreachable at zero weight on this tier (D5 refuses a model with no source at
-# `init!` and a generator trip is refused outright), guarded anyway so the method
-# says what the others say.
+# Unreachable at zero weight on this tier — D5 refuses a model with no source at
+# `init!`, and `inject!(::TripGenerator)` refuses the trip that would take the last
+# one (M7 step 7) — guarded anyway so the method says what the others say. A tripped
+# unit's weight is zeroed (`w[k]`, `gfm.H[j]`), so it drops out of the sum here.
 function coi_rocof(eng::DetailedEngine)
     eng.Σw > 0 || throw(ArgumentError(
         "coi_rocof: the inertia weights sum to zero, so there is no centre-of-inertia " *

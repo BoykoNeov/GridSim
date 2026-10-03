@@ -382,13 +382,23 @@ end
     @test n_events(eng) == 1
 end
 
-@testset "inject!(::TripGenerator) is refused by name, not approximated" begin
+@testset "inject!(::TripGenerator): built at M7 step 7, and NOT as E = 0" begin
+    # This testset asserted the refusal until M7 step 7 built the trip (m7-context.md
+    # D15). What it guarded survives as the property itself: the obvious shortcut,
+    # `E = 0`, leaves X′d as a shunt to ground, and the tripped bus would then draw a
+    # current −V/(jX′d) from the network. A real trip leaves only the bus's load —
+    # read from the NETWORK side (the branch currents into the bus), so the check
+    # does not ask the machine's own parameters what it is doing.
     eng = init!(DetailedEngine, load_bus_system())
-    msg = argerr_msg(() -> inject!(eng, TripGenerator(:G1)))
-    @test occursin("not built at this tier yet", msg)
-    # the message must say WHY the obvious shortcut is wrong, because that is the
-    # thing a later reader would otherwise reinvent
-    @test occursin("shunt to ground", msg)
+    inject!(eng, TripGenerator(:G1))
+    u = eng.integrator.u
+    bt = GridSim.branch_topology(eng.model)
+    V(v) = complex(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
+    Inet = sum(st * (V(1) - V(bt.src[e] == 1 ? bt.dst[e] : bt.src[e])) / (im * bt.X[e])
+               for (e, st) in ((e, eng.params[eng.status_pidx[e]]) for e in eachindex(bt.src))
+               if 1 in (bt.src[e], bt.dst[e]))
+    @test abs(Inet) < 1e-10                  # B1 carries no load: nothing flows at all
+    @test !is_online(eng, :G1) && is_online(eng, :G2)
 end
 
 end

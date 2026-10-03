@@ -365,9 +365,33 @@ runs.
 
 ## Step 7 — the low-inertia study
 
-- [ ] **First: a source trip in the detailed tier (D15, the user's choice)** — machines,
+- [x] **First: a source trip in the detailed tier (D15, the user's choice)** — machines,
       grid-forming and grid-following; weights leave with the unit; zero-inertia trip
-      refused; `coi_rocof` at `t⁺` against the aggregate `RoCoF₀` per kind.
+      refused; `coi_rocof` at `t⁺` against the aggregate `RoCoF₀` per kind. Built as an
+      in-service flag on each source's CURRENT in both networks (`mstat`, new `istat`,
+      the grid-following setpoint), never `E = 0`; the re-initialisation now also checks
+      the DYNAMIC network's Kirchhoff rows (the advisor's addition). Closed form exact
+      to `rtol 1e-8` per kind on a lossless constant-power ring, and exact WITH a
+      surviving grid-following inverter once its own power change is counted.
+      M5's step-1 refusal test and step 6's zero-weight test rewritten on purpose.
+      Gates: core **3994** (3950 + 43 + 1), reference **1251** unchanged, M5 criterion
+      bit-identical, step 6's grid-following capture `==`.
+- [x] **Trip sabotages, nine executed, each red, predictions written first**
+      (`W:\temp\claude\m7\step7\mutate7.py`, log `mut7.log`): T7-1 the `E = 0`
+      shortcut (predicted: the "exports nothing" check; actually caught EARLIER — the
+      leftover X′d is a shunt that pulls B1 to 0.505 pu and the re-solve's band refuses
+      it); T7-2 weight not removed; T7-3 static machine status not zeroed, T7-4
+      grid-following setpoint zeroed on one side, T7-7 grid-forming status ignored by
+      the dynamic vertex — all three caught by the NEW dynamic-Kirchhoff check and by
+      nothing else; T7-5 `Pm` left on a tripped machine — caught, as predicted, only
+      through the dead rotor's own speed channel (0.14 pu where it should decay) plus
+      the parameter read-back; T7-6 grid-forming setpoint left (its idle speed sits at
+      0.02 pu = K_p·P_set); T7-8 relays not disarmed; T7-9 the last-source guard moved
+      after the unit is taken out (the "nothing was changed" snapshot).
+- [x] **The event and the loads put to the user (D16)**: the largest unit is 38 % of the
+      fleet and grid-following displacement turns its trip into a voltage event below
+      the band — taken: BOTH events (G1 and G4), the default loads, and the exact M1
+      control as its own section.
 
 - [ ] `scripts/low_inertia.jl`, both displacement kinds, per-share table.
 - [ ] Zero share reproduces M1's recorded values.
