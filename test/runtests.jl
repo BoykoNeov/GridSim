@@ -27,6 +27,13 @@ module IberiaTwoArea
 include(joinpath(@__DIR__, "..", "scripts", "iberia_two_area.jl"))
 end
 
+# The low-inertia study (M7 step 7) is the third deliverable script, under the same
+# rule and in its own module for the same reason: its claims are asserted in
+# `m7_low_inertia.jl`, and its fixture lives in exactly one place.
+module LowInertia
+include(joinpath(@__DIR__, "..", "scripts", "low_inertia.jl"))
+end
+
 # The suite is split across files (M5 step 0b). Two Julia facts make the split
 # work, and both are load-bearing:
 #
@@ -63,5 +70,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m6_steady_state.jl"))
     include(joinpath(@__DIR__, "m6_economic_dispatch.jl"))
     include(joinpath(@__DIR__, "m7_inverters.jl"))
+    include(joinpath(@__DIR__, "m7_low_inertia.jl"))
 
 end

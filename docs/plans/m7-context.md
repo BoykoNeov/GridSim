@@ -709,3 +709,72 @@ overlay (the advisor's objection: it also refuses every bus with no generating
 element, so the change would spread into the function SPEC §3.2 points at as the
 proof that reduced models are derived; the overlay is the closed form written from
 the model data instead).
+
+### What the study measured (`scripts/low_inertia.jl`, asserted in `test/m7_low_inertia.jl`)
+
+**Design held fixed.** M1's units on two layouts of the same seven buses — `:ring`
+(meshed) and `:chain` (the same buses in a line). Each sweep displaces the units OTHER
+than the tripped one, smallest first, then the tripped unit itself; a displaced
+machine becomes an inverter at the same bus and rating at MATCHED DISPATCH, read off
+the all-machine power flow (a grid-forming inverter holds the voltage the machine left,
+a grid-following one injects the machine's P and Q), so every row of a sweep starts
+from the same operating point — asserted to 1e-8 in every bus voltage. Default
+(constant-impedance) loads; solver tolerance 1e-6 (the engines' real-time 1e-3 is three
+orders too loose for a three-decimal table, and the one after-t⁺ comparison between two
+runs — rows 3 and 4 below — is shown to close as it tightens: 1.9e-5 Hz at 1e-3,
+1.3e-11 at 1e-6, round-off at 1e-8).
+
+**The positive control holds on both layouts:** zero share, constant-power loads, the
+network's `coi_rocof` at t⁺ against M1's own engine on `example_system()` — gaps
+1.4e-12, 3.1e-13, 7.9e-13, 2.2e-16 Hz/s for G1/G4 on ring/chain.
+
+**The finding that reorganised the claims: on the default loads the formula and the
+network RANK THE TWO INVERTER KINDS OPPOSITE WAYS.** By the formula `−f0·P_lost/(2H)`
+grid-forming displacement steepens RoCoF₀ less than grid-following (it keeps 1 s of
+virtual inertia). In the network column grid-forming is steeper in every cell where
+both ran, and on the chain one grid-following swap reads SHALLOWER than no inverters at
+all (−0.745 → −0.622 Hz/s). The advisor caught it — the first draft of the claims read
+the formula column. Measured rather than narrated: with two new columns read from bus
+voltages at t⁻ and t⁺, the balance `Σ2Hω̇ = −P_lost + relief + ΔP_gfl` holds to
+`rtol 1e-8` in every cell tested. Grid-following holds a current and supports no
+voltage, so the dip at t⁺ is deeper and more constant-impedance load sheds itself
+(62.7 MW against 22.4 MW at one swap on the ring's big trip). That load relief is what
+the instantaneous number is mostly made of on default loads.
+
+**The claims, written after both layouts' tables** (script section 4; each asserted):
+
+- (a) above.
+- (b) **Grid-forming displacement moves RoCoF₀ and the nadir in OPPOSITE directions**:
+  RoCoF₀ steeper, nadir shallower, at every share, both events, both layouts (ring, small
+  trip: 48.79 → 49.13 → 49.42 → 49.62 Hz). The nadir benefit is the DROOP, not the
+  virtual inertia: τ_p → 0.001 s moves the nadir < 0.05 Hz while RoCoF₀ explodes (to
+  −1092 Hz/s instantaneous, a number with no physical reading). **Scoped to no current
+  limit (D8):** most grid-forming rows run above rating (1.26–1.63× on the big trip,
+  1.02–1.19× on the small one); the clean cell is the ring's small trip with no machine
+  left, at 0.97×.
+- (c) **The relay's 500 ms reading barely follows RoCoF₀**: from no inverter to no
+  machine left, RoCoF₀ steepens 3.8–4.7× while the windowed COI reading changes by −19 %
+  to +3 %, not monotonically. Removing the virtual inertia raises the windowed reading
+  5–15 % while machines remain and ~1 % once none do.
+- (d) **Grid-following displacement deepens the nadir in every cell that ran**, and on the
+  big trip stops being a frequency question at a third of the generation: |V| at t⁺ =
+  0.863 (ring) and 0.874 (chain) pu, below the band. Its one running big-trip cell is
+  still falling at 30 s on both layouts (printed `≤`, never as a nadir — reserve gone,
+  heading for ~39 Hz on damping alone).
+- (e) **The layout matters most to voltage**: at 46 % grid-following share on the small
+  trip the ring's lowest voltage is 0.963 pu and the chain's t⁺ voltage is 0.899 — a
+  refusal ON the band edge, so the claim is the gap, not the refusal. On the chain the PLL
+  meters read up to twice the centre-of-inertia RoCoF (1.45 against 0.685 Hz/s at one
+  grid-following swap): the trip's own phase jump, which no rotor felt (Hurdle 10).
+
+**Drafted before the tables and wrong** (M3 step 6's lesson, met again): "grid-forming
+steepens RoCoF₀ less than grid-following" (true of the formula, false of the network on
+default loads); "the 500 ms reading falls under grid-forming displacement" (it rises at
+first on three of four tables, and ends higher on one); "removing the virtual inertia
+barely moves the 500 ms reading" (5–15 %). Also: the n = 3 and n = 4 grid-forming rows
+coincide — the tripped unit's kind cannot matter once it is gone — which is a consistency
+check of the machine and inverter trip paths, not a finding.
+
+**Not done, and said so:** the aggregate tier's NADIR is not overlaid — `coi_model`
+refuses any model carrying a `Load` (and any bus with no generating element), and widening
+it was rejected in D16; the overlay is the RoCoF₀ closed form only.

@@ -218,6 +218,16 @@ the plain sweep shows.
 **Cut-first within this step:** the second topology can be cut to a stated
 limitation if time runs out; the first sweep cannot.
 
+*(As built — `m7-context.md` D15/D16: the step began by building the source trip the
+detailed tier did not have, for all three kinds. "The largest-unit trip" became TWO
+events at the user's choice, because M1's largest unit is 38 % of the fleet and its trip
+turns grid-following displacement into a voltage event below the band; the table runs on
+the default loads, with M1's number reproduced exactly on constant-power loads as its own
+section. The second topology was not cut. The aggregate overlay is the RoCoF₀ closed
+form; the aggregate nadir is not drawn, because `coi_model` refuses a `Load`. The finding
+that reorganised the claims: on default loads the formula and the network rank the two
+inverter kinds opposite ways, and load relief at t⁺ accounts for the difference exactly.)*
+
 ### Step 8 — The editor, and a window
 
 The editor is owned by whichever milestone changes the model (`README.md`

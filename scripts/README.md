@@ -72,3 +72,31 @@ instability is in scope and the final voltage collapse to blackout is not.
 place, and renders `docs/images/fig-3-67-two-area.png`. It lives under `ui/`
 rather than here for this directory's own reason: it imports Makie, and nothing
 in `scripts/` may.
+
+## `low_inertia.jl`
+
+M7 step 7's study: **what changes when the generation has no rotor.** M1's four units
+(`example_system()`, field for field) on a seven-bus network in two layouts (a meshed
+`:ring` and a `:chain`), displaced step by step by grid-following and by grid-forming
+inverters at **matched dispatch** — every row of a sweep starts from the same operating
+point — with a unit tripped at every step on the detailed tier. Two events (the user's
+choice, `docs/plans/m7-context.md` D16): G1, the largest unit (38 % of the generation),
+and G4, the smallest. Default (constant-impedance) loads. Four sections:
+
+1. **Positive control** — zero share, constant-power loads: the network's
+   instantaneous centre-of-inertia RoCoF at t⁺ against M1's own engine on the same trip,
+   to ~1e-12 on both layouts.
+2. **The sweeps** — per share: inertia online, RoCoF₀ by formula and by network, the
+   500 ms windowed RoCoF from the centre of inertia and from PLL meters at every bus, the
+   load relief and grid-following power change at t⁺ that account for the gap between
+   the two RoCoF₀ columns exactly, nadir (`≤` when the frequency is still falling at the
+   end — never reported as a nadir), voltage, governor reserve, grid-forming loading
+   against rating, and synchronism; or the wall a refused cell hit.
+3. **Anti-vacuity** — the grid-forming sweeps with τ_p → 0.001 s (virtual inertia ≈ 0).
+4. **What the tables say** — five claims, written after both layouts' tables and each
+   asserted in `test/m7_low_inertia.jl`. Three drafted before the tables did not survive
+   them.
+
+Read D16's "What the study measured" before quoting a number. The grid-forming rows run
+with **no current limit** (D8) and most of them above their rating; the PLL column
+includes the trip's own phase-jump spike, which no rotor felt.

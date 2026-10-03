@@ -393,10 +393,31 @@ runs.
       the band — taken: BOTH events (G1 and G4), the default loads, and the exact M1
       control as its own section.
 
-- [ ] `scripts/low_inertia.jl`, both displacement kinds, per-share table.
-- [ ] Zero share reproduces M1's recorded values.
-- [ ] Second topology (cut-first #2), claim written after both tables.
-- [ ] Anti-vacuity: `τ_p → 0` loses the grid-forming benefit.
+- [x] `scripts/low_inertia.jl`, both displacement kinds, per-share table — both events
+      (D16), matched dispatch asserted (every pre-trip bus voltage to 1e-8), default
+      loads, solver tolerance 1e-6, and the RoCoF₀ gap between formula and network
+      ACCOUNTED for exactly (`−P_lost + load relief + ΔP_gfl`, rtol 1e-8 — the
+      advisor's addition, which reversed the first draft's ranking of the two kinds).
+- [x] Zero share reproduces M1's recorded values — `coi_rocof` at t⁺ against M1's own
+      engine on `example_system()`, constant-power loads, gaps ≤ 1.4e-12 on both layouts
+      and both events.
+- [x] Second topology (`:chain`) — NOT cut; claims written after both tables (section 4
+      of the script, five claims, each asserted; three drafted earlier did not survive).
+- [x] Anti-vacuity: `τ_p → 0` — the t⁺ imbalance is identical and `coi_rocof·H_post`
+      invariant to 1e-9 (read on the network column; the formula column would check its
+      own input); the nadir moves < 0.05 Hz, so the grid-forming nadir benefit is the
+      droop, not the virtual inertia.
+- [x] Study sabotages, three, each red (`mutate7b.py`, `mut7b.log`): grid-following Q
+      not matched (the matched-dispatch check, and one cell tipped into a refusal);
+      load relief read as constant power (the accounting); τ_p never reaching the
+      inverter (the anti-vacuity block). Rows 3 and 4 of a grid-forming sweep coincide —
+      a consistency check of the two trip paths, its after-t⁺ gap shown to be solver
+      error falling with the tolerance.
+- [x] **Step 7 gates:** core **4108** (3994 + 114 study checks), reference **1251**
+      (unchanged — nothing in `reference/` reads the trip), UI **449** (two stale
+      comments in the voltage window corrected, no code moved).
+- **Not done, and said:** the aggregate tier's NADIR overlay (`coi_model` refuses a
+  `Load`; widening it rejected in D16) — the overlay is the RoCoF₀ formula only.
 
 ## Step 8 — editor (not cut) and window (cut-first #1)
 

@@ -98,10 +98,10 @@
 # THE SHIPPED SCENARIO IS A RAMP THAT ADDS LOAD, AND EVERY PART OF THAT WAS FORCED
 # OR MEASURED.
 #
-# A ramp rather than an event, forced: `DetailedEngine` refuses `TripGenerator` by
-# name (a tripped machine makes its bus passive, which a compiled vertex model
-# cannot become at run time), so of the *events* both tiers accept only `TripLine`
-# is left — and on this ring a line trip moves the frequency by 1.5 mHz and the
+# A ramp rather than an event, forced WHEN THIS WAS BUILT (M5 step 8):
+# `DetailedEngine` then refused `TripGenerator` by name, so of the *events* both tiers
+# accepted only `TripLine` was left (M7 step 7 has since built the trip, through an
+# in-service flag on the source's current; the window was not re-designed around it) — and on this ring a line trip moves the frequency by 1.5 mHz and the
 # voltage by 0.004 pu, which is a picture of nothing. A `GenerationRamp` is armed at
 # construction, so both tiers get it identically, and it is the disturbance M3 and
 # M5 step 7 already use.
@@ -691,9 +691,9 @@ sides instead and the offsets collapse by a factor of ten, to 0.013/0.0003/0.010
 — which is what says the 0.13 is denomination and not a broken comparison.
 
 **The default disturbance adds 60 MW of load, and every part of that was forced or
-measured.** `DetailedEngine` refuses `TripGenerator` by name (a tripped machine
-makes its bus passive, and a compiled vertex model cannot change shape at run time),
-so `TripLine` is the only *event* both tiers take — and on this ring a line trip
+measured.** When this window was built (M5 step 8) `DetailedEngine` refused
+`TripGenerator` by name — M7 step 7 has since built it — so `TripLine` was the only
+*event* both tiers took — and on this ring a line trip
 moves the frequency 1.5 mHz and the voltage 0.004 pu, which is a picture of nothing.
 A `GenerationRamp` is armed at construction instead, so both tiers get it
 identically. It is on `G3`, the ring's load, so the voltage **sags** (0.920 → 0.826)
