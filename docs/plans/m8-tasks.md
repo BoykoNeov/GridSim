@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–3 done (2026-10-06)**; step 4 next. Step 3 left **4735 core / 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
+Status: **steps 0–3 done (2026-10-06)**; step 4 next. Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -316,14 +316,19 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
       a false alarm is reachable. M6 step 7's rule again: a claim made on constant
       power is re-run on the default. **First written as "only on the default
       loads"; the review measured it wrong:** constant power lets DC exceed AC too
-      once the voltages are held at 1 pu with resistance on (case9 ladder rungs
-      A1/A2 −6.3 MW, mesh A0 −0.15, A1 −0.51). What holds is the scoped claim,
-      asserted in "which loads let DC exceed the AC apparent power".
+      on every ladder rung with a helper machine on each sourceless bus (case9
+      A1/A2 −6.3 MW, mesh A0, which is lossless, −0.15, mesh A1 −0.51). What those rungs share is the
+      helpers, not resistance (A0 has none) nor 1 pu (A2 has the published
+      setpoints); a first rescoping said "1 pu with resistance on" and was wrong
+      too. What holds is the scoped claim, asserted in "which loads let DC exceed
+      the AC apparent power".
 - [x] Sabotages in `screening.jl` only, predictions written first; **all eight red
       exactly where predicted, and nowhere else**:
       - **T1**, the miss read by position: red in the false alarm (L94 is past the
         end of an 8-branch solution) and the A0 tree check. Green, as predicted, in
-        the `:dc_missed` test, because L14 comes before the outaged L89;
+        the `:dc_missed` test, because L14 comes before the outaged L89 (true at
+        e857b52; the review follow-up's L94 by-id check in that test now catches
+        it);
       - **T2**, `abs` dropped from the DC judgement: red in the positive control,
         the false alarm and case9 at 400 MW (each overloaded flow is negative in
         model orientation). `S_base` invariance green, both bases equally wrong;

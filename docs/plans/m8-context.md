@@ -81,8 +81,8 @@ stands in for, stop meaning what they appear to mean.
      every bus at 1 pu and no resistance the miss is a pure loop flow, so case9's
      ring outages are blind to it. The real-power part does go both ways: negative
      enough to give a DC false alarm; on the published case9 that needs the
-     default loads (constant power with every bus at 1 pu also lets DC exceed AC,
-     measured at review).
+     default loads (constant power also lets DC exceed AC on the ladder rungs
+     with a helper machine on every sourceless bus, measured at review).
   4. **It cannot see voltage at all — measured at step 0, and the larger
      miss.** On our case9-without-line-charging at its published 315 MW, the DC
      screen passes all six ring outages (worst 79.3 % of a rating), while
@@ -549,14 +549,21 @@ and no rung is secretly a different switching state.
   12.7 MW (case9 315), 23.0 (case9 400) and 19.2 (mesh). M6 step 7's rule a second
   time: a claim made on constant power is re-run on the default. **First written
   as "exists only on the default loads", and wrong:** constant power lets DC exceed
-  AC too when every bus is held at 1 pu with resistance on (case9 rung A1 −6.3 MW,
-  mesh A0 −0.15, A1 −0.51). The scoped claim is what the test asserts.
+  AC too on every ladder rung with a helper machine on each sourceless bus (case9
+  A1/A2 −6.3 MW; mesh A0, which is lossless, −0.15; mesh A1 −0.51). The shared
+  feature is the helpers, not resistance (A0 has none) nor 1 pu everywhere (A2
+  carries the published setpoints): on the mesh even the lossless loop flow can
+  push one branch's |P| below its DC value, and case9's A0 hides it only because
+  each outage leaves a tree. A first rescoping said "1 pu with resistance on" and
+  was wrong too. The scoped claim is what the test asserts.
 - **Positive control**, L94 rated 100 MVA. Its DC flow runs against its declared
   direction (−125.0 MW after L89 out), which is what makes a forgotten `abs`
   visible.
 - **All eight sabotages went red exactly where predicted.** The one worth keeping:
-  reading the AC solution by position is **invisible** to the `:dc_missed` test,
-  because L14 sits before the outaged L89 and the indices still agree there. It is
+  reading the AC solution by position was **invisible** to the `:dc_missed` test
+  at e857b52, because L14 sits before the outaged L89 and the indices still agree
+  there (the review follow-up added an L94 by-id check to that test, which now
+  catches it). It is
   seen by the false alarm (L94 is past the end of an 8-branch solution) and by the
   A0 tree check. The grid-forming-slack branch of `:dc_blind` had no fixture until
   its sabotage was written, and got one (a triangle whose slack is rated 0.1 %
