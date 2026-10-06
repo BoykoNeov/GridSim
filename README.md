@@ -11,15 +11,18 @@ NREL-Sienna stack where it fits) and build only the bespoke part — the orchest
 layer that steps models in wall-clock time, injects live perturbations, and routes
 between fidelity tiers.
 
-> **Status: Milestones 1–3 landed; Milestone 4 in progress.** Two fidelity tiers
-> exist behind one interface — an aggregate centre-of-inertia frequency model (M1)
-> and a multi-machine network swing model (M2) with governor droop, low-frequency
-> load shedding, out-of-step tie protection and scheduled generation ramps (M3) —
-> both drivable live (`run_realtime!`) and, since M4 step 1, offline
-> (`solve!`). Both have GLMakie windows. The 28 April 2025 Iberian blackout is the
-> standing real test case, on both tiers. The milestone map and what each one
-> found is [`docs/plans/README.md`](docs/plans/README.md); the durable brief is
-> [`docs/SPEC.md`](docs/SPEC.md).
+> **Status: Milestones 1–7 complete (M7 closed 2026-10-06).** Three fidelity
+> tiers behind one interface — an aggregate centre-of-inertia frequency model (M1),
+> a multi-machine network swing model (M2) with governor droop, load shedding,
+> out-of-step protection and generation ramps (M3), and a detailed tier with
+> voltage as a state, exciters and voltage-dependent loads (M5) — driven live
+> (`run_realtime!`) or offline (`solve!`), and checked against an outside
+> implementation (M4). DC and AC power flows and a cheapest dispatch (M6).
+> Grid-forming and grid-following inverters, phase-locked-loop frequency meters and
+> a low-inertia study (M7). Each has a GLMakie window, plus a scenario editor. The
+> 28 April 2025 Iberian blackout is the standing real test case. The milestone map
+> and what each one found is [`docs/plans/README.md`](docs/plans/README.md); the
+> durable brief is [`docs/SPEC.md`](docs/SPEC.md).
 
 ## Design in one breath
 
@@ -54,6 +57,13 @@ between fidelity tiers.
   survives the sweep and what was an artefact of one cell.
 - Solve a scenario offline (`solve!`) onto a chosen output grid and compare it,
   channel by channel, against the real-time run or against the other tier.
+- Run the detailed tier, where voltage is a state, and see how far its voltages
+  sit from the swing tier's constant ones.
+- Solve a DC or AC power flow, or a cheapest dispatch, on a scenario you drew in
+  the editor.
+- Replace machines with grid-forming or grid-following inverters
+  (`scripts/low_inertia.jl`) and watch what a trip does to frequency — and to
+  what a phase-locked-loop meter on each bus *thinks* frequency is.
 
 ## Getting started
 
@@ -91,9 +101,10 @@ divergence(a, b; band = band)                       # (; max, t_max, rms, t_depa
 ```
 
 The UI is a separate environment; see [`ui/README.md`](ui/README.md) for setup,
-the three windows, and offscreen rendering. The external oracle is a third:
+the windows, and offscreen rendering. The external oracle is a third:
 [`reference/README.md`](reference/README.md) — `julia --project=reference -e
-'import Pkg; Pkg.test()'` checks the multi-machine engine against PowerDynamics.
+'import Pkg; Pkg.test()'` checks the swing and detailed tiers, inverters and power flows against
+PowerDynamics and PowerFlows.
 Neither needs a `Pkg.develop` by hand; both carry a `[sources]` link to the core,
 and all three environments are re-resolved from a deleted manifest whenever a
 dependency moves.
@@ -122,15 +133,16 @@ GridSim/
 ├── src/
 │   ├── GridSim.jl        # module root, exports
 │   ├── model/            # SystemModel (aggregate) and NetworkModel (canonical); coi_model
-│   ├── engines/          # SimulationEngine interface, recorder, playback driver, two engines
+│   ├── engines/          # SimulationEngine interface, recorder, playback driver, three tiers
 │   ├── events/           # perturbation event types (TripGenerator, StepLoad, TripLine)
 │   ├── protection/       # armed, state-triggered schemes: load shedding, out-of-step
 │   ├── scenarios/        # scheduled inputs: generation ramps
 │   ├── analysis/         # post-processing: windowed RoCoF, cross-run divergence
+│   ├── steadystate/      # DC and AC power flow, cheapest dispatch
 │   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
 ├── test/                 # one suite: closed-form, cross-fidelity and control checks
-├── scripts/              # headless experiments; the two Iberian replays
-├── ui/                   # separate package: `using GridSim`, `using GLMakie`; three windows
+├── scripts/              # headless experiments; the two Iberian replays, the low-inertia study
+├── ui/                   # separate package: `using GridSim`, `using GLMakie`; the windows and the editor
 ├── reference/            # separate package: the external oracle (PowerDynamics); a checker, not a tier
 └── docs/
     ├── SPEC.md           # the durable brief (architecture invariants, conventions)

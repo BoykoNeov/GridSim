@@ -5,9 +5,9 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **Steps 0–8 done (2026-10-03)** — 4134 core / 568 UI at step 8 (reference not
-re-run in step 8: no code it reads moved beyond one added helper; step 9 re-measures all
-three on re-resolved manifests). Step 7 closed at 4113 / 1251 / 449. Step 6 closed at 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
+Status: **M7 COMPLETE — closed 2026-10-06** on manifests deleted and re-resolved at
+the close: **4134 core / 1251 reference / 568 UI**, all passing (see step 9). Steps 0–8
+done by 2026-10-03; 4134 core / 568 UI at step 8. Step 7 closed at 4113 / 1251 / 449. Step 6 closed at 3950 core / 1251 reference / 449 UI (step 5 closed at 3868 / 1251 / 449; step 3 at 3778 / 1143 / 449) (step 2 closed at 3753) (step 1 closed at 3730: 3714 at its first commit, +16 from the walked-surface fix). Entered at `372fd35` (M6 closed) with
 **3602 core / 1140 reference / 446 UI** as measured on re-resolved manifests at
 M6's close.
 
@@ -506,6 +506,32 @@ runs.
       meters dip to ~49.3 Hz at the trip while the centre of inertia barely moves.
 - [x] Precompile workload renders the window (its first open measured 57 s before).
 
-## Step 9 — close
+## Step 9 — close (2026-10-06)
 
-- [ ] Manifests re-resolved, counts re-measured, ledger, SPEC, README, memory.
+- [x] **Manifests re-resolved**, all three deleted (copies kept in
+      `W:\temp\claude\m7-close\`) and re-resolved in sequence, root first, never
+      concurrently, each suite at below-normal priority: **4134 core / 1251 reference /
+      568 UI**, 0 failed, 0 errored — identical to step 8 (core, UI) and step 7
+      (reference, 82 + 235 + 135 + 116 + 418 + 154 + 3 + 66 + 42). Counted as
+      `[[deps.` entries: **188 → 191 / 286 → 301 / 364 → 366**, nothing removed. Added:
+      `LLVM`, `LLVMExtra_jll` everywhere (plus `CEnum` in two), and in `reference/`
+      twelve more binary wrappers (the `aws_c_*` set, `s2n_tls_jll`, `MPIABI_jll`,
+      `mpif_jll`). Bumps 20 / 28 / 28, the largest `SciMLBase` 3.56.1 → 3.57.0,
+      `HDF5_jll` 1.14 → 2.2 and `OpenMPI_jll` 4.1 → 5.0 (reference only) — none moved a
+      count. No `Project.toml` changed (`git diff` shows only the docs this close edited).
+- [x] **Found, not planned — a deprecation the bump brought.** `SciMLBase` 3.57.0
+      deprecates `u_modified!` in favour of `derivative_discontinuity!`; it warns from
+      `src/engines/detailed.jl` (`_reinitialise_algebraic!`) and four test helpers, in
+      all three suites. Behaviour unchanged (every count holds). **Not switched at the
+      close**: our compat floor is `SciMLBase = "3.30.1"`, and the new name would raise
+      it. Owed, with that floor question attached.
+- [x] **Ledger**: `docs/validation-ledger.md` gains the step 4–8 rows (it stopped at
+      step 3), and its IBR owed row is marked delivered. The one claim never checked —
+      Hurdle 12's upper-bound clause, unreachable behind the voltage band (D13) — is
+      written down there rather than left implied.
+- [x] **SPEC**: §7.6's IBR bullet and §9 item 7 marked delivered, with what stays owed.
+- [x] **README**s: the top-level status (it still said "M4 in progress") and the
+      layout; the plans index's M7 row; hurdles 10 and 11 marked closed, 12 closed on its
+      main claim with the untested clause named — **the list is empty again**, and the
+      next milestone names its hurdle first.
+- [x] Memory updated.

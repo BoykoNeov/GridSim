@@ -482,10 +482,59 @@ type and the model's bookkeeping", "M7 step 1 — inverters in the scenario file
 | A setpoint step breaks the equivalence, by exactly `K_p_sys·ΔP` | Speed read at the event boundary, no step: inverter jumps by the predicted amount, machine by zero | **closed form** |
 | Swing-tier COI with a grid-forming inverter ≡ aggregate at a trip instant | RHS-derived COI rate against `RoCoF₀` for a machine trip and an inverter trip, rtol 1e-8; settling after the inverter trip agrees at `−0.6/10` | **cross-fidelity** |
 
+### The detailed tier learns both kinds — M7 steps 4-5, `src/engines/detailed.jl`
+
+| Claim | Checked against | Label |
+|---|---|---|
+| Grid-forming in the detailed tier ≡ a hand-converted machine (step 4) | Both started from `ac_powerflow`: exactly zero gap at t = 0, then 6.1e-8 / 9.8e-10 / 9.3e-12 rad at reltol 1e-6 / 1e-8 / 1e-10. `K_q = 0.05` opens 3.7e-4 rad. Mutations B1–B6 red | **convergence** |
+| …and ≡ PowerDynamics' `IdealDroopInverter` behind `X_c`, with `K_q` live | Gains and `X_c` converted to the system base in the oracle builder from the inverter's own fields, so a wrong base in core is a disagreement. Flat run 1e-9; after a line trip ~1e-12 on every channel against `convergence_band`s of 1e-8–1e-9, the trip moving each channel by 1e-4–6e-3. `Q` measured at the bus (B7) is green in-house and red here — caught first by the flat run | **external** |
+| A rating is a switched Q limit (D10) | The engine's own steady state refuses an inverter beyond its rating and points at `ac_powerflow`, which caps it; the capped start sits at the rating and is flat | **structural** |
+| Grid-following in the power flows: constant-power injection on a load-type bus (step 5) | Two-bus closed form `V_t² = (V_g² + √(V_g⁴ − 4X²P²))/2` to 1e-12 | **closed form** |
+| Its transfer limit (D13) | Unreachable as one scan — the limit sits below the 0.9 pu band. Checked in two halves: the band edge 1.9615 pu through `ac_powerflow`, the nose 2.5 pu on the band-free first Newton round, both bracketed to 1e-4 | **closed form** |
+| The PLL's phase-step peak | Predicted before the run from the linearised loop's matrix exponential on a zero-current inverter: relative error 3.4e-4 / 8.4e-5 / 2.1e-5 at Δ = 0.05 / 0.025 / 0.0125 rad, ratio 4 per halving (the Δ² signature of sin φ ≈ φ) | **closed form**, rate |
+| The current is injected in the PLL frame | Read back from the branches and rotated into the PLL frame, it stays at dispatch to < 1e-10 through a line trip while the PLL is 0.0105 rad off the bus angle. The bus-frame mutation is caught ONLY here | **structural** |
+| The ideal current source against `SimpleGFL` (Hurdle 12) | Flat run ~5e-15. After a line trip the gap falls as **1/k** in their current-loop gain (ratios 3.85–4.42 per ×4 on bus voltage, PLL angle, grid-forming speed); PLL frequency falls faster, recorded not fitted. At their default gains the voltage gap is 0.014 pu on a 0.021 pu excursion — **a fidelity boundary with a number on it, not a tolerance** | **external**, signature |
+
+**Not checked, and said:** Hurdle 12's side clause — that the existence limit is an
+*upper bound* on where their model loses synchronism — was never run. The limit sits
+behind the voltage band (D13), so no operating point near it is admitted on either
+side.
+
+### Frequency without a rotor — M7 step 6, `src/analysis/postprocess.jl`
+
+| Claim | Checked against | Label |
+|---|---|---|
+| A measurement-only `PLLMeter` injects nothing | Meter states kicked, every other RHS row `==`; a meter at a grid-following inverter's bus reads its `ωpll_` to 6e-17 | **structural** |
+| A phase jump reads as a spike of `K_p·|V|·Δ` | A real line trip: the spike approaches the closed form as the filter shrinks (leftover 0.059 → 0.011 → 0.0022 per decade of τ), while the centre of inertia does not move (`coi_rocof` 5.6e-17 Hz/s, `f_coi` flat to 0.0) | **closed form** |
+| The windowed RoCoF a relay reads | Phantom spike/W approached from below; the window's cost on an exactly first-order trajectory `T(1 − e^{−W/T})/W` to 1e-7 every sample | **closed form** |
+| Three RoCoFs under three names, none of them "the" RoCoF | `coi_rocof` (instantaneous) `==` step 3's hand RHS arithmetic, and the aggregate `RoCoF₀` at two trips. Measured on the grid-following ring: the instantaneous value is the SMALLEST of the three — the prediction said the opposite | **closed form** |
+| No frequency read at zero inertia weight | Every reachable path refuses by name (D14); the swing tier's live `f_coi` keeps M2's `NaN` | **structural** |
+
+### The low-inertia study — M7 step 7, `scripts/low_inertia.jl`
+
+| Claim | Checked against | Label |
+|---|---|---|
+| A source trip in the detailed tier, all three kinds (D15) | `coi_rocof` at t⁺ against the aggregate `RoCoF₀` per kind, rtol 1e-8; the re-initialisation checks the DYNAMIC network's Kirchhoff rows, the only check that caught three of nine sabotages | **cross-fidelity** |
+| Zero inverter share is M1 | M1's own engine on `example_system()`, constant-power loads, gaps ≤ 1.4e-12, both layouts and both events | **cross-fidelity** |
+| The gap between the RoCoF₀ formula and the network | Accounted for exactly — `−P_lost + load relief + ΔP_gfl`, rtol 1e-8. On default loads it ranks the two inverter kinds the opposite way to the formula | **closed form** |
+| Grid-forming raises the nadir through droop, not virtual inertia | `τ_p → 0`: the t⁺ imbalance identical, `coi_rocof·H_post` invariant to 1e-9, the nadir moving < 0.05 Hz | **structural** (the anti-vacuity control) |
+
+The study's five claims are asserted in the script, written after both tables were
+read. The aggregate tier's nadir overlay is not drawn (`coi_model` refuses a `Load`).
+
+### Editor and window — M7 step 8, `ui/`
+
+| Claim | Checked against | Label |
+|---|---|---|
+| The editor carries inverters, and apply writes nothing on a refusal | Round trip with every field off its default, both modes; one rebuild per apply (`_inverter_with`). Eleven sabotages red | **structural** |
+| The low-inertia window is the study, not a copy | The script `include`d; the read-out `isequal` the study's row; zero share gives two inverter runs `==` sample for sample. Eight sabotages red, two only after a sweep of every setting | **structural** |
+
 ## Owed rows
 
-- SPEC §7.6's third lesson, **IBR behaviour**: **scheduled as M7** (2026-09-29),
-  with the rest of this bullet kept as the record of what it said before. No tier, and **un-scheduled**
+- SPEC §7.6's third lesson, **IBR behaviour**: **scheduled as M7** (2026-09-29) and
+  **delivered by it (closed 2026-10-06)** — the M7 sections above; one clause of
+  Hurdle 12 stays unchecked and says so there. The rest of this bullet is kept as
+  the record of what it said before. No tier, and **un-scheduled**
   rather than implied by M5's voltage work. An inverter has no swing equation, so
   it is a third fidelity and not a machine with different numbers. Step 8's window
   says so on its own caption, and SPEC §7.6 now says it too

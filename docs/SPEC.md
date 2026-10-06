@@ -380,7 +380,9 @@ end
     droop states and agrees with a hand-converted machine to within solver error
     that falls with the tolerance (6.5e-11 → 5.3e-14 rad). The one place the two
     part is a setpoint step, where the inverter's frequency jumps and a rotor's
-    cannot (`m7-context.md` Hurdle 11).
+    cannot (`m7-context.md` Hurdle 11). **Delivered by M7 (closed 2026-10-06)**:
+    grid-forming in every tier, grid-following in the detailed tier, both checked
+    against PowerDynamics; drawn by `ui/src/low_inertia_window.jl`.
 
 ### 7.7 UI (separate `ui/` package, `using GLMakie`)
 
@@ -482,5 +484,11 @@ end
 7. Renewables / low-inertia studies (the M1 lesson, scaled up). **Taken as M7**
    (2026-09-29), together with §7.6's inverter lesson — and chosen against the
    hurdle list rather than this numbering: `docs/plans/m7-context.md` D0.
+   **Delivered in M7 (closed 2026-10-06)**: an `Inverter` type, grid-forming in
+   every tier (exactly a swing machine, checked as one) and grid-following with a
+   PLL in the detailed tier; bus PLL meters and RoCoF read three ways; a source
+   trip in the detailed tier; and `scripts/low_inertia.jl` with its window. Owed:
+   the aggregate tier's nadir overlay for that study, and one clause of Hurdle 12
+   (`docs/plans/README.md`).
 8. National scale: geographic map (`GeoMakie`/`Tyler.jl` or web `maplibre`+`deck.gl`),
    batched/GPU contingency & time-series.
