@@ -165,7 +165,8 @@ end
         # Consumers a later M7 step has TAUGHT inverters (their own testsets check
         # what they do with them). Growing this set is how a step lifts a refusal.
         learned = Set([:coi_model,
-                       :bus_injections, :dc_powerflow, :ac_powerflow])   # M7 step 5
+                       :bus_injections, :dc_powerflow, :ac_powerflow,   # M7 step 5
+                       :dc_line_outages])   # M8 step 2 (test/m8_screening.jl)
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)

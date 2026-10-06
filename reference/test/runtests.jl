@@ -2373,3 +2373,98 @@ end
 end
 
 end
+
+# ===========================================================================
+# M8 step 2 — our line-outage factors against PowerNetworkMatrices' LODF
+# ===========================================================================
+#
+# ONLY THE FACTOR IS THEIRS. Their post-outage flow is formed as our base flow plus
+# `LODF[m, k]·f_k`, so the comparison reads the factor and nothing else. Indexed
+# `[monitored, outaged]` by ARC — the `(from, to)` bus numbers, which
+# `to_powersystems` makes our vertex indices — so a reordering cannot pass for a
+# match (m8-context.md D1).
+#
+# Bands stated before the run (m8-tasks.md step 2). Their susceptances are read back
+# out of a `ComplexF32` admittance matrix (`BA_Matrix(ybus)`), the oracle being a
+# floor a third time: so `eps(Float32)·max|f| / (1 − PTDF_kk)` on ordinary
+# reactances, and plain round-off when every `1/X` is exact in single precision.
+m8_mesh(Xs; extra = Branch[]) =
+    NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)],
+        [[Branch(id, f, t, x, 500.0) for ((id, f, t), x) in
+          zip(((:AB, :A, :B), (:AC, :A, :C), (:BC, :B, :C), (:BD, :B, :D), (:CD, :C, :D),
+               (:DE, :D, :E)), Xs)]; extra],
+        [Machine(:G1, :A, 200.0, 4.0, 2.0, 0.25, 1.05, 150.0),
+         Machine(:G2, :C, 150.0, 4.0, 2.0, 0.25, 1.04, 60.0)],
+        [Load(:LB, :B, 80.0, 20.0, 0.0, 0.0, 1.0), Load(:LD, :D, 90.0, 25.0, 0.0, 0.0, 1.0),
+         Load(:LE, :E, 40.0, 10.0, 0.0, 0.0, 1.0)]; slack = :A)
+const M8_ORDINARY = (0.10, 0.20, 0.15, 0.25, 0.30, 0.10)
+const M8_F32EXACT = (0.125, 0.25, 0.5, 0.25, 0.5, 0.125)
+m8_arc(net, b) = (net.bus_index[b.from], net.bus_index[b.to])
+
+# Worst |ours − theirs| / band over every outage our graph does not call a split,
+# reading their factor at `[m, k]`, or at `[k, m]` when `transposed`.
+function m8_vs_lodf(net; storage_band::Bool, transposed = false)
+    s = dc_line_outages(net)
+    lodf = PF.PNM.LODF(to_powersystems(net))
+    f = s.base.flow
+    worst = 0.0
+    for (k, bk) in pairs(net.branches)
+        s.splits[k] && continue
+        band = storage_band ? eps(Float32) * maximum(abs, f) / s.margin[k] :
+                              100 * eps() * maximum(abs, f)
+        for (e, be) in pairs(net.branches)
+            e == k && continue
+            x = transposed ? lodf[m8_arc(net, bk), m8_arc(net, be)] :
+                             lodf[m8_arc(net, be), m8_arc(net, bk)]
+            worst = max(worst, abs(f[e] + x * f[k] - s.flow[k][e]) / band)
+        end
+    end
+    return worst
+end
+
+@testset "M8 step 2 — line-outage factors against PowerNetworkMatrices.LODF" begin
+
+@testset "single-precision-exact reactances: round-off, no storage band" begin
+    @test m8_vs_lodf(m8_mesh(M8_F32EXACT); storage_band = false) <= 1
+end
+
+@testset "ordinary reactances: inside the band their Float32 storage implies" begin
+    net = m8_mesh(M8_ORDINARY)
+    @test m8_vs_lodf(net; storage_band = true) <= 1
+    # Positive control for the sharp check above: on these reactances their factor
+    # is NOT within round-off, so that check can tell the two fixtures apart.
+    @test m8_vs_lodf(net; storage_band = false) > 1
+end
+
+@testset "anti-vacuity: the transposed reading is outside the band" begin
+    @test m8_vs_lodf(m8_mesh(M8_ORDINARY); storage_band = true, transposed = true) > 1e3
+end
+
+@testset "at a bridge the checker answers, and its answer is 'nothing else moves'" begin
+    # Ours reports a split by name; theirs clamps `1 − PTDF_kk` and answers. Pinned as
+    # a finding about the ORACLE (m8-context.md D1), and the reason every comparison
+    # above skips our splits.
+    net = m8_mesh(M8_ORDINARY)
+    s = dc_line_outages(net)
+    @test s.splits == [false, false, false, false, false, true]
+    lodf = PF.PNM.LODF(to_powersystems(net))
+    de = m8_arc(net, net.branches[6])
+    @test all(abs(lodf[m8_arc(net, b), de]) <= 1e-6 for b in net.branches[1:5])
+    @test isapprox(lodf[de, de], -1.0; atol = 1e-6)
+end
+
+@testset "a nearly-split grid: ours reroutes, the checker's clamp cuts E off" begin
+    # A second path C–E at 1e5 pu puts `1 − PTDF_kk` for D–E near 1e-6, inside their
+    # clamp. Ours does not threshold: E's 40 MW goes round by C–E.
+    net = m8_mesh(M8_ORDINARY; extra = [Branch(:CE, :C, :E, 1e5, 500.0)])
+    s = dc_line_outages(net)
+    @test !any(s.splits)
+    @test isapprox(s.flow[6][7], 0.4; atol = 100 * eps() * 0.4 / s.margin[6])
+    lodf = PF.PNM.LODF(to_powersystems(net))
+    ce, de = m8_arc(net, net.branches[7]), m8_arc(net, net.branches[6])
+    theirs = s.base.flow[7] + lodf[ce, de] * s.base.flow[6]
+    @test abs(theirs - s.base.flow[7]) <= 1e-3
+    @test abs(theirs - s.flow[6][7]) > 0.39
+end
+
+end # M8 step 2

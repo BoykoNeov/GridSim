@@ -128,6 +128,9 @@ include("steadystate/ac_powerflow.jl")
 # (`ext/GridSimDispatchExt.jl`, loaded by `using JuMP, HiGHS`); the formulation and
 # every refusal are here.
 include("steadystate/economic_dispatch.jl")
+# M8 - single-outage screening. After the steady-state solves it reads: step 2's
+# line-outage factors are dc_powerflow's base case plus one solve per outage.
+include("steadystate/screening.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -189,6 +192,9 @@ export branch_loss
 # `names(GLMakie)` in the `ui/` environment before being added (2026-09-23).
 export EconomicDispatch, economic_dispatch, cost_arrays, dispatch_schedule
 export dispatch_loss_gap
+# M8 step 2 - the DC line-outage screen. Both checked clear against
+# `names(GLMakie)` in the `ui/` environment before being added (2026-10-06).
+export DCLineOutages, dc_line_outages
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

@@ -102,14 +102,20 @@ solve deletes the slack row and column rather than factorising this.
 """
 function _dc_susceptance(net::NetworkModel)
     topo = branch_topology(net)
-    n = length(net.buses)
-    m = length(topo.src)
+    return _dc_susceptance(length(net.buses), topo.src, topo.dst, inv.(topo.X))   # X > 0 is enforced by `Branch`
+end
+
+# The same assembly from a susceptance per branch (M8 step 2). The outage screen
+# holds ONE `b` vector and reads it both here and as its per-branch flow weight,
+# so the two can never come from different places.
+function _dc_susceptance(n::Int, src::Vector{Int}, dst::Vector{Int}, bs::Vector{Float64})
+    m = length(src)
     rows = Vector{Int}(undef, 4m)
     cols = Vector{Int}(undef, 4m)
     vals = Vector{Float64}(undef, 4m)
     for e in 1:m
-        b = inv(topo.X[e])              # X > 0 is enforced by `Branch`
-        f, t = topo.src[e], topo.dst[e]
+        b = bs[e]
+        f, t = src[e], dst[e]
         k = 4e - 3
         rows[k],   cols[k],   vals[k]   = f, f,  b
         rows[k+1], cols[k+1], vals[k+1] = t, t,  b

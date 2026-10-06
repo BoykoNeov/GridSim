@@ -51,6 +51,13 @@ stands in for, stop meaning what they appear to mean.
      every factor is ±1 or 0 *whatever the reactances are*. Pre-registered: a
      reactance sabotage in the factor code stays **green** on case9 and goes red
      on the meshed fixture. Run both, and record the green one as the finding.
+     **Corrected at step 2, by algebra and by run:** the sabotage the plan named
+     (the outaged line's reactance in the monitored line's place) is **red** on
+     case9, because it makes each ring factor `±X_m/X_k` and the ring's reactances
+     all differ. "Whatever the reactances are" holds only while the factor code's
+     matrix and its weights agree with each other. The sabotage a ring cannot see
+     is a **consistent** wrong set (`1/X²` in both), and that one is green on case9
+     and red on the mesh (D4, "What step 2 settled").
   3. **Its miss splits into a part with a sign and a part without one.** A
      rating is in MVA and the DC flow is `P` alone. What DC misses on a branch is
      `|S_ac| − |P_dc| = (|S_ac| − |P_ac|) + (|P_ac| − |P_dc|)`. The first term is
@@ -384,6 +391,48 @@ susceptance matrix **once**, sparsely, and computes each outage's column with on
 solve against that factorisation. Only the column in use is ever held. On case9 that
 looks like ceremony, and it is what lets the same code run on a national model.
 It is pinned by the same `nnz` check M6 step 2 uses.
+
+### What step 2 settled (2026-10-06)
+
+`dc_line_outages(net)` returns a `DCLineOutages`: the base `DCPowerFlow`, a split
+flag per branch from `Graphs.bridges`, `1 − PTDF_kk` for every branch (bridges
+included, so their round-off is visible), and per outage the post-outage flow on
+every branch, with the outaged branch exactly `0.0` and a split left empty. The
+`flow` table is branches × branches because that is the size of the question; the
+matrix that would be dense, the PTDF, is never formed. Judging flows against
+ratings is step 3's.
+
+**One susceptance vector.** The screen reads `b = 1/X` once and uses it for both
+the matrix (through a new `_dc_susceptance` method that takes the susceptances) and
+the per-branch flow weights. Two reads could disagree, and a ring cannot see that
+disagreement (below), so it is not left possible.
+
+**Measured, worth not re-deriving:**
+
+- **A bridge's margin has no reliable sign.** case9's three come out −2.2e-16, 0.0
+  and 0.0. A connected grid with a 1e7 pu second path comes out 1.0e-8, under the
+  checker's 1e-6 clamp. The graph is the only test that answers the question.
+- **Near a bridge, the error is the factors' alone.** The rebuild stays 1.1e-16
+  from an exact answer at second-path reactances of 1e3, 1e5 and 1e7 pu, while the
+  factors drift by 7.9e-13, 2.3e-11, 4.5e-9, inside the `eps/(1 − PTDF_kk)` band
+  Hurdle 14.1 stated (0.035–0.052 of it). The prediction that the rebuild would
+  drift too, because its matrix is as ill-conditioned, was wrong: the badly
+  conditioned direction is the far bus's angle, and no other flow reads it.
+- **The case9 blindness belongs to a different sabotage than the plan named** (D0,
+  Hurdle 13.2, corrected there). Wrong reactance in the weight only: red on case9.
+  A consistent wrong set: green on case9, red on the mesh. Scaling every reactance
+  by one factor is invisible on every grid, because the factors do not change, so
+  it is not a sabotage.
+- **A transposed index is the reactance sabotage again** when the inverse is
+  symmetric (`PTDF_km = (b_k/b_m)·PTDF_mk`), so the transposition was run as the
+  two flows swapped in the update instead.
+- **Keeping the reference row is an equivalent change for every flow.** CHOLMOD
+  factorises the singular matrix, every right-hand side sums to zero, and every
+  output is an angle difference, so the null direction cancels. Only the `nnz`
+  check sees it. The reference bus is a gauge: moving it moves no flow (2e-15).
+- **The checker, on top of D1:** 0.012 of its storage band on ordinary reactances,
+  0.031 of round-off on Float32-exact ones; at a bridge, column ≤ 7.6e-17 and
+  diagonal −1.0; at a 1e5 pu second path it leaves the far bus cut off.
 
 ---
 

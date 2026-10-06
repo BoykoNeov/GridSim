@@ -230,3 +230,178 @@ _m8_thrown(f) = try; f(); nothing; catch e; e; end
                                              [1.0, 1.00, 1.00], [1.0, 1.05, 0.95]) == Int[]
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 2: the DC line-outage factors (`dc_line_outages`), checked against the
+# brute force they stand in for — rebuild the model without the branch and solve
+# again. Both share `_dc_susceptance` and `bus_injections`, so a fault THERE is
+# invisible to this comparison by construction; M6 step 2's independent three-bus
+# check carries those (m8-context.md D0, Hurdle 13.1).
+#
+# Bands, stated before any gap was seen (m8-tasks.md step 2): 100·eps·max|f| on an
+# ordinary grid, and 100·eps·max|f| / (1 − PTDF_kk) on a nearly-split one.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Step 0's meshed fixture: A–B–C–D with B and C of degree 3 and unequal reactances,
+# plus a spur D–E, so exactly one bridge. Constant-power loads; the DC solve reads
+# only `P` anyway.
+_m8_mesh_branches() = [Branch(:AB, :A, :B, 0.10, 500.0), Branch(:AC, :A, :C, 0.20, 500.0),
+                       Branch(:BC, :B, :C, 0.15, 500.0), Branch(:BD, :B, :D, 0.25, 500.0),
+                       Branch(:CD, :C, :D, 0.30, 500.0), Branch(:DE, :D, :E, 0.10, 500.0)]
+_m8_mesh(branches = _m8_mesh_branches(); slack = :A, loadE = :E,
+         buses = (:A, :B, :C, :D, :E)) =
+    NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in buses], branches,
+                 [Machine(:G1, :A, 200.0, 4.0, 2.0, 0.25, 1.05, 150.0),
+                  Machine(:G2, :C, 150.0, 4.0, 2.0, 0.25, 1.04, 60.0)],
+                 [Load(:LB, :B, 80.0, 20.0, 0.0, 0.0, 1.0),
+                  Load(:LD, :D, 90.0, 25.0, 0.0, 0.0, 1.0),
+                  Load(:LE, loadE, 40.0, 10.0, 0.0, 0.0, 1.0)]; slack)
+
+# Brute force for outage `k`: every branch's flow after rebuilding without it, in
+# `net`'s branch order with entry `k` zero, or `nothing` where the model is refused
+# as disconnected (that refusal, and no other, is a split).
+function _m8_rebuilt(net::NetworkModel, k::Int)
+    rest = try
+        _m8_without(net, net.branches[k].id)
+    catch e
+        e isa ArgumentError && occursin("not connected", e.msg) || rethrow()
+        return nothing
+    end
+    out = zeros(length(net.branches))
+    out[[j for j in eachindex(net.branches) if j != k]] = dc_powerflow(rest).flow
+    return out
+end
+
+# Worst `gap / band` over every non-split outage, with the band divided by the
+# margin when `near`. Also checks the split set against the brute-force refusals.
+function _m8_vs_rebuilt(net::NetworkModel; near = false)
+    s = dc_line_outages(net)
+    worst = 0.0
+    for k in eachindex(net.branches)
+        bf = _m8_rebuilt(net, k)
+        @test s.splits[k] == (bf === nothing)
+        bf === nothing && continue
+        scale = max(maximum(abs, s.base.flow), maximum(abs, bf))
+        band = 100 * eps() * scale / (near ? s.margin[k] : 1.0)
+        worst = max(worst, maximum(abs.(s.flow[k] .- bf)) / band)
+        @test s.flow[k][k] === 0.0
+    end
+    return worst
+end
+
+@testset "M8 step 2 — DC line-outage factors, bridges from the graph" begin
+
+    @testset "one sparse factorisation: the reduced matrix holds what the branch list predicts" begin
+        # n + 2m for the full matrix (M6 step 2), less the reference bus's diagonal and
+        # its 2·degree off-diagonals. A, the mesh's reference, has degree 2; case9's B1
+        # has degree 1.
+        for (net, deg) in ((_m8_mesh(), 2), (_ed_case9(), 1))
+            n, m = length(net.buses), length(net.branches)
+            Br, keep = GridSim._dc_reduced_susceptance(net, inv.(branch_topology(net).X))
+            @test size(Br) == (n - 1, n - 1) && length(keep) == n - 1
+            @test SparseArrays.nnz(Br) == n + 2m - 1 - 2deg
+            @test !(net.bus_index[net.slack] in keep)
+        end
+    end
+
+    @testset "splits come from the graph and equal the rebuild refusals" begin
+        mesh = dc_line_outages(_m8_mesh())
+        @test mesh.base.branches[mesh.splits] == [:DE]
+        @test isempty(mesh.flow[6])
+        c9 = dc_line_outages(_ed_case9())
+        @test Set(c9.base.branches[c9.splits]) == Set([:L14, :L36, :L82])
+        @test all(isempty, c9.flow[c9.splits])
+        # At a bridge `1 − PTDF_kk` is round-off — which is why it is never tested.
+        @test all(abs.(c9.margin[c9.splits]) .<= 10eps())
+        @test all(c9.margin[.!c9.splits] .> 0.1)
+        # A bridge declared the other way round is still found: the match is on the
+        # unordered bus pair, and `Graphs.bridges` orders its own pairs.
+        rev = [_m8_mesh_branches()[1:5]; Branch(:DE, :E, :D, 0.10, 500.0)]
+        @test dc_line_outages(_m8_mesh(rev)).splits == [false, false, false, false, false, true]
+    end
+
+    @testset "meshed fixture: the factors ARE rebuild-and-re-solve, to round-off" begin
+        net = _m8_mesh()
+        s = dc_line_outages(net)
+        @test s.base.flow == dc_powerflow(net).flow
+        @test _m8_vs_rebuilt(net) <= 1
+        # Not a ring: some factor lies strictly between 0 and ±1, so a set of wrong
+        # reactances cannot hide here the way it hides on case9 (next testset).
+        lodf = [(s.flow[k][e] - s.base.flow[e]) / s.base.flow[k]
+                for k in eachindex(s.splits) if !s.splits[k] for e in eachindex(s.splits) if e != k]
+        @test any(x -> 0.05 < abs(x) < 0.95, lodf)
+    end
+
+    @testset "case9: the same identity, on a ring whose factors are all 0 or ±1" begin
+        net = _ed_case9()
+        s = dc_line_outages(net)
+        @test _m8_vs_rebuilt(net) <= 1
+        # Hurdle 13.2, structurally: losing a ring line sends ALL of its flow the other
+        # way round, whatever the reactances are. A consistently wrong set of them
+        # changes nothing on this fixture (m8-tasks.md step 2's sabotage run).
+        for k in findall(!, s.splits), e in eachindex(s.splits)
+            e == k && continue
+            x = abs((s.flow[k][e] - s.base.flow[e]) / s.base.flow[k])
+            @test min(x, abs(x - 1)) <= 1e-12
+        end
+    end
+
+    @testset "an inverter is read through the base case, and the identity still holds" begin
+        # Found by M7's walk of the exported surface, not planned: the screen takes a
+        # model, so it must either refuse inverters or handle them. It handles them —
+        # an inverter only moves the base flows, which come from `dc_powerflow`, and
+        # the rebuild carries `net.inverters` through `_m8_without`.
+        mk_inv(P) = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)],
+            _m8_mesh_branches(),
+            [Machine(:G1, :A, 200.0, 4.0, 2.0, 0.25, 1.05, 150.0),
+             Machine(:G2, :C, 150.0, 4.0, 2.0, 0.25, 1.04, 60.0)],
+            [Load(:LB, :B, 80.0, 20.0, 0.0, 0.0, 1.0), Load(:LD, :D, 90.0 + P, 25.0, 0.0, 0.0, 1.0),
+             Load(:LE, :E, 40.0, 10.0, 0.0, 0.0, 1.0)]; slack = :A,
+            inverters = [Inverter(:pv, :D, :grid_following, 100.0, P)])
+        net = mk_inv(30.0)
+        @test _m8_vs_rebuilt(net) <= 1
+        # The inverter's 30 MW is in the base, offset by 30 MW more load at the same
+        # bus: the flows match the inverter-free mesh, so it was counted, not dropped.
+        @test isapprox(dc_line_outages(net).base.flow, dc_line_outages(_m8_mesh()).base.flow;
+                       atol = 100eps())
+    end
+
+    @testset "the reference bus moves no flow" begin
+        a, c = dc_line_outages(_m8_mesh()), dc_line_outages(_m8_mesh(; slack = :C))
+        @test a.splits == c.splits
+        scale = maximum(abs, a.base.flow)
+        @test all(maximum(abs.(a.flow[k] .- c.flow[k]); init = 0.0) <= 100eps() * scale
+                  for k in eachindex(a.flow))
+    end
+
+    @testset "a nearly-split grid: answered, not thresholded; the error is the factors', growing as 1/margin" begin
+        # A second path C–E of reactance Xw makes D–E no longer a bridge. Its margin is
+        # about X_DE/Xw. The checker's 1e-6 clamp would call the 1e7 case a split; the
+        # graph does not.
+        #
+        # The exact answer for losing D–E needs no ill-conditioned solve: E then hangs
+        # off C alone, so C–E carries E's 40 MW and the rest is the four-bus grid with
+        # that load moved to C.
+        exact4 = dc_powerflow(_m8_mesh(_m8_mesh_branches()[1:5]; loadE = :C,
+                                       buses = (:A, :B, :C, :D))).flow
+        exact = [exact4; 0.0; 0.4]
+        gaps = Float64[]
+        for Xw in (1e3, 1e5, 1e7)
+            net = _m8_mesh([_m8_mesh_branches(); Branch(:CE, :C, :E, Xw, 500.0)])
+            s = dc_line_outages(net)
+            @test !any(s.splits)
+            @test isapprox(s.margin[6], 0.1 / Xw; rtol = 1e-2)
+            @test _m8_vs_rebuilt(net; near = true) <= 1
+            # Attribution: the rebuild is exact to round-off at every Xw, so the whole
+            # gap is the factors' (predicted the other way at step 2, and wrong).
+            scale = maximum(abs, s.base.flow)
+            @test maximum(abs.(_m8_rebuilt(net, 6) .- exact)) <= 100eps() * scale
+            push!(gaps, maximum(abs.(s.flow[6] .- exact)))
+        end
+        # The signature: the error grows as the margin shrinks (measured 7.9e-13,
+        # 2.3e-11, 4.5e-9), and at 1e7 it is far outside the ORDINARY band (measured
+        # 1.8e5 times it).
+        @test gaps[3] >= 100 * gaps[1]
+        @test gaps[3] > 1000 * 100eps() * maximum(abs, exact)
+    end
+end

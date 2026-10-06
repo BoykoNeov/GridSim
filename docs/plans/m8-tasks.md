@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–1 done (2026-10-06)**; step 2 next. Step 1 left **4265 core / 1251 reference / 568 UI**. Entered at `227d214` (the
+Status: **steps 0–2 done (2026-10-06)**; step 3 next. Step 2 left **4428 core / 1262 reference / 568 UI** (step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -141,18 +141,84 @@ runs.
         `5a5873deefd295a470dc5f71260be7ba` once three precompilation lines are
         removed), re-run on the final code (`ac-STEP1b.txt`, the same digest).
 
-## Step 2 — DC line-outage factors, bridges from the graph
+## Step 2 — DC line-outage factors, bridges from the graph — done 2026-10-06
 
-- [ ] `dc_line_outages(net)`: one sparse factorisation, one solve per outage, no
-      dense PTDF (D4); `nnz` checked.
-- [ ] Bridges from `Graphs.bridges`; the split set equals the brute-force refusal set.
-- [ ] Meshed fixture: matches rebuild-and-re-solve to round-off.
-- [ ] Near-bridge fixture: matches brute force within the pre-stated
-      `eps/(1 − PTDF_kk)` band, at two path reactances so the scaling shows.
-- [ ] Four sabotages in the factor code, each red on the meshed fixture.
-- [ ] The reactance sabotage run on case9: **predicted green**, recorded.
-- [ ] Reference: `LODF` on the Float32-exact fixture with no band; ordinary
-      fixture within a band stated first; the checker's bridge answer pinned.
+Every prediction, band and outcome below was written to
+`W:\temp\claude\gridsim-m8\step2_predictions.md` before the run it describes
+(spikes `step2_spike.jl`, `step2_attrib.jl`; sabotages `mutate3.py`, `mut-M*.log`;
+reference numbers `ref_m8_numbers.jl`).
+
+- [x] `dc_line_outages(net) -> DCLineOutages` (`src/steadystate/screening.jl`): the
+      base case from `dc_powerflow`, one Cholesky factorisation of the reduced
+      susceptance matrix, one solve per outage, no PTDF formed (D4). `nnz` of the
+      reduced matrix is `n + 2m − 1 − 2·deg(reference)`, checked on the mesh and
+      case9. `_dc_susceptance` gained a method taking the susceptances, so the
+      screen holds **one** `b` vector for its matrix and its flow weights; the old
+      method calls it with the same numbers (the DC tests are unchanged and green).
+- [x] Bridges from `Graphs.bridges`, matched on the unordered bus pair (a branch
+      declared the other way round is still found). Split set = rebuild refusal set
+      on the mesh ({DE}) and case9 ({L14, L36, L82}). **Measured: case9's bridge
+      margins are −2.2e-16, 0.0, 0.0** — one negative, so a threshold on the margin
+      would need its sign handled too, while a connected grid with a 1e7 pu second
+      path has 1.0e-8.
+- [x] Mesh: worst gap 1.8e-15, 0.06 of the 100·eps·max|f| band. case9 likewise;
+      its ring factors are all 0 or ±1 to 1e-12 (asserted — the structural reason
+      it is blind, below). Moving the reference bus A → C moves no flow (2.0e-15).
+- [x] Near-bridge, second path C–E at 1e3, 1e5 **and** 1e7 pu: inside the
+      `100·eps·max|f|/(1 − PTDF_kk)` band (0.052, 0.036, 0.035 of it). The gap
+      grows as the margin shrinks (7.9e-13, 2.3e-11, 4.5e-9; at 1e7 it is 1.8e5
+      times the ordinary band). **Found, not planned — whose error it is.** An
+      exact answer needs no ill-conditioned solve (lose D–E and E hangs off C alone),
+      and the rebuild sits at 1.1e-16 from it at every path reactance. **The whole
+      gap is the factors'.** Predicted the other way (that the rebuild's matrix,
+      equally ill-conditioned, would drift too), and wrong; step 0's prose was
+      right. Asserted, so the attribution is a test, not a remark.
+- [x] Sabotages in `screening.jl` only, predictions first:
+      - **M1** denominator `1 + PTDF_kk`: red on mesh, case9, near-bridge;
+      - **M2** transposed: red on mesh, case9, near-bridge. Implemented as `f_k` and
+        `f_m` swapped in the update, because with a symmetric inverse a transposed
+        PTDF index **is** M3 (`PTDF_km = (b_k/b_m)·PTDF_mk`);
+      - **M3** the outaged line's `b_k` in the monitored weight: red on mesh,
+        case9, near-bridge;
+      - **M4** reference row and column kept: red **only** in the `nnz` testset.
+        Every flow check stays green: CHOLMOD factorises the singular matrix, and
+        every output is an angle difference while the right-hand side sums to zero,
+        so the null direction cancels. Predicted at first to fail the factorisation,
+        and wrong. It is an equivalent change, not a test gap, and the structural
+        check is what sees it;
+      - **M5** consistent wrong reactances (`1/X²` in the one `b` vector, matrix
+        and weights alike): red on the mesh and the near-bridge, **green on case9**.
+- [x] **The case9 finding, re-scoped.** The plan pre-registered "the reactance
+      sabotage" (M3) as green on case9. **That prediction was wrong, by algebra and
+      by run**: M3 makes each ring factor `±X_m/X_k`, and case9's ring reactances
+      all differ, so it is red there (2.7e13 of the band). What a ring cannot see is
+      a **consistent** set of wrong reactances, because losing a ring line reroutes
+      all of its flow whatever they are. That is M5, and it is green on case9 and
+      red on the mesh: Hurdle 13.2's blindness, now with the right sabotage
+      attached. A uniform scaling of every reactance is invisible everywhere (the
+      factors do not change), so it is not a sabotage at all.
+- [x] Reference (`reference/test/runtests.jl`, 11 tests), our factor against theirs
+      (their flow = our base + their `LODF[m,k]·f_k`), by arc:
+      - Float32-exact reactances: 0.031 of round-off, no storage band;
+      - ordinary reactances: 0.012 of `eps(Float32)·max|f|/(1 − PTDF_kk)`; the same
+        comparison is 1.4e5 times round-off (the positive control that the sharp
+        check can tell the fixtures apart);
+      - anti-vacuity: reading `LODF[k,m]` is 7.1e5 times the band;
+      - at the bridge D–E it answers: column ≤ 7.6e-17, diagonal −1.0 — "nothing
+        else moves", while ours reports a split;
+      - at a 1e5 pu second path its clamp cuts E off (C–E at 2.8e-6 pu after losing
+        D–E) where ours reroutes the 40 MW (0.400000000023 pu).
+- [x] **Found, not planned: M7's walk of the exported surface caught the new
+      export.** The first full gate went 4414 / 1 red: `dc_line_outages` takes a
+      model and was on neither the "refuses inverters" nor the "handles them" list.
+      It handles them (an inverter only moves the base flows, which come from
+      `dc_powerflow`), so it joined the learned list **with its own testset**: a
+      grid-following inverter on the mesh matches rebuild-and-re-solve, and its
+      30 MW offset by 30 MW more load at the same bus gives the inverter-free flows.
+      The plan never listed this; the guard is why it was not missed.
+- [x] Gate: **4428 core** (4265 + 163 new, the one changed pre-existing line being
+      the learned list in `test/m7_inverters.jl`), **1262 reference** (+11),
+      **568 UI**, exit 0 each, all at below-normal priority.
 
 ## Step 3 — the AC line screen, and what the shortcut missed
 
