@@ -44,8 +44,19 @@ runs.
       offered as "droop sharing, which the dynamic tiers settle to exactly". A
       side review pointed at M1's damping-plus-droop settling law, and
       `swing_vertex!` confirmed it and added the headroom cap. The rule is
-      therefore droop **and damping**, capped (D2), and the user was told the
-      same day.
+      therefore droop **and damping** (D2), and the user was told the same day.
+      **Then the correction itself was wrong**: it put the cap around both terms.
+      A second review read the saturation again. It acts on the governor state
+      only, so the rule is `min(−Δω/Rᵢ, headroomᵢ) − Δω·Dᵢ`: a damped machine can
+      settle above `Pmax`, and with any damping there is always a steady state.
+      Fixed in D0/D2/plan/README the same day, and the user told.
+- [x] **Also from that review, pre-registered before any step runs:** what DC
+      misses splits into a reactive part (≥ 0 by algebra, stated, not tested) and
+      a real-power part (measured, sign not predicted); holding every bus at 1 pu
+      needs a voltage-holding machine on each load bus; the swing-tier oracle must
+      control for load **voltage** relief, not only frequency; the near-bridge
+      check carries an `eps/(1 − PTDF_kk)` band, not round-off; losing the slack's
+      own machine (case9's L14) is a named decision.
 - [x] **The blocker settled before any step** (D3): a screen classifies each
       outcome rather than throwing, through the same solve `ac_powerflow` runs,
       switching included, never through `_ac_first_round`.
@@ -68,7 +79,8 @@ runs.
       dense PTDF (D4); `nnz` checked.
 - [ ] Bridges from `Graphs.bridges`; the split set equals the brute-force refusal set.
 - [ ] Meshed fixture: matches rebuild-and-re-solve to round-off.
-- [ ] Near-bridge fixture (`X = 1e5` pu): still matches brute force.
+- [ ] Near-bridge fixture: matches brute force within the pre-stated
+      `eps/(1 − PTDF_kk)` band, at two path reactances so the scaling shows.
 - [ ] Four sabotages in the factor code, each red on the meshed fixture.
 - [ ] The reactance sabotage run on case9: **predicted green**, recorded.
 - [ ] Reference: `LODF` on the Float32-exact fixture with no band; ordinary
@@ -77,23 +89,29 @@ runs.
 ## Step 3 — the AC line screen, and what the shortcut missed
 
 - [ ] `ac_line_outages(net)` and `compare_line_screens(dc, ac)`.
-- [ ] The direction predicted, then measured, with nuisance causes off; then
-      `R`, `V_set` and default loads added one at a time.
+- [ ] The miss split: reactive part reported, real-power part measured; every
+      bus held at 1 pu first (second machine per bus checked accepted), then `R`,
+      `V_set` and default loads added one at a time.
 - [ ] `S_base` invariance.
 - [ ] Positive control: one outage that overloads at both fidelities.
 - [ ] case9's voltage demonstration, with the caveat.
 
 ## Step 4 — generator outages in the DC screen
 
-- [ ] Read whether the swing tier's loads carry a frequency term, **before** any
-      assertion.
+- [ ] Read how the swing tier's loads respond to frequency **and voltage**, before
+      any assertion; oracle fixture with constant-power loads (or relief accounted
+      for), finite `R`, `Pmax > P0`, no infinite bus.
 - [ ] `pickup_shares(net, lost)` from `machine_arrays`; `dc_generator_outages(net)`.
 - [ ] Swing-tier `TripGenerator` settled pickup and `Δω` match, within a band
       stated first.
 - [ ] Zero damping reduces to droop alone; damped differs by the predicted amount.
-- [ ] Cap fixture: one machine at headroom, the swing tier agrees.
-- [ ] Refusals by name: no speed control left; the loss beyond all headroom.
-- [ ] Sabotages: drop `D`; weights on the machine's own base; cap removed.
+- [ ] Cap fixture: one governor at headroom; that machine at `headroom − Δω·D`;
+      the swing tier agrees.
+- [ ] Refusals by name, exactly two: nothing responds to frequency; `ΣD = 0` with
+      every governor capped. A damped huge loss reports its `Δω`.
+- [ ] Losing the slack's own machine: decided and recorded.
+- [ ] Sabotages: drop `D`; weights on the machine's own base; cap on the damping
+      term too.
 
 ## Step 5 — generator outages in the AC screen: a shared reference
 

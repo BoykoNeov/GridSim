@@ -51,13 +51,20 @@ stands in for, stop meaning what they appear to mean.
      every factor is ±1 or 0 *whatever the reactances are*. Pre-registered: a
      reactance sabotage in the factor code stays **green** on case9 and goes red
      on the meshed fixture. Run both, and record the green one as the finding.
-  3. **Its misses have a direction that can be stated before they are seen.** A
-     rating is in MVA and the DC flow is `P` alone; `|S| ≥ |P|`, so the reactive
-     term can only make DC **under**-report loading — from that cause alone every
-     miss is "DC says fine, AC says overloaded". Angle linearisation, losses and
-     voltage magnitude can push either way. They are isolated one at a time:
-     lossless branches, constant-power loads and `V_set = 1` first, then each
-     cause switched back on. The run is then repeated on `Load`'s **default**
+  3. **Its miss splits into a part with a sign and a part without one.** A
+     rating is in MVA and the DC flow is `P` alone. What DC misses on a branch is
+     `|S_ac| − |P_dc| = (|S_ac| − |P_ac|) + (|P_ac| − |P_dc|)`. The first term is
+     the reactive part, and it is `≥ 0` by algebra: it is **stated, not checked**,
+     because a check of `|S| ≥ |P|` cannot fail. The second term is the real-power
+     error (angle linearisation, losses, voltage magnitude). It can go either way,
+     and it is **measured**, never predicted in sign. Both are reported per
+     branch per outage. The causes of the second term are isolated one at a time:
+     lossless branches and constant-power loads first, with **every** bus's
+     magnitude held at 1. `V_set = 1` holds only generator buses and load buses
+     still sag, so each load bus also gets a zero-`P` machine at `V_set = 1` with
+     unlimited `Q` (whether `NetworkModel` accepts a second machine at a bus is
+     checked first; `machines_at_bus` is a vector). Then each cause is switched
+     back on. The run is then repeated on `Load`'s **default**
      constant-impedance loads, because M6 step 7 found a claim that flipped there,
      and an outage moves voltages, which moves what those loads draw. An
      `S_base`-invariance check ships with it (M6 step 7's one-factor-short
@@ -86,12 +93,22 @@ stands in for, stop meaning what they appear to mean.
      *by construction*. The screen finds bridges with `Graphs.bridges` and reports
      each as a split, by name, and the two sets must be equal. On a constructed
      near-bridge (a second path of reactance `1e5` pu), our factors still match
-     brute force, because nothing was thresholded.
+     brute force, because nothing was thresholded, but **not to round-off**.
+     `1 − PTDF_kk ≈ 1e-6` is a difference of two nearly equal numbers, so the
+     factor loses about `eps/(1 − PTDF_kk)` of relative accuracy (roughly 1e-10
+     there), and brute force does not. That band is stated here, before the run,
+     and its `1/(1 − PTDF_kk)` scaling across two path reactances is the
+     signature. "No threshold" costs accuracy, not correctness.
   2. **What a split means is a decision, not an error.** case9's three bridges
      are exactly its three generator connections, so losing L14 *is* losing G1.
      Whether a bridge whose far side is a lone source is screened as that source's
      outage (Hurdle 15) or reported only as a split is decided in the plan, by
-     name. Until then it is a split.
+     name. Until then it is a split. **The same decision covers losing the
+     reference machine.** case9's G1 is the slack and L14 is its only line, so
+     losing L14 is losing the slack's source, and `ac_powerflow` refuses a slack
+     bus with no source. Steps 4–6 name what the screen does there (a new
+     reference chosen by a stated rule, or a named refusal). It is never picked
+     silently.
 
   The outside checker's behaviour at a bridge is a finding about the **oracle**,
   not a hurdle, and lives in D1.
@@ -100,30 +117,51 @@ stands in for, stop meaning what they appear to mean.
   settle to.** A static screen must say where a tripped generator's power comes
   from. The user chose "the way the grid's own speed control shares it" (D2).
   Read off `swing_vertex!` (`src/engines/swing.jl`, lines 221–237), that is
-  **not** droop alone. At a settled `Δω`, machine `i`'s extra output is
-  `−Δω·(1/Rᵢ + Dᵢ)` on the system base, and a machine whose governor reaches its
-  headroom (`Pmax − P0`) stops at exactly that, while the rest share the remainder.
-  Five measurable claims:
+  **not** droop alone, and the cap is **not** on the whole of it. The rotor line
+  carries `−D·ω` and the governor state `ΔPm` carries `−ω/R`, and the saturation
+  acts on `ΔPm` **only**. So at a settled `Δω` machine `i`'s extra output is
+
+  `pickupᵢ = min(−Δω/Rᵢ, headroomᵢ) − Δω·Dᵢ` (system base, `headroomᵢ = Pmax − P0`),
+
+  with `Δω` whatever makes the pickups cover the loss. Two consequences, both
+  from the equation and not from intuition: as long as any remaining machine has
+  `D > 0` a settled `Δω` **always exists**, since damping keeps growing as
+  frequency falls; and a damped machine whose governor is capped settles **above
+  its `Pmax`**, by `−Δω·Dᵢ`, because that is what the dynamic tier does.
+  (Corrected the day it was written: the first draft put `min(…)` around both
+  terms, and a review caught it against the very lines quoted above.) Five
+  measurable claims:
   1. **The static rule matches a simulated trip.** Solve
-     `Σᵢ min(−Δω·(1/Rᵢ + Dᵢ), headroomᵢ…) = P_lost` for `Δω`, and the per-machine
-     pickup equals the swing tier's settled `TripGenerator` run, to the solver's
-     tolerance and to a band stated before the gap is seen. The swing tier is
-     lossless, so this is checked against the DC screen. The repo's damping term
-     acts only through `ω`; whether the swing tier's loads add a frequency term of
-     their own is **not yet read** and is the first thing the step checks.
+     `Σᵢ pickupᵢ(Δω) = P_lost` for `Δω`, and the per-machine pickup equals the
+     swing tier's settled `TripGenerator` run, to the solver's tolerance and to a
+     band stated before the gap is seen. The swing tier is lossless, so this is
+     checked against the DC screen. **Two other terms can move the total, and
+     both are read in the source before an assertion is written:** a frequency
+     term in the swing tier's loads, if any, and a **voltage** term. If its loads
+     draw by voltage, the settled pickup is `P_lost` *less the load relief* (M7
+     D16 measured exactly that), and the per-machine comparison would fail for a
+     reason that is not the pickup rule. So the oracle fixture uses constant-power
+     loads, or accounts for the relief explicitly. It also has no infinite-bus
+     machine, finite `R`, and an explicit `Pmax` above `P0`. The default
+     `Pmax = P0` is zero headroom, which would leave only damping under test.
   2. **Damping is load-bearing.** A zero-damping fixture must reduce to droop
      alone, and a damped one must differ from droop alone by the predicted
      amount. Both are run, so the damping term cannot be dropped silently.
-  3. **The cap redistributes.** A fixture where one machine hits its headroom
-     must give that machine exactly its headroom, the others the remainder at a
-     larger `|Δω|`, and the swing tier must agree. The swing tier saturates *in
-     the derivative* (the M1 rule), so its settled value is the same fixed point.
-  4. **No speed control means no defined split, and that is refused by name.** If
-     `Σ(1/Rᵢ + Dᵢ) = 0` over the remaining machines (or every one is capped
-     before the loss is covered), there is no steady state to report. case9 as
-     the M6 test builds it (`R = Inf`, `D = 0`) is exactly this case, so it needs
-     droop data before it can screen a generator outage, and that data is
-     declared invented wherever it appears.
+  3. **The cap acts on the governor only.** In a fixture where one machine's
+     governor reaches its headroom, that machine settles at exactly
+     `headroom − Δω·D` above its schedule (above `Pmax` when `D > 0`). The others
+     share the remainder at a larger `|Δω|`, and the swing tier agrees, because it
+     saturates *in the derivative* (the M1 rule), so its settled value is the
+     same fixed point.
+  4. **The refusals are exactly two, and they are named.** No steady state exists
+     only when nothing left responds to frequency (`Σ(1/Rᵢ + Dᵢ) = 0` over the
+     remaining machines), or when the remaining machines have `ΣD = 0` **and**
+     every governor is capped before the loss is covered. With any damping present,
+     a large loss gives a large `|Δω|` rather than a refusal, and the screen
+     reports that `Δω` instead of hiding it. case9 as the M6 test builds it
+     (`R = Inf`, `D = 0`) is the first case. So it needs droop data before it can
+     screen a generator outage, and that data is declared invented wherever it
+     appears.
   5. **The AC version needs a reference shared the same way.** `ac_powerflow`
      has one slack that absorbs every imbalance. After a generator outage the AC
      screen must share the lost power **and the change in losses** by the same
@@ -193,7 +231,7 @@ D3 exists.
 
 ---
 
-## D2 — A lost generator's power is shared by droop **and damping**, capped at headroom (2026-10-06, the user's choice)
+## D2 — A lost generator's power is shared by droop **and damping**, the droop part capped at headroom (2026-10-06, the user's choice)
 
 Offered three ways: the reference bus takes it all, shared by droop, or both side
 by side. The user chose **shared by droop**, on the grounds that it is what a real
@@ -206,8 +244,18 @@ notes settle on **damping plus droop** (`Δω_ss = ΔP/(D + 1/R_eq)`, the
 inertia-free settling law). Reading `swing_vertex!` confirmed the review and added
 a second effect: the governor stops at its headroom. So the rule M8 implements is
 the one the user's reasons actually point at: **each remaining machine picks up
-`−Δω·(1/Rᵢ + Dᵢ)` on the system base, no machine beyond its headroom, with `Δω`
-whatever makes the pickups cover the loss.** That keeps the independent check
+`min(−Δω/Rᵢ, headroomᵢ) − Δω·Dᵢ` on the system base, with `Δω` whatever makes
+the pickups cover the loss.** Only the droop part is capped. The damping part is
+not, so a damped machine can settle above its `Pmax`.
+
+**And the correction needed a correction.** The first version of this section,
+committed the same day, wrote the cap around both terms ("no machine beyond its
+headroom"), and the user was told "each plant capped at its spare capacity". A
+review read the saturation in `swing_vertex!` again: it acts on the governor
+state `ΔPm` alone, while `−D·ω` sits in the rotor equation outside it. It is fixed
+here and in Hurdle 15, and the user was told in plain words. The consequence that
+changes the plan: with any damping present there is always a steady state, so
+"the loss exceeds all headroom" is not a refusal (Hurdle 15 claim 4). That keeps the independent check
 real. Droop alone is the zero-damping special case, and it is checked as one
 (Hurdle 15 claim 2). The user was told the correction the same day, with pure
 droop on zero-damping fixtures offered as the alternative.

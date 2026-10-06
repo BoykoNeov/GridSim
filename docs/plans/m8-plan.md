@@ -22,7 +22,7 @@ between the two is what gets checked and explained.
 By the end of M8 a `NetworkModel` can be screened for every single line outage
 and every single generator outage, at both fidelities. Each outage gets a named
 outcome (`m8-context.md` D3), not an exception. A tripped generator's power is
-shared by droop and damping, capped at headroom (D2), and checked against what the
+shared by droop and damping, the droop part capped at headroom (D2), and checked against what the
 dynamic tiers settle to after the same trip. Grid splits are found from the graph,
 never from a tolerance. One script screens case9 and the meshed fixture and prints
 what the cheap screen missed and why.
@@ -76,7 +76,9 @@ reduced susceptance matrix and one solve per outage (D4). Bridges come from
 
 - **Checks:** against rebuild-and-re-solve on the meshed five-bus fixture
   (step 0's), to round-off. The split set equals the brute-force refusal set. The
-  near-bridge fixture (second path `X = 1e5` pu) still matches brute force. `nnz`
+  near-bridge fixture (second path `X = 1e5` pu) still matches brute force, within
+  the `eps/(1 − PTDF_kk)` band D0 states in advance, and at two path reactances so
+  the scaling shows. `nnz`
   of the factorised matrix is as M6 step 2 predicts.
 - **Sabotages, in the factor code only:** wrong denominator sign; the
   monitored/outaged index transposed; the outaged line's own reactance used where
@@ -96,11 +98,14 @@ reduced susceptance matrix and one solve per outage (D4). Bridges come from
 disagreement, classified as "DC fine, AC overloaded", "DC overloaded, AC fine", or
 "AC voltage / no solution", which DC cannot express.
 
-- **The direction claim, one cause at a time:** lossless branches,
-  constant-power loads and `V_set = 1` first, where the only gap left is
-  reactive loading and angle linearisation, and the direction is predicted
-  before the run. Then `R`, then `V_set`, then `Load`'s default constant-impedance
-  shares, each reported separately.
+- **The miss, split in two (Hurdle 13.3):** per branch per outage, the reactive
+  part `|S_ac| − |P_ac|` (≥ 0 by algebra, so stated and not tested) and the
+  real-power error `|P_ac| − |P_dc|` (measured, sign not predicted). Its causes
+  come one at a time: lossless branches and constant-power loads with every bus
+  held at 1 pu (a zero-`P`, unlimited-`Q` machine at `V_set = 1` on each load bus,
+  after checking that a second machine at a bus is accepted). Then `R`, then
+  realistic `V_set`, then `Load`'s default constant-impedance shares, each
+  reported separately.
 - **`S_base` invariance:** the same physical case on two bases gives the same
   outcomes and the same MW/MVA.
 - **Positive control:** a fixture with one outage that genuinely overloads at
@@ -110,22 +115,29 @@ disagreement, classified as "DC fine, AC overloaded", "DC overloaded, AC fine", 
 
 ### Step 4 — Generator outages in the DC screen, shared by droop and damping (Hurdles 15.1–15.4)
 
-`pickup_shares(net, lost)` solves for `Δω` with headroom caps, using weights from
-`machine_arrays`. `dc_generator_outages(net)` applies the shares and reuses step
+`pickup_shares(net, lost)` solves `Σ min(−Δω/Rᵢ, headroomᵢ) − Δω·Dᵢ = P_lost` for
+`Δω`, using weights from `machine_arrays`. The cap is on the droop term only (D2). `dc_generator_outages(net)` applies the shares and reuses step
 2's machinery for the flows.
 
-- **First, read whether the swing tier's loads carry a frequency term** (D0 Hurdle
-  15.1). The oracle's exactness depends on it, so it is read in the source before
-  any assertion is written.
+- **First, read how the swing tier's loads respond to frequency and to
+  voltage** (D0 Hurdle 15.1), before any assertion is written. A voltage-dependent
+  load turns part of the loss into load relief. So the oracle fixture uses
+  constant-power loads, or accounts for the relief explicitly. It also carries
+  finite `R`, an explicit `Pmax > P0`, and no infinite bus.
 - **The cross-tier oracle:** a swing-tier `TripGenerator` run, settled, gives
   the same per-machine pickup and the same `Δω`, within a band stated first.
 - **Zero damping reduces to droop alone. Damping on differs by the predicted
   amount.** Both are run.
-- **The cap:** a fixture where one machine reaches its headroom. The swing tier
-  agrees, because it saturates in the derivative.
-- **Refusals by name:** no speed control left; the loss larger than all headroom.
+- **The cap:** a fixture where one machine's governor reaches its headroom.
+  That machine settles at `headroom − Δω·D`, above `Pmax` when damped. The swing
+  tier agrees, because it saturates in the derivative.
+- **Refusals by name, exactly two:** nothing left responds to frequency; or
+  `ΣD = 0` with every governor capped before the loss is covered. A damped case
+  with a huge loss reports its large `Δω` and does **not** refuse.
+- **Losing the slack's own machine:** decided here, with the bridge-to-a-lone-source
+  case it is the same as in case9 (D0 Hurdle 14.2).
 - **Sabotages:** drop `D` from the weights; build the weights from `Machine.R`
-  on the machine's own base (the per-unit mutation); remove the cap.
+  on the machine's own base (the per-unit mutation); cap applied to the damping term too.
 
 ### Step 5 — Generator outages in the AC screen: a shared reference (Hurdle 15.5)
 
