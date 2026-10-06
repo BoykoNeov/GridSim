@@ -80,7 +80,9 @@ stands in for, stop meaning what they appear to mean.
      (one rung hid two changes, and the mesh could not be solved as written). With
      every bus at 1 pu and no resistance the miss is a pure loop flow, so case9's
      ring outages are blind to it. The real-power part does go both ways: negative
-     enough to give a DC false alarm, **but only on the default loads**.
+     enough to give a DC false alarm; on the published case9 that needs the
+     default loads (constant power with every bus at 1 pu also lets DC exceed AC,
+     measured at review).
   4. **It cannot see voltage at all — measured at step 0, and the larger
      miss.** On our case9-without-line-charging at its published 315 MW, the DC
      screen passes all six ring outages (worst 79.3 % of a rating), while
@@ -535,16 +537,20 @@ and no rung is secretly a different switching state.
   out, L56 at 100.7 %) is an outage the AC solve refuses for voltage anyway. A
   voltage refusal has no AC flows, so no miss is reported for it.
 - **The two directions of disagreement, each on a natural fixture.** With L14
-  re-rated to 150 MVA, losing L89 leaves 96.0 MW on it in both flows' real power
-  and 159.7 MVA in the AC solve: `:dc_missed`, and the reactive part is what
+  re-rated to 150 MVA, losing L89 leaves 96.0 MW on it in DC, 105.3 MW of real
+  power in AC (the slack also covers the losses) and 159.7 MVA: `:dc_missed`, and the reactive part is what
   crosses the rating, because L14 carries the slack's reactive output. The
-  opposite, `:dc_false_alarm`, **exists only on the default loads**: with L94 at
+  opposite, `:dc_false_alarm`, needs **the default loads on the published case9**: with L94 at
   105 MVA, losing L67 gives 109.8 MW in DC and 100.4 MVA in AC, because the AC
   voltages sag and constant-impedance loads draw less. The same rating on
-  constant-power loads overloads at both (121.1 MVA). Across case9's outages on
-  constant power no AC apparent power fell below its DC flow; on the default loads
-  DC exceeds AC by up to 12.7 MW. M6 step 7's rule a second time: a claim made on
-  constant power is re-run on the default.
+  constant-power loads overloads at both (121.1 MVA). On the published
+  constant-power models no AC apparent power fell below its DC flow (smallest
+  margin +0.16 MW, case9 at 315 MW); on the default loads DC exceeds AC by up to
+  12.7 MW (case9 315), 23.0 (case9 400) and 19.2 (mesh). M6 step 7's rule a second
+  time: a claim made on constant power is re-run on the default. **First written
+  as "exists only on the default loads", and wrong:** constant power lets DC exceed
+  AC too when every bus is held at 1 pu with resistance on (case9 rung A1 −6.3 MW,
+  mesh A0 −0.15, A1 −0.51). The scoped claim is what the test asserts.
 - **Positive control**, L94 rated 100 MVA. Its DC flow runs against its declared
   direction (−125.0 MW after L89 out), which is what makes a forgotten `abs`
   visible.
@@ -555,3 +561,7 @@ and no rung is secretly a different switching state.
   A0 tree check. The grid-forming-slack branch of `:dc_blind` had no fixture until
   its sabotage was written, and got one (a triangle whose slack is rated 0.1 %
   above its own intact output).
+- **Review follow-up.** `dc_base_over` and `:mixed` had no fixture; both got one
+  (step 2's mesh on default loads with DE at 39: 40.0 MW DC against 37.9 MVA AC;
+  default-load case9 with L94 at 105 and L82 at 125, L67 out), each with a
+  sabotage red only in its own test.

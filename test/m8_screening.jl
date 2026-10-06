@@ -574,9 +574,10 @@ const _M8_C9 = (:L14, :L45, :L56, :L36, :L67, :L78, :L82, :L89, :L94)   # branch
     end
 
     @testset "DC misses an overload, and it is the REACTIVE part that crosses the rating" begin
-        # L14 rated 150 MVA: L89 out puts 96.0 MW on it in both flows' P, and 159.7 MVA
-        # in the AC solve. L14 is G1's connection: it carries the slack's reactive
-        # output, which a flow of P alone cannot see.
+        # L14 rated 150 MVA: L89 out puts 96.0 MW on it in DC, 105.3 MW of real power in
+        # AC (the slack's output also covers the losses), and 159.7 MVA. L14 is G1's
+        # connection: it carries the slack's reactive output, which a flow of P alone
+        # cannot see.
         net = _m8_rerate(_ed_case9(); L14 = 150.0)
         dc, ac, c = _m8_screens(net)
         @test c.class == [:splits, :dc_blind, :agree, :splits, :agree, :agree, :splits,
@@ -591,9 +592,51 @@ const _M8_C9 = (:L14, :L45, :L56, :L36, :L67, :L78, :L82, :L89, :L94)   # branch
         # takes the AC flow over it.
         @test 100 * (abs(dc.flow[8][1]) + c.real[8][1]) < 150.0
         @test 100 * (abs(dc.flow[8][1]) + c.real[8][1] + c.reactive[8][1]) > 150.0
-        # Read by id: the miss on L14 is L14's, though L89's removal shifted every
-        # later branch down one index in the AC solution.
-        @test sol.branches[j] === :L14 && length(sol.branches) == 8
+        # Read by id. L14 sits BEFORE the outaged L89, where position and id agree, so
+        # the checks above cannot see a position bug (sabotage T1 left them green).
+        # L94 sits after it: model index 9, solution index 8.
+        j94 = findfirst(==(:L94), sol.branches)
+        @test j94 == 8
+        @test c.real[8][9] == max(abs(sol.flow[j94]), abs(sol.flow_rev[j94])) - abs(dc.flow[8][9])
+    end
+
+    @testset "the two rarer verdicts: a DC-only base overload, and :mixed" begin
+        # A DC base over a rating is reported, not refused (D6): the AC base is secure.
+        # Step 2's lossless mesh on default loads at V_set 1.05 / 1.04; the spur D–E
+        # carries 40.0 MW in DC and 37.9 MVA in AC (measured), so a 39 MVA rating
+        # separates them.
+        mesh = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)],
+            [_m8_mesh_branches()[1:5]; Branch(:DE, :D, :E, 0.10, 39.0)],
+            [Machine(:G1, :A, 200.0, 4.0, 2.0, 0.25, 1.05, 150.0; V_set = 1.05),
+             Machine(:G2, :C, 150.0, 4.0, 2.0, 0.25, 1.04, 60.0; V_set = 1.04)],
+            [Load(:LB, :B, 80.0, 20.0), Load(:LD, :D, 90.0, 25.0), Load(:LE, :E, 40.0, 10.0)];
+            slack = :A)
+        _, ac, c = _m8_screens(mesh)
+        @test c.dc_base_over == [:DE]
+        @test 100 * (abs(dc_powerflow(mesh).flow[6]) + c.base_real[6] + c.base_reactive[6]) < 39.0
+        # `:mixed`: default loads, L94 at 105 and L82 at 125 MVA. Losing L67 gives L94
+        # 109.8 MW in DC against 100.4 MVA in AC (a false alarm) and L82 115.2 MW
+        # against 132.3 MVA (a miss), on the same outage.
+        z = _m8_rerate(_ed_case9(; zip_default = true); L94 = 105.0, L82 = 125.0)
+        _, _, c = _m8_screens(z)
+        @test c.class == [:splits, :agree, :dc_missed, :splits, :mixed, :agree, :splits,
+                          :agree, :dc_blind]
+        @test c.dc_over[5] == [:L94] && c.ac_over[5] == [:L82]
+    end
+
+    @testset "which loads let DC exceed the AC apparent power (measured, scoped)" begin
+        # On the published constant-power case9 no AC apparent power falls below its
+        # DC flow on any solved outage (smallest margin 0.16 MW at 315 MW). On the
+        # default loads it does, by up to 12.7 MW. NOT a law of constant power: with
+        # every bus held at 1 pu and R on (ladder rung A1) DC exceeds AC by 6.3 MW on
+        # case9's constant-power loads, and on the mesh's A0 and A1 rungs by 0.15 and
+        # 0.51 MW (step3_review.log).
+        smin(c) = minimum(c.real[k][e] + c.reactive[k][e]
+                          for k in eachindex(c.real) if !isempty(c.real[k])
+                          for e in eachindex(c.real[k]) if e != k)
+        @test smin(last(_m8_screens(_ed_case9()))) >= 0
+        @test smin(last(_m8_screens(_ed_case9(; zip_default = true)))) < -0.1
+        @test smin(last(_m8_screens(_m8_ladder(_ed_case9(), _ed_case9(; zip_default = true))[2]))) < -0.05
     end
 
     @testset "DC raises a false alarm — on the DEFAULT loads only" begin

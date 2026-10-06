@@ -275,10 +275,12 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
       - **positive control**, L94 rated 100 MVA: L67 and L89 out overload it at
         both fidelities (`:agree`, `[:L94]` each), L56 and L78 out are secure at
         both, the base is secure at both;
-      - **`:dc_missed`**, L14 rated 150 MVA, L89 out: 96.0 MW in both flows' real
-        power, 159.7 MVA in AC. Real power alone is under the rating at either
-        fidelity, and the reactive part takes it over;
-      - **`:dc_false_alarm`, on the default loads only**: L94 rated 105, L67 out is
+      - **`:dc_missed`**, L14 rated 150 MVA, L89 out: 96.0 MW in DC, 105.3 MW of
+        real power in AC (the slack also covers the losses), 159.7 MVA in AC. Real
+        power alone is under the rating at either fidelity, and the reactive part
+        takes it over;
+      - **`:dc_false_alarm`, on the published case9 only with the default loads**:
+        L94 rated 105, L67 out is
         109.8 MW in DC and 100.4 MVA in AC (the voltages sag and the loads draw
         less). The same rating on constant-power loads is `:agree` (121.1 MVA);
       - a grid-forming slack pushed over its rating by an outage is `:dc_blind`;
@@ -306,11 +308,17 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
       at all. Reordered before any test: published `V_set` with helpers on, then
       helpers off. The mesh's `R = X/10` and `V_set` 1.05 / 1.04 are invented and
       declared.
-- [x] **Found, not planned: DC can over-report, but only on the default loads.** On
-      constant-power loads no AC apparent power fell below its DC flow on case9. On
+- [x] **Found, not planned: DC can over-report.** On the published
+      constant-power models no AC apparent power fell below its DC flow (smallest
+      margin +0.16 MW, case9 at 315 MW; +2.6 at 400; mesh +1.97). On
       constant-impedance loads the sag lowers what the loads draw, so DC exceeds AC
-      by up to 12.7 MW (L45 out) and a false alarm is reachable. M6 step 7's rule
-      again: a claim made on constant power is re-run on the default.
+      by up to 12.7 MW (case9 315, L45 out), 23.0 (case9 400) and 19.2 (mesh), and
+      a false alarm is reachable. M6 step 7's rule again: a claim made on constant
+      power is re-run on the default. **First written as "only on the default
+      loads"; the review measured it wrong:** constant power lets DC exceed AC too
+      once the voltages are held at 1 pu with resistance on (case9 ladder rungs
+      A1/A2 −6.3 MW, mesh A0 −0.15, A1 −0.51). What holds is the scoped claim,
+      asserted in "which loads let DC exceed the AC apparent power".
 - [x] Sabotages in `screening.jl` only, predictions written first; **all eight red
       exactly where predicted, and nowhere else**:
       - **T1**, the miss read by position: red in the false alarm (L94 is past the
@@ -337,6 +345,25 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
       - **1262 reference / 568 UI**, unchanged.
 
       Logs: `core-step3.log`, `ref-step3.log`, `ui-step3.log`.
+- [x] **Review follow-up (test-only and docs-only, after e857b52).** The review
+      found an overclaim, two untested branches and a wrong figure:
+      - "false alarm only on default loads" scoped to the measured claim above;
+      - L14's "96.0 MW in both" was wrong: 105.3 MW of real power in AC, because
+        the slack covers the losses. The `:dc_missed` test's tautological check was
+        replaced by a by-id check on L94 (index 8 once the outaged L89 is gone);
+      - **`dc_base_over` had no fixture**: step 2's lossless mesh on default loads
+        at `V_set` 1.05 / 1.04, DE rated 39, overloads in DC only (40.0 MW against
+        37.9 MVA), `dc_base_over == [:DE]`;
+      - **`:mixed` had no fixture**: default-load case9, L94 at 105 and L82 at 125,
+        L67 out: DC flags L94, AC flags L82;
+      - sabotages, predicted first: **T9** (`dc_base_over` always empty) red only
+        in its new test; **T10** (`:mixed` folded into `:dc_missed`) red only in
+        its new test; **T1** re-run against the new tests is red in the
+        `:dc_missed` test's L94 check (as intended) and also in the "which loads"
+        test, which was **not predicted** (that test reads AC solutions on
+        outages past the removed index);
+      - M8 runner 607 green (+8 tests), so core is 4743 by count. The full core
+        gate was **not** re-run: nothing under `src/` changed.
 
 ## Step 4 — generator outages in the DC screen
 
