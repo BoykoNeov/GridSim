@@ -497,8 +497,9 @@ type and the model's bookkeeping", "M7 step 1 — inverters in the scenario file
 
 **Not checked, and said:** Hurdle 12's side clause — that the existence limit is an
 *upper bound* on where their model loses synchronism — was never run. The limit sits
-behind the voltage band (D13), so no operating point near it is admitted on either
-side.
+behind the voltage band (D13): our power flow refuses any point near it, and the
+outside `SimpleGFL` run — which has no band of its own — was seeded from our power
+flow, so it never started near the limit either.
 
 ### Frequency without a rotor — M7 step 6, `src/analysis/postprocess.jl`
 

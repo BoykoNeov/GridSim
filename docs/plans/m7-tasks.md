@@ -523,8 +523,11 @@ runs.
       deprecates `u_modified!` in favour of `derivative_discontinuity!`; it warns from
       `src/engines/detailed.jl` (`_reinitialise_algebraic!`) and four test helpers, in
       all three suites. Behaviour unchanged (every count holds). **Not switched at the
-      close**: our compat floor is `SciMLBase = "3.30.1"`, and the new name would raise
-      it. Owed, with that floor question attached.
+      close** (a code change, and three suites to re-run). The first draft of this box
+      said switching would raise our `SciMLBase = "3.30.1"` compat floor; **measured
+      afterwards, that was wrong** — `derivative_discontinuity!` is defined in 3.30.1
+      (and in 3.21.0) in the depot's own copies, so the rename is free. Owed, as a
+      plain rename.
 - [x] **Ledger**: `docs/validation-ledger.md` gains the step 4–8 rows (it stopped at
       step 3), and its IBR owed row is marked delivered. The one claim never checked —
       Hurdle 12's upper-bound clause, unreachable behind the voltage band (D13) — is
