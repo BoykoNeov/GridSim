@@ -89,7 +89,7 @@ reduced susceptance matrix and one solve per outage (D4). Bridges come from
   fixture. The reactance sabotage is **also run on case9** and is predicted green
   there (Hurdle 13.2); that green is recorded as the finding. **Re-scoped at step
   2:** that prediction was wrong (red on case9, `±X_m/X_k`). The green belongs to a
-  fifth sabotage, a consistent wrong set of reactances, run as well. "Slack row not
+  fifth sabotage, a consistent wrong set of reactances, run as well; case9's flows are blind to it, its margins are not. "Slack row not
   deleted" turned out an equivalent change for every flow, seen only by `nnz`
   (`m8-context.md` D4, "What step 2 settled").
 - **Oracle (reference/):** `PowerNetworkMatrices.LODF` on the Float32-exact

@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–2 done (2026-10-06)**; step 3 next. Step 2 left **4428 core / 1262 reference / 568 UI** (step 1: 4265 / 1251 / 568). Entered at `227d214` (the
+Status: **steps 0–2 done (2026-10-06)**; step 3 next. Step 2 left **4429 core / 1262 reference / 568 UI** (step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -187,14 +187,18 @@ reference numbers `ref_m8_numbers.jl`).
         and wrong. It is an equivalent change, not a test gap, and the structural
         check is what sees it;
       - **M5** consistent wrong reactances (`1/X²` in the one `b` vector, matrix
-        and weights alike): red on the mesh and the near-bridge, **green on case9**.
+        and weights alike): red on the mesh and the near-bridge. On case9 the
+        **flows** stay green (the identity and the 0/±1 ring test) but the
+        **margins** do not. First recorded here as "green on case9"; a review
+        caught that `mut-M5.log` had a red case9 line (`margin > 0.1`), see below.
 - [x] **The case9 finding, re-scoped.** The plan pre-registered "the reactance
       sabotage" (M3) as green on case9. **That prediction was wrong, by algebra and
       by run**: M3 makes each ring factor `±X_m/X_k`, and case9's ring reactances
       all differ, so it is red there (2.7e13 of the band). What a ring cannot see is
       a **consistent** set of wrong reactances, because losing a ring line reroutes
-      all of its flow whatever they are. That is M5, and it is green on case9 and
-      red on the mesh: Hurdle 13.2's blindness, now with the right sabotage
+      all of its flow whatever they are. That is M5: case9's **flows** are blind
+      to it and the mesh's are not. Its **margins** are not blind (`X_k²/ΣX²` in
+      place of `X_k/ΣX`): Hurdle 13.2's blindness, now with the right sabotage
       attached. A uniform scaling of every reactance is invisible everywhere (the
       factors do not change), so it is not a sabotage at all.
 - [x] Reference (`reference/test/runtests.jl`, 11 tests), our factor against theirs
@@ -215,10 +219,27 @@ reference numbers `ref_m8_numbers.jl`).
       `dc_powerflow`), so it joined the learned list **with its own testset**: a
       grid-following inverter on the mesh matches rebuild-and-re-solve, and its
       30 MW offset by 30 MW more load at the same bus gives the inverter-free flows.
-      The plan never listed this; the guard is why it was not missed.
-- [x] Gate: **4428 core** (4265 + 163 new, the one changed pre-existing line being
+      The plan never listed this; the guard is why it was not missed. **Sabotage,
+      run after a review pointed out this box was ticked without one** (predicted
+      first): the grid-following loop dropped from `bus_injections` turns red
+      exactly the "inverter-free flows" line, while the rebuild identity stays
+      green, because both sides read that loop. The model's balance check does not
+      read `bus_injections`, so nothing throws.
+- [x] **Review follow-up: case9's margin check made principled.** The first
+      version asserted every ring margin `> 0.1`, a floor chosen after seeing the
+      numbers and 6 % under the smallest (L78, 0.106). On a single ring with
+      everything else radial the margin has a closed form, `X_k / ΣX_ring`
+      (0.6808 → 0.1351 … 0.1058, matching the spike), now asserted to 100·eps:
+      the one check on the margin that shares no code with the rebuild. Re-run of
+      M5 with predictions first: case9 flows green, the closed form red, mesh and
+      near-bridge red as before; also red, not listed: the inverter testset's
+      identity, which runs on the mesh.
+- [x] Gate: **4428 core** at `922f9fd` (4265 + 163 new, the one changed pre-existing line being
       the learned list in `test/m7_inverters.jl`), **1262 reference** (+11),
-      **568 UI**, exit 0 each, all at below-normal priority.
+      **568 UI**, exit 0 each, all at below-normal priority. The review
+      follow-up changed only `test/m8_screening.jl` and docs (one check became two,
+      so **4429 core** by count); it was gated by the M8 runner (294 green), and the
+      full core suite was **not** re-run for it.
 
 ## Step 3 — the AC line screen, and what the shortcut missed
 

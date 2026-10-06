@@ -313,7 +313,14 @@ end
         @test all(isempty, c9.flow[c9.splits])
         # At a bridge `1 − PTDF_kk` is round-off — which is why it is never tested.
         @test all(abs.(c9.margin[c9.splits]) .<= 10eps())
-        @test all(c9.margin[.!c9.splits] .> 0.1)
+        # On a single ring with everything else radial, a ring line's margin is its
+        # own reactance over the ring's total — a closed form that shares no code with
+        # the rebuild, so it is the one check on the margin itself. (A first `> 0.1`
+        # floor, set after seeing the numbers, was replaced at review.)
+        ring = [b.id in _M8_RING for b in _ed_case9().branches]
+        @test ring == .!c9.splits
+        Xr = [b.X for b in _ed_case9().branches[ring]]
+        @test maximum(abs.(c9.margin[ring] .- Xr ./ sum(Xr))) <= 100eps()
         # A bridge declared the other way round is still found: the match is on the
         # unordered bus pair, and `Graphs.bridges` orders its own pairs.
         rev = [_m8_mesh_branches()[1:5]; Branch(:DE, :E, :D, 0.10, 500.0)]

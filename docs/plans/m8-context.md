@@ -56,8 +56,9 @@ stands in for, stop meaning what they appear to mean.
      case9, because it makes each ring factor `±X_m/X_k` and the ring's reactances
      all differ. "Whatever the reactances are" holds only while the factor code's
      matrix and its weights agree with each other. The sabotage a ring cannot see
-     is a **consistent** wrong set (`1/X²` in both), and that one is green on case9
-     and red on the mesh (D4, "What step 2 settled").
+     is a **consistent** wrong set (`1/X²` in both): case9's **flows** stay green
+     under it and the mesh's go red. Its **margins** still see it (D4, "What step 2
+     settled").
   3. **Its miss splits into a part with a sign and a part without one.** A
      rating is in MVA and the DC flow is `P` alone. What DC misses on a branch is
      `|S_ac| − |P_dc| = (|S_ac| − |P_ac|) + (|P_ac| − |P_dc|)`. The first term is
@@ -420,7 +421,11 @@ disagreement (below), so it is not left possible.
   conditioned direction is the far bus's angle, and no other flow reads it.
 - **The case9 blindness belongs to a different sabotage than the plan named** (D0,
   Hurdle 13.2, corrected there). Wrong reactance in the weight only: red on case9.
-  A consistent wrong set: green on case9, red on the mesh. Scaling every reactance
+  A consistent wrong set: case9's flows green, the mesh's red. case9's margins
+  are NOT blind to it: on a single ring `1 − PTDF_kk = X_k / ΣX_ring`, asserted in
+  closed form, and `1/X²` turns that into `X_k²/ΣX²`. (Recorded at first as "green
+  on case9" outright; the run had a red margin line, and a review caught the
+  overstatement.) Scaling every reactance
   by one factor is invisible on every grid, because the factors do not change, so
   it is not a sabotage.
 - **A transposed index is the reactance sabotage again** when the inverse is
