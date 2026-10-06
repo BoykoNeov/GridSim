@@ -166,8 +166,9 @@ and the inverter lesson is now scheduled under them:
 milestone names its hurdle first, as M7 did. Still owed and not yet hurdles: the
 network optimal power flow (M6 D7 criterion 4), Hurdle 12's untested clause, and
 the aggregate tier's nadir overlay for the low-inertia study (`coi_model` refuses a
-`Load`, M7 D16), and the `u_modified!` → `derivative_discontinuity!` rename that
-`SciMLBase` 3.57.0 deprecated (free: the new name exists at our 3.30.1 floor).
+`Load`, M7 D16). The `u_modified!` → `derivative_discontinuity!` rename that
+`SciMLBase` 3.57.0 deprecated was **paid 2026-10-06**, after the close: one call in
+`src/`, four in the tests, no compat change.
 
 ## Structure notes
 

@@ -296,7 +296,7 @@ end
 
 @testset "inject! invalidates the FSAL cache (no stale-derivative first step)" begin
     # Bug: Tsit5 is FSAL — it reuses the cached RHS at the current state as the
-    # next step's first stage. If inject! mutates params without u_modified!, the
+    # next step's first stage. If inject! mutates params without derivative_discontinuity!, the
     # first post-trip step integrates from the stale (pre-trip, ==0) derivative.
     sys = example_system()
     eng = init!(FrequencyResponseEngine, sys; dt = 0.001)

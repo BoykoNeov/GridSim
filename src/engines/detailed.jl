@@ -2495,10 +2495,11 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
         "wrote its change into one of them only."))
     # A STATE WRITTEN INTO THE INTEGRATOR IS DISCARDED BY THE NEXT STEP UNLESS THE
     # INTEGRATOR IS TOLD (the M3 finding, and the reason this is not a bare
-    # assignment). `u_modified!` invalidates the cached derivative that a FSAL
-    # method would otherwise reuse across the discontinuity; `auto_dt_reset!` stops
-    # the controller carrying a step size chosen for the pre-event dynamics.
-    SciMLBase.u_modified!(eng.integrator, true)
+    # assignment). `derivative_discontinuity!` invalidates the cached derivative
+    # that a FSAL method would otherwise reuse across the discontinuity;
+    # `auto_dt_reset!` stops the controller carrying a step size chosen for the
+    # pre-event dynamics.
+    SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return nothing
 end

@@ -438,7 +438,7 @@ A step on machine 1's field voltage, and the trajectory it produces.
 `Efd` WAS a parameter when this helper was written and is a STATE since M5 step 5,
 so the step is now written into `integrator.u` — and the two calls that follow it
 are not decoration. A state written into the integrator is silently discarded by
-the next step unless `u_modified!` invalidates the cached derivative (the M3
+the next step unless `derivative_discontinuity!` invalidates the cached derivative (the M3
 finding, asserted in its own testset), and `auto_dt_reset!` stops the controller
 carrying a step size chosen for the pre-step problem.
 
@@ -458,7 +458,7 @@ function efd_step_run(net::NetworkModel; ΔEfd::Real = 0.05, reltol::Real = 1.0e
         "into Efd is not held — the exciter integrates it away and the closed form " *
         "this helper feeds is no longer the one being measured.")
     eng.integrator.u[eng.Efd_idx[1]] += ΔEfd
-    SciMLBase.u_modified!(eng.integrator, true)
+    SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
     return solve!(eng, (0.0, Float64(T)); saveat = saveat)
 end
@@ -607,7 +607,7 @@ derivative saturation replaces.
 
 It is done from the test rather than through a switch in the engine, because a
 deliberate-bug mode in production code is a mode someone can reach by accident.
-`u_modified!` is what makes the clamp actually take (a state written into the
+`derivative_discontinuity!` is what makes the clamp actually take (a state written into the
 integrator is otherwise discarded by the next step), so the reproduction is
 faithful rather than accidentally inert.
 
@@ -632,7 +632,7 @@ function clamped_run(net::NetworkModel, Efd_cap::Real; h::Real = 0.005,
         u = eng.integrator.u
         if u[eng.Efd_idx[1]] > Efd_cap
             u[eng.Efd_idx[1]] = Float64(Efd_cap)
-            SciMLBase.u_modified!(eng.integrator, true)
+            SciMLBase.derivative_discontinuity!(eng.integrator, true)
         end
         post = max(post, u[eng.Efd_idx[1]])
         t = t2

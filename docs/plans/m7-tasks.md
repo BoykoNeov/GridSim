@@ -527,7 +527,7 @@ runs.
       said switching would raise our `SciMLBase = "3.30.1"` compat floor; **measured
       afterwards, that was wrong** — `derivative_discontinuity!` is defined in 3.30.1
       (and in 3.21.0) in the depot's own copies, so the rename is free. Owed, as a
-      plain rename.
+      plain rename — **paid 2026-10-06** in a commit of its own after the close.
 - [x] **Ledger**: `docs/validation-ledger.md` gains the step 4–8 rows (it stopped at
       step 3), and its IBR owed row is marked delivered. The one claim never checked —
       Hurdle 12's upper-bound clause, unreachable behind the voltage band (D13) — is

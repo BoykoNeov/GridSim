@@ -246,14 +246,14 @@ end
     # The M3 finding, pinned here because `_reinitialise_algebraic!` writes bus
     # voltages straight into `integrator.u` and its correctness depends on this.
     # Measured: a bare write leaves the run flat (3.9e-15); the same write with
-    # `u_modified!` + `auto_dt_reset!` produces the seeded 0.05 offset.
+    # `derivative_discontinuity!` + `auto_dt_reset!` produces the seeded 0.05 offset.
     net = load_bus_system()
     drifts = Float64[]
     for tell in (false, true)
         eng = init!(DetailedEngine, net)
         eng.integrator.u[eng.δ_idx[2]] += 0.05
         if tell
-            SciMLBase.u_modified!(eng.integrator, true)
+            SciMLBase.derivative_discontinuity!(eng.integrator, true)
             SciMLBase.auto_dt_reset!(eng.integrator)
         end
         ser = solve!(eng, (0.0, 5.0); saveat = 0.05)

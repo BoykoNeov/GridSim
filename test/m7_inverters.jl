@@ -1021,7 +1021,7 @@ end
             e = init!(DetailedEngine, net; reltol = 1e-12, abstol = 1e-14)
             @test current_state(e).V[2] == 1.0       # no current: the bus is at V_g
             e.integrator.u[e.gfl.θ_idx[1]] += Δ
-            GridSim.SciMLBase.u_modified!(e.integrator, true)
+            GridSim.SciMLBase.derivative_discontinuity!(e.integrator, true)
             solve!(e, (0.0, 0.05); saveat = 0.0:1e-5:0.05)
             got = minimum(state_series(e).ωpll_pv) * 2π * 50        # rad/s
             pred = minimum((exp(A * t) * [Δ, 0.0, 0.0])[2] for t in 0.0:1e-6:0.05)

@@ -31,7 +31,7 @@
 # instant with `add_tstop!` and then calling the very same `inject!` gives one
 # path, and it is the path `run_realtime!` already exercises. (`inject!` also
 # already does its own `derivative_discontinuity!` / `auto_dt_reset!` at the
-# boundary, which is the work a callback's `u_modified!` would have signalled.)
+# boundary, which is the work a callback would otherwise have had to signal.)
 #
 # WHAT STAYS A CALLBACK, AND WHY THE DISTINCTION IS LOAD-BEARING. `perturbations`
 # carries SCHEDULED events only. Every state-triggered protection scheme — M3's
