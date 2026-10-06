@@ -491,4 +491,7 @@ end
    the aggregate tier's nadir overlay for that study, and one clause of Hurdle 12
    (`docs/plans/README.md`).
 8. National scale: geographic map (`GeoMakie`/`Tyler.jl` or web `maplibre`+`deck.gl`),
-   batched/GPU contingency & time-series.
+   batched/GPU contingency & time-series. **Contingency screening taken as M8** (2026-10-06,
+   the user's choice): single line and generator outages at the DC-factor and AC
+   fidelities, hurdles 13–15 (`docs/plans/m8-context.md` D0). The map and the
+   batched/GPU runs are not in it (D5).
