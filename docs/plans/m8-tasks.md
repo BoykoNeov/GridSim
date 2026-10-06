@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **step 0 done (2026-10-06)**; step 1 next. Entered at `227d214` (the
+Status: **steps 0–1 done (2026-10-06)**; step 2 next. Step 1 left **4259 core / 1251 reference / 568 UI**. Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -38,8 +38,10 @@ runs.
       `W:\temp\claude\gridsim-m8\case9_n1.jl`). Three bridges, the generator
       connections. At 315 MW, DC passes all six ring outages while AC refuses two
       for voltage (0.873 / 0.757 pu). At 400 MW, DC flags one overload (100.7 %),
-      AC refuses five for voltage and fails to converge on one. No line charging
-      in this model, stated with every number.
+      AC refuses four for voltage, fails to converge on one, and passes L67. No
+      line charging in this model, stated with every number. (Recorded here at
+      first as "five for voltage". The spike's own log says four, and step 1
+      re-measured four.)
 - [x] **Found, not planned — the pickup rule as first offered was wrong.** It was
       offered as "droop sharing, which the dynamic tiers settle to exactly". A
       side review pointed at M1's damping-plus-droop settling law, and
@@ -62,16 +64,73 @@ runs.
       switching included, never through `_ac_first_round`.
 - [x] Plan written against the hurdles (`m8-plan.md`).
 
-## Step 1 — the AC checks split into named pieces, `ac_powerflow` unmoved (D3)
+## Step 1 — the AC checks split into named pieces, `ac_powerflow` unmoved (D3) — done 2026-10-06
 
-- [ ] M5's recorded criterion values captured by MD5 at HEAD **before the first edit**.
-- [ ] Verdict-returning check pieces; `ac_powerflow` calls them and throws as before.
-- [ ] `_ac_powerflow_outcome(net)` in D3's vocabulary.
-- [ ] Checked on case9's step-0 outages (`:secure`, `:voltage`, `:no_solution`)
-      plus a constructed `:overload`.
-- [ ] Anti-vacuity: ratings-before-band reorder goes red on L45.
-- [ ] Gate: the whole suite green, criterion values bit-identical, reference and
-      UI suites re-measured.
+- [x] M5's recorded criterion values captured at HEAD **before the first edit**
+      (`W:\temp\claude\gridsim-m8\criterion-HEAD.txt`, M6's harness unchanged):
+      169 values, value-line MD5 `1eeed2cc84937cb544eee5c35d0091cf`.
+- [x] **Found, not planned: that capture differs from every M7 capture in 89 of
+      169 lines.** The differences are about 1e-5 relative, `av.n_steps` goes from
+      96811 to 56529, and no `over` crosses 1. Two runs attribute it. The pre-rename
+      commit on today's manifest gives today's values, so the rename moved nothing.
+      Today's code on the manifest saved before M7's close reproduces M7 step 6's
+      capture exactly. **M7's close re-resolve moved them** (`SciMLBase` 3.56.1 →
+      3.57.0 among 20 bumps) and was never re-captured (D3, "What step 1
+      settled"). Step 7 re-captures after its re-resolve.
+- [x] **Found, not planned: the M5 gate cannot see this step's code.** The
+      criterion harness never calls `ac_powerflow`. A second HEAD capture was taken
+      before the first edit (`W:\temp\claude\gridsim-m8\ac_snapshot.jl`). It holds
+      83 cases: every `ACPowerFlow` field at round-trip precision, or the full
+      refusal. 20 solved, 20 voltage, 6 overload, 11 Newton failures, 2 named
+      refusals, 24 bridges.
+- [x] Verdict-returning pieces: `_voltage_band_violations`, `_rating_violations`,
+      `_residual_ok`, `_ac_backoff_violations`, `_ac_inverter_slack_excess`,
+      `_ac_newton_attempt`. Each returns **every** offender; the throwing check
+      takes the first, with the identical message. `ac_powerflow` is now a thin
+      thrower over `_ac_solve`, which owns the check order. That order is written
+      once, and it is the order the throws already ran in.
+- [x] `_ac_powerflow_outcome(net)` returns `(outcome, detail, solution)`. The four
+      refusals D3's table left unnamed are decided in D3, "What step 1 settled":
+      back-off and residual give `:no_solution`; a grid-forming slack over its
+      rating gives `:overload` (`kind = :inverter_slack`); a slack with no source
+      still throws.
+- [x] Checked (`test/m8_screening.jl`, 125 tests):
+      - **outcome and `ac_powerflow` agree** on 56 fixtures, with `==` on every
+        field when secure and the named message otherwise;
+      - case9's step-0 outages by name: at 315 MW, L45 and L94 give `:voltage`
+        and the rest `:secure`; at 400 MW, four `:voltage`, L67 `:secure`, L94
+        `:no_solution`, and L56 lists both B5 and B9;
+      - a constructed four-branch overload, every offender listed and recomputed
+        from the returned flows;
+      - switching included (`limited == [:B2, :B3]` at ±0.3 pu), and a switching
+        cap of 0 gives `:no_solution`;
+      - the slack inverter at 50 MVA against 60; the no-source slack throws from
+        both entry points.
+- [x] **Found, not planned: step 0's 400 MW count was wrong in the prose.** It read
+      "five of six for voltage". Its own log, and step 1, say four voltage, one
+      secure (L67) and one non-convergence. Corrected in D0 and step 0 above.
+- [x] Anti-vacuity, **re-scoped**: the planned reorder could not move L45, which
+      has no overload, and `:secure` was unreachable. It runs on L89 at 400 MW,
+      where B9 sits at 0.854 pu and L56 carries 152.6 MVA on the same solve. Five
+      sabotages were executed with predictions written first
+      (`W:\temp\claude\gridsim-m8\mutate1.py`, `mut-S*.log`). All five went red
+      exactly where predicted:
+      - **S1**, ratings before band: red in the 400 MW table and the precedence
+        test. The agreement test stayed **green, as predicted**, because both
+        entry points read one ordered body;
+      - **S2**, the throwing band check naming the last offender: red only in the
+        pieces test, because the solver builds its own message;
+      - **S3**, the ratings piece returning the first offender only: red in the
+        overload and pieces tests;
+      - **S4**, switching skipped: red in the switching test;
+      - **S5**, the voltage outcome listing one bus: red in the L56 two-bus row.
+- [x] Gate:
+      - **4259 core** (4134 + 125 new, so no pre-existing test changed);
+      - **1251 reference / 568 UI**, unchanged, exit 0 each;
+      - the M5 criterion is **bit-identical** (`criterion-STEP1.txt`, same MD5);
+      - the AC capture is **bit-identical** (`ac-STEP1.txt`, MD5
+        `5a5873deefd295a470dc5f71260be7ba` once three precompilation lines are
+        removed).
 
 ## Step 2 — DC line-outage factors, bridges from the graph
 

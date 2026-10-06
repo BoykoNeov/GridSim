@@ -74,8 +74,10 @@ stands in for, stop meaning what they appear to mean.
      screen passes all six ring outages (worst 79.3 % of a rating), while
      `ac_powerflow` refuses two of them for voltage: `|V|` = 0.873 pu at B5 after
      losing L45, 0.757 pu at B9 after losing L94. At 400 MW, DC flags one overload
-     (100.7 %), and AC refuses five of six for voltage and fails to converge on
-     the sixth. **Caveat, stated with the number:** this model has no line
+     (100.7 %), and AC refuses four of six for voltage, fails to converge on a
+     fifth (L94), and solves the sixth (L67) inside every limit. (First written
+     here as "five of six for voltage". Step 0's own log says four, and step 1
+     re-measured four.) **Caveat, stated with the number:** this model has no line
      charging (`m6-context.md` D4), and case9's charging is reactive support, so
      part of that sag is the missing shunt and not the outage. The claim the
      milestone makes is the structural one — a screen that reads only `P` has no
@@ -300,6 +302,73 @@ existing suite plus M5's recorded criterion values are the proof.
 `:voltage` before `:overload` is the band-first order `ac_powerflow` already
 uses, for the same reason: a branch flow on a collapsed-voltage solution is not a
 flow on the operating point anyone asked about.
+
+### What step 1 settled (2026-10-06)
+
+The split is one solve read two ways, not two solves. `ac_powerflow`'s body became
+an internal `_ac_solve` that returns a verdict. `ac_powerflow` throws the verdict's
+exception, and `_ac_powerflow_outcome` returns `(outcome, detail, solution)`. Each
+check gained a piece that returns **every** offender. The throwing check takes the
+first, with the identical message. **The order the checks run in is written once**,
+in `_ac_solve`, and it is the order the throws already ran in: the Newton or the
+switching cap, back-off, the band, the ratings, the residual, the slack inverter's
+rating.
+
+**The four refusals the table above did not name**, each decided by name:
+
+| Refusal | Outcome | Why |
+|---|---|---|
+| back-off (a limited bus on the wrong side of its setpoint) | `:no_solution`, `reason = :backoff` | the solver cannot stand behind the answer (M6 D12) |
+| residual over `1e-10` after a converged Newton | `:no_solution`, `reason = :residual` | the same |
+| a grid-forming slack over its rating | `:overload`, `kind = :inverter_slack` | the network solved, and a source cannot carry it, like a branch |
+| a slack bus with no voltage source | still **throws** `ArgumentError` | losing the reference's source is the Hurdle 14.2 decision (steps 4–6), not this function's |
+
+**What each outcome hands back.** `:secure` and `:overload` carry the
+`ACPowerFlow`, because an overload's flows are the result step 3 compares with DC.
+An overload whose residual also fails carries `nothing`. `:voltage` carries
+`nothing` and lists every bus with its `|V|`, for this section's own reason: a flow
+on a solution outside the band is not a flow anyone asked about.
+
+**Found, not planned: the planned gate could not see this step's code.** M5's
+criterion harness (`scripts/iberia_two_area.jl`) never calls `ac_powerflow`. It
+reaches only the detailed tier's `_check_power_flow`, so it covers the split pieces
+on their passing path and nothing else. A second capture was therefore taken at
+HEAD before the first edit (`W:\temp\claude\gridsim-m8\ac_snapshot.jl`). It records
+83 cases: case9 at 315 and 400 MW, constant-power and default loads, `±0.3` pu
+reactive limits (switching binds), ratings at 60 % (overloads), every outage, the
+grid-forming slack at 50 and 60 MVA, and a slack with no source. For each it prints
+every `ACPowerFlow` field at round-trip precision, or the exception type and full
+message. The cases come out as 20 solved, 20 voltage, 6 overload, 11 Newton
+failures, 2 named refusals, and 24 bridges the model refuses. Before and after
+the edit the captures are **identical** (MD5 `5a5873deefd295a470dc5f71260be7ba`,
+once three precompilation lines are removed). M5's 169 values are identical too
+(value-line MD5 `1eeed2cc84937cb544eee5c35d0091cf`).
+
+**Found, not planned: M5's recorded values moved at M7's close, and nobody
+re-captured them.** Today's HEAD capture differs from every M7 capture in 89 of
+169 lines. The differences are about 1e-5 relative (`av.over` 1.02952749 →
+1.02952570), solver step counts change (`av.n_steps` 96811 → 56529), and every
+`over` stays on its side of 1. Attributed by two runs, not by argument:
+
+- the pre-rename commit `bf52e09` on today's manifest gives today's values (0
+  differ), so the `derivative_discontinuity!` rename moved nothing;
+- today's code on the manifest saved before M7's close
+  (`W:\temp\claude\m7-close\Manifest-root.toml`, `SciMLBase` 3.56.1) reproduces
+  M7 step 6's capture exactly (0 differ).
+
+So the dependency re-resolve at M7's close moved them (`SciMLBase` 3.56.1 →
+3.57.0 and 19 other bumps). No test count moved, because every assertion on them
+carries a tolerance. "Bit-identical" in this repo means within one manifest. Step
+7's close re-captures the values after its re-resolve and records the digest.
+
+**The planned anti-vacuity mutation was blind as written.** Moving ratings ahead
+of the band changes an outcome only where a voltage violation and an overload
+occur on the same solve. L45 at 315 MW has no overload (B5 at 0.873 pu, every
+branch within its rating), so the reorder still reports `:voltage` there. The
+plan's "or `:secure`" was unreachable under any reorder. Case9 offers a natural
+fixture where the two do coincide: **L89 out at 400 MW** puts B9 at 0.854 pu and
+L56 at 152.6 MVA against 150. The precedence test uses it and shows the masked
+overload from the same solve. The reorder turns that case into `:overload`.
 
 ---
 

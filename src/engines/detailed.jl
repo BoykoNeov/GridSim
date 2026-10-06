@@ -1165,8 +1165,27 @@ re-deriving the band (`m6-context.md` D6, D10).
 """
 function _check_voltage_band(net::NetworkModel, Vm::AbstractVector{Float64},
                              what::AbstractString)
-    for (v, b) in pairs(net.buses)
-        _PF_VMIN <= Vm[v] <= _PF_VMAX || throw(ErrorException(
+    bad = _voltage_band_violations(net, Vm)
+    isempty(bad) || throw(_voltage_band_error(net, Vm, first(bad), what))
+    return nothing
+end
+
+"""
+    _voltage_band_violations(net, Vm) -> Vector{Int}
+
+Every vertex whose `|V|` is outside the band, in vertex order — the comparison
+[`_check_voltage_band`](@ref) throws on, **returned** instead (M8 step 1,
+`m8-context.md` D3). A screen needs every offending bus; a single solve needs only
+the first, and the throwing check takes `first` of this list, so the two cannot
+come to disagree about what "outside" means.
+"""
+_voltage_band_violations(net::NetworkModel, Vm::AbstractVector{Float64}) =
+    [v for v in eachindex(net.buses) if !(_PF_VMIN <= Vm[v] <= _PF_VMAX)]
+
+function _voltage_band_error(net::NetworkModel, Vm::AbstractVector{Float64}, v::Int,
+                             what::AbstractString)
+    b = net.buses[v]
+    return ErrorException(
             "$what: bus $(b.id) solved to |V| = $(Vm[v]) pu, outside [$_PF_VMIN, $_PF_VMAX]. " *
             "A collapsed-voltage solution is SELF-CONSISTENT and converges to a " *
             "TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), " *
@@ -1176,9 +1195,7 @@ function _check_voltage_band(net::NetworkModel, Vm::AbstractVector{Float64},
             "is a REAL operating point on the right branch that sits below the band: " *
             "such an inverter reaches its transfer limit only at |V| ≈ 0.71 pu, so " *
             "between the band's edge and that limit the band IS the limit this repo " *
-            "enforces (m7-context.md D13)."))
-    end
-    return nothing
+            "enforces (m7-context.md D13).")
 end
 
 """
@@ -1190,14 +1207,28 @@ rather than reported.
 """
 function _check_branch_ratings(net::NetworkModel, flows::AbstractVector{Float64},
                                what::AbstractString)
-    for (e, br) in pairs(net.branches)
-        mva = flows[e] * net.S_base
-        mva <= br.rating || throw(ErrorException(
+    bad = _rating_violations(net, flows)
+    isempty(bad) || throw(_branch_rating_error(net, flows, first(bad), what))
+    return nothing
+end
+
+"""
+    _rating_violations(net, flows) -> Vector{Int}
+
+Every branch over its thermal rating, in branch order — [`_check_branch_ratings`](@ref)'s
+comparison, **returned** (M8 step 1, D3), with the throwing check taking `first`.
+"""
+_rating_violations(net::NetworkModel, flows::AbstractVector{Float64}) =
+    [e for (e, br) in pairs(net.branches) if !(flows[e] * net.S_base <= br.rating)]
+
+function _branch_rating_error(net::NetworkModel, flows::AbstractVector{Float64}, e::Int,
+                              what::AbstractString)
+    br = net.branches[e]
+    mva = flows[e] * net.S_base
+    return ErrorException(
             "$what: branch $(br.id) carries $mva MVA against a rating of " *
             "$(br.rating) MVA. The solve converged, but onto a dispatch the network " *
-            "cannot physically run."))
-    end
-    return nothing
+            "cannot physically run.")
 end
 
 """
@@ -1207,13 +1238,18 @@ The solve's residual below `1e-10`. **Last, deliberately**: it is necessary and
 conspicuously not sufficient, and the band is what actually decides.
 """
 function _check_residual(residual::Float64, what::AbstractString)
-    residual < _PF_RESIDUAL || throw(ErrorException(
+    _residual_ok(residual) || throw(_residual_error(residual, what))
+    return nothing
+end
+
+# `_check_residual`'s comparison, returned (M8 step 1, D3).
+_residual_ok(residual::Float64) = residual < _PF_RESIDUAL
+
+_residual_error(residual::Float64, what::AbstractString) = ErrorException(
         "$what: the network solve converged to a residual of $residual, above the " *
         "$_PF_RESIDUAL threshold. This is necessary and not sufficient — the " *
         "|V| band check is what actually separates the true solution from a " *
-        "self-consistent collapsed one."))
-    return nothing
-end
+        "self-consistent collapsed one.")
 
 """
     _check_power_flow(net, V, flows, residual, what)

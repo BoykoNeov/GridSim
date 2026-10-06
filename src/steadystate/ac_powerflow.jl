@@ -344,17 +344,29 @@ are per vertex.
 function _ac_assert_no_backoff(net::NetworkModel, limited::Vector{Int},
                                at_max::Vector{Bool}, Qheld::Vector{Float64},
                                Vm::Vector{Float64}, V_set::Vector{Float64})
-    for (i, v) in pairs(limited)
-        ok = at_max[i] ? Vm[v] <= V_set[v] + 1.0e-9 : Vm[v] >= V_set[v] - 1.0e-9
-        ok || throw(ErrorException(
+    bad = _ac_backoff_violations(limited, at_max, Vm, V_set)
+    isempty(bad) || throw(_ac_backoff_error(net, limited, at_max, Qheld, Vm, V_set, first(bad)))
+    return nothing
+end
+
+# `_ac_assert_no_backoff`'s comparison, returned (M8 step 1, `m8-context.md` D3): the
+# positions in `limited` of every switched bus on the wrong side of its setpoint.
+_ac_backoff_violations(limited::Vector{Int}, at_max::Vector{Bool},
+                       Vm::Vector{Float64}, V_set::Vector{Float64}) =
+    [i for (i, v) in pairs(limited)
+     if !(at_max[i] ? Vm[v] <= V_set[v] + 1.0e-9 : Vm[v] >= V_set[v] - 1.0e-9)]
+
+function _ac_backoff_error(net::NetworkModel, limited::Vector{Int}, at_max::Vector{Bool},
+                           Qheld::Vector{Float64}, Vm::Vector{Float64},
+                           V_set::Vector{Float64}, i::Int)
+    v = limited[i]
+    return ErrorException(
             "ac_powerflow: bus $(net.buses[v].id) was held at Q_$(at_max[i] ? "max" : "min") " *
             "= $(Qheld[v]) pu and then solved to |V| = $(Vm[v]) against a setpoint of " *
             "$(V_set[v]) — the wrong side, which means the bus should have come OFF " *
             "its limit and gone back to holding its voltage. Back-off is not " *
             "implemented (it is what makes the switching iteration cycle), so this " *
-            "case is refused rather than answered wrongly."))
-    end
-    return nothing
+            "case is refused rather than answered wrongly.")
 end
 
 """
@@ -373,19 +385,29 @@ of the slack's output between machine and inverter is not something this solve
 decides, and the machine has the short-term overload the inverter lacks.
 """
 function _ac_check_inverter_slack(net::NetworkModel, v_slack::Int, P::Float64, Q::Float64)
+    S = _ac_inverter_slack_excess(net, v_slack, P, Q)
+    S === nothing || throw(_ac_inverter_slack_error(net, S, P, Q))
+    return nothing
+end
+
+# `_ac_check_inverter_slack`'s comparison, returned (M8 step 1, D3): the slack
+# inverters' summed rating (pu) when the solved output exceeds it, else `nothing`.
+function _ac_inverter_slack_excess(net::NetworkModel, v_slack::Int, P::Float64, Q::Float64)
     isempty(net.machines_at_bus[v_slack]) || return nothing
     ia = _inverter_arrays(net)
     S = sum((ia.S[j] for j in eachindex(ia.bus) if ia.bus[j] == v_slack); init = 0.0)
     S > 0 || return nothing
-    hypot(P, Q) <= S * (1 + 1e-12) || throw(ErrorException(
+    return hypot(P, Q) <= S * (1 + 1e-12) ? nothing : S
+end
+
+_ac_inverter_slack_error(net::NetworkModel, S::Float64, P::Float64, Q::Float64) =
+    ErrorException(
         "ac_powerflow: the slack bus $(net.slack) is held by grid-forming inverter(s) " *
         "rated $(S * net.S_base) MVA, and the solve needs $(hypot(P, Q) * net.S_base) " *
         "MVA from them (P = $(P * net.S_base) MW, Q = $(Q * net.S_base) MVAr). The " *
         "slack's reactive limit is not enforced by switching, so this is checked " *
         "here: an inverter has no short-term overload, and a power flow that needs " *
-        "one describes an operating point it cannot hold."))
-    return nothing
-end
+        "one describes an operating point it cannot hold.")
 
 """
     ACPowerFlow
@@ -444,19 +466,31 @@ end
 # the residual RECOMPUTED from it rather than read off the solution object, so the
 # number that is checked is a function of the answer that is returned.
 function _ac_newton(c::_ACContext, x0::Vector{Float64}, abstol::Float64, maxiters::Int)
-    isempty(x0) && return (x0, 0.0)     # one bus, and it is the slack: nothing to solve
+    x, res, failed = _ac_newton_attempt(c, x0, abstol, maxiters)
+    failed === nothing || throw(_ac_newton_error(failed, maxiters))
+    return (x, res)
+end
+
+# The same solve, with a failure RETURNED as its retcode (third element; `nothing` on
+# success) rather than thrown — what a screen needs (M8 step 1, `m8-context.md` D3).
+# `_ac_newton` is this plus the throw, so the two cannot drift apart.
+function _ac_newton_attempt(c::_ACContext, x0::Vector{Float64}, abstol::Float64,
+                            maxiters::Int)
+    isempty(x0) && return (x0, 0.0, nothing)  # one bus, and it is the slack: nothing to solve
     prob = SciMLBase.NonlinearProblem(SciMLBase.NonlinearFunction{true}(_ac_residual!), x0, c)
     sol = NonlinearSolve.solve(prob, NonlinearSolve.NewtonRaphson();
                                abstol = abstol, maxiters = maxiters)
-    SciMLBase.successful_retcode(sol) || throw(ErrorException(
-        "ac_powerflow: the Newton solve returned $(sol.retcode) after $maxiters " *
-        "iterations. A power flow that does not converge is not a result; a case " *
-        "with no solution at all looks exactly like this, and so does one seeded " *
-        "into the wrong basin."))
+    SciMLBase.successful_retcode(sol) || return (x0, NaN, sol.retcode)
     F = similar(sol.u)
     _ac_residual!(F, sol.u, c)
-    return (Vector{Float64}(sol.u), maximum(abs, F))
+    return (Vector{Float64}(sol.u), maximum(abs, F), nothing)
 end
+
+_ac_newton_error(retcode, maxiters::Int) = ErrorException(
+        "ac_powerflow: the Newton solve returned $retcode after $maxiters " *
+        "iterations. A power flow that does not converge is not a result; a case " *
+        "with no solution at all looks exactly like this, and so does one seeded " *
+        "into the wrong basin.")
 
 # One round's problem: which buses hold a magnitude and which solve for one, given the
 # generator buses switched to a limit so far. Built fresh each round (see
@@ -546,11 +580,84 @@ and refused by name if it exceeds it. An inverter has no short-term overload
   - a grid-forming slack whose solved output exceeds its rating;
   - a grid-following inverter (M7 step 5 teaches it);
   - a solve that does not converge, or converges outside the checks above.
+
+A screen, for which those refusals are the answers, reads the **same solve**
+through `_ac_powerflow_outcome`, classified rather than thrown (M8 step 1,
+`m8-context.md` D3). Both are a thin layer over `_ac_solve`, which owns the order
+the checks run in.
 """
 function ac_powerflow(net::NetworkModel;
                       abstol::Real = 1.0e-12,
                       maxiters::Integer = 200,
                       max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
+    r = _ac_solve(net, Float64(abstol), Int(maxiters), Int(max_switch_rounds))
+    r.err === nothing || throw(r.err)
+    return r.solution
+end
+
+"""
+    _ac_powerflow_outcome(net; abstol, maxiters, max_switch_rounds)
+        -> (outcome, detail, solution)
+
+**The same solve `ac_powerflow` runs**: switching included, the same keywords, the
+same code. Its outcome is **classified instead of thrown**, in `m8-context.md` D3's
+vocabulary. A screen asks one question of many outages, and the refusals are exactly
+the answers it exists to find (M8 step 1).
+
+| `outcome` | when | `detail` | `solution` |
+|---|---|---|---|
+| `:secure` | every check passed | `nothing` | the `ACPowerFlow` `ac_powerflow` returns |
+| `:voltage` | a bus outside the band | every such bus, `(bus, Vm)`, in vertex order | `nothing` |
+| `:overload` | in band, over a rating | every branch over, `(kind = :branch, id, mva, rating)`, in branch order; or the slack inverter(s), `kind = :inverter_slack` | the `ACPowerFlow`, unless its residual also failed |
+| `:no_solution` | no answer this solver can stand behind | `(reason, message)` | `nothing` |
+
+**The precedence is `ac_powerflow`'s throw order, defined once in `_ac_solve`.** It
+runs: the Newton or the switching cap, then back-off, then the band, then the
+ratings, then the residual, then the slack inverter's rating. The first check that
+fails is the outcome. So `:voltage` masks an overload on the same solve (D3: a
+branch flow on a solution outside the band is not a flow on the operating point
+anyone asked about), and `outcome !== :secure` holds exactly when `ac_powerflow`
+throws.
+
+D3's table left four refusals unnamed, and step 1 decided them (`m8-context.md` D3,
+"What step 1 settled"):
+
+  - back-off and a residual over the threshold are `:no_solution`
+    (`reason = :backoff` / `:residual`): the solver cannot stand behind the answer;
+  - a grid-forming slack over its rating is `:overload` with
+    `kind = :inverter_slack`: the network solved, and a source cannot carry it;
+  - a slack bus with no voltage source still **throws**, as on a base case, because
+    what a screen does when it loses the reference's source is a later step's
+    decision (Hurdle 14.2), not this function's.
+
+`:splits` is never returned here. A bridge outage leaves a model `NetworkModel`
+refuses, so it is decided from the graph before any solve (Hurdle 14).
+
+**An `:overload` hands back its solution**, because the flows over the rating ARE
+the result, the one the screen compares with DC (step 3). Its residual is still
+checked: an overload whose residual also fails carries `nothing`.
+"""
+function _ac_powerflow_outcome(net::NetworkModel;
+                               abstol::Real = 1.0e-12,
+                               maxiters::Integer = 200,
+                               max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
+    r = _ac_solve(net, Float64(abstol), Int(maxiters), Int(max_switch_rounds))
+    return (outcome = r.outcome, detail = r.detail, solution = r.solution)
+end
+
+# A failed verdict: what a screen reads (`outcome`, `detail`) and what `ac_powerflow`
+# throws (`err`), built together so they cannot describe different failures.
+_ac_failed(outcome::Symbol, detail, err::Exception) =
+    (outcome = outcome, detail = detail, solution = nothing, err = err)
+_ac_no_solution(reason::Symbol, err::ErrorException) =
+    _ac_failed(:no_solution, (reason = reason, message = err.msg), err)
+
+# THE solve, shared by `ac_powerflow` (which throws `err`) and `_ac_powerflow_outcome`
+# (which reports `outcome`). One body, so the screen and the single solve are the same
+# model by construction, not two copies kept in step (D3). Every check returns a
+# verdict and the first failure wins, in the order the throws ran before M8.
+function _ac_solve(net::NetworkModel, abstol::Float64, maxiters::Int,
+                   max_switch_rounds::Int)
     # M7 step 1 refused every inverter; step 4 lifted the grid-forming kind and step
     # 5 the grid-following one (a scheduled injection). Nothing is refused by kind.
     n = length(net.buses)
@@ -595,7 +702,9 @@ function ac_powerflow(net::NetworkModel;
                 x0[length(nonslack) + i] = Vm[v]
             end
         end
-        x, res = _ac_newton(c, x0, Float64(abstol), Int(maxiters))
+        x, res, failed = _ac_newton_attempt(c, x0, abstol, maxiters)
+        failed === nothing ||
+            return _ac_no_solution(:newton, _ac_newton_error(failed, maxiters))
         Vm, θ = _ac_expand(c, x)
         Pnet, Qnet = _ac_flows(c, Vm, θ)
         Qgen = [Qnet[v] + sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
@@ -624,7 +733,7 @@ function ac_powerflow(net::NetworkModel;
         append!(limited, newly)
         append!(at_max, newly_at_max)
         round += 1
-        round <= max_switch_rounds || throw(ErrorException(
+        round <= max_switch_rounds || return _ac_no_solution(:switching, ErrorException(
             "ac_powerflow: reactive-limit switching did not settle in " *
             "$max_switch_rounds rounds; still switching " *
             join(("$(net.buses[v].id)" for v in newly), ", ") * ". Switching here is " *
@@ -632,7 +741,9 @@ function ac_powerflow(net::NetworkModel;
             "with no limited solution — either way a half-switched answer is not one."))
     end
 
-    _ac_assert_no_backoff(net, limited, at_max, Qheld, Vm, sch.V_set)
+    backoff = _ac_backoff_violations(limited, at_max, Vm, sch.V_set)
+    isempty(backoff) || return _ac_no_solution(:backoff,
+        _ac_backoff_error(net, limited, at_max, Qheld, Vm, sch.V_set, first(backoff)))
 
     Pload = [sch.Pl[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
     Qload = [sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
@@ -665,24 +776,44 @@ function ac_powerflow(net::NetworkModel;
     end
 
     what = "ac_powerflow"
-    _check_voltage_band(net, Vm, what)
-    _check_branch_ratings(net, mva, what)
-    _check_residual(res, what)
-    _ac_check_inverter_slack(net, v_slack, Pgen[v_slack] - sch.Pfix[v_slack],
-                             Qgen[v_slack] - sch.Qfix[v_slack])
+    low = _voltage_band_violations(net, Vm)
+    isempty(low) || return _ac_failed(:voltage,
+        [(bus = net.buses[v].id, Vm = Vm[v]) for v in low],
+        _voltage_band_error(net, Vm, first(low), what))
 
     held = Set(limited)
     roles = [v == v_slack ? :slack :
              (sch.has_source[v] && !(v in held)) ? :generator : :load for v in 1:n]
 
-    return ACPowerFlow(net.slack,
-                       Symbol[b.id for b in net.buses], Vm, θ,
-                       Pgen, Qgen, Pload, Qload,
-                       roles, Symbol[net.buses[v].id for v in limited],
-                       Symbol[b.id for b in net.branches],
-                       Symbol[b.from for b in net.branches],
-                       Symbol[b.to for b in net.branches],
-                       flow, flow_rev, qflow, qflow_rev, loss, res)
+    sol = ACPowerFlow(net.slack,
+                      Symbol[b.id for b in net.buses], Vm, θ,
+                      Pgen, Qgen, Pload, Qload,
+                      roles, Symbol[net.buses[v].id for v in limited],
+                      Symbol[b.id for b in net.branches],
+                      Symbol[b.from for b in net.branches],
+                      Symbol[b.to for b in net.branches],
+                      flow, flow_rev, qflow, qflow_rev, loss, res)
+
+    over = _rating_violations(net, mva)
+    if !isempty(over)
+        detail = [(kind = :branch, id = net.branches[e].id, mva = mva[e] * net.S_base,
+                   rating = net.branches[e].rating) for e in over]
+        return (outcome = :overload, detail = detail,
+                solution = _residual_ok(res) ? sol : nothing,
+                err = _branch_rating_error(net, mva, first(over), what))
+    end
+    _residual_ok(res) || return _ac_no_solution(:residual, _residual_error(res, what))
+    P_slack = Pgen[v_slack] - sch.Pfix[v_slack]
+    Q_slack = Qgen[v_slack] - sch.Qfix[v_slack]
+    S = _ac_inverter_slack_excess(net, v_slack, P_slack, Q_slack)
+    if S !== nothing
+        detail = [(kind = :inverter_slack, id = net.slack,
+                   mva = hypot(P_slack, Q_slack) * net.S_base, rating = S * net.S_base)]
+        return (outcome = :overload, detail = detail, solution = sol,
+                err = _ac_inverter_slack_error(net, S, P_slack, Q_slack))
+    end
+
+    return (outcome = :secure, detail = nothing, solution = sol, err = nothing)
 end
 
 # The vertex of a bus in a solved answer, or a throw naming it — a missing bus is a

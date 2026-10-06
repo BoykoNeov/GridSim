@@ -65,7 +65,10 @@ returns `(outcome, detail, solution-or-nothing)` in D3's vocabulary.
   between them produce three of the five outcomes, plus a constructed overload.
 - **Anti-vacuity:** reorder the verdicts (ratings before band). The L45 case
   must then report `:overload` or `:secure` instead of `:voltage`, and a test
-  must go red.
+  must go red. **Re-scoped at step 1 (`m8-context.md` D3, "What step 1
+  settled"):** L45 has no overload, so the reorder cannot move it, and `:secure`
+  was never reachable. The mutation runs on L89 at 400 MW, where both
+  violations occur on one solve.
 
 ### Step 2 — DC line-outage factors, bridges from the graph (Hurdles 13.1, 13.2, 14.1)
 
