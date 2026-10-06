@@ -173,6 +173,8 @@ this step**, not assumed.
 ### Step 7 — Close
 
 Manifests deleted and re-resolved in all three environments, counts re-measured,
+both step-1 captures (M5's criterion values and the AC solve) re-run and their new
+digests recorded,
 ledger rows, `SPEC.md` §9 item 8 annotation, README row and hurdle list, memory.
 
 ## Cut-first, in order

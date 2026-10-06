@@ -592,7 +592,7 @@ function ac_powerflow(net::NetworkModel;
                       max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
     r = _ac_solve(net, Float64(abstol), Int(maxiters), Int(max_switch_rounds))
     r.err === nothing || throw(r.err)
-    return r.solution
+    return r.solution::ACPowerFlow
 end
 
 """

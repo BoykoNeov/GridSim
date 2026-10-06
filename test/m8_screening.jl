@@ -189,10 +189,30 @@ _m8_thrown(f) = try; f(); nothing; catch e; e; end
         @test_throws ArgumentError ac_powerflow(bare)
     end
 
+    @testset "a residual over the threshold is `:no_solution`, and strips an overload's solution" begin
+        # Reached through the solve by loosening the Newton's own `abstol`: at 1e-6 it
+        # stops at an iterate whose residual is ~3e-7, above the 1e-10 the check
+        # demands (measured at step 1; at 1e-7 and tighter it lands at ~1e-14). First
+        # written as "unreachable through the solve", which was never tried.
+        net = _ed_case9()
+        r = GridSim._ac_powerflow_outcome(net; abstol = 1e-6)
+        @test r.outcome === :no_solution && r.detail.reason === :residual
+        @test _m8_thrown(() -> ac_powerflow(net; abstol = 1e-6)).msg == r.detail.message
+        @test GridSim._ac_powerflow_outcome(net; abstol = 1e-7).outcome === :secure
+        # On an overload the ratings run before the residual, so the outcome stays
+        # `:overload` with its branches listed, but the solution is withheld: an
+        # unverified solve's flows are not a result.
+        hot = _m8_without(_m8_rated(_ed_case9(; load = 400.0), 0.6), :L67)
+        r = GridSim._ac_powerflow_outcome(hot; abstol = 1e-6)
+        @test r.outcome === :overload && r.solution === nothing
+        @test [d.id for d in r.detail] == [:L14, :L56, :L82, :L94]
+        @test GridSim._ac_powerflow_outcome(hot).solution isa ACPowerFlow
+    end
+
     @testset "the verdict pieces return every offender; the throwing checks take the first" begin
-        # Back-off and a residual over the threshold are `:no_solution` by reason, but
-        # no fixture reaches either through the solve (M6 D12 found the same for
-        # back-off), so their pieces are checked directly, like the other three.
+        # Back-off is `:no_solution` by reason, but no fixture reaches it through the
+        # solve (M6 D12 found the same), so its piece is checked directly, like the
+        # other three. The residual is reached through the solve (testset above).
         net = three_machine_ring()
         Vm = [0.5, 1.0, 1.2]
         @test GridSim._voltage_band_violations(net, Vm) == [1, 3]

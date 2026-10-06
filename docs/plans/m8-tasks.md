@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–1 done (2026-10-06)**; step 2 next. Step 1 left **4259 core / 1251 reference / 568 UI**. Entered at `227d214` (the
+Status: **steps 0–1 done (2026-10-06)**; step 2 next. Step 1 left **4265 core / 1251 reference / 568 UI**. Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -105,7 +105,12 @@ runs.
       - switching included (`limited == [:B2, :B3]` at ±0.3 pu), and a switching
         cap of 0 gives `:no_solution`;
       - the slack inverter at 50 MVA against 60; the no-source slack throws from
-        both entry points.
+        both entry points;
+      - **the residual refusal reached through the solve**, after a review asked
+        whether it really was unreachable as first written. The Newton's own
+        `abstol` at 1e-6 stops case9 at a residual of 3.0e-7, giving
+        `:no_solution` / `:residual`. The constructed overload at the same
+        setting keeps `:overload` and withholds its solution.
 - [x] **Found, not planned: step 0's 400 MW count was wrong in the prose.** It read
       "five of six for voltage". Its own log, and step 1, say four voltage, one
       secure (L67) and one non-convergence. Corrected in D0 and step 0 above.
@@ -123,14 +128,18 @@ runs.
       - **S3**, the ratings piece returning the first offender only: red in the
         overload and pieces tests;
       - **S4**, switching skipped: red in the switching test;
-      - **S5**, the voltage outcome listing one bus: red in the L56 two-bus row.
+      - **S5**, the voltage outcome listing one bus: red in the L56 two-bus row;
+      - **S6**, an overload always keeping its solution: red only in the residual
+        test's "withheld" line (`mutate2.py`);
+      - **S7**, the residual check skipped: red in the residual test.
 - [x] Gate:
-      - **4259 core** (4134 + 125 new, so no pre-existing test changed);
+      - **4265 core** (4134 + 131 new, so no pre-existing test changed; 4259
+        at the first commit, before the residual testset);
       - **1251 reference / 568 UI**, unchanged, exit 0 each;
       - the M5 criterion is **bit-identical** (`criterion-STEP1.txt`, same MD5);
       - the AC capture is **bit-identical** (`ac-STEP1.txt`, MD5
         `5a5873deefd295a470dc5f71260be7ba` once three precompilation lines are
-        removed).
+        removed), re-run on the final code (`ac-STEP1b.txt`, the same digest).
 
 ## Step 2 — DC line-outage factors, bridges from the graph
 
@@ -189,4 +198,8 @@ runs.
 ## Step 7 — close
 
 - [ ] Manifests deleted and re-resolved in all three environments; counts re-measured.
+- [ ] **After the re-resolve, re-run both captures** (`criterion_snapshot.jl`,
+      `ac_snapshot.jl` in `W:\temp\claude\gridsim-m8\`) and record the new
+      digests beside the old ones. Re-measuring only the test counts is how M5's
+      values moved unseen at M7's close (step 1's finding).
 - [ ] Ledger rows; `SPEC.md` §9 item 8 annotation; README row and hurdle list; memory.

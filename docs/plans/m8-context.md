@@ -319,13 +319,13 @@ rating.
 | Refusal | Outcome | Why |
 |---|---|---|
 | back-off (a limited bus on the wrong side of its setpoint) | `:no_solution`, `reason = :backoff` | the solver cannot stand behind the answer (M6 D12) |
-| residual over `1e-10` after a converged Newton | `:no_solution`, `reason = :residual` | the same |
+| residual over `1e-10` after a converged Newton | `:no_solution`, `reason = :residual` | the same. Reached through the solve by loosening its own `abstol`: at 1e-6 case9 stops at 3.0e-7 (first written as unreachable, which was never tried) |
 | a grid-forming slack over its rating | `:overload`, `kind = :inverter_slack` | the network solved, and a source cannot carry it, like a branch |
 | a slack bus with no voltage source | still **throws** `ArgumentError` | losing the reference's source is the Hurdle 14.2 decision (steps 4–6), not this function's |
 
 **What each outcome hands back.** `:secure` and `:overload` carry the
 `ACPowerFlow`, because an overload's flows are the result step 3 compares with DC.
-An overload whose residual also fails carries `nothing`. `:voltage` carries
+An overload whose residual also fails carries `nothing`, and the same loose `abstol` reaches that branch. `:voltage` carries
 `nothing` and lists every bus with its `|V|`, for this section's own reason: a flow
 on a solution outside the band is not a flow anyone asked about.
 
@@ -359,7 +359,9 @@ re-captured them.** Today's HEAD capture differs from every M7 capture in 89 of
 So the dependency re-resolve at M7's close moved them (`SciMLBase` 3.56.1 →
 3.57.0 and 19 other bumps). No test count moved, because every assertion on them
 carries a tolerance. "Bit-identical" in this repo means within one manifest. Step
-7's close re-captures the values after its re-resolve and records the digest.
+7's close therefore has its own box: re-run both captures after the re-resolve and
+record the new digests next to the old ones, because "counts re-measured" is the
+wording that let this through at M7's close.
 
 **The planned anti-vacuity mutation was blind as written.** Moving ratings ahead
 of the band changes an outcome only where a voltage violation and an overload
