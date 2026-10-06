@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–2 done (2026-10-06)**; step 3 next. Step 2 left **4429 core / 1262 reference / 568 UI** (step 1: 4265 / 1251 / 568). Entered at `227d214` (the
+Status: **steps 0–3 done (2026-10-06)**; step 4 next. Step 3 left **4735 core / 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -241,15 +241,102 @@ reference numbers `ref_m8_numbers.jl`).
       so **4429 core** by count); it was gated by the M8 runner (294 green), and the
       full core suite was **not** re-run for it.
 
-## Step 3 — the AC line screen, and what the shortcut missed
+## Step 3 — the AC line screen, and what the shortcut missed — done 2026-10-06
 
-- [ ] `ac_line_outages(net)` and `compare_line_screens(dc, ac)`.
-- [ ] The miss split: reactive part reported, real-power part measured; every
-      bus held at 1 pu first (second machine per bus checked accepted), then `R`,
-      `V_set` and default loads added one at a time.
-- [ ] `S_base` invariance.
-- [ ] Positive control: one outage that overloads at both fidelities.
-- [ ] case9's voltage demonstration, with the caveat.
+Every prediction, band and outcome below was written to
+`W:\temp\claude\gridsim-m8\step3_predictions.md` before the run it describes
+(spikes `step3_spike.jl`, `step3_pc.jl`, `step3_pc2.jl`, `step3_fa.jl`; sabotages
+`mutate4.py`, `mut-T*.log`). Nothing in `ac_powerflow.jl` changed, so the 83-case
+AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
+
+- [x] `ac_line_outages(net) -> ACLineOutages` (`src/steadystate/screening.jl`): the
+      base case through `ac_powerflow` (a refused base refuses the screen with
+      `ac_powerflow`'s own message), bridges from `_bridge_mask`, and per other
+      branch `_ac_powerflow_outcome` on the model rebuilt without it. Outcomes,
+      solutions, every overloaded element, every low bus and the no-solution reason
+      are kept in concretely typed fields.
+- [x] `compare_line_screens(net, dc, ac) -> LineScreenComparison`. **It takes the
+      model, which the plan's `(dc, ac)` did not**: the DC screen carries no ratings
+      (D6). DC overloads are judged by the same `_rating_violations`, on `|f|`. The
+      DC base is judged and reported, not refused. Classes: `:splits`, `:dc_blind`
+      (AC voltage, no solution, or a grid-forming slack over its rating), `:agree`,
+      `:dc_missed`, `:dc_false_alarm`, `:mixed`. AC solutions are one branch shorter
+      and are read **by branch id**.
+- [x] Checked (`test/m8_screening.jl`, +305 tests; the M8 runner 599 green):
+      - **each outage IS the outcome solve on the rebuilt model**, `==` on every
+        field, on case9 at 315 / 400 MW / default loads / a re-rated L94, and on
+        step 3's mesh; bridges never solved;
+      - a refused base refuses the screen with `ac_powerflow`'s message; mismatched
+        screens are refused;
+      - **case9's voltage demonstration**, no line charging stated beside it: at
+        315 MW, L45 and L94 are `:dc_blind` (B5 0.873, B9 0.757) and the other four
+        `:agree`; at 400 MW the one DC overload (L89 out, L56 at 100.7 %) is an AC
+        voltage refusal, and five of six outages are `:dc_blind`;
+      - **positive control**, L94 rated 100 MVA: L67 and L89 out overload it at
+        both fidelities (`:agree`, `[:L94]` each), L56 and L78 out are secure at
+        both, the base is secure at both;
+      - **`:dc_missed`**, L14 rated 150 MVA, L89 out: 96.0 MW in both flows' real
+        power, 159.7 MVA in AC. Real power alone is under the rating at either
+        fidelity, and the reactive part takes it over;
+      - **`:dc_false_alarm`, on the default loads only**: L94 rated 105, L67 out is
+        109.8 MW in DC and 100.4 MVA in AC (the voltages sag and the loads draw
+        less). The same rating on constant-power loads is `:agree` (121.1 MVA);
+      - a grid-forming slack pushed over its rating by an outage is `:dc_blind`;
+      - `S_base` 100 against 250: the same classes and over-lists, MW/MVA to 1e-9;
+      - an inverter: 30 MW grid-following plus 30 MW more load at B5 screens like
+        case9, and is the outcome solve on the rebuilt model with it carried.
+- [x] **The miss split and the ladder.** Reactive part `max|S| − max|P|` (≥ 0 by
+      algebra, stated, not tested), real-power part `max|P_ac| − |P_dc|`, both ends'
+      max so the sign claim holds. Five rungs, one change each, on case9 and the
+      mesh, with "no reactive limit bound" asserted on every rung:
+      - **A0**, lossless, a zero-P helper machine at `V_set = 1` on every bus
+        without a source (load **and** junction buses: case9's B4, B6, B8 would sag
+        too), every machine at 1 pu: every `|V|` is exactly 1, and AC − DC sums to
+        zero at every bus (≤ 2.5e-14 against a 1e-11 band): **a pure loop flow**;
+      - so **case9's ring outages are blind at A0** (each leaves a tree; ≤ 2.4e-14),
+        while its intact ring shows 5.0e-5 and the mesh's outages 2.4e-5 … 3.4e-3;
+      - A1 + R, A2 + published `V_set`, A3 − helpers (= the published model), A4 +
+        default loads: each rung moves the intact model's miss by > 1e-3 (asserted,
+        so no rung is a no-op). The **second machine per bus** the plan asked to
+        check is moot: helpers go only on buses with no source.
+- [x] **Found, not planned: the plan's rung order could not be run.** "Then
+      realistic `V_set`" was two changes (helpers off, published setpoints on), and
+      with helpers off at `V_set = 1` the mesh's **base** sags out of band (D 0.847
+      at the first invented `R = X/5`, 0.877 at `X/10`), so that rung has no screen
+      at all. Reordered before any test: published `V_set` with helpers on, then
+      helpers off. The mesh's `R = X/10` and `V_set` 1.05 / 1.04 are invented and
+      declared.
+- [x] **Found, not planned: DC can over-report, but only on the default loads.** On
+      constant-power loads no AC apparent power fell below its DC flow on case9. On
+      constant-impedance loads the sag lowers what the loads draw, so DC exceeds AC
+      by up to 12.7 MW (L45 out) and a false alarm is reachable. M6 step 7's rule
+      again: a claim made on constant power is re-run on the default.
+- [x] Sabotages in `screening.jl` only, predictions written first; **all eight red
+      exactly where predicted, and nowhere else**:
+      - **T1**, the miss read by position: red in the false alarm (L94 is past the
+        end of an 8-branch solution) and the A0 tree check. Green, as predicted, in
+        the `:dc_missed` test, because L14 comes before the outaged L89;
+      - **T2**, `abs` dropped from the DC judgement: red in the positive control,
+        the false alarm and case9 at 400 MW (each overloaded flow is negative in
+        model orientation). `S_base` invariance green, both bases equally wrong;
+      - **T3**, a hard-coded 100 in the DC judgement: red **only** in `S_base`
+        invariance;
+      - **T4**, `:voltage` not `:dc_blind`: red in every class vector with a
+        voltage row;
+      - **T5**, a secure outage storing the base solution: red in the identity, the
+        ladder and the inverter test;
+      - **T6**, the base not refused: red only in the refusal test;
+      - **T7**, the missed and false-alarm labels swapped: red in those two tests;
+      - **T8**, a grid-forming slack overload not `:dc_blind`: red only in its own
+        test, which was **added for this sabotage** after seeing no fixture
+        reached that branch.
+- [x] Gate, below-normal priority, exit 0 each:
+      - **4735 core**, the count predicted before the run: 4429 + 305 new + 1 from
+          M7's surface walk, which now reaches `ac_line_outages` (on its learned
+          list, with the inverter testset);
+      - **1262 reference / 568 UI**, unchanged.
+
+      Logs: `core-step3.log`, `ref-step3.log`, `ui-step3.log`.
 
 ## Step 4 — generator outages in the DC screen
 

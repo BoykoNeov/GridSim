@@ -129,7 +129,8 @@ include("steadystate/ac_powerflow.jl")
 # every refusal are here.
 include("steadystate/economic_dispatch.jl")
 # M8 - single-outage screening. After the steady-state solves it reads: step 2's
-# line-outage factors are dc_powerflow's base case plus one solve per outage.
+# line-outage factors are dc_powerflow's base case plus one solve per outage; step
+# 3's AC screen is ac_powerflow's classified solve, once per outage.
 include("steadystate/screening.jl")
 
 # --- post-processing reads over a recorded trajectory ---
@@ -195,6 +196,9 @@ export dispatch_loss_gap
 # M8 step 2 - the DC line-outage screen. Both checked clear against
 # `names(GLMakie)` in the `ui/` environment before being added (2026-10-06).
 export DCLineOutages, dc_line_outages
+# M8 step 3 - the AC line screen and the comparison. All four checked clear against
+# `names(GLMakie)` in the `ui/` environment before being added (2026-10-06).
+export ACLineOutages, ac_line_outages, LineScreenComparison, compare_line_screens
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

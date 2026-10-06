@@ -412,3 +412,313 @@ end
         @test gaps[3] > 1000 * 100eps() * maximum(abs, exact)
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3: the AC line screen (`ac_line_outages`) and what the DC shortcut missed
+# (`compare_line_screens`). Every number below was predicted or measured BEFORE this
+# file was written (`W:\temp\claude\gridsim-m8\step3_predictions.md`). case9 here is
+# `_ed_case9`: NO LINE CHARGING, so every case9 voltage carries that caveat — part of
+# each sag is the missing shunt and not the outage (m8-context.md D0, Hurdle 13.4).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `net` with the named branches re-rated (MVA), everything else the same.
+_m8_rerate(net::NetworkModel; ratings...) = NetworkModel(net.S_base, net.f0, net.buses,
+    [Branch(b.id, b.from, b.to, b.X, get(ratings, b.id, b.rating); R = b.R)
+     for b in net.branches], net.machines, net.loads; slack = net.slack, inverters = net.inverters)
+
+# The ladder's rungs (m8-context.md D6), one change each. Every rung is checked to
+# leave no reactive limit bound, so case9's ±3 pu limits are inert throughout.
+_m8_lossless(net::NetworkModel) = NetworkModel(net.S_base, net.f0, net.buses,
+    [Branch(b.id, b.from, b.to, b.X, b.rating) for b in net.branches], net.machines,
+    net.loads; slack = net.slack, inverters = net.inverters)
+_m8_flatV(net::NetworkModel) = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+    [GridSim._machine_with(m; V_set = 1.0) for m in net.machines], net.loads;
+    slack = net.slack, inverters = net.inverters)
+# A zero-P machine with unlimited Q at V_set = 1 on every bus WITHOUT a source — load
+# buses and junction buses both (case9's B4, B6, B8 carry nothing and would sag too).
+function _m8_helpers(net::NetworkModel)
+    src = Set(m.bus for m in net.machines)
+    hs = [Machine(Symbol(:H_, b.id), b.id, 100.0, 5.0, 0.0, 0.2, 1.0, 0.0)
+          for b in net.buses if !(b.id in src)]
+    return NetworkModel(net.S_base, net.f0, net.buses, net.branches, [net.machines; hs],
+                        net.loads; slack = net.slack, inverters = net.inverters)
+end
+# A0 lossless, every bus at 1 pu; A1 + R; A2 + published V_set; A3 − helpers (the
+# published model); A4 + default constant-impedance loads.
+_m8_ladder(pub, pubzip) = [_m8_helpers(_m8_flatV(_m8_lossless(pub))),
+                           _m8_helpers(_m8_flatV(pub)), _m8_helpers(pub), pub, pubzip]
+
+# Step 3's mesh: step 2's topology with an INVENTED resistance R = X/10 and invented
+# V_set 1.05 / 1.04 (declared; this fixture is not a published case). R = X/5 was
+# tried first and its own base case sagged out of band once the helpers came off.
+_m8_mesh3(; zip = false) = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)],
+    [Branch(b.id, b.from, b.to, b.X, b.rating; R = b.X / 10) for b in _m8_mesh_branches()],
+    [Machine(:G1, :A, 200.0, 4.0, 2.0, 0.25, 1.05, 150.0; V_set = 1.05),
+     Machine(:G2, :C, 150.0, 4.0, 2.0, 0.25, 1.04, 60.0; V_set = 1.04)],
+    [Load(:LB, :B, 80.0, 20.0, (zip ? (1.0, 0.0, 0.0) : (0.0, 0.0, 1.0))...),
+     Load(:LD, :D, 90.0, 25.0, (zip ? (1.0, 0.0, 0.0) : (0.0, 0.0, 1.0))...),
+     Load(:LE, :E, 40.0, 10.0, (zip ? (1.0, 0.0, 0.0) : (0.0, 0.0, 1.0))...)]; slack = :A)
+
+# Worst |Σ (P_ac,from − f_dc)| over the buses: zero exactly when the AC−DC flow
+# difference is a pure loop flow. AC solution read BY ID.
+function _m8_divergence(net::NetworkModel, dcflow, sol::ACPowerFlow)
+    div = zeros(length(net.buses))
+    for (e, b) in pairs(net.branches)
+        j = findfirst(==(b.id), sol.branches)
+        j === nothing && continue
+        d = sol.flow[j] - dcflow[e]
+        div[net.bus_index[b.from]] += d
+        div[net.bus_index[b.to]] -= d
+    end
+    return maximum(abs, div)
+end
+
+# Both screens and the comparison, in one call.
+function _m8_screens(net::NetworkModel)
+    dc, ac = dc_line_outages(net), ac_line_outages(net)
+    return dc, ac, compare_line_screens(net, dc, ac)
+end
+
+const _M8_C9 = (:L14, :L45, :L56, :L36, :L67, :L78, :L82, :L89, :L94)   # branch order
+
+@testset "M8 step 3 — the AC line screen, and what the DC shortcut missed" begin
+
+    @testset "each outage IS the outcome solve on the rebuilt model; bridges never solved" begin
+        # The AC counterpart of step 2's rebuild identity, with `==` on every field:
+        # the screen is the same code on the same model, so exactness is available.
+        for net in (_ed_case9(), _ed_case9(; load = 400.0), _ed_case9(; zip_default = true),
+                    _m8_mesh3(), _m8_rerate(_ed_case9(); L94 = 100.0))
+            ac = ac_line_outages(net)
+            @test ac.branches == [b.id for b in net.branches]
+            s0 = ac_powerflow(net)
+            @test all(getfield(ac.base, f) == getfield(s0, f) for f in fieldnames(ACPowerFlow))
+            @test ac.splits == dc_line_outages(net).splits
+            for (k, b) in pairs(net.branches)
+                if ac.splits[k]
+                    @test ac.outcome[k] === :splits && ac.solution[k] === nothing
+                    continue
+                end
+                r = GridSim._ac_powerflow_outcome(_m8_without(net, b.id))
+                @test ac.outcome[k] === r.outcome
+                if r.solution === nothing
+                    @test ac.solution[k] === nothing
+                else
+                    @test all(getfield(ac.solution[k], f) == getfield(r.solution, f)
+                              for f in fieldnames(ACPowerFlow))
+                end
+                @test ac.over[k] == (r.outcome === :overload ? r.detail : [])
+                @test ac.low[k] == (r.outcome === :voltage ? r.detail : [])
+                @test ac.reason[k] === (r.outcome === :no_solution ? r.detail.reason : :none)
+            end
+        end
+    end
+
+    @testset "a refused base case refuses the whole screen, with ac_powerflow's message" begin
+        # D3: outages from an operating point the network cannot hold say nothing.
+        bad = _m8_rated(_ed_case9(), 0.5)
+        e = _m8_thrown(() -> ac_powerflow(bad))
+        @test e isa ErrorException
+        @test _m8_thrown(() -> ac_line_outages(bad)).msg == e.msg
+        # And the comparison refuses two screens that are not of the model it is given.
+        dc, ac = dc_line_outages(_ed_case9()), ac_line_outages(_ed_case9())
+        @test_throws ArgumentError compare_line_screens(_m8_mesh3(), dc, ac)
+        @test_throws ArgumentError compare_line_screens(_ed_case9(), dc_line_outages(_m8_mesh3()), ac)
+    end
+
+    @testset "case9's voltage demonstration: what a screen of P alone cannot see (no line charging)" begin
+        # Hurdle 13.4. At the published 315 MW every DC flow is inside its rating
+        # (worst 79.3 %), and the AC solve refuses two outages for VOLTAGE: B5 at
+        # 0.873 pu after L45, B9 at 0.757 pu after L94. Part of each sag is the line
+        # charging this model does not carry; the claim is structural — the DC screen
+        # has no channel through which a voltage problem could appear.
+        dc, ac, c = _m8_screens(_ed_case9())
+        @test c.branches == collect(_M8_C9)
+        @test isempty(c.dc_base_over)
+        @test c.class == [:splits, :dc_blind, :agree, :splits, :agree, :agree, :splits,
+                          :agree, :dc_blind]
+        @test all(==(:secure), c.dc_outcome[.!c.splits])
+        @test [d.bus for d in ac.low[2]] == [:B5] && [d.bus for d in ac.low[9]] == [:B9]
+        # No AC flows on a voltage refusal, so no miss is reported there.
+        @test isempty(c.real[2]) && isempty(c.reactive[9]) && isempty(c.real[1])
+        @test all(length(c.real[k]) == 9 for k in (3, 5, 6, 8))
+
+        # 400 MW: the one DC overload (L89 out, L56 at 100.7 %) is an outage AC
+        # refuses for voltage anyway; four voltage refusals, one non-convergence.
+        dc, ac, c = _m8_screens(_ed_case9(; load = 400.0))
+        @test c.class == [:splits, :dc_blind, :dc_blind, :splits, :agree, :dc_blind,
+                          :splits, :dc_blind, :dc_blind]
+        @test c.dc_over[8] == [:L56] && c.ac_outcome[8] === :voltage
+        @test 150.0 < 100abs(dc.flow[8][3]) < 1.01 * 150.0
+        @test c.ac_outcome[9] === :no_solution && ac.reason[9] === :newton
+    end
+
+    @testset "positive control: an outage that overloads at BOTH fidelities, and one secure at both" begin
+        # Without this a screen reporting `:secure` everywhere passes, and so does one
+        # reporting `:overload` everywhere. L94 rated 100 MVA (not case9's 250): its
+        # base is 61.3 MW / 77.5 MVA; L89 out puts it at 125.0 / 144.6 and L67 out at
+        # 109.8 / 121.1; L56 and L78 out leave it under at both (measured).
+        # L94's DC flow runs AGAINST its declared direction, so a judgement that
+        # forgot the magnitude would pass it.
+        net = _m8_rerate(_ed_case9(); L94 = 100.0)
+        dc, ac, c = _m8_screens(net)
+        @test isempty(c.dc_base_over)
+        @test all(dc.flow[k][9] < -1.0 for k in (5, 8))
+        for k in (5, 8)                                   # L67, L89
+            @test c.dc_outcome[k] === :overload && c.ac_outcome[k] === :overload
+            @test c.dc_over[k] == c.ac_over[k] == [:L94] && c.class[k] === :agree
+        end
+        for k in (3, 6)                                   # L56, L78
+            @test c.dc_outcome[k] === c.ac_outcome[k] === :secure && c.class[k] === :agree
+        end
+        @test c.class[2] === c.class[9] === :dc_blind     # L45, L94: voltage, as before
+    end
+
+    @testset "DC misses an overload, and it is the REACTIVE part that crosses the rating" begin
+        # L14 rated 150 MVA: L89 out puts 96.0 MW on it in both flows' P, and 159.7 MVA
+        # in the AC solve. L14 is G1's connection: it carries the slack's reactive
+        # output, which a flow of P alone cannot see.
+        net = _m8_rerate(_ed_case9(); L14 = 150.0)
+        dc, ac, c = _m8_screens(net)
+        @test c.class == [:splits, :dc_blind, :agree, :splits, :agree, :agree, :splits,
+                          :dc_missed, :dc_blind]
+        @test c.ac_over[8] == [:L14] && isempty(c.dc_over[8])
+        sol = ac.solution[8]
+        j = findfirst(==(:L14), sol.branches)
+        S = max(hypot(sol.flow[j], sol.qflow[j]), hypot(sol.flow_rev[j], sol.qflow_rev[j]))
+        # The split is a decomposition: its parts add up to the whole miss.
+        @test c.reactive[8][1] + c.real[8][1] ≈ S - abs(dc.flow[8][1]) rtol = 1e-14
+        # Real power alone, at either fidelity, is under the rating; the reactive part
+        # takes the AC flow over it.
+        @test 100 * (abs(dc.flow[8][1]) + c.real[8][1]) < 150.0
+        @test 100 * (abs(dc.flow[8][1]) + c.real[8][1] + c.reactive[8][1]) > 150.0
+        # Read by id: the miss on L14 is L14's, though L89's removal shifted every
+        # later branch down one index in the AC solution.
+        @test sol.branches[j] === :L14 && length(sol.branches) == 8
+    end
+
+    @testset "DC raises a false alarm — on the DEFAULT loads only" begin
+        # L94 rated 105 MVA. On constant-power loads L67 out overloads it at both
+        # fidelities (109.8 MW / 121.1 MVA). On case9's default constant-impedance
+        # loads the AC voltages sag, the loads draw less, and the AC flow is 100.4 MVA
+        # while the DC flow, which never moves a voltage, stays at 109.8 MW (M6 step
+        # 7's lesson: a claim made on constant power must be re-run on the default).
+        cp = compare_line_screens(_m8_rerate(_ed_case9(); L94 = 105.0),
+                                  dc_line_outages(_m8_rerate(_ed_case9(); L94 = 105.0)),
+                                  ac_line_outages(_m8_rerate(_ed_case9(); L94 = 105.0)))
+        @test cp.class[5] === :agree && cp.ac_over[5] == [:L94]
+        z = _m8_rerate(_ed_case9(; zip_default = true); L94 = 105.0)
+        dc, ac, c = _m8_screens(z)
+        @test c.class == [:splits, :agree, :agree, :splits, :dc_false_alarm, :agree,
+                          :splits, :agree, :dc_blind]
+        @test c.dc_over[5] == [:L94] && isempty(c.ac_over[5]) && c.ac_outcome[5] === :secure
+        @test c.dc_over[8] == c.ac_over[8] == [:L94]      # L89 out: over at both
+        # On those loads the DC flow on L94 exceeds the AC apparent power: the real-power
+        # part is negative AND larger than the reactive part.
+        @test c.real[5][9] < 0 && -c.real[5][9] > c.reactive[5][9]
+    end
+
+    @testset "the miss, one cause at a time (Hurdle 13.3)" begin
+        # Rungs: A0 lossless with every bus held at 1 pu; A1 + R; A2 + published V_set;
+        # A3 − the helper machines (the published model); A4 + default loads.
+        for (pub, pubzip, tree) in ((_ed_case9(), _ed_case9(; zip_default = true), true),
+                                    (_m8_mesh3(), _m8_mesh3(; zip = true), false))
+            rungs = _m8_ladder(pub, pubzip)
+            cs = Any[]
+            for (r, net) in pairs(rungs)
+                dc, ac, c = _m8_screens(net)
+                push!(cs, c)
+                # Precondition, asserted rather than trusted: no reactive limit bound
+                # anywhere, so no rung is secretly a different switching state.
+                @test isempty(ac.base.limited)
+                @test all(isempty(s.limited) for s in ac.solution if s !== nothing)
+                r == 1 || continue
+                # A0: every magnitude IS 1 (every bus holds one), and the injections
+                # are the DC ones exactly, so AC − DC is a pure LOOP flow: it sums to
+                # zero at every bus (band: 10 × the Newton's 1e-12 abstol).
+                for s in (ac.base, (s for s in ac.solution if s !== nothing)...)
+                    @test all(==(1.0), s.Vm)
+                end
+                @test _m8_divergence(net, dc.base.flow, ac.base) <= 1e-11
+                for k in findall(!, ac.splits)
+                    @test _m8_divergence(net, dc.flow[k], ac.solution[k]) <= 1e-11
+                end
+                if tree
+                    # case9's ring outages each leave a TREE, where a loop flow is
+                    # zero: A0 is blind on every outage (measured ≤ 2.4e-14) — and not
+                    # by construction, because its intact RING shows 5.0e-5.
+                    @test all(maximum(abs, c.real[k]) <= 1e-11 for k in findall(!, c.splits))
+                    @test maximum(abs, c.base_real) > 1e-6
+                else
+                    # The mesh keeps a loop after any one outage: the angle
+                    # linearisation is visible (measured 2.4e-5 … 3.4e-3).
+                    @test maximum(maximum(abs, c.real[k]) for k in findall(!, c.splits)) > 1e-6
+                end
+            end
+            # Each rung moves the miss: a rung that changed nothing would make its
+            # cause look absent. Compared on the intact model, which every rung solves.
+            for r in 2:length(rungs)
+                @test maximum(abs.(cs[r].base_real .- cs[r-1].base_real) .+
+                              abs.(cs[r].base_reactive .- cs[r-1].base_reactive)) > 1e-3
+            end
+            # From A1 on the losses break the loop-flow identity (measured 3.7e-2 on
+            # case9's intact model at A1): R is the first cause that is not angles.
+        end
+    end
+
+    @testset "S_base invariance: the same physical case on two bases" begin
+        # `_ed_case9(; S_base)` rescales X, R and the reactive limits, so it is the same
+        # network. Outcomes, overloaded branches and every MW/MVA must not move.
+        a = _m8_rerate(_ed_case9(); L94 = 100.0)
+        b = _m8_rerate(_ed_case9(; S_base = 250.0); L94 = 100.0)
+        _, aca, ca = _m8_screens(a)
+        _, acb, cb = _m8_screens(b)
+        @test ca.class == cb.class && ca.dc_outcome == cb.dc_outcome
+        @test ca.ac_outcome == cb.ac_outcome && ca.dc_over == cb.dc_over && ca.ac_over == cb.ac_over
+        for k in eachindex(ca.real)
+            @test isapprox(100.0 .* ca.real[k], 250.0 .* cb.real[k]; rtol = 1e-9, atol = 1e-9)
+            @test isapprox(100.0 .* ca.reactive[k], 250.0 .* cb.reactive[k]; rtol = 1e-9, atol = 1e-9)
+            @test [d.mva for d in aca.over[k]] ≈ [d.mva for d in acb.over[k]] rtol = 1e-9
+        end
+    end
+
+    @testset "a grid-forming slack pushed over its rating is something DC cannot see" begin
+        # A triangle fed by a grid-forming slack. Losing a line raises the reactive
+        # power the network absorbs, so the source's |P + jQ| rises with no branch
+        # anywhere near its rating. The DC screen has no source rating to judge, so
+        # the outage is `:dc_blind`, not `:agree`. The rating is set 0.1 % above the
+        # intact model's own output, read off its solve: a constructed fixture.
+        mk(S) = NetworkModel(100.0, 50.0, [Bus(:A, 1.0), Bus(:B, 1.0), Bus(:C, 1.0)],
+            [Branch(:AB, :A, :B, 0.1, 500.0), Branch(:AC, :A, :C, 0.1, 500.0),
+             Branch(:BC, :B, :C, 0.1, 500.0)], Machine[],
+            [Load(:DB, :B, 40.0, 10.0, 0.0, 0.0, 1.0), Load(:DC, :C, 40.0, 10.0, 0.0, 0.0, 1.0)];
+            inverters = [Inverter(:gf, :A, :grid_forming, S, 80.0)])
+        s = ac_powerflow(mk(1000.0))
+        v = findfirst(==(:A), s.buses)
+        net = mk(1.001 * 100hypot(s.Pgen[v], s.Qgen[v]))
+        dc, ac, c = _m8_screens(net)
+        @test ac.outcome[1] === :overload && only(ac.over[1]).kind === :inverter_slack
+        @test isempty(c.ac_over[1]) && c.dc_outcome[1] === :secure
+        @test c.class[1] === :dc_blind
+    end
+
+    @testset "an inverter is screened like the load it offsets" begin
+        # The AC screen takes a model, so M7's walk of the exported surface reaches it
+        # (test/m7_inverters.jl). A grid-following inverter injects constant P + jQ0;
+        # 30 MW of it at B5 with 30 MW more constant-power load at the same bus is the
+        # inverter-free case9, so every outcome matches it.
+        base = _ed_case9()
+        withinv = NetworkModel(base.S_base, base.f0, base.buses, base.branches, base.machines,
+            [l.id === :D5 ? Load(:D5, :B5, l.P0 + 30.0, l.Q0, 0.0, 0.0, 1.0) : l for l in base.loads];
+            slack = base.slack, inverters = [Inverter(:pv, :B5, :grid_following, 50.0, 30.0)])
+        a, b = ac_line_outages(base), ac_line_outages(withinv)
+        @test a.outcome == b.outcome
+        @test [d.bus for v in a.low for d in v] == [d.bus for v in b.low for d in v]
+        @test isapprox([d.Vm for v in a.low for d in v], [d.Vm for v in b.low for d in v]; atol = 1e-9)
+        for k in findall(s -> s !== nothing, a.solution)
+            @test isapprox(a.solution[k].flow, b.solution[k].flow; atol = 1e-9)
+        end
+        # And it IS the outcome solve on the rebuilt model, inverter carried through.
+        r = GridSim._ac_powerflow_outcome(_m8_without(withinv, :L56))
+        @test b.solution[3].flow == r.solution.flow
+    end
+end

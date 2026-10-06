@@ -76,7 +76,11 @@ stands in for, stop meaning what they appear to mean.
      constant-impedance loads, because M6 step 7 found a claim that flipped there,
      and an outage moves voltages, which moves what those loads draw. An
      `S_base`-invariance check ships with it (M6 step 7's one-factor-short
-     mutation, again).
+     mutation, again). **Run at step 3 (D6):** the ladder had to be re-ordered
+     (one rung hid two changes, and the mesh could not be solved as written). With
+     every bus at 1 pu and no resistance the miss is a pure loop flow, so case9's
+     ring outages are blind to it. The real-power part does go both ways: negative
+     enough to give a DC false alarm, **but only on the default loads**.
   4. **It cannot see voltage at all — measured at step 0, and the larger
      miss.** On our case9-without-line-charging at its published 315 MW, the DC
      screen passes all six ring outages (worst 79.3 % of a rating), while
@@ -457,3 +461,97 @@ disagreement (below), so it is not left possible.
   Real cases carry them, and supporting them is its own decision.
 - **No line charging.** Hurdle 13 claim 4's caveat is a consequence of this, and
   it is stated wherever a case9 voltage appears.
+
+---
+
+## D6 — The AC line screen and the comparison: four decisions taken at step 3 (2026-10-06), and what it measured
+
+Taken before any run, and written to `W:\temp\claude\gridsim-m8\step3_predictions.md`
+with the predictions:
+
+1. **The comparison takes the model: `compare_line_screens(net, dc, ac)`**, not the
+   plan's `(dc, ac)`. An overload is a flow judged against a rating, and
+   `DCLineOutages` carries flows and no ratings. Giving the screens a copy of the
+   ratings would be a second place the same fact lives. The DC flows are judged by
+   the very comparison the AC solve uses (`_rating_violations`), on `|f|`, because
+   a DC flow may run against a branch's declared direction and a rating does not
+   care. Both screens' branch lists are checked against the model, and a mismatch
+   is refused.
+2. **The DC base case is judged, not refused.** The AC screen refuses a base that
+   `ac_powerflow` refuses (D3). A DC base over a rating is reported in
+   `dc_base_over` instead, because it is already a disagreement between the two,
+   and refusing would hide exactly what the comparison exists to show.
+3. **The two parts of the miss are taken on one end convention, the rating's.**
+   `S = max(|S_from|, |S_to|)`, `P_ac = max(|P_from|, |P_to|)`, `P_dc = |f|`;
+   reactive `= S − P_ac`, real `= P_ac − P_dc`. With both maxima on the same footing,
+   `reactive ≥ 0` holds by algebra, end by end. Mixing ends would break that, and it
+   would be a claim nobody could test.
+4. **AC solutions are read by branch id.** Each one is one branch shorter than the
+   model, so after the outaged branch every index is one lower. Reading by
+   position is the step's most likely silent bug, and it was run as a sabotage (T1).
+
+### The ladder, re-ordered before any test
+
+Hurdle 13.3 asks for the real-power miss with its causes switched on one at a time.
+The plan's order (every bus at 1 pu, then `R`, then "realistic `V_set`", then the
+default loads) hid two changes in its third rung: removing the helper machines and
+restoring the published setpoints. Run as written, with the helpers off and every
+setpoint at 1 pu, **the mesh's own base case sags out of band** (bus D at 0.847 pu
+with the first invented resistance `R = X/5`, and at 0.877 with `X/10`), so that rung
+has no screen at all. The shipped ladder, one change per rung:
+
+| Rung | Change | What it isolates |
+|---|---|---|
+| A0 | lossless; a zero-P, unlimited-Q helper machine at 1 pu on **every** bus without a source; every setpoint 1 pu | the angle linearisation alone |
+| A1 | + branch `R` | losses |
+| A2 | + published `V_set` (helpers still on) | the setpoints |
+| A3 | − helpers: the published model | load and junction voltages free |
+| A4 | + `Load`'s default constant-impedance shares | voltage-dependent draw |
+
+"Every bus without a source" includes junction buses: case9's B4, B6 and B8 carry
+nothing and sag like the load buses. The plan's "check that a second machine at a
+bus is accepted" is moot, because a helper only goes where there is no machine. The
+mesh's `R = X/10` and setpoints 1.05 / 1.04 are invented and declared. Every rung
+asserts that no reactive limit binds, so case9's ±3 pu limits are inert throughout
+and no rung is secretly a different switching state.
+
+### What step 3 measured
+
+- **At A0 the miss is a pure loop flow.** Every injection equals the DC one (no
+  losses, every `|V|` exactly 1, constant power), so `P_ac − P_dc` sums to zero at
+  every bus: ≤ 2.5e-14 on every outage of both fixtures, against a band of 1e-11
+  (ten times the Newton's `abstol`). A loop flow is zero on a tree, and **every
+  case9 ring outage leaves a tree**: there A0's miss is ≤ 2.4e-14, while case9's
+  intact ring shows 5.0e-5 and the mesh's outages show 2.4e-5 to 3.4e-3. case9 is
+  blind a second time, for the same structural reason as Hurdle 13.2, and its
+  intact ring is the control that A0 is not zero by construction.
+- **Each later rung moves the intact model's miss by more than 1e-3**, asserted, so
+  no cause looks absent because its rung did nothing. From A1 on, the loop-flow
+  identity breaks by about the losses (3.7e-2 on case9's intact model).
+- **case9, no line charging, as predicted at step 0.** At 315 MW the DC screen
+  passes all six ring outages and the AC screen refuses L45 (B5 0.873) and L94 (B9
+  0.757) for voltage: `:dc_blind`. The other four agree, and the bridges split. At
+  400 MW five of six outages are `:dc_blind`, and the DC screen's only overload (L89
+  out, L56 at 100.7 %) is an outage the AC solve refuses for voltage anyway. A
+  voltage refusal has no AC flows, so no miss is reported for it.
+- **The two directions of disagreement, each on a natural fixture.** With L14
+  re-rated to 150 MVA, losing L89 leaves 96.0 MW on it in both flows' real power
+  and 159.7 MVA in the AC solve: `:dc_missed`, and the reactive part is what
+  crosses the rating, because L14 carries the slack's reactive output. The
+  opposite, `:dc_false_alarm`, **exists only on the default loads**: with L94 at
+  105 MVA, losing L67 gives 109.8 MW in DC and 100.4 MVA in AC, because the AC
+  voltages sag and constant-impedance loads draw less. The same rating on
+  constant-power loads overloads at both (121.1 MVA). Across case9's outages on
+  constant power no AC apparent power fell below its DC flow; on the default loads
+  DC exceeds AC by up to 12.7 MW. M6 step 7's rule a second time: a claim made on
+  constant power is re-run on the default.
+- **Positive control**, L94 rated 100 MVA. Its DC flow runs against its declared
+  direction (−125.0 MW after L89 out), which is what makes a forgotten `abs`
+  visible.
+- **All eight sabotages went red exactly where predicted.** The one worth keeping:
+  reading the AC solution by position is **invisible** to the `:dc_missed` test,
+  because L14 sits before the outaged L89 and the indices still agree there. It is
+  seen by the false alarm (L94 is past the end of an 8-branch solution) and by the
+  A0 tree check. The grid-forming-slack branch of `:dc_blind` had no fixture until
+  its sabotage was written, and got one (a triangle whose slack is rated 0.1 %
+  above its own intact output).

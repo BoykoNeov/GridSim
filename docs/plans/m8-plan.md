@@ -119,6 +119,11 @@ disagreement, classified as "DC fine, AC overloaded", "DC overloaded, AC fine", 
   both fidelities. Without it a screen that reports `:secure` everywhere passes.
 - **case9's voltage demonstration**, with D0's line-charging caveat printed
   beside every number.
+- **Re-scoped at step 3 (`m8-context.md` D6):** the comparison takes the model,
+  `compare_line_screens(net, dc, ac)`, because the DC screen carries no ratings.
+  The "realistic `V_set`" rung was two changes, and the mesh's base case cannot be
+  solved with the helpers off at 1 pu. So the ladder runs: published `V_set` with
+  the helpers on, then the helpers off.
 
 ### Step 4 — Generator outages in the DC screen, shared by droop and damping (Hurdles 15.1–15.4)
 

@@ -148,3 +148,234 @@ function dc_line_outages(net::NetworkModel)
     end
     return DCLineOutages(base, splits, margin, flow)
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3: the same outages through the nonlinear solve, and what the shortcut missed.
+#
+# THE AC SCREEN IS NOT A SHORTCUT. It rebuilds the model without each branch and runs
+# `ac_powerflow`'s own solve on it, classified rather than thrown (D3): there is no
+# rank-one update of a nonlinear flow. What it buys is the answer the DC screen
+# approximates, so the gap between the two is a measurement of the shortcut and not
+# of a second, different model.
+#
+# EACH OUTAGE'S SOLUTION IS ONE BRANCH SHORTER than the model, because the branch is
+# gone. Every branch after the outaged one sits one index lower in it, so the two
+# screens are matched BY BRANCH ID, never by position.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# `net` without branch `k`, every other collection carried. A bridge leaves a
+# disconnected model, which `NetworkModel` refuses; callers decide bridges from the
+# graph first and never reach that refusal.
+_without_branch(net::NetworkModel, k::Int) =
+    NetworkModel(net.S_base, net.f0, net.buses,
+                 Branch[b for (e, b) in pairs(net.branches) if e != k],
+                 net.machines, net.loads; slack = net.slack, inverters = net.inverters)
+
+# What `_ac_powerflow_outcome` reports, as concrete types: a struct field typed `Any`
+# is the performance cliff `CLAUDE.md` names.
+const _OverEntry = @NamedTuple{kind::Symbol, id::Symbol, mva::Float64, rating::Float64}
+const _LowEntry = @NamedTuple{bus::Symbol, Vm::Float64}
+
+"""
+    ACLineOutages
+
+Every single-branch outage of a model, screened with the nonlinear power flow — the
+same solve [`ac_powerflow`](@ref) runs, switching included, with its refusals
+**classified** instead of thrown (`m8-context.md` D3).
+
+  - `base` — the intact model's `ACPowerFlow`. The screen exists only for a base case
+    `ac_powerflow` accepts; any other refuses the whole screen, with
+    `ac_powerflow`'s own message.
+  - `branches` — branch ids, in model order; every vector below is in that order.
+  - `splits` — `true` where losing that branch splits the grid, decided from the
+    graph (Hurdle 14). Never solved.
+  - `outcome` — `:splits`, `:secure`, `:overload`, `:voltage` or `:no_solution`.
+  - `solution` — the post-outage `ACPowerFlow` for `:secure` and `:overload` (unless
+    an overload's residual also failed), else `nothing`. **It has one branch fewer
+    than the model**, so read it by branch id.
+  - `over` — for `:overload`, every element over its rating, `(kind, id, mva,
+    rating)` in MVA. `kind` is `:branch`, or `:inverter_slack` for a grid-forming
+    slack over its rating.
+  - `low` — for `:voltage`, every bus outside the band, `(bus, Vm)`.
+  - `reason` — for `:no_solution`, why (`:newton`, `:switching`, `:backoff`,
+    `:residual`); `:none` otherwise.
+"""
+struct ACLineOutages
+    base::ACPowerFlow
+    branches::Vector{Symbol}
+    splits::Vector{Bool}
+    outcome::Vector{Symbol}
+    solution::Vector{Union{ACPowerFlow,Nothing}}
+    over::Vector{Vector{_OverEntry}}
+    low::Vector{Vector{_LowEntry}}
+    reason::Vector{Symbol}
+end
+
+"""
+    ac_line_outages(net::NetworkModel) -> ACLineOutages
+
+Screen every single-branch outage of `net` with the nonlinear (AC) power flow: for
+each branch that is not a bridge, rebuild the model without it and run the solve
+`ac_powerflow` runs, classifying the result (`m8-context.md` D3).
+
+The base case must be one `ac_powerflow` accepts. If it is not, this throws exactly
+what `ac_powerflow(net)` throws: a screen of outages from an operating point the
+network cannot hold says nothing about the outages.
+
+Bridges are found from the graph, as in [`dc_line_outages`](@ref), and never solved.
+Losing one leaves two grids, and who serves the cut-off part is a decision the screen
+does not take (Hurdle 14).
+
+Unlike the DC screen this can see voltage: a `:voltage` outcome is exactly the case
+the linear flow has no way to express (Hurdle 13.4). Compare the two with
+[`compare_line_screens`](@ref).
+"""
+function ac_line_outages(net::NetworkModel)
+    base = ac_powerflow(net)
+    splits = _bridge_mask(net)
+    m = length(net.branches)
+    outcome = Vector{Symbol}(undef, m)
+    solution = Vector{Union{ACPowerFlow,Nothing}}(nothing, m)
+    over = [_OverEntry[] for _ in 1:m]
+    low = [_LowEntry[] for _ in 1:m]
+    reason = fill(:none, m)
+    for k in 1:m
+        if splits[k]
+            outcome[k] = :splits
+            continue
+        end
+        r = _ac_powerflow_outcome(_without_branch(net, k))
+        outcome[k] = r.outcome
+        solution[k] = r.solution
+        r.outcome === :overload && append!(over[k], r.detail)
+        r.outcome === :voltage && append!(low[k], r.detail)
+        r.outcome === :no_solution && (reason[k] = r.detail.reason)
+    end
+    return ACLineOutages(base, Symbol[b.id for b in net.branches], splits, outcome,
+                         solution, over, low, reason)
+end
+
+"""
+    LineScreenComparison
+
+The DC and AC line screens of one model, side by side, and what the DC shortcut
+missed (`m8-context.md` D0, Hurdle 13).
+
+  - `branches`, `splits` — as in both screens; every vector is in this order.
+  - `dc_base_over` — branches the **DC** base case puts over their rating. The AC base
+    is secure by construction ([`ac_line_outages`](@ref) refuses otherwise), so a
+    non-empty list here is already a disagreement. It is reported rather than
+    refused, because refusing would hide it.
+  - `dc_outcome` — `:secure`, `:overload` or `:splits`: the DC flows judged against
+    the same ratings the AC solve is held to.
+  - `ac_outcome` — the AC screen's outcome.
+  - `dc_over`, `ac_over` — the branches each screen puts over its rating. A
+    grid-forming slack over its rating is not a branch and is not listed here.
+  - `class` — per outage:
+      - `:splits` — a bridge; neither screen solves it;
+      - `:dc_blind` — the AC outcome is `:voltage` or `:no_solution`, or a
+        grid-forming slack is over its rating: things a flow of `P` alone cannot
+        express;
+      - `:agree` — both put exactly the same branches over (often none);
+      - `:dc_missed` — AC overloads a branch DC passes, and DC flags nothing AC
+        does not;
+      - `:dc_false_alarm` — DC overloads a branch AC passes, and misses nothing;
+      - `:mixed` — both of the last two at once.
+  - `reactive`, `real` — the miss on each branch, split in two (Hurdle 13.3), pu on
+    `S_base`, in model branch order. With `S = max(|S_from|, |S_to|)` (the end the
+    rating binds), `P_ac = max(|P_from|, |P_to|)` and `P_dc = |f_dc|`:
+    `reactive = S − P_ac` and `real = P_ac − P_dc`, so `S − P_dc = reactive + real`.
+    `reactive ≥ 0` by algebra, end by end, and that is a statement, not a check.
+    `real` has no predicted sign: it carries the angle linearisation, the losses
+    and the voltage magnitudes, all of which the DC flow drops. The outaged branch
+    reads `0.0` in both. **Empty where AC has no flows**: a split, `:voltage`,
+    `:no_solution`, or an overload whose residual failed.
+  - `base_reactive`, `base_real` — the same split on the intact model.
+"""
+struct LineScreenComparison
+    branches::Vector{Symbol}
+    splits::Vector{Bool}
+    dc_base_over::Vector{Symbol}
+    dc_outcome::Vector{Symbol}
+    ac_outcome::Vector{Symbol}
+    dc_over::Vector{Vector{Symbol}}
+    ac_over::Vector{Vector{Symbol}}
+    class::Vector{Symbol}
+    reactive::Vector{Vector{Float64}}
+    real::Vector{Vector{Float64}}
+    base_reactive::Vector{Float64}
+    base_real::Vector{Float64}
+end
+
+# The two parts of the miss on every branch of `net`: `dc` in model order, `sol` read
+# BY BRANCH ID. A branch absent from `sol` (the outaged one) reads 0.0 in both.
+function _screen_miss(net::NetworkModel, dc::Vector{Float64}, sol::ACPowerFlow)
+    m = length(net.branches)
+    reactive = zeros(Float64, m)
+    real = zeros(Float64, m)
+    for (e, b) in pairs(net.branches)
+        j = findfirst(==(b.id), sol.branches)
+        j === nothing && continue
+        S = max(hypot(sol.flow[j], sol.qflow[j]), hypot(sol.flow_rev[j], sol.qflow_rev[j]))
+        P = max(abs(sol.flow[j]), abs(sol.flow_rev[j]))
+        reactive[e] = S - P
+        real[e] = P - abs(dc[e])
+    end
+    return reactive, real
+end
+
+"""
+    compare_line_screens(net, dc::DCLineOutages, ac::ACLineOutages) -> LineScreenComparison
+
+Put the DC and AC line screens of `net` side by side: per outage, both outcomes,
+every disagreement classified, and what the DC flow missed on each branch, split
+into a reactive part and a real-power part (see [`LineScreenComparison`](@ref)).
+
+**It takes the model** because the DC screen carries flows and no ratings, and an
+overload is a flow judged against a rating. The DC flows are judged by the same
+comparison the AC solve uses (`_rating_violations`), on their magnitude: a DC flow
+may run either way along a branch, and a rating does not care which. Both screens
+must be of `net`; their branch lists are checked against it, and a mismatch is
+refused.
+"""
+function compare_line_screens(net::NetworkModel, dc::DCLineOutages, ac::ACLineOutages)
+    ids = Symbol[b.id for b in net.branches]
+    (dc.base.branches == ids && ac.branches == ids) || throw(ArgumentError(
+        "compare_line_screens: the screens are not of this model — branches " *
+        "$(dc.base.branches) (DC) and $(ac.branches) (AC) against $ids."))
+    dc.splits == ac.splits || throw(ArgumentError(
+        "compare_line_screens: the two screens disagree on which branches are " *
+        "bridges, so they are not of the same model."))
+    m = length(ids)
+    judged(flow) = Symbol[ids[e] for e in _rating_violations(net, abs.(flow))]
+    dc_outcome = Vector{Symbol}(undef, m)
+    dc_over = [Symbol[] for _ in 1:m]
+    ac_over = [Symbol[] for _ in 1:m]
+    class = Vector{Symbol}(undef, m)
+    reactive = [Float64[] for _ in 1:m]
+    real = [Float64[] for _ in 1:m]
+    for k in 1:m
+        if dc.splits[k]
+            dc_outcome[k] = class[k] = :splits
+            continue
+        end
+        dc_over[k] = judged(dc.flow[k])
+        dc_outcome[k] = isempty(dc_over[k]) ? :secure : :overload
+        append!(ac_over[k], (d.id for d in ac.over[k] if d.kind === :branch))
+        sol = ac.solution[k]
+        sol === nothing || ((reactive[k], real[k]) = _screen_miss(net, dc.flow[k], sol))
+        o = ac.outcome[k]
+        if o === :voltage || o === :no_solution || any(d -> d.kind !== :branch, ac.over[k])
+            class[k] = :dc_blind
+            continue
+        end
+        missed = setdiff(ac_over[k], dc_over[k])
+        false_alarm = setdiff(dc_over[k], ac_over[k])
+        class[k] = isempty(missed) ? (isempty(false_alarm) ? :agree : :dc_false_alarm) :
+                   (isempty(false_alarm) ? :dc_missed : :mixed)
+    end
+    base_reactive, base_real = _screen_miss(net, dc.base.flow, ac.base)
+    return LineScreenComparison(ids, copy(dc.splits), judged(dc.base.flow), dc_outcome,
+                                copy(ac.outcome), dc_over, ac_over, class, reactive,
+                                real, base_reactive, base_real)
+end
