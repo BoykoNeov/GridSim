@@ -1036,3 +1036,358 @@ end
         @test maximum(o.ω[1:4]) - minimum(o.ω[1:4]) > 1e-4
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5 — generator outages in the AC screen, the lost power shared (m8-context.md D8).
+# Predictions and bands were written first: W:\temp\claude\gridsim-m8\step5_predictions.md.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Step 4's mesh with real `Load`s at B and D (130 + j30, 120 + j25), one source per
+# bus so the detailed tier can run it. Invented and declared. `r` sets R = r·X; `cp`
+# picks constant-power loads over `Load`'s default constant impedance; `gfm` puts a
+# grid-forming inverter at E instead of G3; `only_slack` leaves G1 the one responder
+# (no governor or damping elsewhere, Pmax 400 so it never caps); `avr` gives every
+# machine a field and a regulator (Td0′ 5 s, K_A 50, T_E 0.05 s).
+#   system base:  G1 1/R 60, D 3.0, headroom .70 | G2 37.5, 3.0, .40 | G3 20, 1.8, .05
+function _m8_acmesh(; r = 0.0, cp = true, slack = :A, gfm = false, S_inv = 300.0,
+                      Q1max = Inf, gov = true, damp = 1.0, only_slack = false,
+                      avr = false)
+    R(x) = gov ? x : Inf
+    o = only_slack
+    ex = avr ? (; Td0′ = 5.0, K_A = 50.0, T_E = 0.05) : (;)
+    ms = [Machine(:G1, :A, 300.0, 5.0, 1.0damp, 0.25, 1.05, 150.0, R(0.05),
+                  o ? 400.0 : 220.0, 0.5; V_set = 1.05, Q_max = Q1max, ex...),
+          Machine(:G2, :C, 150.0, 4.0, o ? 0.0 : 2.0damp, 0.25, 1.04, 60.0,
+                  o ? Inf : R(0.04), 100.0, 0.4; V_set = 1.04, ex...)]
+    invs = gfm ? [Inverter(:I3, :E, :grid_forming, S_inv, 40.0; K_p = 0.125, V_set = 1.02)] :
+                 Inverter[]
+    gfm || push!(ms, Machine(:G3, :E, 120.0, 3.5, o ? 0.0 : 1.5damp, 0.25, 1.02, 40.0,
+                             o ? Inf : R(0.06), 45.0, 0.6; V_set = 1.02, ex...))
+    br = [Branch(id, f, t, x, 500.0; R = r * x) for (id, f, t, x) in
+          ((:AB, :A, :B, 0.10), (:AC, :A, :C, 0.20), (:BC, :B, :C, 0.15),
+           (:BD, :B, :D, 0.25), (:CD, :C, :D, 0.30), (:DE, :D, :E, 0.10),
+           (:BE, :B, :E, 0.20))]
+    ld(id, b, p, q) = cp ? Load(id, b, p, q, 0, 0, 1) : Load(id, b, p, q)
+    ls = [ld(:LB, :B, 130.0, 30.0), ld(:LD, :D, 120.0, 25.0)]
+    NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)], br, ms, ls;
+                 slack, inverters = invs)
+end
+
+# `m` with its fields copied and the named ones replaced — for the rebuilt models.
+_m8_machine_with(m::Machine; P0 = m.P0, Pmax = max(m.Pmax, P0)) =
+    Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, P0, m.R, Pmax, m.Tg;
+            V_set = m.V_set, Q_min = m.Q_min, Q_max = m.Q_max)
+
+# The detailed tier after tripping `lost` at 1 s, read at `T`: each bus's change in
+# electrical export (network side, as step 4 reads the swing tier), every machine's
+# speed, every bus's |V|. FBDF, not the default Rodas5P: on the default loads Rodas5P
+# stalls (MaxIters) where G2's loss drives G3's governor onto its cap, at reltol 1e-10
+# and at 1e-6 — the kink-landing stall `detailed.jl` records for the exciter limit, and
+# its recorded workaround (D8, "What step 5 measured").
+function _m8_detailed_settled(net::NetworkModel, lost::Symbol; T = 300.0)
+    eng = init!(DetailedEngine, net; powerflow = ac_powerflow(net), reltol = 1e-10,
+                abstol = 1e-12, solver = GridSim.OrdinaryDiffEq.FBDF())
+    export_of(bus) = sum((br.from === bus ? branch_power(eng, br.from, br.to) :
+                          br.to === bus ? branch_power(eng, br.to, br.from) : 0.0)
+                         for br in net.branches)
+    e0 = Dict(b.id => export_of(b.id) for b in net.buses)
+    V0 = current_state(eng).V
+    solve!(eng, (0.0, T); perturbations = [1.0 => TripGenerator(lost)], saveat = 1.0)
+    st = current_state(eng)
+    return (; Δexport = Dict(b.id => export_of(b.id) - e0[b.id] for b in net.buses),
+            ω = st.ω, V0, V = st.V)
+end
+
+@testset "M8 step 5 — generator outages in the AC screen, a shared reference" begin
+    lossy_zip = _m8_acmesh(r = 0.1, cp = false)
+    B1 = 1e-10                                   # solution against solution (stated first)
+
+    @testset "the base is ac_powerflow's: each machine loses what it produced there" begin
+        base = ac_powerflow(lossy_zip)
+        sc = ac_generator_outages(lossy_zip)
+        @test sc.base.Vm == base.Vm && sc.base.Pgen == base.Pgen
+        @test sc.machines == [:G1, :G2, :G3] && sc.responders == [:G1, :G2, :G3]
+        # The slack's machine produced its schedule PLUS the base losses and the loads'
+        # shift; the others their schedule.
+        st1 = GridSim._ac_shared_setup(lossy_zip, base, 1)
+        @test st1.P_lost == base.Pgen[1] && abs(st1.P_lost - 1.5) > 1e-2
+        @test GridSim._ac_shared_setup(lossy_zip, base, 2).P_lost == 0.6
+        @test all(==(:secure), sc.outcome)
+        # A refused base refuses the screen, with ac_powerflow's own message.
+        bad = _m8_acmesh(r = 0.1); bad = NetworkModel(bad.S_base, bad.f0, bad.buses,
+            [Branch(b.id, b.from, b.to, b.X, 50.0; R = b.R) for b in bad.branches],
+            bad.machines, bad.loads; slack = :A)
+        msg(f) = try; f(); ""; catch e; e.msg; end
+        @test msg(() -> ac_powerflow(bad)) == msg(() -> ac_generator_outages(bad)) != ""
+    end
+
+    @testset "all weight on the slack: the shared solve IS ac_powerflow on the rebuilt model" begin
+        # Only G1 responds. Losing G3 must then be `ac_powerflow` on the model without
+        # G3 and G1's schedule raised by its 40 MW: the same operating point by algebra.
+        # `==` is not promised (one more unknown, one more equation: D8's correction);
+        # band B1. MEASURED: bit-identical on both fixtures (the extra column reaches only
+        # the reference's row, so the elimination does the same arithmetic elsewhere) —
+        # recorded, not asserted, because it rests on the pivoting order.
+        for (r, cp) in ((0.0, true), (0.1, false))
+            net = _m8_acmesh(; r, cp, only_slack = true)
+            base = ac_powerflow(net)
+            o = GridSim._ac_generator_outcome(net, base, 3)
+            @test o.outcome === :secure
+            rb = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+                              [_m8_machine_with(net.machines[1]; P0 = 190.0), net.machines[2]],
+                              net.loads; slack = :A)
+            ap = ac_powerflow(rb)
+            s = o.solution
+            @test maximum(abs, s.Vm .- ap.Vm) <= B1
+            @test maximum(abs, s.θ .- ap.θ) <= B1
+            @test maximum(abs, s.flow .- ap.flow) <= B1
+            @test maximum(abs, s.Pgen .- ap.Pgen) <= B1
+            # THE SHARP CHECK, no band of its own: `ac_powerflow`'s answer, plugged into
+            # the shared residual with the speed deviation read off the slack's output,
+            # satisfies it to `ac_powerflow`'s own residual (M6 step 3's bound).
+            st = GridSim._ac_shared_setup(net, base, 3)
+            rd = GridSim._ac_shared_round(st, falses(3), Int[], Bool[])
+            x = (ap.Pgen[1] - base.Pgen[1]) / rd.Pb[1]
+            u = GridSim._ac_shared_unknowns(rd, ap.Vm, ap.θ, x)
+            F = similar(u)
+            GridSim._ac_shared_residual!(F, u, rd)
+            @test maximum(abs, F) <= length(net.buses) * max(ap.residual, eps())
+            @test abs(x + o.Δω) <= B1
+            @test o.pickup[1] ≈ ap.Pgen[1] - base.Pgen[1] atol = B1
+            @test o.pickup[2] == 0.0 && o.pickup[3] == 0.0
+        end
+    end
+
+    @testset "pickup = lost power + change in losses + change in load draw (D8's correction)" begin
+        # The plan's "lost power + change in losses" is false on the default loads; the
+        # load term is the correction, and on the default loads it is asserted to MOVE.
+        for (net, zip) in ((_m8_acmesh(r = 0.1), false), (lossy_zip, true),
+                           (_m8_acmesh(), false))
+            sc = ac_generator_outages(net)
+            b = sc.base
+            for k in eachindex(sc.machines)
+                s = sc.solution[k]
+                # What it produced, read off the base and the model — NOT off the
+                # screen's own setup, which is the code a wrong lost power would be in.
+                P_lost = k == 1 ? b.Pgen[1] : net.machines[k].P0 / net.S_base
+                dloss = sum(s.loss) - sum(b.loss)
+                dload = sum(s.Pload) - sum(b.Pload)
+                bound = length(net.buses) * (max(b.residual, eps()) + max(s.residual, eps()))
+                @test abs(sum(sc.pickup[k]) - P_lost - dloss - dload) <= bound
+                if zip
+                    @test abs(dload) > 1e-3
+                else
+                    @test abs(dload) <= 1e-14
+                end
+                any(br -> br.R > 0, net.branches) && @test abs(dloss) > 1e-3
+            end
+        end
+    end
+
+    @testset "lossless, constant power: the AC shares ARE the DC screen's" begin
+        # No losses and no load shift leave the sharing rule alone deciding Δω — so the
+        # AC screen and step 4's DC screen must agree, governor caps included (losing
+        # G1 caps G2 and G3; losing G2 caps G3).
+        net = _m8_acmesh()
+        dc, ac = dc_generator_outages(net), ac_generator_outages(net)
+        @test ac.capped == dc.capped
+        @test findall(ac.capped[1]) == [2, 3] && findall(ac.capped[2]) == [3]
+        for k in eachindex(dc.machines)
+            @test abs(ac.Δω[k] - dc.Δω[k]) <= B1
+            @test maximum(abs, ac.pickup[k] .- dc.pickup[k]) <= B1
+        end
+    end
+
+    @testset "the governor cap is on the droop only: a capped machine settles above Pmax" begin
+        sc = ac_generator_outages(lossy_zip)
+        ma = machine_arrays(lossy_zip)
+        x = -sc.Δω[2]                                   # G2 lost caps G3
+        @test sc.capped[2] == [false, false, true]
+        @test sc.pickup[2][3] == ma.headroom[3] + x * ma.D[3]
+        @test sc.pickup[2][3] > ma.headroom[3] + 1e-4    # above Pmax, by the damping
+        @test x * ma.invR[3] > ma.headroom[3]           # the droop alone is past the cap
+        # and the uncapped G1 follows the droop-and-damping law exactly
+        @test sc.pickup[2][1] == x * (ma.invR[1] + ma.D[1])
+    end
+
+    @testset "the reference is a gauge: moved, only the angles shift" begin
+        base = ac_powerflow(lossy_zip)
+        for k in 1:3
+            a = GridSim._ac_generator_outcome(lossy_zip, base, k)
+            c = GridSim._ac_generator_outcome(lossy_zip, base, k; reference = :C)
+            @test c.solution.slack === :C && c.solution.θ[3] == 0.0
+            @test abs(a.Δω - c.Δω) <= B1
+            @test maximum(abs, a.pickup .- c.pickup) <= B1
+            @test maximum(abs, a.solution.Vm .- c.solution.Vm) <= B1
+            @test maximum(abs, a.solution.flow .- c.solution.flow) <= B1
+            shift = c.solution.θ .- a.solution.θ
+            @test maximum(shift) - minimum(shift) <= B1
+            @test abs(shift[1]) > 1e-3                  # the angles DID move
+        end
+    end
+
+    @testset "losing the reference bus's machine: no special case (D7, the user's choice)" begin
+        sc = ac_generator_outages(lossy_zip)
+        s = sc.solution[1]
+        @test sc.outcome[1] === :secure
+        @test s.slack === :A && s.θ[1] == 0.0          # it keeps the angle reference
+        @test s.roles[1] === :load                     # and holds no voltage now
+        @test s.Vm[1] < 1.05 - 1e-3                    # solved, not its old V_set
+        @test :A ∉ s.limited
+        @test sc.solution[2].roles[1] === :generator   # while its machine is there
+        # `ac_powerflow` keeps its refusal of a slack with no source: the bypass lives
+        # only inside the shared solve.
+        m = lossy_zip.machines
+        rb = NetworkModel(100.0, 50.0, lossy_zip.buses, lossy_zip.branches,
+                          [_m8_machine_with(m[2]; P0 = 210.0), m[3]], lossy_zip.loads;
+                          slack = :A)
+        @test occursin("carries no machine",
+                       try; ac_powerflow(rb); ""; catch e; e.msg; end)
+        # case9, with INVENTED droop (R 0.05 and D 1 on each machine's base, rated at
+        # its Pmax): losing G1 is screened, not thrown — the slack bus keeps its angle,
+        # loses its voltage, and the outcome is a voltage refusal naming it.
+        br(id, f, t, r, x) = Branch(id, Symbol(:B, f), Symbol(:B, t), x, 500.0; R = r)
+        c9 = [br(:L14, 1, 4, 0.0, 0.0576), br(:L45, 4, 5, 0.017, 0.092),
+              br(:L56, 5, 6, 0.039, 0.17), br(:L36, 3, 6, 0.0, 0.0586),
+              br(:L67, 6, 7, 0.0119, 0.1008), br(:L78, 7, 8, 0.0085, 0.072),
+              br(:L82, 8, 2, 0.0, 0.0625), br(:L89, 8, 9, 0.032, 0.161),
+              br(:L94, 9, 4, 0.01, 0.085)]
+        Pmax, Vg = (250.0, 300.0, 270.0), (1.04, 1.025, 1.025)
+        ms = [Machine(Symbol(:G, i), Symbol(:B, i), Pmax[i], 5.0, 1.0, 0.2, 1.0,
+                      315 * Pmax[i] / sum(Pmax), 0.05, Pmax[i]; V_set = Vg[i]) for i in 1:3]
+        ls = [Load(:D5, :B5, 90.0, 30.0, 0, 0, 1), Load(:D7, :B7, 100.0, 35.0, 0, 0, 1),
+              Load(:D9, :B9, 125.0, 50.0, 0, 0, 1)]
+        net9 = NetworkModel(100.0, 50.0, [Bus(Symbol(:B, i), 345.0) for i in 1:9], c9, ms,
+                            ls; slack = :B1)
+        s9 = ac_generator_outages(net9)
+        @test s9.outcome == [:voltage, :secure, :secure]
+        @test :B1 in (l.bus for l in s9.low[1])
+        @test isfinite(s9.Δω[1]) && s9.Δω[1] < 0      # the frequency it solved to is kept
+    end
+
+    @testset "the reference's reactive limit is enforced (the user's choice)" begin
+        # G1's Q is 0.359 pu at the base and 0.597 after losing G2 (lossy, constant
+        # power); a limit between them binds only in the outage, and only because the
+        # reference is now an ordinary voltage-holding bus.
+        net = _m8_acmesh(r = 0.1, Q1max = 0.478)
+        sc = ac_generator_outages(net)
+        @test isempty(sc.base.limited)
+        s = sc.solution[2]
+        @test sc.outcome[2] === :secure
+        @test s.limited == [:A] && s.roles[1] === :load
+        @test s.Qgen[1] ≈ 0.478 atol = 1e-12
+        @test s.Vm[1] < 1.05 - 1e-3
+        # `ac_powerflow` on the rebuilt model does NOT enforce the slack's limit: it holds
+        # 1.05 pu and runs past it. The difference is the decision, shown on purpose.
+        m = net.machines
+        rb = NetworkModel(100.0, 50.0, net.buses, net.branches,
+                          [_m8_machine_with(m[1]; P0 = 210.0), m[3]], net.loads; slack = :A)
+        ap = ac_powerflow(rb)
+        @test ap.Vm[1] == 1.05 && ap.Qgen[1] > 0.478 + 0.05 && isempty(ap.limited)
+    end
+
+    @testset "a grid-forming inverter's reactive limit follows its real power (the user's choice)" begin
+        # I3 rated 45 MVA at 40 MW: √(45² − 40²) = 20.6 MVAr of reactive capability at
+        # the base, where E needs 14.9 — no limit binds. Losing G2 raises its output to
+        # 43.2 MW, and at THAT power its capability is 12.4 MVAr: it binds there, and
+        # only because the power rose.
+        net = _m8_acmesh(gfm = true, S_inv = 45.0)
+        sc = ac_generator_outages(net)
+        @test isempty(sc.base.limited)
+        @test sc.responders == [:G1, :G2, :I3]
+        s = sc.solution[2]
+        @test sc.outcome[2] === :secure && s.limited == [:E]
+        P, Q = s.Pgen[5], s.Qgen[5]
+        @test P ≈ 0.4 + sc.pickup[2][3] atol = 1e-12
+        @test hypot(P, Q) ≈ 0.45 rtol = 1e-12          # AT its rating, not past it
+        @test Q < sqrt(0.45^2 - 0.4^2) - 0.05           # the base-power limit would not bind
+        # Losing G1 hands it 100 MW: past its rating whatever its Q, so flagged.
+        @test sc.outcome[1] === :overload
+        @test only(sc.over[1]).kind === :inverter && only(sc.over[1]).id === :I3
+        @test only(sc.over[1]).rating == 45.0 && only(sc.over[1]).mva > 45.0
+        @test sc.solution[1] !== nothing               # the solved point is the result
+    end
+
+    @testset "the refusals: D7's two, and a reference bus with two sources" begin
+        @test all(==(:no_response), ac_generator_outages(_m8_acmesh(gov = false, damp = 0.0)).outcome)
+        s0 = ac_generator_outages(_m8_acmesh(damp = 0.0))
+        @test s0.outcome == [:reserve_exhausted, :secure, :secure]
+        @test isnan(s0.Δω[1]) && s0.solution[1] === nothing && all(iszero, s0.pickup[1])
+        n0 = _m8_acmesh()
+        two = NetworkModel(100.0, 50.0, n0.buses, n0.branches,
+                           vcat(n0.machines, [Machine(:G4, :A, 50.0, 2.0, 1.0, 0.25, 1.05, 0.0;
+                                                      V_set = 1.05)]), n0.loads; slack = :A)
+        @test occursin("carries 2 sources", try; ac_generator_outages(two); ""; catch e; e.msg; end)
+        # The governor half of back-off, predicted unreachable through a fixture
+        # (capping raises x), so its piece is exercised directly.
+        g, h = [10.0, 20.0, 5.0], [0.5, 1.0, 0.1]
+        @test GridSim._governor_backoff_violations(Bool[1, 0, 1], 0.04, g, h) == [1]
+        @test isempty(GridSim._governor_backoff_violations(Bool[1, 0, 1], 0.05, g, h))
+    end
+
+    @testset "a grid-following inverter is screened like the load it offsets" begin
+        # 30 MW of grid-following inverter at D and 30 MW more constant-power load
+        # there: the same equations, so the same screen.
+        a = _m8_acmesh(r = 0.1)
+        b = NetworkModel(100.0, 50.0, a.buses, a.branches, a.machines,
+                         [a.loads[1], Load(:LD, :D, 150.0, 25.0, 0, 0, 1)]; slack = :A,
+                         inverters = [Inverter(:F1, :D, :grid_following, 50.0, 30.0)])
+        sa, sb = ac_generator_outages(a), ac_generator_outages(b)
+        @test sb.responders == sa.responders           # it does not respond
+        @test sb.outcome == sa.outcome
+        for k in 1:3
+            @test abs(sa.Δω[k] - sb.Δω[k]) <= B1
+            @test maximum(abs, sa.pickup[k] .- sb.pickup[k]) <= B1
+            @test maximum(abs, sa.solution[k].Vm .- sb.solution[k].Vm) <= B1
+        end
+    end
+
+    @testset "the detailed tier: the same shares on constant power, load relief on the default" begin
+        B4 = 1e-7                                      # step 4's band, at reltol 1e-10
+        bus = [:A, :C, :E]
+        ma = machine_arrays(_m8_acmesh())
+        # CONSTANT POWER, lossless: the total is the lost power in both tiers, so Δω and
+        # every share are the sharing rule's alone (D8: a re-test of D2, kept).
+        net = _m8_acmesh()
+        sc = ac_generator_outages(net)
+        for lost in (:G2, :G3)                          # G2's loss caps G3
+            k = findfirst(==(lost), sc.machines)
+            d = _m8_detailed_settled(net, lost)
+            for i in 1:3
+                i == k && continue
+                @test abs(d.Δexport[bus[i]] - sc.pickup[k][i]) <= B4
+                @test abs(d.ω[i] - sc.Δω[k]) <= B4
+            end
+        end
+        # DEFAULT LOADS: the tiers hold voltage differently, so their load relief
+        # differs. Predicted first: without a regulator the detailed tier's voltages
+        # sag further, its loads draw less and it settles at a SMALLER |Δω|; with one,
+        # the gap shrinks and keeps its sign. And it is load relief EXACTLY: the
+        # sharing rule fed the detailed tier's own settled load draw gives its Δω.
+        gaps = Float64[]
+        for avr in (false, true)
+            net = _m8_acmesh(cp = false; avr)
+            sc = ac_generator_outages(net)
+            ls = [(net.bus_index[l.bus], l.P0 / net.S_base) for l in net.loads]
+            for lost in (:G2, :G3)
+                k = findfirst(==(lost), sc.machines)
+                d = _m8_detailed_settled(net, lost)
+                @test abs(d.ω[mod1(k + 1, 3)]) < abs(sc.Δω[k]) - 1e-6
+                push!(gaps, abs(sc.Δω[k]) - abs(d.ω[mod1(k + 1, 3)]))
+                # Lossless: what the survivors pick up is the lost power plus the change
+                # in what the constant-impedance loads draw at the detailed tier's |V|.
+                dload = sum(P0 * (d.V[v]^2 - d.V0[v]^2) for (v, P0) in ls)
+                alive = trues(3); alive[k] = false
+                st, Δω, pk, _ = GridSim._pickup_solve(ma.invR, ma.D, ma.headroom, alive,
+                                                      ma.Pm[k] + dload)
+                @test st === :shared
+                for i in 1:3
+                    i == k && continue
+                    @test abs(d.ω[i] - Δω) <= B4
+                    @test abs(d.Δexport[bus[i]] - pk[i]) <= B4
+                end
+            end
+        end
+        @test gaps[3] < gaps[1] && gaps[4] < gaps[2]   # the regulator narrows it
+    end
+end

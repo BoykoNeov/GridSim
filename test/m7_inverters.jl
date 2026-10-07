@@ -168,7 +168,8 @@ end
                        :bus_injections, :dc_powerflow, :ac_powerflow,   # M7 step 5
                        :dc_line_outages,    # M8 step 2 (test/m8_screening.jl)
                        :ac_line_outages,    # M8 step 3 (test/m8_screening.jl)
-                       :dc_generator_outages])   # M8 step 4: grid-forming droop shares
+                       :dc_generator_outages,    # M8 step 4: grid-forming droop shares
+                       :ac_generator_outages])   # M8 step 5: and their rating follows P
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)

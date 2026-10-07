@@ -613,3 +613,440 @@ function dc_generator_outages(net::NetworkModel)
     return DCGeneratorOutages(base, Symbol[mc.id for mc in net.machines], r.ids,
                               outcome, Δω, pickup, capped, flow)
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5: generator outages in the AC screen, the lost power and the change in losses
+# shared by droop and damping (m8-context.md D2, D8).
+#
+# `ac_powerflow` has one slack that takes every imbalance. Here the imbalance is
+# SHARED: the reference bus keeps only the angle reference (θ = 0), every bus gets a
+# real-power balance, the reference included, and the one extra unknown is the
+# settled speed deviation (`x = −Δω`). Each responder produces its BASE output plus
+# D2's pickup, `min(x·gᵢ, hᵢ) + x·dᵢ`, so the lost power, the change in the losses and
+# the change in what voltage-dependent loads draw all end up shared by the same rule
+# (D8's corrected identity). `ac_powerflow` itself is untouched.
+#
+# THE BASE IS `ac_powerflow`'S (D8.1). Each machine's lost power is what it actually
+# produced there: its schedule, or, for the slack's own machine, its solved output,
+# base losses included. Pickups are measured from that base and capped at
+# `machine_arrays`' headroom, as the detailed tier's seeded governor is.
+#
+# GOVERNOR CAPS AND REACTIVE LIMITS ARE SWITCHED, BIND-ONLY, in one loop (D8.7): solve,
+# cap every governor past its headroom and hold every voltage-holding bus past its
+# reactive limit, solve again. The reference bus's reactive limits are enforced like
+# any other bus's (D8.5, the user's choice). A grid-forming inverter's reactive limit
+# is `√(S² − P²)` at the power it is producing NOW (D8.6), so a bus held at it holds a
+# `Q` that moves with `x`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# A governor is capped once its droop is past its headroom by more than this — the
+# reactive switch's tolerance, for the same reason (`_AC_QLIM_TOL`).
+const _GOV_CAP_TOL = 1.0e-9
+
+# One round of the shared solve: the round's `_ACContext` (its `nonslack` is every bus
+# but the reference and its `pq` every bus holding no voltage) plus what sharing adds.
+#   - `Pa`, `Pb` — per bus, the responders' pickup is `Pa + x·Pb`: `Pa` the headroom of
+#     the capped governors there, `Pb` the damping plus every uncapped droop gain
+#   - `Qm_held`, `held_sign` — per bus held at a reactive limit, the machines' part of
+#     the limit and `+1`/`−1` for the max/min end (`0` where not held); the inverters'
+#     part is added inside the residual, from `x`
+#   - `inv_bus`, `inv_S`, `inv_P0`, `inv_g` — per grid-forming inverter: its vertex,
+#     rating, base output and droop gain `1/K_p` (system base)
+struct _ACSharedContext
+    c::_ACContext
+    Pa::Vector{Float64}
+    Pb::Vector{Float64}
+    Qm_held::Vector{Float64}
+    held_sign::Vector{Float64}
+    inv_bus::Vector{Int}
+    inv_S::Vector{Float64}
+    inv_P0::Vector{Float64}
+    inv_g::Vector{Float64}
+end
+
+# A grid-forming inverter's reactive capability at the power it is producing, zero
+# once that power reaches its rating (it has nothing left to give; the rating check
+# after the solve is what reports it). Generic for the residual's dual numbers.
+@inline function _inverter_q_cap(S::Float64, P)
+    r = S * S - P * P
+    return r > 0 ? sqrt(r) : zero(r)
+end
+
+# The summed reactive capability of the grid-forming inverters at vertex `v`.
+function _bus_inverter_q_cap(s::_ACSharedContext, v::Int, x)
+    q = zero(x)
+    @inbounds for j in eachindex(s.inv_bus)
+        s.inv_bus[j] == v && (q += _inverter_q_cap(s.inv_S[j], s.inv_P0[j] + x * s.inv_g[j]))
+    end
+    return q
+end
+
+# Real power balance at EVERY bus, reactive balance at every bus holding no voltage,
+# with each bus's generation its base plus its responders' pickup at `x = u[end]`.
+function _ac_shared_residual!(F, u, s::_ACSharedContext)
+    c = s.c
+    Vm, θ = _ac_expand(c, u)
+    P, Q = _ac_flows(c, Vm, θ)
+    x = u[end]
+    @inbounds for v in 1:c.n
+        z = _zip_scale(Vm[v], c.a_i[v], c.a_p[v])
+        F[v] = P[v] - (c.Pgen[v] + s.Pa[v] + x * s.Pb[v] - c.Pl[v] * z)
+    end
+    @inbounds for (i, v) in pairs(c.pq)
+        z = _zip_scale(Vm[v], c.a_i[v], c.a_p[v])
+        Qh = s.held_sign[v] == 0.0 ? zero(x) :
+             s.Qm_held[v] + s.held_sign[v] * _bus_inverter_q_cap(s, v, x)
+        F[c.n + i] = Q[v] - (Qh + c.Qfix[v] - c.Ql[v] * z)
+    end
+    return nothing
+end
+
+# `_ac_newton_attempt` for the shared problem: the same solver, the same keywords,
+# the residual recomputed from the returned answer.
+function _ac_shared_newton(s::_ACSharedContext, u0::Vector{Float64}, abstol::Float64,
+                           maxiters::Int)
+    prob = SciMLBase.NonlinearProblem(
+        SciMLBase.NonlinearFunction{true}(_ac_shared_residual!), u0, s)
+    sol = NonlinearSolve.solve(prob, NonlinearSolve.NewtonRaphson();
+                               abstol = abstol, maxiters = maxiters)
+    SciMLBase.successful_retcode(sol) || return (u0, NaN, sol.retcode)
+    F = similar(sol.u)
+    _ac_shared_residual!(F, sol.u, s)
+    return (Vector{Float64}(sol.u), maximum(abs, F), nothing)
+end
+
+"""
+    _ac_shared_setup(net, base, lost; reference = net.slack)
+
+Everything about losing machine `lost` (its index) that does not change between
+switching rounds: the schedule without it, every bus's base output, the responders
+and the inverters' data. `base` is `ac_powerflow(net)`; `reference` is the bus whose
+angle is held at zero (a gauge: moving it moves no flow, D8).
+
+The base output at the base slack bus is its SOLVED generation, since that bus has one
+source (refused otherwise, D8.8) and that source carried the base losses. If the lost
+machine is that source, what is left there is the grid-following inverters' fixed
+injection only.
+"""
+function _ac_shared_setup(net::NetworkModel, base::ACPowerFlow, lost::Int;
+                          reference::Symbol = net.slack)
+    n = length(net.buses)
+    sch = _ac_schedule(net; skip_machine = lost)
+    v_slack = net.bus_index[net.slack]
+    v_ref = net.bus_index[reference]
+    r = _responders(net)
+    alive = trues(length(r.ids))
+    alive[lost] = false
+    # The base output of every bus. Every other bus held its schedule in the base solve.
+    Pbase = copy(sch.Pgen)
+    lost_at_slack = r.bus[lost] == v_slack
+    lost_at_slack || (Pbase[v_slack] = base.Pgen[v_slack])
+    # What the lost machine produced: its schedule, or the slack's solved output.
+    P_lost = lost_at_slack ? base.Pgen[v_slack] - sch.Pfix[v_slack] : r.P[lost]
+    # Each grid-forming inverter's base output: its schedule, or the slack's solved
+    # output if it is the slack's one source.
+    ia = _inverter_arrays(net)
+    inv_P0 = copy(ia.P)
+    for j in eachindex(ia.bus)
+        ia.bus[j] == v_slack && (inv_P0[j] = base.Pgen[v_slack] - sch.Pfix[v_slack])
+    end
+    # The machines' own reactive limits per bus (the inverters' follow `x`).
+    Qm_min = zeros(Float64, n)
+    Qm_max = zeros(Float64, n)
+    for (k, m) in pairs(net.machines)
+        k == lost && continue
+        v = net.bus_index[m.bus]
+        Qm_min[v] += m.Q_min
+        Qm_max[v] += m.Q_max
+    end
+    return (; sch, Y = _ac_admittance(net), v_ref, v_slack, Pbase, P_lost, r, alive,
+            inv_bus = ia.bus, inv_S = ia.S, inv_P0, inv_g = inv.(ia.K_p),
+            inv_ids = ia.id, Qm_min, Qm_max)
+end
+
+# One round's problem, given which governors are capped and which buses are held at a
+# reactive limit (and at which end, `at_max`, in step with `limited`).
+function _ac_shared_round(st, capped::AbstractVector{Bool}, limited::Vector{Int},
+                          at_max::Vector{Bool})
+    sch, n = st.sch, length(st.sch.Pgen)
+    nonslack = [v for v in 1:n if v != st.v_ref]
+    held = Set(limited)
+    pq = [v for v in 1:n if !sch.has_source[v] || v in held]
+    Vm_held = [sch.has_source[v] && !(v in held) ? sch.V_set[v] : 1.0 for v in 1:n]
+    c = _ACContext(n, st.Y, st.v_ref, nonslack, pq, Vm_held, st.Pbase, zeros(n),
+                   sch.Qfix, sch.Pl, sch.Ql, sch.a_i, sch.a_p)
+    Pa = zeros(Float64, n)
+    Pb = zeros(Float64, n)
+    r = st.r
+    for i in eachindex(r.ids)
+        st.alive[i] || continue
+        if capped[i]
+            Pa[r.bus[i]] += r.h[i]
+            Pb[r.bus[i]] += r.d[i]
+        else
+            Pb[r.bus[i]] += r.g[i] + r.d[i]
+        end
+    end
+    Qm_held = zeros(Float64, n)
+    held_sign = zeros(Float64, n)
+    for (i, v) in pairs(limited)
+        Qm_held[v] = at_max[i] ? st.Qm_max[v] : st.Qm_min[v]
+        held_sign[v] = at_max[i] ? 1.0 : -1.0
+    end
+    return _ACSharedContext(c, Pa, Pb, Qm_held, held_sign, st.inv_bus, st.inv_S,
+                            st.inv_P0, st.inv_g)
+end
+
+# The unknown vector of round `s` at bus voltages `Vm`, `θ` and `x`: the layout
+# `_ac_shared_residual!` reads. A test plugs a foreign solution in through this.
+_ac_shared_unknowns(s::_ACSharedContext, Vm::Vector{Float64}, θ::Vector{Float64},
+                    x::Float64) = vcat(θ[s.c.nonslack], Vm[s.c.pq], x)
+
+# Positions in `capped` of every capped governor whose droop has fallen back under its
+# headroom — the governor half of back-off, refused rather than answered (D8.7).
+_governor_backoff_violations(capped::AbstractVector{Bool}, x::Float64,
+                             g::Vector{Float64}, h::Vector{Float64}) =
+    [i for i in eachindex(capped) if capped[i] && x * g[i] < h[i] - _GOV_CAP_TOL]
+
+# The settled pickup of every responder at `x`, given the capped set; `0.0` for the
+# lost machine. This IS D2's rule, `min(x·g, h) + x·d`, with the `min` decided by the
+# switching, not re-taken here.
+_shared_pickups(st, capped::AbstractVector{Bool}, x::Float64) =
+    Float64[!st.alive[i] ? 0.0 :
+            capped[i] ? st.r.h[i] + x * st.r.d[i] : x * (st.r.g[i] + st.r.d[i])
+            for i in eachindex(st.r.ids)]
+
+"""
+    _ac_generator_outcome(net, base, lost; reference, abstol, maxiters, max_switch_rounds)
+
+Machine `lost` (index) taken out of `net`, its power, the change in losses and the
+change in load draw shared by droop and damping, solved with the nonlinear flow and
+**classified** (`m8-context.md` D3, D8). Returns
+`(; outcome, detail, solution, Δω, pickup, capped, reason)`.
+
+Outcomes: `:secure`, `:overload` (branches over their rating, `kind = :branch`, or a
+grid-forming inverter over its rating, `kind = :inverter`), `:voltage`,
+`:no_solution` (`reason` `:newton`, `:switching`, `:backoff`, `:residual`), and D7's
+two refusals `:no_response` and `:reserve_exhausted`. The checks after the solve run in
+`_ac_solve`'s order: back-off, band, ratings, residual, inverter rating. A check that
+fails after the network solved still reports the solved `Δω` and shares.
+"""
+function _ac_generator_outcome(net::NetworkModel, base::ACPowerFlow, lost::Int;
+                               reference::Symbol = net.slack,
+                               abstol::Real = 1.0e-12, maxiters::Integer = 200,
+                               max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
+    st = _ac_shared_setup(net, base, lost; reference)
+    sch, r, n = st.sch, st.r, length(net.buses)
+    nr = length(r.ids)
+    capped = falses(nr)
+    refused(outcome, reason = :none, detail = nothing) =
+        (; outcome, detail, solution = nothing, Δω = NaN,
+         pickup = zeros(Float64, nr), capped = collect(capped), reason)
+    sum((r.g[i] + r.d[i] for i in 1:nr if st.alive[i]); init = 0.0) > 0.0 ||
+        return refused(:no_response)
+    gen_buses = [v for v in 1:n if sch.has_source[v]]   # the reference included (D8.5)
+    limited = Int[]
+    at_max = Bool[]
+    u = Float64[]
+    res = 0.0
+    local s::_ACSharedContext, Vm::Vector{Float64}, θ::Vector{Float64}
+    local Pnet::Vector{Float64}, Qnet::Vector{Float64}, Qgen::Vector{Float64}
+    round = 0
+    while true
+        s = _ac_shared_round(st, capped, limited, at_max)
+        # Every governor capped and no damping left: nothing moves with `x`, so no
+        # frequency settles the loss (D7's second refusal).
+        sum(s.Pb) > 0.0 || return refused(:reserve_exhausted)
+        c = s.c
+        if round == 0
+            u0 = zeros(Float64, length(c.nonslack) + length(c.pq) + 1)
+            u0[length(c.nonslack)+1:end-1] .= 1.0
+        else
+            u0 = _ac_shared_unknowns(s, Vm, θ, u[end])
+        end
+        u, res, failed = _ac_shared_newton(s, u0, Float64(abstol), Int(maxiters))
+        failed === nothing || return refused(:no_solution, :newton,
+            (reason = :newton, message = _ac_newton_error(failed, Int(maxiters)).msg))
+        Vm, θ = _ac_expand(c, u)
+        Pnet, Qnet = _ac_flows(c, Vm, θ)
+        Qgen = [Qnet[v] + sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
+        x = u[end]
+        newly = Int[]
+        newly_at_max = Bool[]
+        held = Set(limited)
+        for v in gen_buses
+            v in held && continue
+            Qsrc = Qgen[v] - sch.Qfix[v]
+            qi = _bus_inverter_q_cap(s, v, x)
+            if Qsrc > st.Qm_max[v] + qi + _AC_QLIM_TOL
+                push!(newly, v); push!(newly_at_max, true)
+            elseif Qsrc < st.Qm_min[v] - qi - _AC_QLIM_TOL
+                push!(newly, v); push!(newly_at_max, false)
+            end
+        end
+        newly_capped = [i for i in 1:nr if st.alive[i] && !capped[i] && r.g[i] > 0.0 &&
+                        isfinite(r.h[i]) && x * r.g[i] > r.h[i] + _GOV_CAP_TOL]
+        isempty(newly) && isempty(newly_capped) && break
+        append!(limited, newly)
+        append!(at_max, newly_at_max)
+        capped[newly_capped] .= true
+        round += 1
+        round <= max_switch_rounds || return refused(:no_solution, :switching,
+            (reason = :switching, message = "ac_generator_outages: switching did not " *
+             "settle in $max_switch_rounds rounds; bind-only switching should terminate, " *
+             "so this is a bug or a case with no limited solution."))
+    end
+    x = u[end]
+    pickup = _shared_pickups(st, capped, x)
+    solved(outcome, detail, solution, reason = :none) =
+        (; outcome, detail, solution, Δω = -x, pickup, capped = collect(capped), reason)
+
+    qb = _ac_backoff_violations(limited, at_max, Vm, sch.V_set)
+    isempty(qb) || return solved(:no_solution, (reason = :backoff, message =
+        _ac_backoff_error(net, limited, at_max, s.Qm_held, Vm, sch.V_set, first(qb)).msg),
+        nothing, :backoff)
+    gb = _governor_backoff_violations(capped, x, r.g, r.h)
+    isempty(gb) || return solved(:no_solution, (reason = :backoff, message =
+        "ac_generator_outages: the governor of $(r.ids[first(gb)]) was capped at its " *
+        "headroom and then settled with its droop back under it — it should have come " *
+        "off its cap. Refused rather than answered wrongly (m8-context.md D8)."),
+        nothing, :backoff)
+
+    Pload = [sch.Pl[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
+    Qload = [sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
+    Pgen = Pnet .+ Pload
+    flow, flow_rev, qflow, qflow_rev, loss, mva = _ac_branch_flows(net, Vm, θ)
+
+    low = _voltage_band_violations(net, Vm)
+    isempty(low) || return solved(:voltage,
+        [(bus = net.buses[v].id, Vm = Vm[v]) for v in low], nothing)
+
+    held = Set(limited)
+    roles = [(sch.has_source[v] && !(v in held)) ? :generator : :load for v in 1:n]
+    sol = ACPowerFlow(net.buses[st.v_ref].id,
+                      Symbol[b.id for b in net.buses], Vm, θ,
+                      Pgen, Qgen, Pload, Qload,
+                      roles, Symbol[net.buses[v].id for v in limited],
+                      Symbol[b.id for b in net.branches],
+                      Symbol[b.from for b in net.branches],
+                      Symbol[b.to for b in net.branches],
+                      flow, flow_rev, qflow, qflow_rev, loss, res)
+
+    over = _rating_violations(net, mva)
+    isempty(over) || return solved(:overload,
+        [(kind = :branch, id = net.branches[e].id, mva = mva[e] * net.S_base,
+          rating = net.branches[e].rating) for e in over],
+        _residual_ok(res) ? sol : nothing)
+    _residual_ok(res) || return solved(:no_solution,
+        (reason = :residual, message = _residual_error(res, "ac_generator_outages").msg),
+        nothing, :residual)
+    # Every grid-forming bus with no machine left on it: its inverters' output against
+    # their summed rating (`_ac_inverter_slack_excess`' rule, at every bus, D8.6).
+    inv_over = _OverEntry[]
+    for v in unique(st.inv_bus)
+        any(k -> k != lost, net.machines_at_bus[v]) && continue
+        js = [j for j in eachindex(st.inv_bus) if st.inv_bus[j] == v]
+        S = sum(st.inv_S[js])
+        Sout = hypot(Pgen[v] - sch.Pfix[v], Qgen[v] - sch.Qfix[v])
+        Sout <= S * (1 + 1e-12) && continue
+        push!(inv_over, (kind = :inverter, id = length(js) == 1 ? st.inv_ids[js[1]] :
+                         net.buses[v].id, mva = Sout * net.S_base, rating = S * net.S_base))
+    end
+    isempty(inv_over) || return solved(:overload, inv_over, sol)
+    return solved(:secure, nothing, sol)
+end
+
+"""
+    ACGeneratorOutages
+
+Every single-machine outage of a model, screened with the nonlinear power flow, the
+lost power **and the change in losses and in load draw** shared by droop and damping
+(`m8-context.md` D2, D8).
+
+  - `base` — the intact model's `ACPowerFlow`, the operating point every outage is
+    measured from. The screen exists only for a base `ac_powerflow` accepts.
+  - `machines` — the machine ids screened, in model order; every outage vector below
+    is in this order.
+  - `responders` — machine ids then grid-forming inverter ids: the order of each
+    `pickup` and `capped` vector.
+  - `outcome` — `:secure`, `:overload`, `:voltage`, `:no_solution`, or D7's two
+    refusals `:no_response` and `:reserve_exhausted`.
+  - `Δω` — the settled speed deviation, pu; `NaN` where nothing was solved.
+  - `pickup` — per outage, each responder's change in output from the base, pu on
+    `S_base`. They sum to the lost power plus the change in losses plus the change in
+    load draw. `capped` — `true` where a governor sits at its headroom.
+  - `solution` — the post-outage `ACPowerFlow` for `:secure` and `:overload` (unless
+    an overload's residual failed). Its `slack` names the reference bus, which holds
+    only the angle: its role is `:generator` while it holds a voltage, `:load` once
+    its source is lost or its reactive limit binds.
+  - `over` — for `:overload`, every element over its rating, `kind` `:branch` or
+    `:inverter`. `low` — for `:voltage`, every bus outside the band.
+  - `reason` — for `:no_solution`, why; `:none` otherwise.
+"""
+struct ACGeneratorOutages
+    base::ACPowerFlow
+    machines::Vector{Symbol}
+    responders::Vector{Symbol}
+    outcome::Vector{Symbol}
+    Δω::Vector{Float64}
+    pickup::Vector{Vector{Float64}}
+    capped::Vector{Vector{Bool}}
+    solution::Vector{Union{ACPowerFlow,Nothing}}
+    over::Vector{Vector{_OverEntry}}
+    low::Vector{Vector{_LowEntry}}
+    reason::Vector{Symbol}
+end
+
+"""
+    ac_generator_outages(net::NetworkModel) -> ACGeneratorOutages
+
+Screen every single-machine outage of `net` with the nonlinear (AC) power flow. The
+lost machine's power, the change in the network's losses and the change in what
+voltage-dependent loads draw are shared by the remaining machines' droop and damping
+and the grid-forming inverters' droop ([`pickup_shares`](@ref)'s rule), with the
+settled speed deviation one more unknown of the solve.
+
+**Measured from `ac_powerflow(net)`**, which must accept the base (it refuses the
+screen otherwise, with its own message). The slack's machine there carried the base
+losses, so losing it loses that whole output. The slack bus keeps only the angle
+reference in every outage: losing its machine leaves an ordinary bus with no voltage
+control, screened like any other, and its reactive limits are enforced like any other
+bus's (`m8-context.md` D8). A slack bus carrying more than one source is refused, by
+name: how its base output divides between them is not decided anywhere.
+
+A grid-forming inverter's reactive limit follows the real power it now produces,
+`√(S² − P²)`, and an inverter pushed past its rating is an `:overload` with
+`kind = :inverter`. Every machine is screened, a negative-`P0` one too; inverter
+outages are not.
+"""
+function ac_generator_outages(net::NetworkModel)
+    base = ac_powerflow(net)
+    v_slack = net.bus_index[net.slack]
+    nsrc = length(net.machines_at_bus[v_slack]) +
+           count(==(v_slack), _inverter_arrays(net).bus)
+    nsrc <= 1 || throw(ArgumentError(
+        "ac_generator_outages: the slack bus :$(net.slack) carries $nsrc sources. The " *
+        "AC flow decides only their summed output, which includes the base losses, so " *
+        "what any one of them was producing — the power its outage loses — is not " *
+        "defined (m8-context.md D8). Put one source on the slack bus."))
+    nm = length(net.machines)
+    r = _responders(net)
+    outcome = Vector{Symbol}(undef, nm)
+    Δω = fill(NaN, nm)
+    pickup = Vector{Vector{Float64}}(undef, nm)
+    capped = Vector{Vector{Bool}}(undef, nm)
+    solution = Vector{Union{ACPowerFlow,Nothing}}(nothing, nm)
+    over = [_OverEntry[] for _ in 1:nm]
+    low = [_LowEntry[] for _ in 1:nm]
+    reason = fill(:none, nm)
+    for k in 1:nm
+        o = _ac_generator_outcome(net, base, k)
+        outcome[k], Δω[k], pickup[k], capped[k] = o.outcome, o.Δω, o.pickup, o.capped
+        solution[k] = o.solution
+        reason[k] = o.reason
+        o.outcome === :overload && append!(over[k], o.detail)
+        o.outcome === :voltage && append!(low[k], o.detail)
+    end
+    return ACGeneratorOutages(base, Symbol[m.id for m in net.machines], r.ids, outcome,
+                              Δω, pickup, capped, solution, over, low, reason)
+end
