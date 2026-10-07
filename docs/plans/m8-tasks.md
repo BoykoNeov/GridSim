@@ -538,3 +538,5 @@ Every prediction, band and outcome below was written to
       digests beside the old ones. Re-measuring only the test counts is how M5's
       values moved unseen at M7's close (step 1's finding).
 - [ ] Ledger rows; `SPEC.md` §9 item 8 annotation; README row and hurdle list; memory.
+- [ ] **Hurdle list gets the frequency gap** (the user's choice at step 6, D9): `:secure`
+      has no frequency criterion; the mesh's G1 loss settles 10.94 Hz low and passes.

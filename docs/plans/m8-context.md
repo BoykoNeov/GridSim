@@ -985,3 +985,9 @@ models: the reason it sits on M7's learned list had not yet been earned. The vol
 band in the printed reasons is read from `_PF_VMIN`/`_PF_VMAX`, not typed in. +48
 tests (223 in the file); nothing under `src/` changed, so the full gate was not
 re-run.
+
+**Claim (d) is named for later (the user's choice, 2026-10-07).** `:secure` stays
+"the lines and voltages are within limits" in M8; no frequency criterion is added.
+Step 7 puts it on the hurdle list as an open problem for the next milestone: a
+screen that passes an outage settling 10.9 Hz low is not a statement that the grid
+survives it.
