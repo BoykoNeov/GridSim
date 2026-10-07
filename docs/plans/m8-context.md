@@ -626,6 +626,14 @@ and the swing tier read **the same object**.
    gauge (step 2 measured that moving it moves no flow). Measured again here: the
    screen with the reference at A and at D differ by ≤ 6.7e-16. **The AC choice
    (step 5) is the user's**, because there the reference bus also holds a voltage.
+   **Decided by the user (2026-10-07), for step 5: keep it, no special case.** In
+   the shared-reference AC solve the reference bus keeps only the angle reference;
+   the imbalance goes to the shared response. So losing its machine makes it an
+   ordinary bus with no voltage control, angles are still measured from it, and the
+   outage is screened like any other (on case9 that is G1, the largest unit).
+   Offered against moving the reference by a rule (same answers, only the reported
+   angles shift) and refusing that outage by name (hides a real case). Step 5
+   confirms the solve really does treat the reference that way before relying on it.
 
 ### What step 4 measured
 

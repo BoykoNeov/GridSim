@@ -410,6 +410,9 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
 ## Step 5 — generator outages in the AC screen: a shared reference
 
 - [ ] Shared-reference AC solve; `ac_powerflow` unchanged.
+- [ ] Losing the reference bus's machine: **the user chose "no special case"**
+      (D7, 2026-10-07): the bus keeps the angle reference and loses its voltage
+      control. Confirm the solve treats it so, and test it (case9's G1).
 - [ ] All weight on the slack equals `ac_powerflow` exactly.
 - [ ] Pickup = lost power + change in losses, as an identity.
 - [ ] Detailed-tier settled source trip against it, band and reason stated first.
