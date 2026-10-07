@@ -710,3 +710,146 @@ checked, while M7's surface walk relies on the screen's own tests for what it do
 with inverters. 30 MW of grid-following inverter at D with 30 MW more load on LD
 screens exactly like the model without it, except the outage of LD itself, which is
 now 150 MW of load and scales every share by exactly 150/120.
+
+---
+
+## D8 — Generator outages in the AC screen: what step 5 decided before any code (2026-10-07)
+
+Written after reading `_ac_solve`, the detailed tier's governor and `TripGenerator`,
+and after a review, **before** the predictions file and before any code.
+
+### Two corrections to the plan, recorded before a test exists
+
+1. **The losses identity in the plan is false on the default loads.** Balance at
+   the base and after the outage gives
+   `Σ pickup = P_lost + Δ(Σ losses) + Δ(Σ load draw)`. The plan's "lost power +
+   change in losses" drops the last term, which is zero only on constant-power
+   loads. The identity is asserted **with** the load term, on constant power **and**
+   on the default loads, and on the default loads the load term is asserted
+   non-zero, so it is not decorative (M6 step 7's rule; M7 D16 measured the same
+   relief dynamically). Bound: M6 step 3's form, `n·max(residual, eps)`, once per
+   solve.
+2. **"With all weight on the slack the shared solve equals `ac_powerflow`
+   exactly" cannot be `==`.** The shared solve has one more unknown (the speed
+   deviation) and one more equation (the reference bus's real-power balance), so
+   Newton walks a different path and lands within its own tolerance of the same
+   point, not on the same bits. The re-scope keeps a check that needs no band:
+   the rebuilt model (machine removed, the slack's `P0` raised to balance) solved
+   by `ac_powerflow`, **plugged into the shared residual** with the speed
+   deviation read from the slack's solved output, gives a residual within
+   `ac_powerflow`'s own. Comparing the two *solutions* needs a band, stated first
+   in the predictions file.
+
+### Decisions
+
+1. **The base is `ac_powerflow`'s.** An outage is measured from the operating point
+   the repo already calls the AC flow, where the slack carries the base losses.
+   **Each machine's lost power is what it actually produced there**: its schedule,
+   or for the slack's machine its solved output (case9's G1 loses `P0` plus the
+   base losses). Each pickup is measured from that base, and the governor's cap is
+   `ma.headroom = (Pmax − P0)/S_base` measured from it. That is what the detailed
+   tier does: it takes a seeded slack machine's `Pm` from the solved flow and its
+   `headroom` from `machine_arrays` unchanged.
+2. **The solve works on the intact model with the lost machine masked**, never on
+   a rebuilt one: `NetworkModel` refuses an unbalanced schedule, and the pickups
+   that would balance it are the unknowns. `ac_powerflow` is untouched; the
+   refactors it shares (the schedule gaining a skipped machine, the branch-flow
+   block becoming a function) are gated by the 83-case AC digest.
+3. **Unknowns and equations.** Angles at every bus but the reference (angle 0),
+   magnitudes at every bus that holds no voltage, and `x = −Δω`. A real-power
+   balance at **every** bus, the reference included, and a reactive balance at
+   every bus that holds no voltage. Each responder's output is its base plus
+   `min(x·gᵢ, hᵢ) + x·dᵢ` (D2), grid-forming inverters with `1/K_p` and no cap.
+4. **Losing the reference bus's machine: no special case (the user's choice, D7).**
+   The reference keeps only the angle. With its source gone it is an ordinary bus
+   holding no voltage, reported with role `:load` and a solved magnitude. The
+   throw for a sourceless slack stays in `ac_powerflow` and is bypassed only inside
+   the shared solve.
+5. **The reference bus's reactive limits are enforced (the user's choice,
+   2026-10-07).** In `ac_powerflow` they are not, because the slack must absorb
+   whatever is left. Once the real power is shared nothing forces that, so the
+   reference is a voltage-holding bus like any other and switches to its limit when
+   it reaches it. Where that binds the answer differs from `ac_powerflow` on the
+   rebuilt model, and a test shows the difference on purpose.
+6. **A grid-forming inverter pushed past its rating by its share is flagged (the
+   user's choice, 2026-10-07), and its reactive limit follows its real power.**
+   Its cap is `√(S² − P²)` at the power it is **now** producing, recomputed inside
+   the solve (a bus held at an inverter's limit holds a `Q` that is a function of
+   `x`). An inverter whose share takes `|P|` past `S` has no reactive capability
+   left, and the outcome is `:overload` with `kind = :inverter`, every such
+   inverter listed. The check covers every grid-forming bus without a machine, not
+   only the slack (`_ac_inverter_slack_excess`'s rule, generalised).
+7. **Governor caps are switched, as reactive limits are.** Solve uncapped, cap every
+   governor past its headroom, solve again; bind-only. A capped governor whose
+   droop then falls back under its headroom is the back-off case and is refused as
+   `:no_solution` (`reason = :backoff`), not answered wrongly. With no damping left
+   and every governor capped there is no unknown left to balance on, so the
+   outcome is `:reserve_exhausted`; with nothing responding at all,
+   `:no_response`. Those are D7's two refusals, decided the same way.
+8. **A reference bus carrying more than one source is refused by name**, for the
+   whole screen: `ac_powerflow` does not decide how the slack's output divides
+   between its sources, so "what the lost one produced" is undefined there.
+9. **Machines only are screened as outages**, every one, a negative-`P0` one too,
+   as in D7.
+
+### What the detailed-tier comparison can and cannot check
+
+The detailed tier refuses `R ≠ 0`, so the comparison is lossless and never sees the
+losses term. On constant-power loads it re-tests D2's sharing rule (the total is
+`P_lost` in both tiers, so `Δω` and the shares are fixed by the rule alone): kept,
+band from step 4's sweep. The informative run is on the **default** loads, where the
+two tiers hold voltage differently (a fixed `V_set` here, a frozen or
+finite-gain field there), so their load relief differs. Its gap and sign are
+predicted before the run, with `K_A` declared. Armature resistance is set to zero:
+the tier's governor balances air-gap power, and `I²Ra` would sit between that and
+the terminal output this solve reports.
+
+### What step 5 measured (2026-10-07)
+
+Predictions, bands and outcomes: `W:\temp\claude\gridsim-m8\step5_predictions.md`.
+The fixture is invented and declared (step 4's mesh with `Load`s at B and D, one
+source per bus so the detailed tier can run it).
+
+| Check | Result |
+|---|---|
+| 83-case AC digest, HEAD and after the shared refactors | `5a5873de…` both: `ac_powerflow` unmoved |
+| All weight on the slack, against `ac_powerflow` on the rebuilt model (band 1e-10) | **bit-identical** on both fixtures; predicted otherwise |
+| … their answer plugged into our residual | within their own residual |
+| Σ pickup − lost − Δlosses − Δload | ≤ 7e-15, every outage, three fixtures |
+| … the load term on the default loads | −0.03 … −0.09 pu: the plan's identity was off by that much |
+| Lossless constant power, AC shares against the DC screen | ≤ 1e-15, caps included |
+| Reference moved A → C, same base | ≤ 5e-16 apart from one uniform angle shift |
+| Losing G1 (the reference's machine) | A: θ 0.0, role `:load`, 1.011 pu (setpoint 1.05) |
+| case9, invented droop, losing G1 | `:voltage` (B1 0.81 pu on constant power), `Δω` kept |
+| Reference Q_max between base and outage need | held at the limit, 1.029 pu; `ac_powerflow` holds 1.05 pu past it |
+| I3 45 MVA, losing G2 | P 43.2 MW, Q held at 12.4 MVAr, `|S|` = rating to 7.6e-13 |
+| Detailed tier, constant power (band 1e-7) | ≤ 4.4e-11 |
+| … default loads, frozen field | `|Δω|` 0.00643 / 0.00254 against AC 0.00800 / 0.00326 (G2 / G3 lost) |
+| … default loads, regulator K_A 50 | 0.00797 / 0.00324: narrower, same sign |
+| … the rule fed the detailed tier's own load draw | its `Δω` and shares inside 1e-7: the gap is load relief |
+
+**The bit-identity is the elimination's, not a promise.** The extra unknown reaches
+only the reference bus's row, so a dense LU with partial pivoting performs the same
+arithmetic on every other row, and Newton takes the same steps. A pivot landing on
+that row would break it, so the test asserts the band and the record carries the
+measurement.
+
+**Found: Rodas5P stalls on the default loads where a governor caps.** Losing G2
+drives G3 onto its headroom; on constant power the default solver lands, on the
+default loads it reaches MaxIters at t = 1.6 s (reltol 1e-10) and 5.9 s (1e-6), on a
+smooth trajectory. It is `detailed.jl`'s recorded kink-landing stall, there measured on
+the exciter limit, met on a governor; FBDF, its recorded workaround, completes every
+case, and the test uses it.
+
+**Found: a check read its answer from the code it checked.** The identity test first
+took the lost power from `_ac_shared_setup`, where the first sabotage (the slack's
+machine losing only its schedule) lives; it would have stayed green against it by
+construction. Caught while predicting the sabotages, before any ran; it now reads the
+base and the model.
+
+**Sabotages, all seven red** (`mutate5.py`): the slack's machine losing only its
+schedule (lost-power check and identity only); the cap on the damping too (wider than
+predicted: losing G1 then leaves nothing moving with frequency); the inverter's limit
+frozen at its base power (inverter test only); governor caps never switched; the
+reference's share removed, two ways that broke the **same** 25 lines; and the
+reference skipped in reactive switching (its own test only).

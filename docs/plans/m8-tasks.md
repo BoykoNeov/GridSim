@@ -5,7 +5,8 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–4 done (step 4 on 2026-10-07)**; step 5 next. Step 4 left **4869
+Status: **steps 0–5 done (step 5 on 2026-10-07)**; step 6 next. Step 5's gate is
+recorded in its own section. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
 +1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
 so **4885 core by count** (full gate not re-run: nothing under `src/` changed). Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
@@ -407,20 +408,81 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
       term too. Plus grid-forming inverters left out. All four red, each in the
       swing-tier comparison as well as in closed form (D7's table).
 
-## Step 5 — generator outages in the AC screen: a shared reference
+## Step 5 — generator outages in the AC screen: a shared reference — done 2026-10-07
 
-- [ ] Shared-reference AC solve; `ac_powerflow` unchanged.
-- [ ] Losing the reference bus's machine: **the user chose "no special case"**
-      (D7, 2026-10-07): the bus keeps the angle reference and loses its voltage
-      control. Confirm the solve treats it so, and test it (case9's G1).
-- [ ] All weight on the slack equals `ac_powerflow` exactly.
-- [ ] Pickup = lost power + change in losses, as an identity.
-- [ ] Detailed-tier settled source trip against it, band and reason stated first.
-- [ ] **Decide whether a screen flags a grid-forming inverter pushed past its
-      rating by its share of a lost generator** (found at step 4, D7: the DC screen
-      does not, the swing tier has no limit, and only the `Inverter` constructor
-      noticed). The AC solve already calls a grid-forming slack over its rating an
-      `:overload`.
+Every prediction, band and outcome below was written to
+`W:\temp\claude\gridsim-m8\step5_predictions.md` before the run it describes
+(spikes `step5_spike.jl` … `step5_spike4.jl`, `step5_diag.jl`; fixture
+`step5_fixture.jl`; sabotages `mutate5.py`, `mut5-*.log`). Decisions in
+`m8-context.md` D8, written before the code.
+
+- [x] **Two plan corrections recorded before a test existed** (D8): the identity
+      needs a load-draw term (false on the default loads without it), and "equals
+      `ac_powerflow` exactly" cannot be promised as `==`.
+- [x] Shared-reference AC solve, `_ac_generator_outcome` in `screening.jl`:
+      the angle reference only at the slack bus, a real-power row at every bus, the
+      speed deviation one more unknown, governor caps and reactive limits switched
+      bind-only in one loop, `_ac_solve`'s check order after it.
+      `ac_generator_outages(net) -> ACGeneratorOutages`. `ac_powerflow` unchanged:
+      the 83-case AC digest is `5a5873de…` at HEAD and after the two refactors it
+      shares (`_ac_schedule(net; skip_machine)`, `_ac_branch_flows`).
+- [x] Losing the reference bus's machine, **no special case (the user's choice)**:
+      bus A keeps `θ == 0.0`, reports role `:load`, solves to 1.011 pu (its setpoint
+      was 1.05); `ac_powerflow` still refuses a sourceless slack. case9 with invented
+      droop: losing G1 is screened, a `:voltage` outcome naming B1, with its solved
+      `Δω` kept.
+- [x] All weight on the slack against `ac_powerflow` on the rebuilt model, band
+      1e-10 stated first: **measured bit-identical** on both fixtures (lossless
+      constant power, lossy default loads), predicted otherwise. Asserted inside the
+      band, not as `==`: it rests on the elimination order. The plug-in check (their
+      answer in our residual) is within their own residual.
+- [x] Pickup = lost power + change in losses + **change in load draw**, within
+      `n·max(residual, eps)` per solve, every outage on three fixtures; on the
+      default loads the load term is −0.03 … −0.09 pu, asserted non-zero.
+- [x] Lossless constant power: the AC shares equal step 4's DC screen, caps
+      included (≤ 1e-15). The reference moved to C: only the angles shift (≤ 5e-16).
+- [x] The reference's reactive limit enforced (the user's choice): with Q_max 0.478
+      pu between G1's base 0.359 and its post-G2 0.597, the shared solve holds A at
+      the limit (1.029 pu); `ac_powerflow` on the rebuilt model holds 1.05 pu at
+      0.608, past the limit — the difference shown on purpose.
+- [x] **A grid-forming inverter pushed past its rating is flagged, its reactive
+      limit following its power (the user's choice).** I3 at 45 MVA: 20.6 MVAr of
+      capability at its base 40 MW, where E needs 14.9; losing G2 raises it to 43.2
+      MW, where it has 12.4, and the bus is held there, `|S|` at the rating to
+      7.6e-13. Losing G1 hands it 100 MW: `:overload`, `kind = :inverter`.
+- [x] Detailed-tier settled trip, bands stated first. Constant power: the shares
+      agree to ≤ 4.4e-11 (band 1e-7). Default loads: the detailed tier settles at a
+      **smaller** `|Δω|`, as predicted (frozen field: 0.00643 against 0.00800 losing
+      G2, 0.00254 against 0.00326 losing G3; with a regulator, K_A 50: 0.00797 /
+      0.00324, the gap narrower, same sign), and **the gap is load relief exactly**:
+      the sharing rule fed the detailed tier's own settled load draw gives its `Δω`
+      and shares inside 1e-7.
+- [x] **Found, not planned: the detailed tier's default solver stalls on this
+      fixture.** Rodas5P hits MaxIters where G2's loss drives G3's governor onto its
+      cap, on the default loads, at reltol 1e-10 and at 1e-6 — the kink-landing stall
+      `detailed.jl` records for the exciter, met on a governor. FBDF (its recorded
+      workaround, a keyword) completes every case.
+- [x] **Found, not planned: the identity test was blind to the first sabotage.** It
+      read the lost power from the screen's own setup, the code SB1 breaks; caught
+      reading the sabotage list before any run, and changed to read it off the base.
+- [x] Sabotages in `screening.jl` only, predictions written first; **all seven red**:
+      - **SB1**, the slack's machine losing only its schedule: red in the lost-power
+        check and the identity, nowhere else;
+      - **SB2**, the cap on the damping too: red as predicted and wider — losing G1
+        caps both other governors, nothing is left moving with frequency, and that
+        outage turns into a refusal every reader of its solution trips on;
+      - **SB3**, the inverter's limit at its base power: red only in the inverter test;
+      - **SB4**, governor caps never switched: red in DC-vs-AC, the cap test, the
+        refusals (no damping now solves instead of refusing) and the detailed tier;
+      - **SB5** (the reference's responders weightless) and **SB7** (the reference's
+        row without its share): the **same** 25 failing lines — one sabotage written
+        two ways;
+      - **SB6**, the reference skipped in reactive switching: red only in its own test.
+- [x] Gate, below-normal priority, exit 0 each: **5044 core**, the count predicted
+      before the run (4885 + 158 new + 1 from M7's surface walk, which now reaches
+      `ac_generator_outages` on its learned list); **1262 reference / 568 UI**,
+      unchanged. Logs: `core-step5.log`, `ref-step5.log`, `ui-step5.log`. The AC
+      digest after the refactor: `5a5873de…`, unchanged (`ac-STEP5.txt`).
 
 ## Step 6 — the report
 
