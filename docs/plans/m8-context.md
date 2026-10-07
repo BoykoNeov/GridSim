@@ -853,3 +853,31 @@ predicted: losing G1 then leaves nothing moving with frequency); the inverter's 
 frozen at its base power (inverter test only); governor caps never switched; the
 reference's share removed, two ways that broke the **same** 25 lines; and the
 reference skipped in reactive switching (its own test only).
+
+### The review follow-up: one decision and three checks (2026-10-07)
+
+10. **A base whose slack is already past its own reactive limits refuses the screen
+    (the user's choice, 2026-10-07).** `ac_powerflow` lets the slack run past them;
+    the shared solve enforces them (decision 5), so on such a base every outage would
+    put the reference on its limit whatever the outage did, and each answer would mix
+    the outage with a violation that was already there. Refused by name, as a refused
+    base refuses the screen. Raised by the review; nothing had tested or recorded it.
+
+Three checks the step had stated or implied without testing, added the same day:
+
+| Check | Result |
+|---|---|
+| G1 Q_max 30 MVAr against a base of 35.9 | the screen refuses; at 47.8 it screens |
+| Grid-forming inverter (175 MVA) as the slack's one source, losing G3 | held at its limit, `|S|` at the rating to 2e-16, identity holds; its base output is the solved 1.5302 pu |
+| … losing G2 | `:overload`, `kind = :inverter`, I1 |
+| A −30 MW machine lost (D8.9's "a negative-`P0` one too") | `Δω` +0.0024 pu, nothing capped, DC agrees to 6e-17 |
+| Detailed tier read at 300 s **and** 450 s | every gap ≤ 8.1e-10 (worst: regulator on, G2 lost, 300 s; 7.8e-11 at 450 s) |
+
+Two more sabotages, predictions first, both red exactly where predicted: the refusal
+removed (its own test only), and the slack inverter's base output left at its schedule
+(the inverter-slack test's held-at-rating row only: its limit is then computed from too
+low a power).
+
+**For step 6:** `:secure` means "a steady state exists inside the band and the
+ratings", not "acceptable". Losing G1 on this mesh is `:secure` at `Δω` ≈ −0.22 pu
+(11 Hz): the screen has no frequency criterion, and the report must say so.

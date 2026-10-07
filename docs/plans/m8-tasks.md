@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–5 done (step 5 on 2026-10-07)**; step 6 next. Step 5's gate is
+Status: **steps 0–5 done (step 5 on 2026-10-07)**; step 6 next. Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
 recorded in its own section. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
 +1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
@@ -483,6 +483,14 @@ Every prediction, band and outcome below was written to
       `ac_generator_outages` on its learned list); **1262 reference / 568 UI**,
       unchanged. Logs: `core-step5.log`, `ref-step5.log`, `ui-step5.log`. The AC
       digest after the refactor: `5a5873de…`, unchanged (`ac-STEP5.txt`).
+- [x] **Review follow-up** (`m8-context.md` D8, "The review follow-up"): a base whose
+      slack is already past its own reactive limits now **refuses the screen** (the
+      user's choice); tests added for a grid-forming inverter as the slack's one
+      source, a negative-`P0` machine lost, and the detailed tier read at 300 s and
+      450 s (worst 8.1e-10). Sabotages SB8 (refusal removed) and SB9 (slack inverter
+      at its schedule), predicted first, each red only in its own test. M8 runner 953.
+- [x] Follow-up gate, below-normal priority, exit 0 each: **5091 core**, the count
+      predicted (5044 + 47); **1262 reference / 568 UI** unchanged (`*-step5f.log`).
 
 ## Step 6 — the report
 
