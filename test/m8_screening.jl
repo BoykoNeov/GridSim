@@ -1350,9 +1350,11 @@ end
         # every share are the sharing rule's alone (D8: a re-test of D2, kept).
         net = _m8_acmesh()
         sc = ac_generator_outages(net)
-        for lost in (:G2, :G3)                          # G2's loss caps G3
+        # Settled, not passing through: read at 300 s AND 450 s (the band is a claim
+        # at reltol 1e-10 on FBDF; measured worst over every read here 8.1e-10).
+        for lost in (:G2, :G3), T in (300.0, 450.0)    # G2's loss caps G3
             k = findfirst(==(lost), sc.machines)
-            d = _m8_detailed_settled(net, lost)
+            d = _m8_detailed_settled(net, lost; T)
             for i in 1:3
                 i == k && continue
                 @test abs(d.Δexport[bus[i]] - sc.pickup[k][i]) <= B4
@@ -1369,11 +1371,11 @@ end
             net = _m8_acmesh(cp = false; avr)
             sc = ac_generator_outages(net)
             ls = [(net.bus_index[l.bus], l.P0 / net.S_base) for l in net.loads]
-            for lost in (:G2, :G3)
+            for lost in (:G2, :G3), T in (300.0, 450.0)
                 k = findfirst(==(lost), sc.machines)
-                d = _m8_detailed_settled(net, lost)
+                d = _m8_detailed_settled(net, lost; T)
                 @test abs(d.ω[mod1(k + 1, 3)]) < abs(sc.Δω[k]) - 1e-6
-                push!(gaps, abs(sc.Δω[k]) - abs(d.ω[mod1(k + 1, 3)]))
+                T == 300.0 && push!(gaps, abs(sc.Δω[k]) - abs(d.ω[mod1(k + 1, 3)]))
                 # Lossless: what the survivors pick up is the lost power plus the change
                 # in what the constant-impedance loads draw at the detailed tier's |V|.
                 dload = sum(P0 * (d.V[v]^2 - d.V0[v]^2) for (v, P0) in ls)
@@ -1389,5 +1391,59 @@ end
             end
         end
         @test gaps[3] < gaps[1] && gaps[4] < gaps[2]   # the regulator narrows it
+    end
+
+    # ── Review follow-ups (predictions in step5_predictions.md, before the runs) ──
+
+    @testset "a base whose slack is already past its own reactive limit refuses the screen" begin
+        # `ac_powerflow` lets the slack run past its limits; this screen enforces them,
+        # so such a base would put every outage's reference on its limit whatever the
+        # outage did. Refused by name (the user's choice, 2026-10-07). G1 makes 35.9
+        # MVAr in this base.
+        msg = try; ac_generator_outages(_m8_acmesh(r = 0.1, Q1max = 0.30)); "";
+              catch e; e isa ArgumentError ? e.msg : ""; end
+        @test occursin("slack bus :A", msg) && occursin("reactive limits", msg)
+        @test ac_powerflow(_m8_acmesh(r = 0.1, Q1max = 0.30)).Vm[1] == 1.05   # it accepts it
+        @test all(==(:secure), ac_generator_outages(_m8_acmesh(r = 0.1, Q1max = 0.478)).outcome)
+    end
+
+    @testset "a grid-forming inverter as the slack's one source" begin
+        # Its base output is the SOLVED one (1.5302 pu: 150 MW plus the losses), and its
+        # reactive limit follows that plus its share. Rated 175 MVA, K_p 0.05.
+        n = _m8_acmesh(r = 0.1)
+        net = NetworkModel(100.0, 50.0, n.buses, n.branches, n.machines[2:3], n.loads;
+                           slack = :A, inverters = [Inverter(:I1, :A, :grid_forming, 175.0,
+                                                             150.0; K_p = 0.05, V_set = 1.05)])
+        sc = ac_generator_outages(net)
+        b = sc.base
+        @test sc.machines == [:G2, :G3] && sc.responders == [:G2, :G3, :I1]
+        s = sc.solution[2]                             # G3 lost
+        @test sc.outcome[2] === :secure && s.limited == [:A]
+        @test hypot(s.Pgen[1], s.Qgen[1]) ≈ 1.75 rtol = 1e-12   # AT its rating
+        @test s.Pgen[1] ≈ b.Pgen[1] + sc.pickup[2][3] atol = 1e-12
+        bound = 5 * (max(b.residual, eps()) + max(s.residual, eps()))
+        @test abs(sum(sc.pickup[2]) - 0.4 - (sum(s.loss) - sum(b.loss)) -
+                  (sum(s.Pload) - sum(b.Pload))) <= bound
+        # Losing G2 hands it more than its rating can carry.
+        @test sc.outcome[1] === :overload && only(sc.over[1]).id === :I1
+        @test only(sc.over[1]).kind === :inverter
+    end
+
+    @testset "a negative-P0 machine lost: frequency rises, nothing caps, DC agrees" begin
+        # D8.9 says every machine is screened, a load-as-machine too; checked here. 30 MW
+        # of LB's load moved onto a −30 MW machine at B (damping 2 on 100 MVA).
+        n = _m8_acmesh()
+        net = NetworkModel(100.0, 50.0, n.buses, n.branches,
+                           vcat(n.machines, [Machine(:LM, :B, 100.0, 1.0, 2.0, 0.25, 1.0, -30.0)]),
+                           [Load(:LB, :B, 100.0, 30.0, 0, 0, 1), n.loads[2]]; slack = :A)
+        ac, dc = ac_generator_outages(net), dc_generator_outages(net)
+        k = findfirst(==(:LM), ac.machines)
+        @test ac.outcome[k] === :secure
+        @test ac.Δω[k] > 0 && !any(ac.capped[k])
+        @test abs(ac.Δω[k] - dc.Δω[k]) <= B1
+        @test maximum(abs, ac.pickup[k] .- dc.pickup[k]) <= B1
+        s = ac.solution[k]
+        @test abs(sum(ac.pickup[k]) + 0.3 - (sum(s.loss) - sum(ac.base.loss))) <=
+              5 * (max(ac.base.residual, eps()) + max(s.residual, eps()))
     end
 end

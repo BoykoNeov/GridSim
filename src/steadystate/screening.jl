@@ -1029,6 +1029,26 @@ function ac_generator_outages(net::NetworkModel)
         "AC flow decides only their summed output, which includes the base losses, so " *
         "what any one of them was producing — the power its outage loses — is not " *
         "defined (m8-context.md D8). Put one source on the slack bus."))
+    # `ac_powerflow` does not enforce the slack's reactive limits; this screen does
+    # (D8.5). A base already past them would put the reference on its limit in every
+    # outage, whatever the outage did, so each answer would carry two causes. Refused
+    # by name, as a refused base refuses the screen (the user's choice, 2026-10-07).
+    ia, fa = _inverter_arrays(net), _gfl_arrays(net)
+    Pfix_s = sum((fa.P[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
+    Qfix_s = sum((fa.Q[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
+    Qcap = sum((_inverter_q_cap(ia.S[j], base.Pgen[v_slack] - Pfix_s)
+                for j in eachindex(ia.bus) if ia.bus[j] == v_slack); init = 0.0)
+    Qmax = sum((net.machines[k].Q_max for k in net.machines_at_bus[v_slack]); init = 0.0) + Qcap
+    Qmin = sum((net.machines[k].Q_min for k in net.machines_at_bus[v_slack]); init = 0.0) - Qcap
+    Qs = base.Qgen[v_slack] - Qfix_s
+    Qmin - _AC_QLIM_TOL <= Qs <= Qmax + _AC_QLIM_TOL || throw(ArgumentError(
+        "ac_generator_outages: the slack bus :$(net.slack) already produces " *
+        "$(Qs * net.S_base) MVAr in the base case, outside its reactive limits " *
+        "[$(Qmin * net.S_base), $(Qmax * net.S_base)] MVAr. ac_powerflow does not " *
+        "enforce the slack's limits; this screen does, so every outage would put the " *
+        "reference on its limit whatever the outage did, and each answer would mix the " *
+        "outage with a violation that was already there (m8-context.md D8). Fix the " *
+        "base, or the limits, first."))
     nm = length(net.machines)
     r = _responders(net)
     outcome = Vector{Symbol}(undef, nm)
