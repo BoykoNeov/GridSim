@@ -164,7 +164,7 @@ function why(s::OutageScreen, net::NetworkModel, r::Int)
         o = s.ac_outcome[r]
         if o === :voltage
             push!(parts, "AC " * join([@sprintf("%s %.3f pu", l.bus, l.Vm) for l in s.low[r]], ", ") *
-                         " (band 0.9–1.1); DC has no voltage")
+                         " (band $(GridSim._PF_VMIN)–$(GridSim._PF_VMAX)); DC has no voltage")
         elseif o === :no_solution
             push!(parts, "AC finds no operating point ($(s.reason[r]))")
         else
@@ -266,8 +266,9 @@ function print_claims()
  a. The D9 rule decides three of case9's nine line outages — L14, L36 and L82, the
     lines its three generators hang on. Without it they would be "splits" with no
     answer. On the numbers the two outages are the same: each mapped line carries at
-    most 1e-15 pu in its generator's outage, at both fidelities, and the bus it cuts
-    off sits at its near end's voltage exactly. That includes losing G1, a voltage
+    most 1e-15 pu in its generator's outage, at both fidelities (exactly 0.0 in AC
+    wherever AC solved), and the bus it cuts off sits at its near end's voltage
+    exactly. That includes losing G1, a voltage
     refusal, read through the refusal's own list of buses (and at 200 MW, where it
     solves). Leaving the dead bus out changes no verdict. The mesh has no such line.
  b. At the published ratings the DC screen passes every outage of both grids on both
@@ -276,8 +277,9 @@ function print_claims()
     the default loads L45 comes back inside the band and the other two stay out. Part
     of every case9 sag is the missing line charging.
  c. Where both screens say secure, DC still understates the most-loaded branch: by up
-    to 8.2 points of its rating on case9 with constant-power loads (L78 out: 66.7 %
-    against 74.9 %), and it never overstates there. On the default loads it errs both
+    to 8.2 points of its rating on case9 with constant-power loads (L78 out: L67 at
+    66.7 % against 74.9 %), and it never overstates there. On every agreed row of all
+    four tables the most-loaded branch is the same branch at both fidelities. On the default loads it errs both
     ways, −3.0 to +3.3 points, because the sagging voltage sheds load. On the mesh,
     under 2.1 points either way.
  d. "Secure" says nothing about frequency. Losing the mesh's G1 (150 MW) puts both
@@ -286,7 +288,7 @@ function print_claims()
     (11.22 / 11.06 Hz in AC). Both screens call it secure, because they judge line
     loading and voltage only. A real grid would have shed load long before.
  e. DC's settled frequency is not a bound in either direction. On constant-power loads
-    AC's deviation is deeper in all six generator outages, by 0.6–16 % (losses rise and
+    AC's deviation is deeper in all six generator outages, by 0.6–15.5 % (losses rise and
     must be covered too; case9's G1: 0.401 against 0.463 Hz). On the default loads it is
     shallower in five of six, down to half (case9's G1: 0.195 Hz), and deeper only for
     the mesh's G1.

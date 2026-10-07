@@ -114,10 +114,12 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
             for loads in (:constant_power, :default)
                 rows = Dict(c.line => c for c in _OS.rule_check(_OS.case9(; loads, mw)))
                 for l in lines
-                    @test rows[l].dc_flow <= 1e-14
+                    # Claim (a) prints "at most 1e-15 pu" and "exactly 0.0 in AC".
+                    @test rows[l].dc_flow <= 1e-15
                     @test rows[l].ac_flow <= 1e-12
                     @test rows[l].ΔV <= 1e-12
                 end
+                mw == 315.0 && @test all(rows[l].ac_flow == 0.0 for l in lines)
             end
         end
         c = only(c for c in _OS.rule_check(_OS.case9()) if c.line === :L14)
@@ -198,6 +200,20 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
                                                              ac_generator_outages(a))
     end
 
+    @testset "outage_screen on inverter models (why it is on M7's learned list)" begin
+        # A grid-forming inverter answers frequency in both generator screens and is
+        # over its rating when G1 is lost (step 5's I3 at 45 MVA): the row says so.
+        s = outage_screen(_m8_acmesh(; gfm = true, S_inv = 45.0))
+        g1 = findfirst(==(:G1), s.id)
+        @test length(s.id) == 7 + 2 && s.kind[g1] === :machine
+        @test s.class[g1] === :dc_blind && only(s.ac_over[g1]).kind === :inverter
+        @test s.generators.machines == [:G1, :G2]
+        # An inverter on the cut-off side keeps a bridge a split, in the full report.
+        s = outage_screen(_m8_pendant(; at_p = :inverter))
+        r = findfirst(==(:CP), s.id)
+        @test s.class[r] === :splits && s.via[r] === :none
+    end
+
     @testset "the script's fixtures are the ones they say they are" begin
         # case9: the branch data and loads are `_ed_case9`'s, number for number; the
         # machines differ ONLY in the invented droop, damping and rating.
@@ -266,6 +282,21 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
         g = gaps((:case9, :default))
         @test minimum(g) ≈ -3.02 atol = 0.01
         @test maximum(g) ≈ 3.26 atol = 0.01
+        # The most-loaded branch is the SAME branch at both fidelities on every agreed
+        # row of all four tables, so "DC understates the most-loaded branch" compares
+        # one line with itself (L78 out: L67 at both).
+        worst_id(v) = v[argmax(v)]
+        for (k, (net, s)) in screens, r in eachindex(s.id)
+            s.class[r] === :agree || continue
+            dc = [abs(s.dc_flow[r][e]) * net.S_base / b.rating for (e, b) in pairs(net.branches)]
+            sol = s.via[r] !== :none ? s.ac_generators.solution[findfirst(==(s.via[r]), s.generators.machines)] :
+                  s.kind[r] === :branch ? s.ac_lines.solution[r] :
+                  s.ac_generators.solution[r - length(net.branches)]
+            ac = Dict(id => max(hypot(sol.flow[j], sol.qflow[j]), hypot(sol.flow_rev[j], sol.qflow_rev[j])) *
+                            net.S_base / net.branches[findfirst(b -> b.id === id, net.branches)].rating
+                      for (j, id) in pairs(sol.branches))
+            @test net.branches[argmax(dc)].id === argmax(ac)
+        end
         # The mesh: never more than 2.1 points either way, on either load model.
         @test all(x -> 0 < x < 2.1, gaps((:mesh, :constant_power)))
         @test all(x -> 0 < x < 2.1, gaps((:mesh, :default)))
@@ -280,7 +311,7 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
             # 105 MW is carried by damping alone, Σ D = 4.8 pu: x = 1.05/4.8 exactly.
             @test s.Δω_dc[g1] ≈ -1.05 / 4.8 rtol = 1e-14
             @test s.Δω_dc[g1] * _OS.F0 ≈ -10.9375
-            @test s.Δω_ac[g1] * _OS.F0 < -10.9
+            @test s.Δω_ac[g1] * _OS.F0 ≈ (k === :constant_power ? -11.22 : -11.06) atol = 0.005
             @test all(s.generators.ac_outcome .=== :secure)
         end
     end
@@ -299,9 +330,18 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
             a, b = screens[(f, :constant_power)][2], screens[(f, :default)][2]
             @test isequal(a.Δω_dc, b.Δω_dc)
         end
-        # The widest gap: G1 on case9's default loads, AC about half DC's.
-        s = screens[(:case9, :default)][2]
-        g1 = findfirst(==(:G1), s.id)
-        @test 0.45 < s.Δω_ac[g1] / s.Δω_dc[g1] < 0.5
+        # The printed figures: deeper by 0.6–15.5 % on constant power (six outages)…
+        ratio(k) = (s = screens[k][2]; [s.Δω_ac[r] / s.Δω_dc[r] for r in eachindex(s.id) if s.kind[r] === :machine])
+        rs = [ratio((:case9, :constant_power)); ratio((:mesh, :constant_power))]
+        @test 100 * (minimum(rs) - 1) ≈ 0.56 atol = 0.005
+        @test 100 * (maximum(rs) - 1) ≈ 15.52 atol = 0.005
+        # …case9's G1 at 0.401 against 0.463 Hz, and 0.195 Hz on the default loads,
+        # about half of DC's (ratio 0.486).
+        sc, sd = screens[(:case9, :constant_power)][2], screens[(:case9, :default)][2]
+        g1 = findfirst(==(:G1), sc.id)
+        @test sc.Δω_dc[g1] * _OS.F0 ≈ -0.401 atol = 5e-4
+        @test sc.Δω_ac[g1] * _OS.F0 ≈ -0.463 atol = 5e-4
+        @test sd.Δω_ac[g1] * _OS.F0 ≈ -0.195 atol = 5e-4
+        @test sd.Δω_ac[g1] / sd.Δω_dc[g1] ≈ 0.486 atol = 5e-4
     end
 end

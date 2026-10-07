@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–6 done (step 6 on 2026-10-07)**; step 7 (close) next. Step 6 left **5268 core / 1262 reference / 568 UI**. Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
+Status: **steps 0–6 done (step 6 on 2026-10-07)**; step 7 (close) next. Step 6 left **5268 core / 1262 reference / 568 UI** (gated), **5316 core by count** after its review follow-up (test-only). Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
 recorded in its own section. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
 +1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
@@ -524,6 +524,11 @@ Every prediction, band and outcome below was written to
       predicted before the run (5091 + 175 in `test/m8_outage_screen.jl` + 2 from
       M7's surface walk, which now reaches `lone_source_bridges` and `outage_screen`);
       **1262 reference / 568 UI**, unchanged. Logs: `*-step6.log`.
+- [x] **Review follow-up** (`m8-context.md` D9, last paragraph): every printed claim
+      number asserted at its printed precision; claim (c)'s same-branch premise
+      checked; `outage_screen` on two inverter models; the band read from the code.
+      +48 test-only (**5316 core by count**; full gate not re-run, nothing under
+      `src/` changed; step-6 file 223/223 on the M8 runner).
 
 ## Step 7 — close
 

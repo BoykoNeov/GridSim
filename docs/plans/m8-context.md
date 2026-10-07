@@ -946,14 +946,16 @@ The claims, written after the four tables (each asserted in
   both load models, and every disagreement is a voltage refusal it cannot express.
 - **c.** Where both say secure, DC still understates the most-loaded branch: up to
   8.2 points of rating on case9 with constant-power loads (L78 out, 66.7 % against
-  74.9 %), never overstating there; on the default loads it errs both ways, −3.0 to
-  +3.3 points. On the mesh, under 2.1 either way.
+  74.9 %, L67 at both), never overstating there; on the default loads it errs both
+  ways, −3.0 to +3.3 points. On the mesh, under 2.1 either way. On every agreed row
+  of all four tables the most-loaded branch is the same branch at both fidelities
+  (asserted at review: the two maxima are taken separately, so this was not given).
 - **d.** `:secure` carries no frequency criterion — step 5's note, now printed.
   Losing the mesh's G1 caps both remaining governors and leaves 105 MW to damping
   alone: Δf −10.94 Hz in DC (exactly 1.05/4.8 pu), −11.22 / −11.06 Hz in AC, and
   both screens say secure.
 - **e.** DC's settled frequency is not a bound in either direction: AC's deviation is
-  deeper in all six generator outages on constant power (by 0.6–16 %), shallower in
+  deeper in all six generator outages on constant power (by 0.6–15.5 %), shallower in
   five of six on the default loads (down to half, case9's G1: 0.195 against
   0.401 Hz).
 
@@ -973,3 +975,13 @@ too, and the rule declined the machine-plus-load case for the wrong reason (a lo
 source on both sides). It was caught elsewhere, by the positive control and the
 other declines. A zero-output second machine on the main side made the fixture test
 what it claims; re-run, red exactly at the two predicted checks.
+
+**Review follow-up (2026-10-07, test and script only).** Every number the claims
+print is now asserted at the precision printed. Before this, claim (a) printed
+1e-15 against a 1e-14 test band, claim (d)'s AC values were only bounded, and claim
+(e)'s range and its three frequencies were not asserted at all. Claim (c)'s
+same-branch premise is now checked, and `outage_screen` is run on two inverter
+models: the reason it sits on M7's learned list had not yet been earned. The voltage
+band in the printed reasons is read from `_PF_VMIN`/`_PF_VMAX`, not typed in. +48
+tests (223 in the file); nothing under `src/` changed, so the full gate was not
+re-run.
