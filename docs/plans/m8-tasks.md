@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–5 done (step 5 on 2026-10-07)**; step 6 next. Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
+Status: **steps 0–6 done (step 6 on 2026-10-07)**; step 7 (close) next. Step 6 left **5268 core / 1262 reference / 568 UI**. Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
 recorded in its own section. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
 +1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
@@ -492,12 +492,38 @@ Every prediction, band and outcome below was written to
 - [x] Follow-up gate, below-normal priority, exit 0 each: **5091 core**, the count
       predicted (5044 + 47); **1262 reference / 568 UI** unchanged (`*-step5f.log`).
 
-## Step 6 — the report
+## Step 6 — the report — done 2026-10-07
 
-- [ ] The bridge-to-a-lone-source decision, recorded in context.
-- [ ] `scripts/outage_screen.jl` on the meshed fixture and case9, both fidelities.
-- [ ] Claims in `test/m8_outage_screen.jl`, prose written after reading the table.
-- [ ] Window or no window: the user's call.
+- [x] The bridge-to-a-lone-source decision, recorded in context (`m8-context.md` D9,
+      the user's choice): a bridge whose cut-off side carries exactly one machine and
+      nothing else is screened as that machine's outage; everything else stays a
+      split. It lives only in `outage_screen`; the line screens still say `:splits`.
+- [x] `scripts/outage_screen.jl` on the meshed fixture and case9, both fidelities,
+      both load models. New in core: `lone_source_bridges`,
+      `compare_generator_screens` (DC generator flows judged against ratings, two new
+      classes `:refused` / `:refusals_differ`), `outage_screen`.
+- [x] Claims in `test/m8_outage_screen.jl`, prose written after reading the table.
+      Predictions first (`W:\temp\claude\gridsim-m8\step6_predictions.md`): every
+      case9 and mesh row as predicted; L45 on default loads, left open, comes back
+      inside the band. Claim (d) prints step 5's note: `:secure` has no frequency
+      criterion (the mesh's G1 settles 10.94 Hz low and both screens pass it).
+- [x] Window or no window: the user's call — **no window**.
+- [x] Sabotages, predicted first (`mutate6.py`): all six red. The rule looking at the
+      `from` side only (red where predicted, L82 and the pendant); a load not
+      disqualifying a side; the dead bus judged; DC generator flows judged without
+      their magnitude; a grid-forming inverter over its rating not counted as blind;
+      a mapped bridge filled from the line screen. **One went red where it was NOT
+      predicted** (loads ignored): the pendant fixture's main side held one machine,
+      so it became a lone source too and the rule declined for the wrong reason. A
+      zero-output second machine on the main side fixed the fixture; re-run, red
+      exactly at the two predicted checks. And one sabotage would have been
+      invisible before it ran (no magnitude): every constructed overload ran along its
+      line's declared direction, so an L94 fixture (flow against its direction) was
+      added first.
+- [x] Gate: below-normal priority, exit 0 each: **5268 core**, the count
+      predicted before the run (5091 + 175 in `test/m8_outage_screen.jl` + 2 from
+      M7's surface walk, which now reaches `lone_source_bridges` and `outage_screen`);
+      **1262 reference / 568 UI**, unchanged. Logs: `*-step6.log`.
 
 ## Step 7 — close
 

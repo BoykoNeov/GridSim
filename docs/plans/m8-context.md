@@ -881,3 +881,95 @@ low a power).
 **For step 6:** `:secure` means "a steady state exists inside the band and the
 ratings", not "acceptable". Losing G1 on this mesh is `:secure` at `Δω` ≈ −0.22 pu
 (11 Hz): the screen has no frequency criterion, and the report must say so.
+
+---
+
+## D9 — The report, and the bridge to a lone source (step 6, 2026-10-07)
+
+### Decisions (the user's, 2026-10-07)
+
+1. **A bridge whose cut-off side is a lone source is screened as that source's
+   outage** (Hurdle 14.2). "A lone source" means that side carries exactly one
+   machine and nothing else: no load and no inverter of either kind. The two
+   outages are then the same outage for the grid that is left, **exactly**:
+   `NetworkModel` has no shunt anywhere (no line charging, no taps), so once the
+   machine is gone that side injects nothing, carries no current, and every bus on
+   it sits at the voltage of the bridge's near end. Open or closed, the bridge
+   changes nothing the rest of the grid sees. Anything else on the cut-off side
+   makes losing the bridge a different question (does that island survive alone?),
+   and the bridge stays a split. So does a bridge with a lone source on **both**
+   sides: no one machine is "the" outage. The side is found from the graph, never
+   from the end the branch is declared at (case9's L82 is declared B8 → B2, its
+   generator at the `to` end).
+2. **The graph facts do not move.** `dc_line_outages` and `ac_line_outages` still
+   report every bridge as a split; the mapping lives only in `outage_screen`, the
+   layer that joins the line screens to the generator screens. Every earlier test
+   and the 83-case AC digest are untouched by it.
+3. **The cut-off buses are dead in the line outage, so they are never judged against
+   the voltage band.** The mapped row is the machine's row with those buses left out
+   of `low`. They sit at their near end's voltage, so leaving them out can never
+   empty a voltage verdict; `outage_screen` throws rather than answer if it ever
+   did, because the rule's premise would then be false. The reference bus can be one
+   of them (case9's B1 behind L14): it stays a pure angle gauge, at the same angle
+   as its near end because no current crosses.
+4. **No window** (the user's call). The printed table carries the findings; a map
+   view stays unbuilt and is not implied.
+5. **The generator screens get the comparison the line screens have**
+   (`compare_generator_screens`): DC flows judged against the same ratings, the
+   same five classes, plus two the line screen never needs — `:refused` (both
+   refuse the same way) and `:refusals_differ`.
+
+### What step 6 measured
+
+Predictions, written before the first run:
+`W:\temp\claude\gridsim-m8\step6_predictions.md`. Fixtures: case9 without line
+charging with INVENTED droop and damping (R 5 %, D 1, each machine rated at its
+Pmax), and step 5's invented mesh, lossy; both on constant-power and default loads.
+
+| Prediction | Outcome |
+|---|---|
+| case9 maps L14 → G1, L36 → G3, L82 → G2 | as predicted |
+| the mapped line carries nothing in its generator's outage | DC ≤ 9.3e-16 pu, AC exactly 0.0 on L36/L82 (and 6.9e-27 on L14 at 200 MW); cut-off bus at its near end's voltage to 0.0 pu |
+| L14's AC check at 315 MW | **not possible on the solution**: losing G1 is a voltage refusal, which keeps no solution. Read instead through the refusal's own bus list (B1 and B4 both listed, equal to the bit) and at 200 MW, where it solves |
+| case9 constant power: L14/G1, L45, L94 voltage, everything else agree | as predicted, to the row |
+| case9 default: L45 uncertain | L45 comes back inside the band (57 % loading); L14/G1 and L94 stay out (0.873–0.885, 0.861 pu) |
+| DC Δω losing G1, −0.401 Hz | −0.40116 Hz |
+| mesh: everything secure and agreed | as predicted, both load models |
+| dropping the dead bus changes no verdict | as predicted |
+
+The claims, written after the four tables (each asserted in
+`test/m8_outage_screen.jl`, printed as section 3 of the script):
+
+- **a.** The rule decides three of case9's nine line outages; without it they would
+  be splits with no answer.
+- **b.** At the published ratings the DC screen passes every outage of both grids on
+  both load models, and every disagreement is a voltage refusal it cannot express.
+- **c.** Where both say secure, DC still understates the most-loaded branch: up to
+  8.2 points of rating on case9 with constant-power loads (L78 out, 66.7 % against
+  74.9 %), never overstating there; on the default loads it errs both ways, −3.0 to
+  +3.3 points. On the mesh, under 2.1 either way.
+- **d.** `:secure` carries no frequency criterion — step 5's note, now printed.
+  Losing the mesh's G1 caps both remaining governors and leaves 105 MW to damping
+  alone: Δf −10.94 Hz in DC (exactly 1.05/4.8 pu), −11.22 / −11.06 Hz in AC, and
+  both screens say secure.
+- **e.** DC's settled frequency is not a bound in either direction: AC's deviation is
+  deeper in all six generator outages on constant power (by 0.6–16 %), shallower in
+  five of six on the default loads (down to half, case9's G1: 0.195 against
+  0.401 Hz).
+
+**Found while writing the fixtures:** the abs-free sabotage of the new comparison
+would have been invisible. Every overload the first draft constructed ran along its
+line's declared direction, so a DC flow judged without its magnitude still crossed
+the rating. A fixture on L94 (declared B9 → B4, carrying 111.9 MW from B4 to B9
+after G2's loss) was added before the sabotages ran.
+
+**Six sabotages, predictions first** (`mutate6.py`), all red: the rule reading only
+the side of the branch's `from` bus; a load not disqualifying a side; the dead bus
+judged; DC generator flows judged without their magnitude; a grid-forming inverter
+over its rating not counted as blind; a mapped bridge filled from the line screen.
+Five went red exactly where predicted. **The load sabotage did not**: the pendant
+fixture's main side carried one machine, so with loads ignored it was a lone source
+too, and the rule declined the machine-plus-load case for the wrong reason (a lone
+source on both sides). It was caught elsewhere, by the positive control and the
+other declines. A zero-output second machine on the main side made the fixture test
+what it claims; re-run, red exactly at the two predicted checks.
