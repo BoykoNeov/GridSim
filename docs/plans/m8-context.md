@@ -572,3 +572,109 @@ and no rung is secretly a different switching state.
   (step 2's mesh on default loads with DE at 39: 40.0 MW DC against 37.9 MVA AC;
   default-load case9 with L94 at 105 and L82 at 125, L67 out), each with a
   sabotage red only in its own test.
+
+---
+
+## D7 — Generator outages in the DC screen: what step 4 decided and measured (2026-10-07)
+
+Predictions and the band were written first, to
+`W:\temp\claude\gridsim-m8\step4_predictions.md`; the spike is
+`W:\temp\claude\gridsim-m8\step4_spike.jl`.
+
+### Hurdle 15.1, answered from the source before any assertion
+
+The swing tier **refuses a `Load` outright** (`_assert_classical_tier`,
+`src/engines/swing.jl`) and holds a constant `E′` at every bus, so it has **no
+voltage term at all**. It has no load object either: a load is a negative-`P0`
+machine (M2a's convention), and its only response is its `D`, which is frequency
+relief. So nothing has to be accounted for; the oracle fixture is machines only,
+one per bus, lossless, loads as damped negative-`P0` machines, and the DC screen
+and the swing tier read **the same object**.
+
+### Decisions
+
+1. **Who responds.** Every remaining machine (`invR`, `D`, `headroom` from
+   `machine_arrays`) **and every grid-forming inverter**, with gain `1/K_p` from
+   `_inverter_arrays`, no damping and **no cap**: the swing tier's droop inverter has
+   no power limit, and leaving it out would count it silently as a non-responder,
+   which `machine_arrays` alone would have done. A grid-following inverter holds its
+   `P`. Only **machines** are screened as outages; inverter outages are not (the
+   plan's "generators").
+2. **Every machine is screened, a negative-`P0` one too.** Losing it is a load trip:
+   `Δω > 0`, every governor commands less, and nothing caps on the way up, because the
+   swing tier has no down-floor (its header).
+3. **The solve is exact.** `T(x) = Σ min(x·gᵢ, hᵢ) + x·Σd` with `x = −Δω` is
+   piecewise linear and never decreasing; the bends (`hᵢ/gᵢ`) are walked and `T` is
+   recomputed from its definition at each one, never accumulated. No root-finder, no
+   tolerance, and the refusals fall out of the same walk.
+4. **The refusals are outcomes in the screen and throws in `pickup_shares`** (D3):
+   `:no_response` and `:reserve_exhausted`, by name, carrying `Δω = NaN`, zero
+   pickups and no flows. `pickup_shares` throws `ArgumentError` with the same two
+   names.
+5. **A tie** (no damping left, headroom left exactly equal to the loss) has every `Δω`
+   past the last cap as an answer; the smallest `|Δω|` is returned. Tested on numbers
+   exact in binary, so it is a tie and not a rounding; a near-tie lands on whichever
+   side the arithmetic puts it, which is correct.
+6. **The bus stays.** Losing a generator does not remove a substation, so `B` does
+   not change, and each outage is one solve against the line screen's factorisation
+   (D4). The swing tier is different here, and it matters for what is compared:
+   `TripGenerator` zeroes every coupling at the machine's bus, because in that tier
+   the machine IS the bus. So the cross-tier check compares **pickups and `Δω` only,
+   never flows**, and the fixture has no cut vertex.
+7. **Losing the slack bus's own machine, in DC: screened like any other.** The
+   pickups rebalance every injection, so the reference absorbs nothing and stays a
+   gauge (step 2 measured that moving it moves no flow). Measured again here: the
+   screen with the reference at A and at D differ by ≤ 6.7e-16. **The AC choice
+   (step 5) is the user's**, because there the reference bus also holds a voltage.
+
+### What step 4 measured
+
+The fixture is invented and declared: step 2's mesh plus B–E (no bridge, no cut
+vertex), G1/G2/G3 with governors on bases 300/150/120 MVA, two loads as damped
+negative-`P0` machines.
+
+| Check | Result |
+|---|---|
+| Closed forms (uncapped, capped, load lost, inverter sharing, droop alone) | every one exact, asserted at `rtol = 1e-14` |
+| Damped − droop-alone `Δω` | `0.4/97.5 − 0.4/107`, as predicted |
+| Screen flows against rebuild (machine removed, pickups added) and `dc_powerflow` | ≤ 2.2e-16 pu |
+| Swing tier settled, band **1e-7 pu stated first**: pickups read from the NETWORK side (Σ `branch_power` out of the bus) | ≤ 1.5e-10 |
+| … every survivor's own speed against `Δω` | ≤ 1.5e-12; spread between survivors ≤ 9e-13 |
+| … the same at 300 s and 450 s | both inside; the pickup gap grows slightly with time (5e-12 → 1.5e-11), the round-off of angles that drift for ever |
+| Capped governor's `ΔPm` against its headroom | 9.1e-11 past it (the out-of-domain guard's step), inside 1e-9 |
+| Capped G3 | settles 1.45 MW above its `Pmax` in both tiers: the cap is on the governor only |
+| Huge damped loss (G1, 150 MW) | `Δω` = −0.1265 pu (6.3 Hz), reported, both governors capped |
+| Same loss, no damping | `:reserve_exhausted` |
+| No governor, no damping | `:no_response` on every outage |
+| case9 as M6 builds it (`R = Inf`, `D = 0`) | `:no_response` on all three generators (Hurdle 15.4): it needs invented droop data first |
+
+**The zero-damping swing run never settles.** With `D = 0` only the governors act,
+and in this fixture the machines are still swinging against each other after 300 s
+(spread 3e-3 pu, gap to the static answer 0.19 pu). So "zero damping reduces to droop
+alone" is checked **in closed form only**, and the test records that no settled run
+exists to hold it against. Predicted by the review before the run; confirmed.
+
+**Found, not planned: `branch_power` on the swing tier refused every model with a
+grid-forming inverter.** It read the branch ends through `branch_arrays`, which
+computes the couplings from a machine at every bus and throws on an inverter bus. The
+read-out had been unusable on inverter models since M7 step 3, and nothing called it
+there. It now reads `branch_topology` (the ends only), as does `branch_power_series`.
+The inverter oracle run is its test.
+
+**Found, not planned: the screen can hand an inverter more than its rating.** The
+first inverter fixture (120 MVA, 40 MW) gave a pickup that the rebuild's `Inverter`
+constructor refused at 126.6 MVA. Nothing in the DC screen judges an inverter's
+output against its rating, and the swing tier has no limit to agree with. The fixture
+was re-rated to 300 MVA with the same system-base droop. Whether a screen should flag
+it is for step 5 (the AC solve already treats a grid-forming slack over its rating as
+`:overload`) or step 6.
+
+**Sabotages, all red, every one also red in the swing-tier comparison** (so none was
+caught only by algebra written alongside the code):
+
+| Sabotage | closed-form checks red | swing-tier checks red |
+|---|---|---|
+| S1 `D` dropped from the weights | 8 of 16 | 48 of 52 |
+| S2 `1/R` on the machine's own base | 7 of 16 | 48 of 52 |
+| S3 the cap applied to the damping term too | 6 of 16 | 24 of 52 |
+| S4 grid-forming inverters left out | 2 of 16 | 16 of 52 |

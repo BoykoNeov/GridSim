@@ -5,7 +5,9 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–3 done (2026-10-06)**; step 4 next. Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
+Status: **steps 0–4 done (step 4 on 2026-10-07)**; step 5 next. Step 4 left **4869
+core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
++1 in M7's surface walk). Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -372,20 +374,37 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
 
 ## Step 4 — generator outages in the DC screen
 
-- [ ] Read how the swing tier's loads respond to frequency **and voltage**, before
+- [x] Read how the swing tier's loads respond to frequency **and voltage**, before
       any assertion; oracle fixture with constant-power loads (or relief accounted
-      for), finite `R`, `Pmax > P0`, no infinite bus.
-- [ ] `pickup_shares(net, lost)` from `machine_arrays`; `dc_generator_outages(net)`.
-- [ ] Swing-tier `TripGenerator` settled pickup and `Δω` match, within a band
-      stated first.
-- [ ] Zero damping reduces to droop alone; damped differs by the predicted amount.
-- [ ] Cap fixture: one governor at headroom; that machine at `headroom − Δω·D`;
-      the swing tier agrees.
-- [ ] Refusals by name, exactly two: nothing responds to frequency; `ΣD = 0` with
-      every governor capped. A damped huge loss reports its `Δω`.
-- [ ] Losing the slack's own machine: decided and recorded.
-- [ ] Sabotages: drop `D`; weights on the machine's own base; cap on the damping
-      term too.
+      for), finite `R`, `Pmax > P0`, no infinite bus. **Answered from the source**
+      (D7): the tier refuses a `Load` and holds `E′` at every bus, so there is no
+      voltage term; a load is a damped negative-`P0` machine. Fixture: one machine
+      per bus, no bridge and no cut vertex, bases 300/150/120 MVA.
+- [x] `pickup_shares(net, lost)` from `machine_arrays`; `dc_generator_outages(net)`.
+      Grid-forming inverters share too (gain `1/K_p` from `_inverter_arrays`, no
+      cap), every machine is screened including negative-`P0` ones, and the solve
+      walks the bends exactly (D7). Flows equal the rebuild to ≤ 2.2e-16.
+- [x] Swing-tier `TripGenerator` settled pickup and `Δω` match, within a band
+      stated first. Band 1e-7 pu; measured ≤ 1.5e-10 (pickups, from the network
+      side) and ≤ 1.5e-12 (every survivor's speed), at 300 s and 450 s, uncapped,
+      capped and with an inverter. **Found:** `branch_power(::SwingEngine)` threw on
+      every inverter model since M7 step 3; fixed (D7).
+- [x] Zero damping reduces to droop alone; damped differs by the predicted amount.
+      Closed form only: the zero-damping swing run **never settles** (spread 3e-3
+      pu at 300 s), measured and asserted as the reason.
+- [x] Cap fixture: one governor at headroom; that machine at `headroom − Δω·D`;
+      the swing tier agrees. G3 settles 1.45 MW above its `Pmax` in both tiers;
+      its `ΔPm` sits 9.1e-11 past the headroom.
+- [x] Refusals by name, exactly two: nothing responds to frequency; `ΣD = 0` with
+      every governor capped. A damped huge loss reports its `Δω` (−0.1265 pu, 6.3
+      Hz). Outcomes in the screen, throws in `pickup_shares` (D3). case9 as M6
+      builds it refuses all three (`:no_response`).
+- [x] Losing the slack's own machine: decided and recorded. **DC:** screened like
+      any other; the reference is a gauge (≤ 6.7e-16 with it moved). **AC:** the
+      user's call, at step 5.
+- [x] Sabotages: drop `D`; weights on the machine's own base; cap on the damping
+      term too. Plus grid-forming inverters left out. All four red, each in the
+      swing-tier comparison as well as in closed form (D7's table).
 
 ## Step 5 — generator outages in the AC screen: a shared reference
 

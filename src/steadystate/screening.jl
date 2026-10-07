@@ -379,3 +379,237 @@ function compare_line_screens(net::NetworkModel, dc::DCLineOutages, ac::ACLineOu
                                 copy(ac.outcome), dc_over, ac_over, class, reactive,
                                 real, base_reactive, base_real)
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4: generator outages in the DC screen, the lost power shared by droop and
+# damping (m8-context.md D2, D7).
+#
+# WHO PICKS UP A LOST GENERATOR is read off `swing_vertex!`, not chosen. At a settled
+# frequency deviation `Δω` every remaining machine `i` produces, on top of its
+# schedule,
+#
+#     pickupᵢ = min(−Δω·(1/R)ᵢ, headroomᵢ) − Δω·Dᵢ,
+#
+# because the rotor line carries `−D·ω` and the governor state carries `−ω/R`, and
+# the saturation acts on the GOVERNOR state only. So the cap is on the droop term and
+# never on the damping term: a damped machine whose governor is at its headroom
+# settles ABOVE its `Pmax`, by `−Δω·D`, because that is what the dynamic tier does.
+# A grid-forming inverter's droop law settles the same way with gain `1/K_p` and no
+# cap (the swing tier gives it no power limit); a grid-following one holds its `P`.
+#
+# THE SOLVE IS EXACT. With `x = −Δω` the total pickup `T(x) = Σ min(x·gᵢ, hᵢ) + x·Σd`
+# is piecewise linear and never decreasing, bending where a governor reaches its
+# headroom (`x = hᵢ/gᵢ`). Walking those bends finds `T(x) = P_lost` with no
+# root-finder and no tolerance, and it decides the two refusals the same way: nothing
+# left responds to frequency, or no damping is left once every governor is capped
+# short of the loss. With any damping present a steady state always exists, however
+# large the loss, and the screen reports the large `Δω` rather than refusing.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every element that can answer a frequency deviation, on the SYSTEM base, in the
+# order: machines (model order), then grid-forming inverters (model order). The
+# machine weights come from `machine_arrays` and the inverter gain from
+# `_inverter_arrays`, the one place each per-unit conversion lives (D2): never
+# rebuilt from `Machine.R` or `Inverter.K_p` beside them.
+function _responders(net::NetworkModel)
+    ma = machine_arrays(net)
+    ia = _inverter_arrays(net)
+    ids = vcat(Symbol[m.id for m in net.machines], ia.id)
+    bus = vcat(ma.bus, ia.bus)
+    g = vcat(ma.invR, inv.(ia.K_p))
+    d = vcat(ma.D, zeros(length(ia.id)))
+    h = vcat(ma.headroom, fill(Inf, length(ia.id)))
+    P = vcat(ma.Pm, ia.P)
+    return (; ids, bus, g, d, h, P, n_machines = length(net.machines))
+end
+
+# The settled pickup of every element marked `alive`, for a loss of `P_lost` pu.
+# Returns `(status, Δω, pickup, capped)`; `status` is `:shared`, `:no_response` or
+# `:reserve_exhausted`, and the last two carry `Δω = NaN` and zero pickups.
+function _pickup_solve(g::Vector{Float64}, d::Vector{Float64}, h::Vector{Float64},
+                       alive::AbstractVector{Bool}, P_lost::Float64)
+    n = length(g)
+    pickup = zeros(Float64, n)
+    capped = falses(n)
+    P_lost == 0.0 && return (:shared, 0.0, pickup, capped)
+    Σd = sum(d[i] for i in 1:n if alive[i]; init = 0.0)
+    Σg = sum(g[i] for i in 1:n if alive[i]; init = 0.0)
+    Σg + Σd > 0.0 || return (:no_response, NaN, pickup, capped)
+    if P_lost < 0.0
+        # Frequency RISES and every governor commands less. There is no down-floor
+        # in the swing tier (its header says so), so nothing caps on the way up.
+        Δω = -P_lost / (Σg + Σd)
+        for i in 1:n
+            alive[i] && (pickup[i] = -Δω * (g[i] + d[i]))
+        end
+        return (:shared, Δω, pickup, capped)
+    end
+    # The bends, in order. A governor with zero headroom bends at x = 0: capped from
+    # the start. Governor-free elements (g = 0) never bend.
+    T(x) = sum(min(x * g[i], h[i]) + x * d[i] for i in 1:n if alive[i]; init = 0.0)
+    bends = sort!([h[i] / g[i] for i in 1:n if alive[i] && g[i] > 0.0 && isfinite(h[i])])
+    x_lo = 0.0
+    for xb in bends
+        T(xb) >= P_lost && break    # the answer lies on the segment ending here
+        x_lo = xb
+    end
+    # On the segment starting at x_lo the slope is the damping plus every governor
+    # not yet at its headroom there. Recomputed from the definition, never
+    # accumulated across bends.
+    slope = Σd + sum(g[i] for i in 1:n if alive[i] && g[i] > 0.0 && x_lo < h[i] / g[i];
+                     init = 0.0)
+    slope > 0.0 || return (:reserve_exhausted, NaN, pickup, capped)
+    x = x_lo + (P_lost - T(x_lo)) / slope
+    for i in 1:n
+        alive[i] || continue
+        droop = x * g[i]
+        capped[i] = g[i] > 0.0 && droop >= h[i]
+        pickup[i] = min(droop, h[i]) + x * d[i]
+    end
+    return (:shared, -x, pickup, capped)
+end
+
+"""
+    pickup_shares(net::NetworkModel, lost::Symbol) -> NamedTuple
+
+Who makes up the power of machine `lost` once frequency has settled, and at what
+frequency (`m8-context.md` D2): each remaining machine picks up
+`min(−Δω/Rᵢ, headroomᵢ) − Δω·Dᵢ` and each grid-forming inverter `−Δω/K_pᵢ`, all on
+the system base, with `Δω` the one deviation at which the pickups cover the loss.
+
+Returns `(; Δω, responders, pickup, capped)`:
+
+  - `Δω` — the settled speed deviation, pu (times `f0` for Hz). Negative after losing
+    a generator; positive after losing a negative-`P0` machine (a load).
+  - `responders` — machine ids in model order, then grid-forming inverter ids.
+  - `pickup` — pu on `S_base`, the change in each one's output, in that order. The
+    lost machine's entry is `0.0`, and the entries sum to its `P0/S_base`.
+  - `capped` — `true` where the governor sits at its headroom. A capped machine with
+    damping still settles above its `Pmax`, by `−Δω·D`, as the swing tier does.
+
+**Two refusals, by name, and only two.** Nothing left responds to frequency (every
+remaining `1/R`, `D` and `1/K_p` is zero); or no damping is left and every governor
+is capped before the loss is covered. With any damping present a steady state always
+exists, and a huge loss gives a huge `Δω`, reported rather than refused.
+
+When no damping is left and the headroom left exactly equals the loss, every `Δω`
+past the last governor's cap balances; the smallest `|Δω|` is returned.
+
+Losing a negative-`P0` machine raises frequency, and every governor commands less
+with no floor, as in the swing tier.
+"""
+function pickup_shares(net::NetworkModel, lost::Symbol)
+    r = _responders(net)
+    k = findfirst(==(lost), view(r.ids, 1:r.n_machines))
+    k === nothing && throw(ArgumentError(
+        "pickup_shares: :$lost is not a machine of this model (machines: " *
+        "$(join(r.ids[1:r.n_machines], ", ")))."))
+    alive = trues(length(r.ids))
+    alive[k] = false
+    status, Δω, pickup, capped = _pickup_solve(r.g, r.d, r.h, alive, r.P[k])
+    status === :no_response && throw(ArgumentError(
+        "pickup_shares: nothing left responds to frequency after losing :$lost — every " *
+        "remaining droop gain 1/R, damping D and inverter gain 1/K_p is zero, so no " *
+        "frequency settles the $(r.P[k] * net.S_base) MW it leaves (m8-context.md D2)."))
+    status === :reserve_exhausted && throw(ArgumentError(
+        "pickup_shares: after losing :$lost every remaining governor is at its headroom " *
+        "before the $(r.P[k] * net.S_base) MW is covered, and no damping is left to " *
+        "carry the rest, so frequency never settles (m8-context.md D2)."))
+    return (; Δω, responders = r.ids, pickup, capped = collect(capped))
+end
+
+"""
+    DCGeneratorOutages
+
+Every single-machine outage of a model, screened with the linear power flow, the
+lost power shared by droop and damping ([`pickup_shares`](@ref)'s rule).
+
+  - `base` — the intact model's [`DCPowerFlow`](@ref)
+  - `machines` — the machine ids screened, in model order; every outage vector below
+    is in this order
+  - `responders` — machine ids then grid-forming inverter ids: the order of each
+    `pickup` and `capped` vector
+  - `outcome` — `:shared`, or one of the two refusals by name: `:no_response`
+    (nothing left responds to frequency) and `:reserve_exhausted` (no damping left,
+    every governor capped short of the loss). A screen reports a refusal; it does
+    not throw (`m8-context.md` D3).
+  - `Δω` — the settled speed deviation, pu; `NaN` for a refusal
+  - `pickup`, `capped` — per outage, as `pickup_shares` returns them; all zero and
+    `false` for a refusal
+  - `flow` — per outage, the post-outage active power on every branch, pu, in the
+    model's orientation; empty for a refusal
+
+The machine's bus stays in the network: losing a generator does not remove a
+substation, so every branch still carries what passes through it.
+"""
+struct DCGeneratorOutages
+    base::DCPowerFlow
+    machines::Vector{Symbol}
+    responders::Vector{Symbol}
+    outcome::Vector{Symbol}
+    Δω::Vector{Float64}
+    pickup::Vector{Vector{Float64}}
+    capped::Vector{Vector{Bool}}
+    flow::Vector{Vector{Float64}}
+end
+
+"""
+    dc_generator_outages(net::NetworkModel) -> DCGeneratorOutages
+
+Screen every single-machine outage of `net` with the linear (DC) power flow. The
+lost power is shared by the remaining machines' droop and damping and the
+grid-forming inverters' droop ([`pickup_shares`](@ref)), and the flows follow from
+the new injections with one solve against the same sparse factorisation
+[`dc_line_outages`](@ref) uses: `B` does not change, because the bus stays.
+
+The result is **the same numbers as rebuilding the model without the machine, adding
+each pickup to its responder's schedule and calling [`dc_powerflow`](@ref)**, to
+round-off. The reference bus is a gauge here as in the line screen, so losing the
+slack bus's own machine is screened like any other: the pickups rebalance every
+injection and nothing is left for the reference to absorb.
+
+Every machine is screened, a negative-`P0` one too (losing it raises frequency).
+Inverter outages are not screened. An outage with no steady state is reported as a
+refusal in `outcome`, never thrown.
+"""
+function dc_generator_outages(net::NetworkModel)
+    base = dc_powerflow(net)
+    topo = branch_topology(net)
+    n, m = length(net.buses), length(topo.src)
+    r = _responders(net)
+    nm = r.n_machines
+    outcome = Vector{Symbol}(undef, nm)
+    Δω = fill(NaN, nm)
+    pickup = Vector{Vector{Float64}}(undef, nm)
+    capped = Vector{Vector{Bool}}(undef, nm)
+    flow = Vector{Vector{Float64}}(undef, nm)
+    # The same susceptances and the same reduced matrix as the line screen (D4).
+    b = inv.(topo.X)
+    Br, keep = _dc_reduced_susceptance(net, b)
+    F = n > 1 ? LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Br)) : nothing
+    θ = zeros(Float64, n)
+    alive = trues(length(r.ids))
+    for k in 1:nm
+        alive[k] = false
+        status, dω, pk, cp = _pickup_solve(r.g, r.d, r.h, alive, r.P[k])
+        alive[k] = true
+        outcome[k] = status
+        pickup[k] = pk
+        capped[k] = collect(cp)
+        if status !== :shared
+            flow[k] = Float64[]
+            continue
+        end
+        Δω[k] = dω
+        # The machine leaves its bus; every responder adds its pickup at its own.
+        P = copy(base.P)
+        P[r.bus[k]] -= r.P[k]
+        for i in eachindex(pk)
+            P[r.bus[i]] += pk[i]
+        end
+        F === nothing || (θ[keep] = F \ P[keep])
+        flow[k] = Float64[b[e] * (θ[topo.src[e]] - θ[topo.dst[e]]) for e in 1:m]
+    end
+    return DCGeneratorOutages(base, Symbol[mc.id for mc in net.machines], r.ids,
+                              outcome, Δω, pickup, capped, flow)
+end

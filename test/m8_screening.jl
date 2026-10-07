@@ -765,3 +765,252 @@ const _M8_C9 = (:L14, :L45, :L56, :L36, :L67, :L78, :L82, :L89, :L94)   # branch
         @test b.solution[3].flow == r.solution.flow
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 4: generator outages in the DC screen, the lost power shared by droop and
+# damping (`pickup_shares`, `dc_generator_outages`; m8-context.md D2, D7).
+#
+# What the swing tier's loads do was READ before any assertion (Hurdle 15.1): the tier
+# refuses a `Load` outright and holds `E′` at every bus, so it has no voltage term at
+# all, and a load is a negative-P0 machine whose only response is its `D`. So the
+# oracle fixture is machines only, one per bus, lossless, and the DC screen reads the
+# very same object.
+#
+# Closed-form values and the cross-tier band were written down before the first run
+# (`W:\temp\claude\gridsim-m8\step4_predictions.md`): BAND 1e-7 pu on every pickup and
+# on every survivor's speed. Measured: ≤ 1.5e-10 and ≤ 1.5e-12.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Every number INVENTED, and declared so. Step 2's mesh plus B–E, so no bridge and no
+# cut VERTEX: the swing tier's trip zeroes every branch at the lost machine's bus, and
+# the survivors must stay one grid. Machine bases differ from S_base and from each
+# other, and R and D differ, so a weight on the wrong base or a dropped term moves an
+# answer. Loads are negative-P0 machines (the swing tier's convention).
+#   system base:  G1 1/R 60, D 3.0, headroom .70 | G2 37.5, 3.0, .40 | G3 20, 1.8, .05
+#                 LB D 2.0 | LD D 1.5
+function _m8_genmesh(; damp = 1.0, gov = true, gfm = false, slack = :A)
+    R(r) = gov ? r : Inf
+    ms = [Machine(:G1, :A, 300.0, 5.0, 1.0damp, 0.25, 1.05, 150.0, R(0.05), 220.0, 0.5),
+          Machine(:LB, :B, 100.0, 1.0, 2.0damp, 0.25, 1.00, -130.0),
+          Machine(:G2, :C, 150.0, 4.0, 2.0damp, 0.25, 1.04, 60.0, R(0.04), 100.0, 0.4),
+          Machine(:LD, :D, 100.0, 1.0, 1.5damp, 0.25, 1.00, -120.0)]
+    # The inverter variant puts a grid-forming inverter at E instead of G3: K_p on the
+    # system base 0.125·100/300 = 1/24.
+    invs = gfm ? [Inverter(:I3, :E, :grid_forming, 300.0, 40.0; K_p = 0.125, V_set = 1.02)] :
+                 Inverter[]
+    gfm || push!(ms, Machine(:G3, :E, 120.0, 3.5, 1.5damp, 0.25, 1.02, 40.0, R(0.06), 45.0, 0.6))
+    br = [Branch(:AB, :A, :B, 0.10, 500.0), Branch(:AC, :A, :C, 0.20, 500.0),
+          Branch(:BC, :B, :C, 0.15, 500.0), Branch(:BD, :B, :D, 0.25, 500.0),
+          Branch(:CD, :C, :D, 0.30, 500.0), Branch(:DE, :D, :E, 0.10, 500.0),
+          Branch(:BE, :B, :E, 0.20, 500.0)]
+    NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E)], br, ms;
+                 slack, inverters = invs)
+end
+
+# Brute force for one generator outage: the model without machine `k`, every
+# responder's schedule raised by its pickup, solved again.
+function _m8_gen_rebuilt(net::NetworkModel, k::Int, pk::Vector{Float64}, resp::Vector{Symbol})
+    Sb = net.S_base
+    ms = Machine[]
+    for (i, m) in pairs(net.machines)
+        i == k && continue
+        P = m.P0 + pk[findfirst(==(m.id), resp)] * Sb
+        push!(ms, Machine(m.id, m.bus, m.S_rated, m.H, m.D, m.Xd′, m.E′, P, m.R,
+                          max(m.Pmax, P), m.Tg))
+    end
+    invs = [GridSim._inverter_with(iv; P0 = iv.P0 + pk[findfirst(==(iv.id), resp)] * Sb)
+            for iv in net.inverters]
+    dc_powerflow(NetworkModel(Sb, net.f0, net.buses, net.branches, ms, net.loads;
+                              slack = net.slack, inverters = invs)).flow
+end
+
+# The swing tier after tripping `lost`, read at `T`: each element's change in
+# ELECTRICAL export (Σ branch_power out of its bus, after − before) — the network
+# side, never `ΔPm − D·ω`, which is the rule's own formula — and every vertex's speed.
+function _m8_swing_settled(net::NetworkModel, lost::Symbol, Ts)
+    eng = SwingEngine(net; reltol = 1e-10, abstol = 1e-12, dt = 0.05)
+    export_of(bus) = sum((br.from === bus ? branch_power(eng, br.from, br.to) :
+                          br.to === bus ? branch_power(eng, br.to, br.from) : 0.0)
+                         for br in net.branches)
+    e0 = Dict(b.id => export_of(b.id) for b in net.buses)
+    inject!(eng, TripGenerator(lost))
+    out = []
+    for T in Ts
+        while eng.integrator.t < T - 1e-9
+            step!(eng, 0.05)
+        end
+        st = current_state(eng)
+        push!(out, (; Δexport = Dict(b.id => export_of(b.id) - e0[b.id] for b in net.buses),
+                      ω = st.ω, ΔPm = st.ΔPm))
+    end
+    return out
+end
+
+@testset "M8 step 4 — generator outages in the DC screen, shared by droop and damping" begin
+    net = _m8_genmesh()
+    order = [:G1, :LB, :G2, :LD, :G3]       # machines sort by bus
+
+    @testset "the swing tier has no load object and no voltage term (read first)" begin
+        # The swing tier refuses a `Load` by name, so nothing there can draw by
+        # voltage; the oracle fixture's loads are negative-P0 machines and both the DC
+        # screen and the swing tier read that one object.
+        withload = NetworkModel(100.0, 50.0, [Bus(:A, 230.0), Bus(:B, 230.0)],
+            [Branch(:AB, :A, :B, 0.1, 500.0)],
+            [Machine(:G1, :A, 100.0, 5.0, 1.0, 0.25, 1.0, 50.0),
+             Machine(:M2, :B, 100.0, 5.0, 1.0, 0.25, 1.0, -40.0)],
+            [Load(:D, :B, 10.0, 0.0, 0.0, 0.0, 1.0)])
+        msg = try; SwingEngine(withload); ""; catch e; e.msg; end
+        @test occursin("Load", msg) && occursin("negative", msg)
+        @test SwingEngine(net) isa SwingEngine
+        @test dc_powerflow(net).P ≈ [1.5, -1.3, 0.6, -1.2, 0.4]
+    end
+
+    @testset "closed form: uncapped, capped, a load lost, an inverter sharing" begin
+        s = pickup_shares(net, :G3)
+        @test s.responders == order
+        @test s.Δω ≈ -0.4 / 107 rtol = 1e-14
+        @test s.pickup ≈ [63, 2.0, 40.5, 1.5, 0] .* (0.4 / 107) rtol = 1e-14
+        @test s.pickup[5] === 0.0 && !any(s.capped)
+        @test sum(s.pickup) ≈ 0.4 rtol = 1e-14
+        # G3's governor reaches its 0.05 headroom at x = 2.5e-3; past that the slope
+        # loses its 1/R = 20.
+        c = pickup_shares(net, :G2)
+        x = 2.5e-3 + (0.6 - 88.3 * 2.5e-3) / 68.3
+        @test c.Δω ≈ -x rtol = 1e-14
+        @test c.capped == [false, false, false, false, true]
+        # The cap is on the GOVERNOR only: capped G3 settles at headroom + D·|Δω|,
+        # 1.45 MW above its Pmax, because damping is outside the saturation.
+        @test c.pickup[5] ≈ 0.05 + 1.8x rtol = 1e-14
+        @test 100 * c.pickup[5] > 45.0 - 40.0
+        @test sum(c.pickup) ≈ 0.6 rtol = 1e-14
+        # Losing a negative-P0 machine is a load trip: frequency rises, and every
+        # governor commands less with no floor, as in the swing tier.
+        l = pickup_shares(net, :LB)
+        @test l.Δω ≈ 1.3 / 126.8 rtol = 1e-14
+        @test all(l.pickup .<= 0)
+        @test sum(l.pickup) ≈ -1.3 rtol = 1e-14
+        # A grid-forming inverter shares by its droop gain 1/K_p (24 on the system
+        # base), uncapped and undamped; leaving it out would change Δω.
+        g = pickup_shares(_m8_genmesh(gfm = true), :G2)
+        @test g.responders == [:G1, :LB, :G2, :LD, :I3]
+        @test g.Δω ≈ -0.6 / 90.5 rtol = 1e-14
+        @test g.pickup[5] ≈ 24 * 0.6 / 90.5 rtol = 1e-14
+    end
+
+    @testset "zero damping is droop alone; damping moves Δω by the predicted amount" begin
+        z = pickup_shares(_m8_genmesh(damp = 0.0), :G3)
+        @test z.Δω ≈ -0.4 / 97.5 rtol = 1e-14
+        @test z.pickup ≈ [60, 0, 37.5, 0, 0] .* (0.4 / 97.5) rtol = 1e-14
+        @test pickup_shares(net, :G3).Δω - z.Δω ≈ 0.4 / 97.5 - 0.4 / 107 rtol = 1e-12
+    end
+
+    @testset "the refusals are exactly two, named; a damped huge loss is reported" begin
+        msg(f) = try; f(); ""; catch e; e isa ArgumentError ? e.msg : rethrow(); end
+        # No governor and no damping: nothing responds.
+        none = _m8_genmesh(damp = 0.0, gov = false)
+        @test occursin("nothing left responds", msg(() -> pickup_shares(none, :G3)))
+        @test all(==(:no_response), dc_generator_outages(none).outcome)
+        # No damping, 0.45 pu of headroom left against a 1.5 pu loss.
+        zd = _m8_genmesh(damp = 0.0)
+        @test occursin("no damping is left", msg(() -> pickup_shares(zd, :G1)))
+        zs = dc_generator_outages(zd)
+        @test zs.outcome == [:reserve_exhausted, :shared, :shared, :shared, :shared]
+        @test isnan(zs.Δω[1]) && isempty(zs.flow[1]) && all(iszero, zs.pickup[1])
+        # The same loss with damping: both governors capped, a 6.3 Hz deviation —
+        # reported, not refused (Hurdle 15.4).
+        big = pickup_shares(net, :G1)
+        x = 0.4 / 37.5 + (1.5 - (65.8 * 2.5e-3 + 45.8 * (0.4 / 37.5 - 2.5e-3))) / 8.3
+        @test big.Δω ≈ -x rtol = 1e-12
+        @test big.capped == [false, false, true, false, true]
+        @test 50 * abs(big.Δω) > 6.0
+        # ΣD = 0 and the headroom left EXACTLY equal to the loss: every Δω past the
+        # last cap balances, and the smallest |Δω| (that cap) is returned.
+        # Numbers exact in binary (1/R = 16, headroom 0.5, bend at 1/32), so the tie
+        # is a tie and not a rounding either way.
+        two(ms) = NetworkModel(100.0, 50.0, [Bus(:A, 230.0), Bus(:B, 230.0)],
+                               [Branch(:AB, :A, :B, 0.1, 500.0)], ms)
+        gov(P0) = Machine(:G1, :A, 100.0, 5.0, 0.0, 0.25, 1.0, P0, 0.0625, P0 + 50.0)
+        tie = two([gov(50.0), Machine(:G2, :B, 100.0, 5.0, 0.0, 0.25, 1.0, 50.0),
+                   Machine(:L, :B, 100.0, 5.0, 0.0, 0.25, 1.0, -100.0)])
+        e = pickup_shares(tie, :G2)
+        @test e.Δω === -1 / 32 && e.capped == [true, false, false]
+        @test e.pickup[1] === 0.5
+        # A load lost: frequency rises, no cap on the way up.
+        @test pickup_shares(tie, :L).Δω === 1.0 / 16
+        # The governor itself lost: only a governor-free, undamped machine is left.
+        @test occursin("nothing left responds", msg(() -> pickup_shares(tie, :G1)))
+        # A machine producing nothing leaves nothing to share, even with no responder.
+        nul = two([Machine(:G1, :A, 100.0, 5.0, 0.0, 0.25, 1.0, 50.0),
+                   Machine(:G0, :B, 100.0, 5.0, 0.0, 0.25, 1.0, 0.0),
+                   Machine(:L, :B, 100.0, 5.0, 0.0, 0.25, 1.0, -50.0)])
+        @test pickup_shares(nul, :G0).Δω === 0.0
+        # case9 as M6 builds it carries no droop (`R = Inf`) and no damping, so every
+        # generator outage is the first refusal: it needs droop data, invented and
+        # declared, before it can screen one (Hurdle 15.4).
+        c9 = dc_generator_outages(_ed_case9())
+        @test c9.machines == [:G1, :G2, :G3] && all(==(:no_response), c9.outcome)
+        # Inverter outages are not screened.
+        @test occursin("not a machine", msg(() -> pickup_shares(_m8_genmesh(gfm = true), :I3)))
+    end
+
+    @testset "the screen's flows ARE rebuild-and-re-solve, to round-off" begin
+        for nt in (net, _m8_genmesh(gfm = true))
+            s = dc_generator_outages(nt)
+            @test s.machines == [m.id for m in nt.machines]
+            for k in eachindex(s.machines)
+                @test s.outcome[k] === :shared
+                @test s.pickup[k] == pickup_shares(nt, s.machines[k]).pickup
+                bf = _m8_gen_rebuilt(nt, k, s.pickup[k], s.responders)
+                @test maximum(abs.(s.flow[k] .- bf)) <= 100eps() * maximum(abs, bf)
+            end
+        end
+    end
+
+    @testset "losing the slack bus's own machine: the reference is a gauge" begin
+        # G1 sits on the slack bus A. The pickups rebalance every injection, so nothing
+        # is left for the reference, and moving the reference moves no flow.
+        a = dc_generator_outages(_m8_genmesh(slack = :A))
+        d = dc_generator_outages(_m8_genmesh(slack = :D))
+        @test a.outcome[1] === :shared
+        for k in eachindex(a.flow)
+            @test maximum(abs.(a.flow[k] .- d.flow[k])) <= 100eps() * maximum(abs, a.flow[k])
+        end
+    end
+
+    @testset "the swing tier settles to the same pickups and Δω (band 1e-7, stated first)" begin
+        band = 1e-7
+        for (nt, lost) in ((net, :G3), (net, :G2), (_m8_genmesh(gfm = true), :G2))
+            s = pickup_shares(nt, lost)
+            bus_of = Dict(vcat([m.id => m.bus for m in nt.machines],
+                               [i.id => i.bus for i in nt.inverters]))
+            lostv = nt.bus_index[bus_of[lost]]
+            # Settled, not passing through: the same answer at 300 s and at 450 s.
+            for o in _m8_swing_settled(nt, lost, (300.0, 450.0))
+                for (i, r) in pairs(s.responders)
+                    r === lost && continue
+                    @test abs(o.Δexport[bus_of[r]] - s.pickup[i]) <= band
+                end
+                # Every survivor's own speed, not only the average.
+                for v in eachindex(nt.buses)
+                    v == lostv || @test abs(o.ω[v] - s.Δω) <= band
+                end
+                # The capped governor sits at its headroom (the out-of-domain guard
+                # lets it reach 9e-11 past it), and the machine above its Pmax.
+                if lost === :G2 && isempty(nt.inverters)
+                    @test abs(o.ΔPm[5] - 0.05) <= 1e-9
+                    @test o.Δexport[:E] > 0.05 + band
+                end
+            end
+        end
+    end
+
+    @testset "zero damping: the swing tier never settles, so the algebra is the check" begin
+        # Measured, not assumed: with D = 0 only the governors act on the swings, and
+        # in this fixture the machines are still swinging against each other after
+        # 300 s (spread 3e-3 pu). `pickup_shares`' droop-alone answer is checked in
+        # closed form above; here it is recorded that no settled run exists to hold
+        # it against.
+        o = only(_m8_swing_settled(_m8_genmesh(damp = 0.0), :G3, (300.0,)))
+        @test maximum(o.ω[1:4]) - minimum(o.ω[1:4]) > 1e-4
+    end
+end

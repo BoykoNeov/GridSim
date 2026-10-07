@@ -150,6 +150,12 @@ disagreement, classified as "DC fine, AC overloaded", "DC overloaded, AC fine", 
   case it is the same as in case9 (D0 Hurdle 14.2).
 - **Sabotages:** drop `D` from the weights; build the weights from `Machine.R`
   on the machine's own base (the per-unit mutation); cap applied to the damping term too.
+- **Re-scoped at step 4 (`m8-context.md` D7):** grid-forming inverters share the
+  loss too (their droop, uncapped), because the swing tier's do and weights from
+  `machine_arrays` alone would drop them in silence; a fourth sabotage leaves them
+  out. Zero damping is checked in closed form only: the swing run never settles
+  without damping, measured. Losing the slack's machine is decided for DC (a
+  gauge); the AC choice moves to step 5 as the user's.
 
 ### Step 5 — Generator outages in the AC screen: a shared reference (Hurdle 15.5)
 
