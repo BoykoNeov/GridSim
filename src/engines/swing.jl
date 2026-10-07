@@ -1452,7 +1452,11 @@ an orientation mistake writing them out twice at two call sites.
 """
 function branch_power(eng::SwingEngine, from::Symbol, to::Symbol)
     b = _find_branch(eng, from, to)
-    ba = branch_arrays(eng.model)
+    # `branch_topology`, not `branch_arrays`: only the ends are read, and
+    # `branch_arrays` computes `K` from a machine at every bus, so it refused every
+    # model with a grid-forming inverter and took this read-out with it (found at M8
+    # step 4, reading the swing tier's pickups on an inverter model).
+    ba = branch_topology(eng.model)
     K = eng.params[eng.K_pidx[eng.branch_to_edge[b]]]
     u = eng.integrator.u
     # The branch's OWN orientation (`ba.src`/`ba.dst`), never the graph edge's:
@@ -1537,7 +1541,7 @@ post-event coupling for pre-event samples.
 function branch_power_series(eng::SwingEngine, from::Symbol, to::Symbol)
     b = _find_branch(eng, from, to)
     _branch_series_guard(eng.log, eng.model, b, from, to)
-    ba = branch_arrays(eng.model)
+    ba = branch_topology(eng.model)     # the ends only; see `branch_power`
     K = eng.params[eng.K_pidx[eng.branch_to_edge[b]]]
     i, j = eng.δ_idx[ba.src[b]], eng.δ_idx[ba.dst[b]]
     sol = eng.integrator.sol
