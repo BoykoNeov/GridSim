@@ -307,6 +307,15 @@ struct LineScreenComparison
     base_real::Vector{Float64}
 end
 
+# Which way two lists of overloaded branches differ, once AC has flows to compare:
+# `:agree`, `:dc_missed`, `:dc_false_alarm` or `:mixed`. One rule for both screens.
+function _disagreement(dc_over::Vector{Symbol}, ac_over::Vector{Symbol})
+    missed = setdiff(ac_over, dc_over)
+    false_alarm = setdiff(dc_over, ac_over)
+    return isempty(missed) ? (isempty(false_alarm) ? :agree : :dc_false_alarm) :
+           (isempty(false_alarm) ? :dc_missed : :mixed)
+end
+
 # The two parts of the miss on every branch of `net`: `dc` in model order, `sol` read
 # BY BRANCH ID. A branch absent from `sol` (the outaged one) reads 0.0 in both.
 function _screen_miss(net::NetworkModel, dc::Vector{Float64}, sol::ACPowerFlow)
@@ -369,10 +378,7 @@ function compare_line_screens(net::NetworkModel, dc::DCLineOutages, ac::ACLineOu
             class[k] = :dc_blind
             continue
         end
-        missed = setdiff(ac_over[k], dc_over[k])
-        false_alarm = setdiff(dc_over[k], ac_over[k])
-        class[k] = isempty(missed) ? (isempty(false_alarm) ? :agree : :dc_false_alarm) :
-                   (isempty(false_alarm) ? :dc_missed : :mixed)
+        class[k] = _disagreement(dc_over[k], ac_over[k])
     end
     base_reactive, base_real = _screen_miss(net, dc.base.flow, ac.base)
     return LineScreenComparison(ids, copy(dc.splits), judged(dc.base.flow), dc_outcome,
@@ -1069,4 +1075,302 @@ function ac_generator_outages(net::NetworkModel)
     end
     return ACGeneratorOutages(base, Symbol[m.id for m in net.machines], r.ids, outcome,
                               Δω, pickup, capped, solution, over, low, reason)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 6: the report — every outage at both fidelities, side by side, and the one
+# decision the screens left open (m8-context.md D9, Hurdle 14.2).
+#
+# A BRIDGE WHOSE CUT-OFF SIDE IS A LONE SOURCE IS SCREENED AS THAT SOURCE'S OUTAGE
+# (the user's choice, 2026-10-07). "A lone source" means: that side carries exactly one
+# machine and nothing else — no load and no inverter of either kind. Then the two
+# outages are the SAME outage for the grid that is left, exactly and not
+# approximately: `NetworkModel` has no shunt anywhere (no line charging, no taps), so
+# once the machine is gone that side injects nothing, carries no current, and every bus
+# on it sits at the voltage of the bridge's near end. Whether the bridge is open or
+# closed then changes nothing the rest of the grid sees. Anything else on the cut-off
+# side — a load, an inverter, a second machine — makes losing the bridge a different
+# question (does that island survive alone?), and the bridge stays a split. So does a
+# bridge with a lone source on BOTH sides: no one machine is "the" outage there.
+#
+# The graph facts do not move: `dc_line_outages` and `ac_line_outages` still report the
+# bridge as a split. The mapping lives here, in the layer that joins the line screens
+# to the generator screens, and the buses it cuts off are named in every row it fills:
+# they are dead in the line outage, so they are never judged against the voltage band.
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    lone_source_bridges(net::NetworkModel) -> (; machine, cut_off)
+
+For each branch, in model order: the machine whose outage losing that branch **is**
+(`machine`, `:none` otherwise), and the buses losing it cuts off with that machine
+(`cut_off`, empty otherwise).
+
+A branch maps to a machine when it is a bridge (from the graph, as in
+[`dc_line_outages`](@ref)) and one side of it carries exactly one machine and nothing
+else: no load and no inverter of either kind (`m8-context.md` D9). The side is found
+from the graph, never from which end the branch is declared at. A bridge with a lone
+source on both sides maps to `:none`.
+"""
+function lone_source_bridges(net::NetworkModel)
+    topo = branch_topology(net)
+    n, m = length(net.buses), length(topo.src)
+    splits = _bridge_mask(net)
+    machine = fill(:none, m)
+    cut_off = [Symbol[] for _ in 1:m]
+    # A bus holding anything that is not a machine disqualifies its side.
+    occupied = falses(n)
+    for l in net.loads
+        occupied[net.bus_index[l.bus]] = true
+    end
+    for iv in net.inverters
+        occupied[net.bus_index[iv.bus]] = true
+    end
+    adj = [Tuple{Int,Int}[] for _ in 1:n]          # (neighbour, edge)
+    for e in 1:m
+        push!(adj[topo.src[e]], (topo.dst[e], e))
+        push!(adj[topo.dst[e]], (topo.src[e], e))
+    end
+    for k in 1:m
+        splits[k] || continue
+        # The side of `src[k]` once `k` is gone; the other side is everything else.
+        near = falses(n)
+        stack = [topo.src[k]]
+        near[topo.src[k]] = true
+        while !isempty(stack)
+            v = pop!(stack)
+            for (w, e) in adj[v]
+                (e == k || near[w]) && continue
+                near[w] = true
+                push!(stack, w)
+            end
+        end
+        lone = Tuple{Int,Vector{Int}}[]
+        for part in (findall(near), findall(!, near))
+            any(occupied[part]) && continue
+            ms = reduce(vcat, (net.machines_at_bus[v] for v in part); init = Int[])
+            length(ms) == 1 && push!(lone, (ms[1], part))
+        end
+        length(lone) == 1 || continue
+        mi, part = lone[1]
+        machine[k] = net.machines[mi].id
+        cut_off[k] = Symbol[net.buses[v].id for v in part]
+    end
+    return (; machine, cut_off)
+end
+
+"""
+    GeneratorScreenComparison
+
+The DC and AC generator screens of one model, side by side — the generator half of
+what [`LineScreenComparison`](@ref) is for lines.
+
+  - `machines` — machine ids, in model order; every vector is in this order.
+  - `dc_outcome` — `:secure` or `:overload` (the DC flows judged against the ratings
+    the AC solve is held to, as in `compare_line_screens`), or the DC screen's refusal
+    (`:no_response`, `:reserve_exhausted`).
+  - `ac_outcome` — the AC screen's outcome.
+  - `dc_over`, `ac_over` — the branches each screen puts over its rating. A
+    grid-forming inverter over its rating is not a branch and is not listed here.
+  - `class` — per outage: `:refused` (both screens refuse, the same way),
+    `:refusals_differ` (only one refuses, or they refuse differently), then the line
+    comparison's `:dc_blind`, `:agree`, `:dc_missed`, `:dc_false_alarm`, `:mixed`.
+    `:dc_blind` here includes a grid-forming inverter over its rating.
+  - `Δω_dc`, `Δω_ac` — the settled speed deviation at each fidelity, pu; `NaN` where
+    that fidelity solved nothing. They differ by the change in losses and in load
+    draw, which only the AC solve shares out.
+  - `reactive`, `real` — the miss on each branch, split as in `LineScreenComparison`;
+    empty where AC has no flows.
+"""
+struct GeneratorScreenComparison
+    machines::Vector{Symbol}
+    dc_outcome::Vector{Symbol}
+    ac_outcome::Vector{Symbol}
+    dc_over::Vector{Vector{Symbol}}
+    ac_over::Vector{Vector{Symbol}}
+    class::Vector{Symbol}
+    Δω_dc::Vector{Float64}
+    Δω_ac::Vector{Float64}
+    reactive::Vector{Vector{Float64}}
+    real::Vector{Vector{Float64}}
+end
+
+const _SHARE_REFUSALS = (:no_response, :reserve_exhausted)
+
+"""
+    compare_generator_screens(net, dc::DCGeneratorOutages, ac::ACGeneratorOutages)
+        -> GeneratorScreenComparison
+
+Put the DC and AC generator screens of `net` side by side: per outage, both outcomes,
+every disagreement classified, both `Δω`, and the miss on each branch (see
+[`GeneratorScreenComparison`](@ref)). Takes the model for the ratings, as
+[`compare_line_screens`](@ref) does, and refuses screens of another model.
+"""
+function compare_generator_screens(net::NetworkModel, dc::DCGeneratorOutages,
+                                   ac::ACGeneratorOutages)
+    ids = Symbol[mc.id for mc in net.machines]
+    bids = Symbol[b.id for b in net.branches]
+    (dc.machines == ids && ac.machines == ids && dc.base.branches == bids &&
+     ac.base.branches == bids) || throw(ArgumentError(
+        "compare_generator_screens: the screens are not of this model — machines " *
+        "$(dc.machines) (DC) and $(ac.machines) (AC) against $ids."))
+    nm = length(ids)
+    dc_outcome = Vector{Symbol}(undef, nm)
+    dc_over = [Symbol[] for _ in 1:nm]
+    ac_over = [Symbol[] for _ in 1:nm]
+    class = Vector{Symbol}(undef, nm)
+    reactive = [Float64[] for _ in 1:nm]
+    real = [Float64[] for _ in 1:nm]
+    for k in 1:nm
+        if dc.outcome[k] in _SHARE_REFUSALS
+            dc_outcome[k] = dc.outcome[k]
+        else
+            dc_over[k] = Symbol[bids[e] for e in _rating_violations(net, abs.(dc.flow[k]))]
+            dc_outcome[k] = isempty(dc_over[k]) ? :secure : :overload
+        end
+        append!(ac_over[k], (d.id for d in ac.over[k] if d.kind === :branch))
+        sol = ac.solution[k]
+        (sol === nothing || isempty(dc.flow[k])) ||
+            ((reactive[k], real[k]) = _screen_miss(net, dc.flow[k], sol))
+        o = ac.outcome[k]
+        if dc_outcome[k] in _SHARE_REFUSALS || o in _SHARE_REFUSALS
+            class[k] = dc_outcome[k] === o ? :refused : :refusals_differ
+        elseif o === :voltage || o === :no_solution || any(d -> d.kind !== :branch, ac.over[k])
+            class[k] = :dc_blind
+        else
+            class[k] = _disagreement(dc_over[k], ac_over[k])
+        end
+    end
+    return GeneratorScreenComparison(ids, dc_outcome, copy(ac.outcome), dc_over, ac_over,
+                                     class, copy(dc.Δω), copy(ac.Δω), reactive, real)
+end
+
+"""
+    OutageScreen
+
+Every single outage of a model — each branch, then each machine — at both
+fidelities, one row each ([`outage_screen`](@ref)). Every vector is in that row order.
+
+  - `kind` — `:branch` or `:machine`; `id` — the element lost.
+  - `via` — for a branch that cuts off a lone source, that machine
+    ([`lone_source_bridges`](@ref)); its row is the machine's row. `:none` otherwise.
+  - `cut_off` — the buses that branch cuts off with it: dead in this outage, so never
+    in `low`. Empty for every other row.
+  - `dc_outcome`, `ac_outcome`, `class` — as the two comparisons report them; a bridge
+    that cuts off anything other than a lone source is `:splits` in all three.
+  - `dc_flow` — the DC post-outage flow on every branch, pu, model order; empty where
+    DC solved nothing.
+  - `dc_over` — branch ids DC puts over their rating. `ac_over` — every element AC
+    puts over its rating, `(kind, id, mva, rating)` in MVA.
+  - `low` — every LIVE bus outside the voltage band, `(bus, Vm)`.
+  - `reason` — the AC screen's `:no_solution` reason, `:none` otherwise.
+  - `Δω_dc`, `Δω_ac` — machine rows and the rows they fill; `NaN` for a line.
+  - `reactive`, `real` — the miss on each branch (see [`LineScreenComparison`](@ref)).
+
+The four screens and both comparisons it was built from are kept, under `dc_lines`,
+`ac_lines`, `lines`, `dc_generators`, `ac_generators` and `generators`.
+"""
+struct OutageScreen
+    kind::Vector{Symbol}
+    id::Vector{Symbol}
+    via::Vector{Symbol}
+    cut_off::Vector{Vector{Symbol}}
+    dc_outcome::Vector{Symbol}
+    ac_outcome::Vector{Symbol}
+    class::Vector{Symbol}
+    dc_flow::Vector{Vector{Float64}}
+    dc_over::Vector{Vector{Symbol}}
+    ac_over::Vector{Vector{_OverEntry}}
+    low::Vector{Vector{_LowEntry}}
+    reason::Vector{Symbol}
+    Δω_dc::Vector{Float64}
+    Δω_ac::Vector{Float64}
+    reactive::Vector{Vector{Float64}}
+    real::Vector{Vector{Float64}}
+    dc_lines::DCLineOutages
+    ac_lines::ACLineOutages
+    lines::LineScreenComparison
+    dc_generators::DCGeneratorOutages
+    ac_generators::ACGeneratorOutages
+    generators::GeneratorScreenComparison
+end
+
+"""
+    outage_screen(net::NetworkModel) -> OutageScreen
+
+Screen every single outage of `net` — each branch, then each machine — with the linear
+(DC) and the nonlinear (AC) power flow, and put the two side by side, with every
+disagreement classified ([`OutageScreen`](@ref)).
+
+It runs the four screens ([`dc_line_outages`](@ref), [`ac_line_outages`](@ref),
+[`dc_generator_outages`](@ref), [`ac_generator_outages`](@ref)) and both comparisons,
+so it refuses whatever they refuse, with their message: a base `ac_powerflow` does not
+accept, or a slack bus the AC generator screen cannot screen.
+
+**One decision is taken here and nowhere else** (`m8-context.md` D9, the user's
+choice): a bridge whose cut-off side carries exactly one machine and nothing else is
+screened as that machine's outage, because for the grid that is left the two are the
+same outage. Its row is the machine's row, with the cut-off buses named and left out
+of the voltage check. Every other bridge is a split.
+"""
+function outage_screen(net::NetworkModel)
+    dcl, acl = dc_line_outages(net), ac_line_outages(net)
+    lines = compare_line_screens(net, dcl, acl)
+    dcg, acg = dc_generator_outages(net), ac_generator_outages(net)
+    gens = compare_generator_screens(net, dcg, acg)
+    src = lone_source_bridges(net)
+    m, nm = length(net.branches), length(net.machines)
+    N = m + nm
+    kind = [fill(:branch, m); fill(:machine, nm)]
+    id = [lines.branches; gens.machines]
+    via = [src.machine; fill(:none, nm)]
+    cut_off = [src.cut_off; [Symbol[] for _ in 1:nm]]
+    dc_outcome = Vector{Symbol}(undef, N)
+    ac_outcome = Vector{Symbol}(undef, N)
+    class = Vector{Symbol}(undef, N)
+    dc_flow = Vector{Vector{Float64}}(undef, N)
+    dc_over = Vector{Vector{Symbol}}(undef, N)
+    ac_over = Vector{Vector{_OverEntry}}(undef, N)
+    low = Vector{Vector{_LowEntry}}(undef, N)
+    reason = Vector{Symbol}(undef, N)
+    Δω_dc = fill(NaN, N)
+    Δω_ac = fill(NaN, N)
+    reactive = Vector{Vector{Float64}}(undef, N)
+    real = Vector{Vector{Float64}}(undef, N)
+    # Row `r` filled from machine `k`'s outage.
+    function from_machine!(r, k)
+        dc_outcome[r], ac_outcome[r], class[r] = gens.dc_outcome[k], gens.ac_outcome[k],
+                                                  gens.class[k]
+        dc_flow[r], dc_over[r] = dcg.flow[k], gens.dc_over[k]
+        ac_over[r], reason[r] = acg.over[k], acg.reason[k]
+        low[r] = [l for l in acg.low[k] if !(l.bus in cut_off[r])]
+        Δω_dc[r], Δω_ac[r] = gens.Δω_dc[k], gens.Δω_ac[k]
+        reactive[r], real[r] = gens.reactive[k], gens.real[k]
+        # The cut-off buses sit at their near end's voltage (no shunt, no current), so
+        # leaving them out never empties a voltage verdict; if it ever did, the rule's
+        # premise would be false, and that is not answered silently.
+        ac_outcome[r] === :voltage && isempty(low[r]) && error(
+            "outage_screen: losing $(id[r]) is a voltage outcome only on the buses it " *
+            "cuts off ($(join(cut_off[r], ", "))), which should sit at their near end's " *
+            "voltage. The lone-source rule's premise failed (m8-context.md D9).")
+        return nothing
+    end
+    for e in 1:m
+        if via[e] !== :none
+            from_machine!(e, findfirst(==(via[e]), gens.machines))
+            continue
+        end
+        dc_outcome[e], ac_outcome[e], class[e] = lines.dc_outcome[e], lines.ac_outcome[e],
+                                                  lines.class[e]
+        dc_flow[e] = dcl.splits[e] ? Float64[] : dcl.flow[e]
+        dc_over[e], ac_over[e], low[e] = lines.dc_over[e], acl.over[e], acl.low[e]
+        reason[e] = acl.reason[e]
+        reactive[e], real[e] = lines.reactive[e], lines.real[e]
+    end
+    for k in 1:nm
+        from_machine!(m + k, k)
+    end
+    return OutageScreen(kind, id, via, cut_off, dc_outcome, ac_outcome, class, dc_flow,
+                        dc_over, ac_over, low, reason, Δω_dc, Δω_ac, reactive, real,
+                        dcl, acl, lines, dcg, acg, gens)
 end

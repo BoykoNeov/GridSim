@@ -100,3 +100,27 @@ and G4, the smallest. Default (constant-impedance) loads. Four sections:
 Read D16's "What the study measured" before quoting a number. The grid-forming rows run
 with **no current limit** (D8) and most of them above their rating; the PLL column
 includes the trip's own phase-jump spike, which no rotor felt.
+
+## `outage_screen.jl`
+
+M8 step 6's report: **every single outage, at both fidelities, side by side.** Each
+line and each generator of two grids is taken out one at a time and screened with
+the linear (DC) power flow — the shortcut real screening tools start from — and with
+the full nonlinear (AC) one, and every place the two disagree gets a reason printed
+beside it. The grids are case9 **without line charging** (the model has no shunts),
+with **invented** droop and damping because published case9 has none, and M8 step 5's
+invented five-bus mesh. Both run on constant-power and on the default
+constant-impedance loads. Three sections:
+
+1. **The one decision step 6 took** (`docs/plans/m8-context.md` D9, the user's
+   choice): a line whose loss cuts off a generator sitting alone is screened as that
+   generator's outage. Checked on the numbers — the line carries nothing in the
+   generator's outage, and the bus it cuts off sits at its neighbour's voltage.
+2. **The tables** — per outage: both verdicts, the class of disagreement, the most
+   loaded branch against its rating at each fidelity, the settled frequency after a
+   generator is lost, and why.
+3. **What the tables say** — five claims, written after the tables and each asserted
+   in `test/m8_outage_screen.jl`.
+
+Read claim (d) before quoting a "secure": the screen judges line loading and voltage
+only. It has no frequency criterion, and one "secure" row settles 10.9 Hz low.

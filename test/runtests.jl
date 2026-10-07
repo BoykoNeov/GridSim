@@ -34,6 +34,12 @@ module LowInertia
 include(joinpath(@__DIR__, "..", "scripts", "low_inertia.jl"))
 end
 
+# The outage-screening report (M8 step 6) is the fourth, under the same rule: its
+# claims are asserted in `m8_outage_screen.jl`, and its two fixtures live in the script.
+module OutageScreenScript
+include(joinpath(@__DIR__, "..", "scripts", "outage_screen.jl"))
+end
+
 # The suite is split across files (M5 step 0b). Two Julia facts make the split
 # work, and both are load-bearing:
 #
@@ -72,5 +78,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m7_inverters.jl"))
     include(joinpath(@__DIR__, "m7_low_inertia.jl"))
     include(joinpath(@__DIR__, "m8_screening.jl"))
+    include(joinpath(@__DIR__, "m8_outage_screen.jl"))
 
 end

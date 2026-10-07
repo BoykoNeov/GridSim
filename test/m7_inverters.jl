@@ -169,7 +169,10 @@ end
                        :dc_line_outages,    # M8 step 2 (test/m8_screening.jl)
                        :ac_line_outages,    # M8 step 3 (test/m8_screening.jl)
                        :dc_generator_outages,    # M8 step 4: grid-forming droop shares
-                       :ac_generator_outages])   # M8 step 5: and their rating follows P
+                       :ac_generator_outages,    # M8 step 5: and their rating follows P
+                       # M8 step 6 (test/m8_outage_screen.jl): an inverter on a cut-off
+                       # side keeps a bridge a split; the report joins the four above
+                       :lone_source_bridges, :outage_screen])
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)

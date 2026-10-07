@@ -205,6 +205,10 @@ export pickup_shares, DCGeneratorOutages, dc_generator_outages
 # M8 step 5 - generator outages in the AC screen. Both checked clear against
 # `names(GLMakie)` in the `ui/` environment before being added (2026-10-07).
 export ACGeneratorOutages, ac_generator_outages
+# M8 step 6 - the report. All five checked clear against `names(GLMakie)` in the
+# `ui/` environment before being added (2026-10-07).
+export lone_source_bridges, GeneratorScreenComparison, compare_generator_screens
+export OutageScreen, outage_screen
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model
