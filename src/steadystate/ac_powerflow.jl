@@ -137,8 +137,13 @@ the test that says so is an `==`.
 
 `has_source` is true where a machine or a grid-forming inverter sits — the buses
 that hold a voltage, which is what `_holds_voltage` means by a generator bus.
+
+`skip_machine = k` leaves machine `k` out of every column, as if it were not in the
+model (M8 step 5): the generator screen's view of the model after losing it, which
+cannot be built as a `NetworkModel` because its schedule no longer balances. The
+default `0` skips nothing, and is what `ac_powerflow` reads.
 """
-function _ac_schedule(net::NetworkModel)
+function _ac_schedule(net::NetworkModel; skip_machine::Int = 0)
     n = length(net.buses)
     Pgen  = zeros(Float64, n)
     V_set = fill(NaN, n)
@@ -147,6 +152,7 @@ function _ac_schedule(net::NetworkModel)
     has_source = falses(n)
     ma = machine_arrays(net)
     for k in eachindex(ma.bus)
+        k == skip_machine && continue
         v = ma.bus[k]
         m = net.machines[k]
         if has_source[v]
@@ -749,31 +755,7 @@ function _ac_solve(net::NetworkModel, abstol::Float64, maxiters::Int,
     Qload = [sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
     Pgen  = Pnet .+ Pload
 
-    # Branch flows at BOTH ends, from the series admittance and the solved voltages
-    # — not from `Y`, so that the losses identity in the tests compares two things
-    # that were computed from different data (`m6-tasks.md` step 3).
-    nb = length(net.branches)
-    flow     = Vector{Float64}(undef, nb)
-    flow_rev = Vector{Float64}(undef, nb)
-    qflow     = Vector{Float64}(undef, nb)
-    qflow_rev = Vector{Float64}(undef, nb)
-    loss      = Vector{Float64}(undef, nb)
-    mva       = Vector{Float64}(undef, nb)
-    Vc = ComplexF64[Vm[v] * cis(θ[v]) for v in 1:n]
-    for (e, br) in pairs(net.branches)
-        f, t = net.bus_index[br.from], net.bus_index[br.to]
-        y = inv(complex(br.R, br.X))
-        I = y * (Vc[f] - Vc[t])
-        Sf = Vc[f] * conj(I)
-        St = Vc[t] * conj(-I)
-        flow[e], qflow[e] = real(Sf), imag(Sf)
-        flow_rev[e], qflow_rev[e] = real(St), imag(St)
-        loss[e] = real(Sf) + real(St)
-        # The rating is a property of the conductor, so it is the LARGER end that
-        # has to fit — on a lossy branch the two differ, and taking the sending end
-        # alone would pass a line whose receiving end is over its limit.
-        mva[e] = max(abs(Sf), abs(St))
-    end
+    flow, flow_rev, qflow, qflow_rev, loss, mva = _ac_branch_flows(net, Vm, θ)
 
     what = "ac_powerflow"
     low = _voltage_band_violations(net, Vm)
@@ -814,6 +796,38 @@ function _ac_solve(net::NetworkModel, abstol::Float64, maxiters::Int,
     end
 
     return (outcome = :secure, detail = nothing, solution = sol, err = nothing)
+end
+
+# Branch flows at BOTH ends, from the series admittance and the solved voltages
+# — not from `Y`, so that the losses identity in the tests compares two things
+# that were computed from different data (`m6-tasks.md` step 3). Returns
+# `(flow, flow_rev, qflow, qflow_rev, loss, mva)`, each in branch order. Taken out of
+# `_ac_solve` at M8 step 5 so the generator screen's solve reads the same flows.
+function _ac_branch_flows(net::NetworkModel, Vm::Vector{Float64}, θ::Vector{Float64})
+    n = length(net.buses)
+    nb = length(net.branches)
+    flow     = Vector{Float64}(undef, nb)
+    flow_rev = Vector{Float64}(undef, nb)
+    qflow     = Vector{Float64}(undef, nb)
+    qflow_rev = Vector{Float64}(undef, nb)
+    loss      = Vector{Float64}(undef, nb)
+    mva       = Vector{Float64}(undef, nb)
+    Vc = ComplexF64[Vm[v] * cis(θ[v]) for v in 1:n]
+    for (e, br) in pairs(net.branches)
+        f, t = net.bus_index[br.from], net.bus_index[br.to]
+        y = inv(complex(br.R, br.X))
+        I = y * (Vc[f] - Vc[t])
+        Sf = Vc[f] * conj(I)
+        St = Vc[t] * conj(-I)
+        flow[e], qflow[e] = real(Sf), imag(Sf)
+        flow_rev[e], qflow_rev[e] = real(St), imag(St)
+        loss[e] = real(Sf) + real(St)
+        # The rating is a property of the conductor, so it is the LARGER end that
+        # has to fit — on a lossy branch the two differ, and taking the sending end
+        # alone would pass a line whose receiving end is over its limit.
+        mva[e] = max(abs(Sf), abs(St))
+    end
+    return flow, flow_rev, qflow, qflow_rev, loss, mva
 end
 
 # The vertex of a bus in a solved answer, or a throw naming it — a missing bus is a
