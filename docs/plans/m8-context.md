@@ -648,6 +648,23 @@ negative-`P0` machines.
 | No governor, no damping | `:no_response` on every outage |
 | case9 as M6 builds it (`R = Inf`, `D = 0`) | `:no_response` on all three generators (Hurdle 15.4): it needs invented droop data first |
 
+**What the agreement is made of, measured after the step was committed** (the
+predictions file promised two settledness checks and the first commit ran one; a
+review caught it). The three settled cases at three solver tolerances, at 300 s:
+
+| Case | reltol 1e-8 | 1e-10 (the test's) | 1e-12 |
+|---|---|---|---|
+| uncapped (G3 lost): pickup gap | 1.3e-8 | 5.0e-12 | 4.8e-12 |
+| capped (G2 lost): pickup gap | **1.1e-7** | 8.3e-11 | 3.0e-11 |
+| … its `ΔPm` past the headroom | 8.2e-11 | 9.1e-11 | 1.6e-11 |
+| inverter (G2 lost): pickup gap | 7.0e-8 | 2.1e-11 | 2.0e-11 |
+
+So below 1e-10 the uncapped and inverter gaps stop moving: what is left is the
+round-off of angles that grow for ever after a generator trip, not the solver. The
+capped gap keeps shrinking with the overshoot past the headroom, so it is the step
+size. And **the band is a statement at reltol 1e-10**: at 1e-8 the capped case would
+breach it. Script: `W:\temp\claude\gridsim-m8\step4_tol.jl`.
+
 **The zero-damping swing run never settles.** With `D = 0` only the governors act,
 and in this fixture the machines are still swinging against each other after 300 s
 (spread 3e-3 pu, gap to the static answer 0.19 pu). So "zero damping reduces to droop
@@ -678,3 +695,10 @@ caught only by algebra written alongside the code):
 | S2 `1/R` on the machine's own base | 7 of 16 | 48 of 52 |
 | S3 the cap applied to the damping term too | 6 of 16 | 24 of 52 |
 | S4 grid-forming inverters left out | 2 of 16 | 16 of 52 |
+| S5 grid-following inverters given droop (added at review) | — | — (red only in the grid-following test: 10 failed, 5 errored of 16) |
+
+**Grid-following inverters, tested at review.** "Holds its `P`" was stated and not
+checked, while M7's surface walk relies on the screen's own tests for what it does
+with inverters. 30 MW of grid-following inverter at D with 30 MW more load on LD
+screens exactly like the model without it, except the outage of LD itself, which is
+now 150 MW of load and scales every share by exactly 150/120.

@@ -7,7 +7,8 @@ the plan did not anticipate**.
 
 Status: **steps 0–4 done (step 4 on 2026-10-07)**; step 5 next. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
-+1 in M7's surface walk). Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
++1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
+so **4885 core by count** (full gate not re-run: nothing under `src/` changed). Step 3 left **4743 core by count** (4735 gated + 8 test-only at review; the full gate was not re-run) **/ 1262 reference / 568 UI** (step 2 left **4429 core / 1262 reference / 568 UI**; step 1: 4265 / 1251 / 568). Entered at `227d214` (the
 `derivative_discontinuity!` rename, after M7's close) with **4134 core** measured
 at that commit; reference and UI carried from M7's close at **1251 / 568**. Neither
 suite reads the renamed call, and both are re-measured at step 1's gate.
@@ -412,6 +413,11 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
 - [ ] All weight on the slack equals `ac_powerflow` exactly.
 - [ ] Pickup = lost power + change in losses, as an identity.
 - [ ] Detailed-tier settled source trip against it, band and reason stated first.
+- [ ] **Decide whether a screen flags a grid-forming inverter pushed past its
+      rating by its share of a lost generator** (found at step 4, D7: the DC screen
+      does not, the swing tier has no limit, and only the `Inverter` constructor
+      noticed). The AC solve already calls a grid-forming slack over its rating an
+      `:overload`.
 
 ## Step 6 — the report
 

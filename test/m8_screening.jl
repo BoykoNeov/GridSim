@@ -966,6 +966,28 @@ end
         end
     end
 
+    @testset "a grid-following inverter is screened like the load it offsets" begin
+        # It holds its P and answers no frequency deviation, so 30 MW of it at D with
+        # 30 MW more load on LD is the inverter-free model: same responders, same
+        # shares, same flows (M7's surface walk relies on this testset).
+        gfl = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+            [m.id === :LD ? GridSim._machine_with(m; P0 = -150.0, Pmax = -150.0) : m
+             for m in net.machines];
+            slack = net.slack, inverters = [Inverter(:pv, :D, :grid_following, 50.0, 30.0)])
+        a, b = dc_generator_outages(net), dc_generator_outages(gfl)
+        @test a.responders == b.responders == order
+        @test a.outcome == b.outcome
+        for k in eachindex(a.machines)
+            # Losing LD itself is losing 150 MW of load in the inverter model, not
+            # 120: the same shares, scaled by 150/120.
+            s = a.machines[k] === :LD ? 1.25 : 1.0
+            @test isapprox(s * a.Δω[k], b.Δω[k]; rtol = 1e-14)
+            @test isapprox(s .* a.pickup[k], b.pickup[k]; atol = 1e-15)
+            a.machines[k] === :LD && continue
+            @test isapprox(a.flow[k], b.flow[k]; atol = 1e-14)
+        end
+    end
+
     @testset "losing the slack bus's own machine: the reference is a gauge" begin
         # G1 sits on the slack bus A. The pickups rebalance every injection, so nothing
         # is left for the reference, and moving the reference moves no flow.
