@@ -303,7 +303,7 @@ current in this tier, and every hand-written copy of `ΔV/(jX)`:
 | `test/m8_screening.jl` `export_of` | the bus's own end of each branch | correct once `branch_power` reads each end honestly |
 | `test/m5_detailed.jl` antisymmetry asserts | `a,b` against `b,a` | lossless fixtures; true there, still asserted |
 | the windows (`ui/`) | none — no window calls `branch_power` | nothing to fix |
-| `branch_power(::SwingEngine, …)` | the classical tier | step 2's (still refuses `R`) |
+| `branch_power(::SwingEngine, …)` | the classical tier | step 2's — audited in D6 |
 
 **Sabotages** (predictions written first, `W:\temp\claude\gridsim-m9\step1\predictions.md`):
 
@@ -436,3 +436,30 @@ end formula and the detailed tier at the frozen-flux degeneration are the two ch
 that see the equation, and between them they are red under all five edge sabotages.
 The step-1 lesson stands one level up: a resistance misread the same way in BOTH
 tiers' builders would be green here too, and is step 3's to catch.
+
+**Found at review (the same day), and fixed in a follow-up commit.**
+
+5. **`coi_model` accepted a lossy model in silence.** The classical tier's aggregate
+   reads no branch and never called `_assert_lossless_branches` — the guard's
+   docstring named every tier but this one, and the ledger said "all three tiers"
+   refused `R`. Harmless while the tier it is derived from was lossless; from this
+   step that tier's reference bus carries the losses while the aggregate balances
+   `Σ P0 = 0`, a derived view disagreeing with its source in silence. Now refused by
+   name (no caller passed a lossy model: the playback window and the M2/M7 tests
+   use lossless fixtures). The guard has two callers left, `build_oracle` and
+   `coi_model`.
+6. **The antisymmetry audit for this tier (Hurdle 17.7)**, step 1's table carried
+   on — every reader of a classical-tier branch power, and every hand copy of
+   `K·sin Δ`:
+
+| Where | Reads | Verdict |
+|---|---|---|
+| `branch_power(::SwingEngine, a, b)` | the end named first | lossy: each end at its own terminal (`_lossy_end`); lossless unchanged |
+| `branch_power_series(::SwingEngine, …)` | same | lossy as above; lossless now honours the caller's order (finding 1) |
+| `_zero_edge!` (both trips) | — | zeroes all four coefficients on a lossy model (S4) |
+| `scripts/iberia_two_area.jl` `peak_export`, `K·sin`, `asin(P/K)`, `Ks = K·cos δ₀` | `branch_arrays(net).K`, the stored orientation | lossless two-area fixture; `branch_arrays.K` keeps its lossless meaning on purpose |
+| `test/m2_network.jl`, `test/m2_events_and_coi.jl` | hand copies of `K·sin`, `asin(P/K)`, live `K_pidx` | lossless fixtures; true there |
+| `test/m5_detailed.jl` antisymmetry asserts on `sw` | `a,b` against `b,a` | lossless fixture; still asserted |
+| `test/m8_screening.jl` `export_of` | the bus's own end of each branch | correct with losses as it stands |
+| `ui/` windows | none call `branch_power`; the network and playback windows build `SwingEngine` | a lossy model now runs in the network window; the playback window refuses it through `coi_model` (finding 5); the voltage window's tier-pair guard compares branches with `==`, `R` included |
+

@@ -503,8 +503,9 @@ because the file makes them look like one field.
 
 **Who reads `R`.** The AC power flow (M6 step 3), the detailed tier, whose edge
 current is `(Vf − Vt)/(R + jX)` from M9 step 1, and the classical tier, whose coupling
-gained its conductance in M9 step 2. The reference oracle still REFUSES it
-(`_assert_lossless_branches`): a resistance that
+gained its conductance in M9 step 2. The reference oracle and `coi_model` (the
+classical tier's aggregate) still REFUSE it (`_assert_lossless_branches`): a
+resistance that
 silently reached a lossless edge model would simulate a different network with
 nothing to say so — the shape M5's `Load` ZIP shares already used, data that is only
 sometimes read being exactly the data that gets set wrong and noticed a milestone
@@ -1505,13 +1506,15 @@ end
 Refuse a branch carrying a series resistance, by name — the M6 step 1 half of the
 `_assert_frozen_flux` family, and there for exactly the same reason.
 
-**This function is the list of what still has to learn `R`**, and it is down to
-one: the AC power flow reads it (M6 step 3), the detailed tier from M9 step 1
-(`_branch_current!`) and the classical tier from M9 step 2 (`swing_edge_lossy!`, with
-the reference bus picking up the losses). What still calls this is the reference
-oracle's `build_oracle`, which passes `R = 0` to PowerDynamics (M9 step 3). A model
-with `R ≠ 0` run there is a *different network* than its data describes — a lossless
-one — silently and with a plausible answer.
+**This function is the list of what still has to learn `R`**: the AC power flow
+reads it (M6 step 3), the detailed tier from M9 step 1 (`_branch_current!`) and the
+classical tier from M9 step 2 (`swing_edge_lossy!`, with the reference bus picking up
+the losses). Two callers are left: the reference oracle's `build_oracle`, which
+passes `R = 0` to PowerDynamics (M9 step 3), and `coi_model`, the classical tier's
+aggregate, which reads no branch and balances a schedule summing to zero — **it was
+never on this list until step 2's review found it accepting a lossy model in
+silence**. A model with `R ≠ 0` run at either is a *different network* than its data
+describes — a lossless one — silently and with a plausible answer.
 """
 function _assert_lossless_branches(net::NetworkModel, who::AbstractString)
     for br in net.branches
@@ -2227,6 +2230,13 @@ function coi_model(net::NetworkModel)
             "(m7-context.md D5, Hurdle 10)."))
     end
     _assert_frozen_flux(net, "coi_model")
+    # M9 step 2, found at its review: this aggregate never refused `R`, and nothing
+    # said so — `_assert_lossless_branches` named every tier but this one. It reads no
+    # branch at all, and that was harmless while the classical tier it is derived from
+    # was lossless too. From step 2 that tier reads `R` and its reference bus carries
+    # the losses, while the aggregate still balances `Σ P0 = 0`: a derived view that
+    # silently disagrees with the model it derives from. Refused by name instead.
+    _assert_lossless_branches(net, "coi_model")
     isempty(net.loads) || throw(ArgumentError(
         "coi_model: the model carries $(length(net.loads)) Load(s) " *
         "($(join([l.id for l in net.loads], ", "))). Folding a voltage-dependent load " *

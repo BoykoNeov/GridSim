@@ -8,7 +8,7 @@ the plan did not anticipate**.
 Status: **steps 0–2 done (2026-10-08); step 3 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5603 core / 1262 reference / 568 UI** (+149 step-2 checks, +1 from the reworked M6 refusal test).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -126,6 +126,8 @@ runs.
       both ends of a dead branch exactly zero.
 - [x] Sabotages S1–S6, predictions first, every one red somewhere; S3's refusal was
       the solver library's and is now the tier's own (D6).
+- [x] **Found at review:** `coi_model` accepted a lossy model in silence — now refused
+      by name; the antisymmetry audit for this tier recorded (D6, findings 5–6).
 
 ## Step 3 — the outside check on both tiers (Hurdle 17.5)
 

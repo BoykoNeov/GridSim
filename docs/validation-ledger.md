@@ -337,7 +337,7 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 | Mechanism | Checked by | Label |
 |---|---|---|
 | `Branch.R`, `Machine.V_set`/`Q_min`/`Q_max`, `NetworkModel.slack` added without moving a number (step 1) | Full suite green with all 2835 pre-existing tests passing, **and** M5's 169 recorded criterion values bit-identical by MD5 against a capture taken at HEAD before the first edit — a tolerance-based suite cannot see a float move underneath it | structural |
-| Those fields are read by nothing that integrates **(true through M8; from M9 step 1 the detailed tier reads `R`, from step 2 the classical tier — see the M9 section)** | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) — from M9 step 1, the classical tier and `build_oracle` only; from M9 step 2, `build_oracle` alone | structural |
+| Those fields are read by nothing that integrates **(true through M8; from M9 step 1 the detailed tier reads `R`, from step 2 the classical tier — see the M9 section)** | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) — from M9 step 1, the classical tier and `build_oracle` only; from M9 step 2, `build_oracle` and `coi_model` — **corrected at step 2's review: `coi_model` never refused `R` until then, so "all three tiers" was never true of the aggregate** | structural |
 | `bus_roles` / `bus_role` derived, never stored | Rejection cases (slack naming a missing bus; a bus not in the model); a declared slack carrying no machine, which the model accepts and the engine refuses | structural |
 | DC susceptance matrix `B` is sparse **structurally** | `SparseMatrixCSC`, `nnz == n + 2m` on three fixtures, symmetric, `max|B·1| < 1e-12`; and on a five-bus radial where 13 of 25 entries can tell sparse from dense — on the three-bus ring, a complete graph, the same count passes against a dense matrix | structural |
 | DC solve `B·θ = P`, two buses | `θ₂ = −P/b` asserted **exactly** (`==`): one unknown makes the solve a single division, so a tolerance could only hide a solver change | closed form |
@@ -580,6 +580,7 @@ step 2 (D6). test: `test/m9_line_resistance.jl`.
 | The classical tier IS the detailed tier's frozen-flux limit on a lossy line | M5 step 2's oracle on the reduced pair: dispatch to 1e-12 first, then four channels inside `convergence_band` at two tolerances, each end as reference | **cross-fidelity** |
 | Swing against DC: the losses and nothing else | `ω_swing − Δω_DC = (L_pre − L_post − [reference lost]·L_pre)/Σw`, uncapped, three outages, rtol 1e-6 | **derived** (internal — green under S2) |
 | A dead branch carries nothing | Both ends `== 0.0` after a line trip and a generator trip (S4 red) | **structural** |
+| The aggregate cannot silently drop the losses | `coi_model` refuses a lossy model by name (added at step 2's review — it had accepted one in silence) | **structural (guard)** |
 
 **Not checked, and said:** (1) a resistance misread *the same way* by the tier and
 by the AC solve is invisible to every check in this section — each compares one

@@ -394,6 +394,16 @@ end
     @test occursin("no steady state", msg) && occursin("reference bus", msg)
 end
 
+@testset "the aggregate refuses a lossy model by name" begin
+    # Found at step 2's review: `coi_model` accepted a lossy model in silence and
+    # balanced `Σ P0 = 0` while the tier it is derived from now carries the losses on
+    # its reference bus.
+    net = ratio_ring(D1 = 1.0)
+    msg = argerr_msg(() -> coi_model(_r_with_R(net, 0.3)))
+    @test occursin("coi_model", msg) && occursin("L12", msg)
+    @test coi_model(net) isa SystemModel                 # lossless: as before
+end
+
 @testset "a grid-forming inverter is not a lossy grid's reference" begin
     lossy = _r_with_R(_m8_genmesh(gfm = true, slack = :E), 0.3)
     msg = argerr_msg(() -> SwingEngine(lossy))
