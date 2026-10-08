@@ -60,8 +60,11 @@ and its docstring's list shrinks by one.
   `ac_snapshot.jl`), M8's screen outputs on both report fixtures, and step 0's
   lossless dip table. **Gate:** all four bit-identical after the change.
 - **Flat run:** a lossy `ac_powerflow` seeds the tier and nothing moves (no event).
-- **Settled:** on constant-power loads, a lossy source trip settles to the AC
-  screen's lossy `Δω` and pickups, within a band stated first.
+- **Settled, as an identity (`m9-context.md` D0 17.4):** with every governor
+  uncapped on constant-power loads, `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw`, each
+  side's post-outage losses read from its own solution. Regulator off, as the
+  dip step will run it; not a band fitted to the gap. Lossless, both sides of the
+  identity are zero (step 0's digit-for-digit match).
 - **`t⁺` accounting:** the initial COI rate equals `(ΔP + Δlosses(t⁺))/(2ΣHS)`,
   where `Δlosses(t⁺)` is read from the network at the instants either side of the
   trip — an identity, not a tolerance.
@@ -95,8 +98,10 @@ or left with an empty list on purpose.
 
 `reference/src/oracle.jl` passes `R = br.R` to `Library.PiLine`. Both tiers are run
 against PowerDynamics on a lossy meshed fixture, with the band **stated before the
-gap is seen** and derived from the two sides' convergence (M4 step 4's method, M6
-oracle B's caution that the oracle may be the less accurate side).
+gap is seen**, built with `convergence_band` — the cross-convergence method M4 step
+4 adopted after measuring that a band from each side's *own* convergence never looks
+at the gap it judges — and with M6 oracle B's caution that the oracle may be the
+less accurate side.
 
 - **The sabotage only this check can see:** one placed in whatever our tier shares
   with our power flow, so steps 1–2's flat runs and cross-tier checks stay green and
@@ -125,23 +130,31 @@ generator screen's outcome gains a frequency verdict beside it, on its **own** `
 
 Per generator outage, a dynamic run in the detailed tier on the screened grid
 (lossy, with its loads), started from the AC screen's own base solution. The engine
-gains a per-machine running minimum beside `eng.nadir`. The run stops when frequency
-has turned and come within a stated band of the screen's settled value, or at a
-horizon; a horizon reached first is the named outcome "not reached". Each outage
-runs at two tolerances and is judged only when the two dips agree within
-`convergence_band`; a solver failure or a disagreement is its own named outcome.
+gains a per-machine running minimum beside `eng.nadir`.
 
+- **Stopping rule, on the run's own settling** (never the screen's value, which
+  default loads miss by 12–23 %, `m9-context.md` D1): the run stops once
+  `|d f_coi/dt|` has stayed below a stated rate for a stated time, with a horizon of
+  several `2ΣHS/ΣD` time constants — the damping-only slide of a governor-capped grid, the slowest case (mesh G1 needed ~100 s). A minimum followed by a
+  recovery fixes the dip on its own; only the monotone, governor-capped case needs
+  the settling test. A horizon reached first is the named outcome "not reached".
+- **The solver pair is frozen here, before any lossy run:** FBDF at reltol 1e-6
+  and at 1e-8 (abstol reltol/100 each). An outage is judged only when the two dips
+  agree within `convergence_band`; a failure at either setting, or a disagreement,
+  is its own named outcome. Never a third setting tried after the fact.
+- **Positive control for 16.5, predicted from step 0:** on the lossless copy,
+  mesh-default G2 fails at 1e-8 (`Unstable` at 5.6 s) and runs at 1e-6, so under the
+  frozen pair it is **predicted to return the solver-failure outcome**, not a dip.
+  That prediction is the control; it is not "fixed" by changing the pair.
 - **Regression:** step 0's lossless table reproduced from the new code (lossless
-  copies), dip and settled to the printed digits.
-- **Refusal sets (16.6):** the outages the tier refuses at re-initialisation equal
-  the AC screen's `:voltage` set, on both report fixtures and both load models —
-  predicted to hold, measured.
+  copies), dip and settled to the printed digits, wherever the frozen pair judges.
+- **Refusal mismatch (16.6), reported not asserted empty:** the outages the tier
+  refuses at re-initialisation while the AC screen says `:secure` get the named
+  outcome "dynamic run refused at the trip". Step 0 predicts exactly one on the
+  lossless copies, case9-constant-power G2; the lossy grids are measured.
 - **Exactness:** the per-machine running minimum equals a dense-`saveat` minimum on
   a short run, and is never shallower than it (a decimated read can only miss a
   minimum, never invent one).
-- **Positive control for 16.5:** mesh-default G2, which fails at one setting, must
-  come back as the two-tolerance outcome rather than a verdict, and as a verdict once
-  the pair agrees.
 - **Sabotages:** the minimum read from the recorder; the COI read in place of every
   machine (mesh G2's 7.7 % is the fixture that sees it); the last sample reported
   when the horizon runs out; a single tolerance.

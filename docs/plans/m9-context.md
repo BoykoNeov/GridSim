@@ -44,20 +44,29 @@ written (D1).
      machine and reports the average beside it.
   4. **The dip is a running minimum over a run that must be long enough, and the
      recorder cannot give it.** The recorder decimates, so the per-machine minimum
-     is tracked in the engine as `eng.nadir` already is. A run that ends before
-     frequency has turned or come within band of the screen's settled value
-     reports a named "not reached" outcome — never its last sample. (Mesh G1's dip
-     arrives at ~100 s; step 0's mesh-default G2 was still moving at 60 s.)
+     is tracked in the engine as `eng.nadir` already is. The run stops on its **own**
+     settling, never on the screen's value (D1: default loads settle 12–23 % away
+     from it). A run that reaches its horizon first reports a named "not reached"
+     outcome — never its last sample. (Mesh G1's dip arrives at ~100 s; step 0's
+     mesh-default G2 was still moving at 60 s.)
   5. **A solver failure is an outcome, never a verdict.** Step 0's mesh-default G2
      fails with `Unstable` under FBDF at reltol 1e-8 and runs under FBDF 1e-6, FBDF
      1e-10 and Rodas5P 1e-8, all three agreeing to four digits. Retrying until a
      setting passes would be choosing an answer. Each outage runs at two tolerances
      and is judged only when the two agree within `convergence_band`; a failure or
      a disagreement is its own outcome.
-  6. **The dynamic tier's refusals should be the AC screen's `:voltage` set.** At
-     step 0 the detailed tier refused exactly case9's three outages the AC screen
-     refuses for voltage (re-initialisation outside the band). Pre-registered as a
-     check, measured at the dip step, not assumed.
+  6. **The dynamic tier refuses outages the AC screen calls secure.** The two judge
+     voltage at different instants: the detailed tier's re-initialisation checks the
+     band the instant after the trip, with the field flux held and (by default) no
+     regulator; the AC screen checks it after settling, with every `V_set` held.
+     Measured at step 0 (first written here, wrongly, as "the same set" — the spike
+     had not printed the AC outcome for the refused runs; corrected the same day by
+     `W:\temp\claude\gridsim-m9\step0_refusals.jl`): case9's G1 is refused by both,
+     on both load models; **case9-constant-power G2 is refused dynamically (B2 at
+     0.889 pu) and `:secure` in the AC screen**, lossless and lossy alike. So "the
+     dynamic run refused at the trip" is a named outcome of the frequency verdict —
+     never a silent pass, and never borrowed from the AC verdict — and the dip step
+     reports the mismatch set rather than asserting it empty.
   7. **The rate of fall is not one number** (M7 Hurdle 10: three RoCoFs under three
      names; the instantaneous one measured the smallest). A RoCoF limit is
      meaningless without its window, and the sources disagree on the window (D3).
@@ -80,8 +89,15 @@ written (D1).
   3. **Exact accounting at `t⁺`.** On a lossy grid the initial COI rate departs from
      `ΔP/(2ΣHS)` by exactly the instantaneous change in losses (plus load relief on
      default loads, M7 D16's identity with a losses term added).
-  4. **Settled agreement.** On constant-power loads the lossy detailed tier settles
-     to the AC screen's lossy `Δω` (M8 step 5 checked only lossless).
+  4. **Settled agreement, as an identity rather than a band.** Lossless on constant
+     power the total pickup is the lost power, whatever the voltages, which is why
+     step 0 matched to the digit. Lossy, the pickup is the lost power **plus the
+     change in losses**, and losses depend on voltages the two sides hold
+     differently (field flux against `V_set`, M8 step 5). So the check is: with every
+     governor uncapped, on constant-power loads, `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw`,
+     each side's post-outage losses read from its own solution, `Σw` the summed
+     droop-and-damping weights. A band fitted to the gap is exactly what this
+     replaces.
   5. **An outside check that does not share our builder.** If the detailed tier's
      edge current reuses the power flow's admittance code, the flat run cannot see
      a sabotage there. PowerDynamics' `Library.PiLine` already takes `R` (the
@@ -111,10 +127,10 @@ on lossless copies (`R` dropped), with the AC screen re-run on the same copies.
 
 | outage | dip Hz | s after trip | settled Hz | AC screen Hz | dip/settled | RoCoF₀ Hz/s | worst machine Hz |
 |---|---|---|---|---|---|---|---|
-| case9 cp G1 | refused at re-init: B1 0.773 pu | | | | | | |
-| case9 cp G2 | refused at re-init: B2 0.889 pu | | | | | | |
+| case9 cp G1 | refused at re-init: B1 0.773 pu (AC: `:voltage`) | | | | | | |
+| case9 cp G2 | refused at re-init: B2 0.889 pu (**AC: `:secure`**) | | | | | | |
 | case9 cp G3 | −0.741 | 1.41 | −0.449 | −0.449 | 1.65 | 0.935 | G2 −0.744 |
-| case9 def G1 | refused at re-init: B1 0.882 pu | | | | | | |
+| case9 def G1 | refused at re-init: B1 0.882 pu (AC: `:voltage`) | | | | | | |
 | case9 def G2 | −0.656 | 1.41 | −0.397 | −0.455 | 1.65 | 0.827 | G1 −0.658 |
 | case9 def G3 | −0.581 | 1.41 | −0.352 | −0.398 | 1.65 | 0.734 | G2 −0.583 |
 | mesh cp G1 | −10.94 | ~103 | −10.94 | −10.94 | 1.00 | 3.60 | G3 −10.94 |
@@ -130,7 +146,17 @@ case9's 1.65 inside the predicted 1.5–3.0, the mesh's 1.20–1.32 below it; th
 case is monotone as predicted; the worst machine is deeper than the average by under
 10 % as predicted. Default loads settle shallower dynamically than the AC screen says
 (load relief, M8's known gap) — the mesh's G1 by a lot, −8.67 against −11.22 Hz.
-**The solver failure on mesh-default G2 was not predicted** (Hurdle 16.5).
+**The solver failure on mesh-default G2 was not predicted** (Hurdle 16.5), and
+neither was the refusal mismatch (Hurdle 16.6): case9-constant-power G2 is refused
+dynamically and `:secure` in the AC screen. That mismatch was first written into D0
+as a match — the spike skipped the AC column for refused runs — and caught at review
+the same day.
+
+**What default loads mean for stopping a run.** The default-load runs settle 12–23 %
+away from the AC screen's value (load relief; case9 G2 −0.397 against −0.455, the
+mesh's G1 −8.67 against −11.22). A stopping rule keyed to the screen's settled value
+would call every default-load outage "not reached", so the dip step stops on the
+run's own settling instead (plan step 5).
 
 All dips here are on invented dynamics (`outage_screen.jl` says so); a pass or fail
 on them proves nothing about a real grid. Checks rest on algebra and on agreement

@@ -30,6 +30,17 @@ runs.
 - [x] **Found, not planned — a solver failure on one outage** (mesh-default G2:
       FBDF 1e-8 `Unstable`; three other settings agree to four digits). Named as
       Hurdle 16.5: never a verdict.
+- [x] **Found at review, the same day — the refusal sets do NOT match.** The plan
+      first claimed the detailed tier refused exactly the AC screen's `:voltage`
+      outages; the spike had never printed the AC outcome for refused runs.
+      Re-checked (`step0_refusals.jl`): case9-constant-power G2 is refused
+      dynamically (B2 0.889 pu at the trip) and `:secure` in AC, lossless and lossy.
+      D0 16.6 rewritten: a named "refused at the trip" outcome, reported not
+      asserted empty. Two more review corrections in the same commit: the dip run
+      stops on its own settling (default loads settle 12–23 % off the screen's
+      value), the solver pair is frozen in the plan (FBDF 1e-6 / 1e-8, mesh-default
+      G2 predicted to come back as a solver failure), and 17.4 became an identity in
+      the losses rather than a band.
 - [x] **The limits read from their sources** (D3): SO GL Annex III Table 1 (800 mHz
       dip, 200 mHz settled for Continental Europe, read from the page image);
       no area-wide sourced rate limit, so the preset carries none.
@@ -47,7 +58,8 @@ runs.
       for this tier only.
 - [ ] Gate: all four captures bit-identical.
 - [ ] Flat run from a lossy `ac_powerflow`.
-- [ ] Settled lossy trip against the AC screen (constant power), band stated first.
+- [ ] Settled lossy trip against the AC screen (constant power, uncapped): the
+      losses identity of D0 17.4, not a band.
 - [ ] `t⁺` identity with the losses term.
 - [ ] Antisymmetry audit, list recorded.
 - [ ] Sabotages, predictions first, each red where predicted; the shared-builder one
@@ -77,10 +89,12 @@ runs.
 ## Step 5 — the dip (Hurdles 16.2–16.6)
 
 - [ ] Per-machine running minimum in the engine.
-- [ ] Stopping rule and "not reached".
-- [ ] Two-tolerance agreement; solver failure as an outcome (mesh-default G2).
-- [ ] Step 0's table reproduced.
-- [ ] Refusal sets equal the AC `:voltage` set (measured).
+- [ ] Stopping rule on the run's own settling, and "not reached".
+- [ ] Frozen pair FBDF 1e-6 / 1e-8; mesh-default G2 (lossless) returns the
+      solver-failure outcome as predicted.
+- [ ] Step 0's table reproduced wherever the pair judges.
+- [ ] "Refused at the trip" outcome; mismatch set reported (predicted lossless:
+      case9-constant-power G2 only; lossy measured).
 - [ ] Sabotages.
 
 ## Step 6 — the rate of fall (Hurdle 16.7)

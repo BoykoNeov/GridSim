@@ -236,8 +236,10 @@ overlay.
 (`m9-context.md` D0), after measuring the dip (D1). Hurdle 16 is split there into
 seven measurable sub-claims — two settled values that may disagree, a dip only a
 dynamic run can see, every machine rather than the average, a running minimum over
-a long-enough run, a solver failure as an outcome rather than a verdict, refusal
-sets that should match, and a rate of fall that is meaningless without its window.
+a run that stops on its own settling, a solver failure as an outcome rather than a
+verdict, a dynamic run that refuses an outage the AC screen calls secure (measured:
+case9's G2 on constant-power loads), and a rate of fall that is meaningless without
+its window.
 
 17. **Line resistance in the dynamic tiers, without moving a lossless number.**
     Both dynamic tiers refuse `Branch.R` (`_assert_lossless_branches`), so neither
