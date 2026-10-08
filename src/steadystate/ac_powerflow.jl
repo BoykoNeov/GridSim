@@ -1075,25 +1075,26 @@ returns, so `init!`'s two-axis cross-check (`worst_pm`) stays live on this path.
 
 Two refusals were written here first and both turned out to be **unreachable**, the
 way M5 step 8's mapping mutation found its own check's premise wrong.
-`_assert_detailed_tier` already refuses, before `init!` reaches this function:
+`_assert_detailed_tier` refused both before `init!` reached this function:
 
-  - **a branch with `R ≠ 0`** — "nothing in `src/engines/` reads it … both lossless",
-    a guard written for this tier's own reasons, whose message already points here
-    ("use the M6 power flow, which does read it");
+  - **a branch with `R ≠ 0`** — refused by the tier from M6 step 1 until M9 step 1,
+    while its edge current was lossless. **No longer refused anywhere on this path,
+    and no longer needs to be**: the tier's edge current is `(Vf − Vt)/(R + jX)`, so
+    the network it integrates is the lossy one this solution solved;
   - **two machines on one bus** — a vertex model's state count is fixed at compile
-    time, so the tier cannot express it at all.
+    time, so the tier cannot express it at all. Still refused by the tier.
 
-So the two preconditions this function needs — a lossless network, and one machine
-per bus so that a bus's solved `Q` is unambiguously that machine's — are guaranteed
-by a guard that predates it, and a second copy of either would have been decoration.
-The multi-machine one would also have been **wrong**: its message said the fixpoint
-path handles such a model, and the fixpoint path refuses it too.
+The multi-machine refusal would also have been **wrong**: its message said the
+fixpoint path handles such a model, and the fixpoint path refuses it too.
 
-The consequence is worth stating rather than leaving implicit: **oracle A can never
-see a lossy branch.** With `R = 0` the loss channel is zero to round-off and
-`flow + flow_rev` vanishes, so the resistive half of `ac_powerflow` — the one thing
-`Branch.R` was added for — is outside this oracle's reach. That is oracle B's to
-check; `PowerFlows.jl` does model resistance.
+**Oracle A sees a lossy branch from M9 step 1.** Through M8 it could not: with
+`R = 0` forced, the loss channel was zero to round-off and the resistive half of
+`ac_powerflow` was outside its reach (oracle B's to check). Now a lossy solution
+seeds the tier and the run is flat only if the tier's `R + jX` and this solve's
+`1/(R + jX)` describe the same branch. The two are written separately — the tier's
+edge model in `engines/detailed.jl`, this solve's admittance in `_ac_*` here — so
+the flat run is a check of one against the other and not of a shared builder
+against itself (M9 step 1's finding, recorded for step 3).
 
 ## What it does refuse
 
@@ -1122,10 +1123,10 @@ function _seed_from_powerflow(net::NetworkModel, sol::ACPowerFlow, ma)
             "$(join((b.id for b in net.branches), ", ")). Solve the flow for the " *
             "model you are about to integrate."))
 
-    # NO `R == 0` CHECK AND NO ONE-MACHINE-PER-BUS CHECK, deliberately: both were
-    # written here first and both are unreachable — `_assert_detailed_tier` refuses
-    # such a model before `init!` reaches this function, and the second message would
-    # have been false besides. The docstring carries the finding.
+    # NO `R == 0` CHECK (the tier reads `R` from M9 step 1) AND NO ONE-MACHINE-PER-
+    # BUS CHECK (unreachable — `_assert_detailed_tier` refuses such a model before
+    # `init!` reaches this function, and its message would have been false besides).
+    # The docstring carries both findings.
     _assert_seed_is_this_dispatch(net, sol, ma)
 
     V = ComplexF64[sol.Vm[v] * cis(sol.θ[v]) for v in 1:nb]

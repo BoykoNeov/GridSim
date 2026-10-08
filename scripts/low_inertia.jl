@@ -119,8 +119,8 @@ function bus_export(eng, b::Int)
     I = 0.0im
     for e in eachindex(bt.src)
         st = eng.params[eng.status_pidx[e]]
-        bt.src[e] == b && (I += st * (V(b) - V(bt.dst[e])) / (im * bt.X[e]))
-        bt.dst[e] == b && (I += st * (V(b) - V(bt.src[e])) / (im * bt.X[e]))
+        bt.src[e] == b && (I += st * (V(b) - V(bt.dst[e])) / complex(bt.R[e], bt.X[e]))
+        bt.dst[e] == b && (I += st * (V(b) - V(bt.src[e])) / complex(bt.R[e], bt.X[e]))
     end
     return V(b) * conj(I)
 end

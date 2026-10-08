@@ -141,7 +141,12 @@ end
 end
 
 # ── the five readers of Branch.X, each stated ───────────────────────────────────
-@testset "the five readers of Branch.X are DELIBERATELY unchanged by R" begin
+@testset "the five readers of Branch.X: X itself unchanged by R (M6), R read by the detailed tier (M9)" begin
+    # M9 STEP 1 ANNOTATION. What follows was M6 step 1's decision, and four of its
+    # five sites still hold it. The two detailed-tier edge models no longer do: their
+    # current is (Vf − Vt)/(R + jX) now, with `R` carried by `branch_topology` beside
+    # an unchanged `X`. The `===` checks on `X` below are still the point — wiring `R`
+    # in did not touch the reactance any reader sees.
     # `Branch.X` is read in five places (m6-plan.md step 1): `branch_arrays`,
     # `SwingEngine`'s edge model, `DetailedEngine`'s static and dynamic edge models,
     # and `branch_power`. Adding `R` beside it is a five-site decision, and on all
@@ -176,10 +181,14 @@ end
     # not change is any number a run produces, because there is no such run.
     m = argerr_msg(() -> SwingEngine(ring_R; dt = 0.01))
     @test occursin("SwingEngine", m) && occursin("R = 0.03", m) && occursin("L12", m)
-    m = argerr_msg(() -> init!(DetailedEngine, lossy; dt = 0.01))
-    @test occursin("DetailedEngine", m) && occursin("R = 0.03", m)
-    # The guard names the step that lifts it, so a boundary is never read as a bug.
-    @test occursin("power flow", m)
+    # The guard names where `R` IS read, so a boundary is never read as a bug.
+    @test occursin("power flow", m) && occursin("DetailedEngine", m)
+    # M9 STEP 1: the detailed tier reads `R` now, so the same model RUNS there, and
+    # `branch_topology` carries `R` beside an `X` that is still bit-for-bit the
+    # lossless one (the `===` above). `test/m9_line_resistance.jl` holds the checks
+    # that the tier reads it correctly; this pins only that the refusal is gone.
+    @test init!(DetailedEngine, lossy; dt = 0.01) isa DetailedEngine
+    @test all(b.R .=== 0.03) && all(a.R .=== 0.0)
 end
 
 # ── the promotion: DetailedEngine's private slack now reads the model's ─────────
@@ -531,13 +540,14 @@ end
                           for br in lossless.branches],
                          lossless.machines, lossless.loads; slack = :B1)
 
-    # Every ENGINE refuses this model by name, because a lossy model run at a
-    # lossless tier is a different network than its data describes…
+    # The classical engine refuses this model by name, because a lossy model run at
+    # a lossless tier is a different network than its data describes (the detailed
+    # tier reads `R` from M9 step 1, so it is no longer the one to ask)…
     # …and it refuses it for THIS reason, not for some other property of the
     # fixture: asserting only `ArgumentError` here would pass against a model
     # rejected for its bare junction bus.
     @test occursin("series resistance",
-                   argerr_msg(() -> init!(DetailedEngine, lossy)))
+                   argerr_msg(() -> GridSim._assert_lossless_branches(lossy, "SwingEngine")))
     # …but the DC power flow is not a tier, it is an APPROXIMATION that states it
     # drops R. Refusing here would refuse exactly the cases step 3 exists for.
     @test dc_powerflow(lossy).θ == dc_powerflow(lossless).θ
@@ -1534,21 +1544,14 @@ end
     # written here was FALSE (it said the fixpoint path handles a multi-machine bus;
     # the fixpoint path refuses it too, which the assertion below pins).
 
-    # A resistive branch. The AC flow's admittance is 1/(R + jX) and this tier's edge
-    # is ΔV/(jX), so a seeded state on such a model genuinely would not be a fixpoint
-    # — but the tier's own guard fires first, and its message already points at M6.
-    msg = argerr_msg(() -> init!(DetailedEngine, _seed_lossy_case();
-                                 powerflow = ac_powerflow(_seed_lossy_case())))
-    @test occursin("L12", msg)
-    @test occursin("series resistance R = 0.02", msg)
-    @test occursin("use the M6 power flow, which does read it", msg)
-    # It fires on the FIXPOINT path too, which is what makes it the tier's guard and
-    # not the seeded path's — the seeded path never sees such a model at all.
-    @test occursin("series resistance", argerr_msg(() -> init!(DetailedEngine, _seed_lossy_case())))
-    # …and the same model with R = 0 goes through both ways, so the refusal is about
-    # the resistance and not about the fixture.
-    let ok = _seed_lossy_case(R = 0.0)
-        @test init!(DetailedEngine, ok; powerflow = ac_powerflow(ok)) isa DetailedEngine
+    # A resistive branch. Through M8 the tier refused it before seeding (its edge was
+    # ΔV/(jX) while the AC flow's admittance is 1/(R + jX)). From M9 step 1 the edge is
+    # ΔV/(R + jX), so the seeded state IS a fixpoint of the lossy network, and `init!`'s
+    # own residual check — a different set of equations from the flow's — is what says
+    # so. Both paths build it; the flatness is `m9_line_resistance.jl`'s to measure.
+    let lossy = _seed_lossy_case()
+        @test init!(DetailedEngine, lossy; powerflow = ac_powerflow(lossy)) isa DetailedEngine
+        @test init!(DetailedEngine, lossy) isa DetailedEngine
     end
 
     # Two machines on one bus. `ac_powerflow` solves such a model happily — it sums

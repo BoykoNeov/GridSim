@@ -214,3 +214,104 @@ Copies under `W:\temp\claude\gridsim-m9\sogl\`.
 - **No line charging, no N-2, no batched/GPU runs, no map** — as M8 D5.
 - **Line outages get no frequency verdict.** A line outage loses no generation; a
   split that islands generation is already a named outcome. Stated, not built.
+
+## D5 — Step 1 measured: line resistance in the detailed tier (2026-10-08)
+
+**The change.** The edge current is `(Vf − Vt)/(R + jX)` in both compiled networks
+(`_branch_current!`; `R` appended to the edge parameters so `X` and `status` keep
+their slots). `AntiSymmetric` is kept, and is exact: a series branch with no shunt
+carries one current, so the far end sees `−I`; what stops being equal and opposite
+is the power, and that is read where power is read. `branch_power` and
+`branch_power_series` read the receiving end as `Re(V_to·conj(−I))`.
+`branch_topology` carries `R`. The refusal is gone from this tier;
+`_assert_lossless_branches` now names what is left (the classical tier, step 2, and
+`build_oracle`, step 3).
+
+**Bit-identity needed the old arithmetic kept, on purpose.** `bX/X²` and `b/X` are
+the same number in exact arithmetic and not in floating point, so at `R = 0` the
+edge and every read-out run the pre-M9 expressions textually (`_series_current`,
+`_end_power`). Removing that fast path (sabotage S6) moves 86 of M5's 169 recorded
+criterion values in their last digits. With it, all four captures taken at HEAD
+before the first edit — M5's criterion values, the 83-case AC digest, every field
+of `outage_screen` on both report grids and load models, and step 0's lossless dip
+table at full precision — are byte-identical after the change.
+
+**What was measured on the lossy report grids** (spike
+`W:\temp\claude\gridsim-m9\step1\spike.jl`, log beside it):
+
+- **Each end at its own terminal.** At the seed, each branch's two end powers sum
+  to `ac_powerflow`'s `loss` within 2.2e-16, from separately written admittance code.
+- **Flat run.** Seeded from a lossy `ac_powerflow`, both grids, both load models, two
+  tolerances: worst drift 4.2e-13 on any state over 50 s.
+- **`t⁺`, exactly.** On constant-power loads, `Σ2H·ω̇(t⁺) = −(P_lost + ΔL)` closes to
+  6.7e-14 or better on the four outages that pass the trip (case9 G3, mesh G1–G3);
+  the losses change it accounts for is −1.9e-3 to +1.7e-2 pu, so the term is what
+  closes the identity, not decoration. (On default loads the load-relief term
+  dominates, as M7 D16 found; not asserted here.)
+- **Settled, as an identity.** `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw` holds to
+  4e-14 on case9 G3 and 5e-14 on mesh G3 at 400 s, against gaps of 3.0e-5 and
+  2.8e-5 pu (1.5 and 1.4 mHz): **the dynamic tier settles slightly deeper than the
+  AC screen, and the difference is the losses and nothing else.** What limits the
+  residual is how settled the run is, not the solver (case9 G3: 5e-9 at 100 s,
+  4e-12 at 200 s, 4e-14 at 400 s).
+
+**Found, not planned.**
+
+1. **Only two outages qualify for the settled identity**, not three: the mesh's G2
+   caps G3's 5 MW of headroom on the lossy grid, so it is excluded with case9's G1
+   and G2 (refused at the trip) and the mesh's G1 (both governors capped).
+2. **The refused-at-the-trip set on the lossy grid is step 0's lossless one**:
+   case9 G1 and G2 on constant-power loads, by the voltage band. Now pinned.
+3. **The tier's own steady state (no `powerflow`) refuses lossy case9** on the
+   voltage band: that path holds each machine's internal voltage at `Machine.E′`
+   (1.0 on case9), not at `V_set`. Lossless case9 on constant-power loads is refused
+   there already; on default loads the lossless copy passes and the lossy one sags
+   B9 to 0.889 pu. A real effect of the resistance on a path the screen does not
+   use; that check runs on the mesh.
+4. **A check was too lenient, and a sabotage found it.** The `t⁺` test first skipped
+   any re-initialisation error as "refused at the trip". With `R` written into the
+   dynamic network only (S4), the dynamic-Kirchhoff check's own throw was swallowed,
+   and the test went red only through its count of cases. The catch now takes the
+   voltage-band refusal alone and the refused set is asserted.
+5. **The detailed tier's rating check reads the sending end only** (`_branch_flows`),
+   while `ac_powerflow` judges the larger end. The two ends differed before M9 — in
+   reactive power, by `|I|²X` — and now differ in real power too. Widening it would
+   move lossless refusals, which this step's gate forbids, so it is **carried, not
+   changed**. At initialisation on the seeded path it is moot (`ac_powerflow` has
+   refused any overload at either end); at a re-initialisation after an event it is
+   not.
+
+**The antisymmetry audit (Hurdle 17.7).** Every reader of a branch's power or
+current in this tier, and every hand-written copy of `ΔV/(jX)`:
+
+| Where | Reads | Verdict |
+|---|---|---|
+| `branch_power(::DetailedEngine, a, b)` | the end named first | fixed: receiving end read at its own terminal |
+| `branch_power_series(::DetailedEngine, …)` | same | fixed, same way |
+| `_branch_flows` (rating check) | sending end `|S|` | `R` read; sending-end-only carried (finding 5) |
+| `scripts/iberia_two_area.jl` `peak_export` | `:ES → :FR`, the branch's own orientation | correct end; lossless fixture |
+| `scripts/low_inertia.jl` `bus_export` | its own copy of `ΔV/(jX)` | now `ΔV/(R + jX)`, the same number at `R = 0` |
+| `test/m5_detailed.jl`, `test/m7_inverters.jl` | hand copies of `ΔV/(jX)` | same change, same reason |
+| `test/m8_screening.jl` `export_of` | the bus's own end of each branch | correct once `branch_power` reads each end honestly |
+| `test/m5_detailed.jl` antisymmetry asserts | `a,b` against `b,a` | lossless fixtures; true there, still asserted |
+| the windows (`ui/`) | none — no window calls `branch_power` | nothing to fix |
+| `branch_power(::SwingEngine, …)` | the classical tier | step 2's (still refuses `R`) |
+
+**Sabotages** (predictions written first, `W:\temp\claude\gridsim-m9\step1\predictions.md`):
+
+| | Sabotage | Red | Green |
+|---|---|---|---|
+| S1 | `R` with the wrong sign | seeded start refused (residual 0.36), so every seeded check | the tier's own steady state (shares the edge with itself) |
+| S2 | receiving end read as minus the sending end | both-ends check, `t⁺`, settled — and the own-steady-state check through its losses read (**predicted green; wrong, harmlessly**) | flat runs |
+| S3 | `R` scaled by a machine base | as S1 | as S1 |
+| S4 | `R` in the dynamic network only | own steady state (residual 0.15), `t⁺` and settled (dynamic Kirchhoff check at the trip, 0.26) | seeded flat run, both-ends check (the seeded path never solves the static network before an event) |
+| S5 | `R` in the static network only | every seeded check, own steady state | — |
+| S6 | `R = 0` fast path removed | the gate: 86 / 169 criterion values move | every check with a tolerance |
+
+**For step 3.** The tier's edge model and `ac_powerflow`'s admittance are written
+separately, and nothing is shared, so no sabotage hides from the seeded flat run
+behind a shared builder. Step 3's "only the outside check sees it" mutation is
+therefore the plan's fallback, the conductance sign — recorded here before step 3
+starts. **S1 is that sign, and the seeded flat run already sees it**, so on the
+detailed tier step 3 will have no mutation that only the outside check catches.
+Said now, so step 3 states it rather than discovers it.

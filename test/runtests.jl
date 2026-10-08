@@ -79,5 +79,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m7_low_inertia.jl"))
     include(joinpath(@__DIR__, "m8_screening.jl"))
     include(joinpath(@__DIR__, "m8_outage_screen.jl"))
+    include(joinpath(@__DIR__, "m9_line_resistance.jl"))
 
 end

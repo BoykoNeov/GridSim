@@ -337,7 +337,7 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 | Mechanism | Checked by | Label |
 |---|---|---|
 | `Branch.R`, `Machine.V_set`/`Q_min`/`Q_max`, `NetworkModel.slack` added without moving a number (step 1) | Full suite green with all 2835 pre-existing tests passing, **and** M5's 169 recorded criterion values bit-identical by MD5 against a capture taken at HEAD before the first edit — a tolerance-based suite cannot see a float move underneath it | structural |
-| Those fields are read by nothing that integrates | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) | structural |
+| Those fields are read by nothing that integrates **(true through M8; from M9 step 1 the detailed tier reads `R` — see the M9 section)** | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) — from M9 step 1, the classical tier and `build_oracle` only | structural |
 | `bus_roles` / `bus_role` derived, never stored | Rejection cases (slack naming a missing bus; a bus not in the model); a declared slack carrying no machine, which the model accepts and the engine refuses | structural |
 | DC susceptance matrix `B` is sparse **structurally** | `SparseMatrixCSC`, `nnz == n + 2m` on three fixtures, symmetric, `max|B·1| < 1e-12`; and on a five-bus radial where 13 of 25 entries can tell sparse from dense — on the three-bus ring, a complete graph, the same count passes against a dense matrix | structural |
 | DC solve `B·θ = P`, two buses | `θ₂ = −P/b` asserted **exactly** (`==`): one unknown makes the solve a single division, so a tolerance could only hide a solver change | closed form |
@@ -558,6 +558,24 @@ testsets in `test/m8_screening.jl` and `test/m8_outage_screen.jl`.
 mesh's G1 settles 10.94 Hz low in DC (−11.22 / −11.06 Hz in AC) and both screens
 pass it. This is named as an open problem on the hurdle list, not a claim
 (`plans/m8-context.md` D9, the user's choice).
+
+## Line resistance in the dynamic tiers — M9, `src/engines/detailed.jl`
+
+The detailed tier's edge current is `(Vf − Vt)/(R + jX)` from M9 step 1
+(`plans/m9-context.md` D5). test: `test/m9_line_resistance.jl`.
+
+| Claim | Checked against | Label |
+|---|---|---|
+| Nothing lossless moved (Hurdle 17.1) | Four captures at round-trip precision taken at HEAD before the first edit — M5's 169 criterion values, the 83-case AC digest, every field of `outage_screen` on both report grids and load models, step 0's lossless dip table — byte-identical after. Anti-vacuity: with the `R = 0` fast path removed, 86 of the 169 criterion values move | **structural** |
+| Each end of a branch read at its own terminal (Hurdle 17.7) | At the seed, `branch_power(a,b) + branch_power(b,a)` against `ac_powerflow`'s `loss` from separately written admittance code, ≤ 2.2e-16 on both lossy report grids, both load models; the audit of every reader and hand copy is recorded in D5 | **cross-fidelity** |
+| A lossy power flow seeds the tier flat (Hurdle 17.2) | `init!`'s own dynamic-network residual, then 50 s at two tolerances: worst 4.2e-13 per state against a 1e-10 gate | **cross-fidelity** |
+| The initial rate accounts for the change in losses (Hurdle 17.3) | `Σ2H·ω̇(t⁺) = −(P_lost + ΔL)` read from the right-hand side and both ends of every branch, constant power, four outages: ≤ 6.7e-14 against ΔL of 1.9e-3 – 1.7e-2 pu | **derived** |
+| The tier and the AC screen settle apart by the losses alone (Hurdle 17.4) | `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw`, uncapped constant power (case9 G3, mesh G3 — the only two that qualify): ≤ 5e-14 against gaps of ~3e-5 pu, at 400 s | **cross-fidelity** |
+| The two compiled networks hold the same `R` | The tier's own steady state on a lossy mesh (sabotage S4, `R` in one network only: refused, residual 0.15) and the dynamic-Kirchhoff check at a trip (0.26) | **structural** |
+
+**Not checked, and said:** the detailed tier's line-rating check reads the sending
+end only, where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive
+power) and is carried, not changed, because widening it would move lossless refusals.
 
 ## Owed rows
 

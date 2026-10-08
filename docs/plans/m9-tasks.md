@@ -5,9 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **step 0 done (2026-10-08); step 1 next.** Entered at `7a32ae1` with M8's
-close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests; step
-1 re-measures them before its first edit.
+Status: **steps 0–1 done (2026-10-08); step 2 next.** Entered at `7a32ae1` with M8's
+close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
+re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
+**5454 core / 1262 reference / 568 UI**.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -49,21 +50,39 @@ runs.
 - [x] Plan written against the hurdles (`m9-plan.md`); `docs/plans/README.md` row
       and hurdle list updated.
 
-## Step 1 — line resistance in the detailed tier (Hurdles 17.1–17.4, 17.7)
+## Step 1 — line resistance in the detailed tier (Hurdles 17.1–17.4, 17.7) — done 2026-10-08
 
-- [ ] Entry counts re-measured at HEAD before the first edit.
-- [ ] Captures at HEAD: M5 criterion values, 83-case AC digest, M8 screen outputs,
-      step 0's lossless dip table.
-- [ ] Edge current reads `R`; `branch_power` honest at both ends; refusal lifted
-      for this tier only.
-- [ ] Gate: all four captures bit-identical.
-- [ ] Flat run from a lossy `ac_powerflow`.
-- [ ] Settled lossy trip against the AC screen (constant power, uncapped): the
-      losses identity of D0 17.4, not a band.
-- [ ] `t⁺` identity with the losses term.
-- [ ] Antisymmetry audit, list recorded.
-- [ ] Sabotages, predictions first, each red where predicted; the shared-builder one
-      recorded for step 3.
+- [x] Entry counts re-measured at HEAD (`40b9acf`) before the first edit: 5316 / 1262 /
+      568, M8's close counts (the commits since were docs only).
+- [x] Captures at HEAD, `W:\temp\claude\gridsim-m9\step1\*-HEAD.txt`: M5's criterion
+      values and the 83-case AC digest (both byte-identical to M8's close captures as
+      well), every field of `outage_screen` on both report grids and both load models
+      (`screen_snapshot.jl`, new), step 0's lossless dip table at full precision
+      (`dips_snapshot.jl`, new — same runs, `repr` instead of four decimals).
+- [x] Edge current `(Vf − Vt)/(R + jX)` in both compiled networks (`R` appended to the
+      edge parameters, written into both); `AntiSymmetric` kept — a series branch
+      with no shunt carries one current; `branch_power`/`branch_power_series` read
+      the receiving end as `Re(V_to·conj(−I))`; `branch_topology` carries `R`; the
+      refusal lifted for this tier only (`_assert_lossless_branches` now names the
+      classical tier and `build_oracle` as what is left).
+- [x] **Gate: all four captures byte-identical** after the change. **Anti-vacuity
+      (S6):** with the `R = 0` fast path removed (the lossy formula at `R = 0`), 86 of
+      the 169 criterion values move in their last digits — the fast path is what
+      keeps them, and the gate sees it.
+- [x] Flat run from a lossy `ac_powerflow`: both report grids, both load models, two
+      tolerances, worst drift 4.2e-13 per state (gate 1e-10).
+- [x] Settled lossy trip against the AC screen: the identity holds to 4e-14 on case9
+      G3 (gap 3.0e-5 pu) and 5e-14 on mesh G3 (2.8e-5 pu) at 400 s. **Only two
+      outages qualify:** case9 G1/G2 are refused at the trip and the mesh's G2 caps
+      G3's 5 MW of headroom (not foreseen by the plan).
+- [x] `t⁺` identity with the losses term: four outages (case9 G3, mesh G1–G3),
+      residual ≤ 6.7e-14 against a losses change of 1.9e-3 to 1.7e-2 pu.
+- [x] Antisymmetry audit, list recorded (`m9-context.md` D5).
+- [x] Sabotages, predictions first (`W:\temp\claude\gridsim-m9\step1\predictions.md`),
+      each red where predicted, with one prediction wrong in the safe direction and
+      one check found too lenient and tightened (D5). Nothing is shared with the
+      power flow's admittance code, so step 3's mutation is the plan's fallback, the
+      conductance sign.
 
 ## Step 2 — line resistance in the swing tier (Hurdle 17.6)
 

@@ -394,7 +394,7 @@ end
     u = eng.integrator.u
     bt = GridSim.branch_topology(eng.model)
     V(v) = complex(u[eng.Vre_idx[v]], u[eng.Vim_idx[v]])
-    Inet = sum(st * (V(1) - V(bt.src[e] == 1 ? bt.dst[e] : bt.src[e])) / (im * bt.X[e])
+    Inet = sum(st * (V(1) - V(bt.src[e] == 1 ? bt.dst[e] : bt.src[e])) / complex(bt.R[e], bt.X[e])
                for (e, st) in ((e, eng.params[eng.status_pidx[e]]) for e in eachindex(bt.src))
                if 1 in (bt.src[e], bt.dst[e]))
     @test abs(Inet) < 1e-10                  # B1 carries no load: nothing flows at all

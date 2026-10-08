@@ -214,22 +214,40 @@ const _DETAILED_DT0 = 0.02
 """
     _branch_current!(e, v_src, v_dst, p, t)
 
-One branch's current, `I = status·(V_src − V_dst)/(jX)`, split into real and
+One branch's current, `I = status·(V_src − V_dst)/(R + jX)`, split into real and
 imaginary parts and wrapped by the caller in `AntiSymmetric` so the far end sees
 `−I`. Shared by the static and dynamic networks, which is what makes the power
 flow a solve of *the same network* the engine integrates rather than of a second
 one written beside it.
 
-Dividing by `jX` rotates by `−90°`: `(a + jb)/(jX) = (b − ja)/X`.
+**`AntiSymmetric` stays exact with `R ≠ 0`** (M9 step 1). A series impedance with
+no shunt carries ONE current: what leaves the source end arrives at the far end.
+What is no longer equal and opposite is the POWER — `V_src·conj(I)` and
+`V_dst·conj(−I)` differ by `|I|²R` — and that is read where power is read
+(`branch_power`), never here.
+
+Dividing by `R + jX`: `(a + jb)/(R + jX) = ((aR + bX) + j(bR − aX))/(R² + X²)`.
+**At `R = 0` the pre-M9 arithmetic runs, textually**: `bX/X²` and `b/X` are the same
+number in exact arithmetic and not in floating point, and every lossless run the
+repo has recorded (M5's criterion, the M8 screens, M9 step 0's dip table) is
+pinned bit for bit across this change (`m9-context.md` D0, Hurdle 17.1). The branch
+is on a parameter, so it is fixed for the life of a run.
 
 `status` is the line's in-service flag, `1.0` or `0.0`. It multiplies the current
 rather than the admittance so that an out-of-service line is an open circuit
 exactly, with no `X = Inf` anywhere near a denominator.
 """
 function _branch_current!(e, v_src, v_dst, p, t)
-    X, status = p[1], p[2]
-    e[1] =  status * (v_src[2] - v_dst[2]) / X
-    e[2] = -status * (v_src[1] - v_dst[1]) / X
+    X, status, R = p[1], p[2], p[3]
+    if R == 0
+        e[1] =  status * (v_src[2] - v_dst[2]) / X
+        e[2] = -status * (v_src[1] - v_dst[1]) / X
+    else
+        a, b = v_src[1] - v_dst[1], v_src[2] - v_dst[2]
+        z2 = R * R + X * X
+        e[1] = status * (a * R + b * X) / z2
+        e[2] = status * (b * R - a * X) / z2
+    end
     return nothing
 end
 
@@ -910,10 +928,10 @@ function _assert_detailed_tier(net::NetworkModel)
     # M7 step 1 refused every inverter; step 4 built the grid-forming kind and step 5
     # the grid-following one. What is left to refuse about inverters is D5 — a model
     # with nothing to follow — and that runs first thing in `init!`.
-    # M6 step 1. `Branch.R` exists in the model and this tier's edge current is
-    # `(Vf − Vt)/(jX)`, so a lossy branch would be silently simulated as a lossless
-    # one. Refused here until M6 step 3's power flow reads it.
-    _assert_lossless_branches(net, "DetailedEngine")
+    # `Branch.R` was refused here from M6 step 1 to M9 step 1, while this tier's edge
+    # current was `(Vf − Vt)/(jX)`. It is `(Vf − Vt)/(R + jX)` now (`_branch_current!`),
+    # so a lossy branch is simulated as the lossy branch its data describes, and the
+    # refusal is gone from this tier (`m9-context.md` D0, Hurdle 17).
     for (v, ks) in pairs(net.machines_at_bus)
         # M7 step 4: a grid-forming inverter is a source too, and a vertex model holds
         # exactly one. Without inverters this is the pre-M7 check, message for message.
@@ -953,7 +971,20 @@ function _detailed_graph(net::NetworkModel)
     return g, bt
 end
 
-const _DETAILED_EDGE_PSYM = [:X, :status]
+# `:R` APPENDED (M9 step 1), so `X` and `status` keep the slots they always had.
+const _DETAILED_EDGE_PSYM = [:X, :status, :R]
+
+"""
+    _series_current(d::ComplexF64, R, X, status) -> ComplexF64
+
+`status·d/(R + jX)` as a phasor — `_branch_current!`'s expression for the read-outs
+that work in complex arithmetic (`_branch_flows`, `branch_power`,
+`branch_power_series`). At `R = 0` it is the pre-M9 `status·d/(jX)` textually, for
+the reason `_branch_current!` gives: the lossy form rounds differently even when
+`R` is zero, and every lossless number is pinned bit for bit.
+"""
+@inline _series_current(d::ComplexF64, R::Float64, X::Float64, status::Float64) =
+    R == 0 ? status * d / (im * X) : status * d / complex(R, X)
 
 _detailed_edge() = NetworkDynamics.EdgeModel(
     g = NetworkDynamics.AntiSymmetric(_branch_current!),
@@ -1278,13 +1309,21 @@ end
 # |S| on each branch, from the solved bus voltages: `S = V_from · conj(I)`.
 # Computed from the same current expression the edge model integrates, so the
 # check and the physics cannot come to hold different conventions.
+#
+# THE SENDING END ONLY, and that is a known gap carried forward rather than changed
+# (M9 step 1's audit, `m9-tasks.md`). `ac_powerflow` judges the LARGER end. The two
+# ends differ even on a lossless branch — reactive power by `|I|²X` — and now by
+# `|I|²R` in real power too; widening this to both ends would move lossless refusals,
+# which the step's gate forbids. At initialisation on the seeded path it is moot
+# (`ac_powerflow` has already refused an overload at either end); at a
+# re-initialisation after an event it is not.
 function _branch_flows(net::NetworkModel, bt, V::Vector{ComplexF64},
                        status::Vector{Float64})
     n = length(net.branches)
     out = Vector{Float64}(undef, n)
     for e in 1:n
         d = V[bt.src[e]] - V[bt.dst[e]]
-        I = status[e] * d / (im * bt.X[e])
+        I = _series_current(d, bt.R[e], bt.X[e], status[e])
         out[e] = abs(V[bt.src[e]] * conj(I))
     end
     return out
@@ -1732,6 +1771,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     sstatus_pidx = [SII.parameter_index(nws, NetworkDynamics.EPIndex(branch_to_edge[e], :status)) for e in 1:ne]
     X_pidx  = [SII.parameter_index(nw,  NetworkDynamics.EPIndex(branch_to_edge[e], :X)) for e in 1:ne]
     sX_pidx = [SII.parameter_index(nws, NetworkDynamics.EPIndex(branch_to_edge[e], :X)) for e in 1:ne]
+    R_pidx  = [SII.parameter_index(nw,  NetworkDynamics.EPIndex(branch_to_edge[e], :R)) for e in 1:ne]
+    sR_pidx = [SII.parameter_index(nws, NetworkDynamics.EPIndex(branch_to_edge[e], :R)) for e in 1:ne]
 
     # --- static parameters, then the power flow -------------------------------
     su = zeros(Float64, NetworkDynamics.dim(nws))
@@ -1782,6 +1823,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     end
     for e in 1:ne
         sp[sX_pidx[e]]      = bt.X[e]
+        sp[sR_pidx[e]]      = bt.R[e]
         sp[sstatus_pidx[e]] = 1.0
     end
 
@@ -1999,6 +2041,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
     end
     for e in 1:ne
         p0[X_pidx[e]]      = bt.X[e]
+        p0[R_pidx[e]]      = bt.R[e]
         p0[status_pidx[e]] = 1.0
     end
 
@@ -2012,7 +2055,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         "DetailedEngine: the back-substituted state is not a fixpoint of the " *
         "dynamic network (|residual| = $r > $_PF_RESIDUAL). The power flow " *
         "converged, so this is the BACK-SUBSTITUTION, not the solve: a machine " *
-        "state, a per-unit conversion, or the air-gap-vs-terminal power choice. " *
+        "state, a per-unit conversion, the air-gap-vs-terminal power choice, or " *
+        "(from M9 step 1) a branch's series impedance read differently by the two. " *
         "Checked here, at build time and with a number, rather than left to " *
         "surface later as a flat run that is not flat."))
 
@@ -2364,9 +2408,16 @@ generation_ramp(eng::DetailedEngine, machine::Symbol) = _ramp_of(eng.ramps, mach
 
 Active power flowing **from** bus `from` **into** the branch, per unit on
 `model.S_base`, right now: `Re(V_from · conj(I))` with
-`I = status·(V_from − V_to)/(jX)` — the same current expression the edge model
+`I = status·(V_from − V_to)/(R + jX)` — the same current expression the edge model
 integrates, so the read-out and the physics cannot hold different conventions
 (`_branch_flows` makes the same argument about the power flow's own check).
+
+**Each end is read at its own terminal** (M9 step 1, Hurdle 17.7). On a lossy branch
+`branch_power(eng, a, b) + branch_power(eng, b, a)` is the branch's loss `|I|²R`, not
+zero — `branch_power(::ACPowerFlow, …)`'s contract, now this tier's too. Asked
+against the branch's orientation, the answer is `Re(V_to·conj(−I))`, never the
+negated sending end. On a lossless branch the two are equal in exact arithmetic,
+and there the negation is kept, so every lossless read is the number it was.
 
 **This is the quantity the classical tier reports as `K·sin(δ_from − δ_to)`, and
 that is the whole point of the shared name** (M5 step 7). There it is bounded by
@@ -2387,10 +2438,19 @@ function branch_power(eng::DetailedEngine, from::Symbol, to::Symbol)
     Vf = complex(u[eng.Vre_idx[bt.src[e]]], u[eng.Vim_idx[bt.src[e]]])
     Vt = complex(u[eng.Vre_idx[bt.dst[e]]], u[eng.Vim_idx[bt.dst[e]]])
     status = eng.params[eng.status_pidx[e]]
-    I = status * (Vf - Vt) / (im * bt.X[e])
-    # The CALLER's order decides the sign — see `branch_power(::SwingEngine, …)`.
-    return _oriented(eng.model.branches[e], from) ? real(Vf * conj(I)) :
-                                                    -real(Vf * conj(I))
+    I = _series_current(Vf - Vt, bt.R[e], bt.X[e], status)
+    # The CALLER's order decides which END is read — see `branch_power(::SwingEngine, …)`.
+    return _end_power(Vf, Vt, I, bt.R[e], _oriented(eng.model.branches[e], from))
+end
+
+# The active power entering a branch at the end the caller named: the sending end
+# `Re(Vf·conj(I))` when the caller's order is the branch's own, else the receiving end
+# `Re(Vt·conj(−I))`. At `R = 0` the receiving end is the negated sending end, as it
+# was before M9 — equal in exact arithmetic, and kept for the bits (`_series_current`).
+@inline function _end_power(Vf::ComplexF64, Vt::ComplexF64, I::ComplexF64, R::Float64,
+                            oriented::Bool)
+    oriented && return real(Vf * conj(I))
+    return R == 0 ? -real(Vf * conj(I)) : real(Vt * conj(-I))
 end
 
 """
@@ -2420,15 +2480,15 @@ function branch_power_series(eng::DetailedEngine, from::Symbol, to::Symbol)
     bt = branch_topology(eng.model)
     ir, ii = eng.Vre_idx[bt.src[e]], eng.Vim_idx[bt.src[e]]
     jr, ji = eng.Vre_idx[bt.dst[e]], eng.Vim_idx[bt.dst[e]]
-    status, X = eng.params[eng.status_pidx[e]], bt.X[e]
-    sgn = _oriented(eng.model.branches[e], from) ? 1.0 : -1.0
+    status, X, R = eng.params[eng.status_pidx[e]], bt.X[e], bt.R[e]
+    oriented = _oriented(eng.model.branches[e], from)
     sol = eng.integrator.sol
     P = Vector{Float64}(undef, length(sol.u))
     @inbounds for k in eachindex(sol.u)
         u = sol.u[k]
         Vf = complex(u[ir], u[ii])
         Vt = complex(u[jr], u[ji])
-        P[k] = sgn * real(Vf * conj(status * (Vf - Vt) / (im * X)))
+        P[k] = _end_power(Vf, Vt, _series_current(Vf - Vt, R, X, status), R, oriented)
     end
     return (t = copy(sol.t), P = P)
 end
