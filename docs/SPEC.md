@@ -494,4 +494,12 @@ end
    batched/GPU contingency & time-series. **Contingency screening taken as M8** (2026-10-06,
    the user's choice): single line and generator outages at the DC-factor and AC
    fidelities, hurdles 13–15 (`docs/plans/m8-context.md` D0). The map and the
-   batched/GPU runs are not in it (D5).
+   batched/GPU runs are not in it (D5). **Delivered in M8 (closed 2026-10-08)**:
+   `src/steadystate/screening.jl` screens every line and every generator at both
+   fidelities and reports each outcome rather than throwing; DC line-outage factors
+   checked exact against rebuild-and-re-solve and against `PowerNetworkMatrices`;
+   splits from the graph; a lost generator shared by droop and damping, checked
+   against the swing and detailed tiers' settled trips; `scripts/outage_screen.jl`
+   prints the report. Not built: the map, batched/GPU runs, double outages, line
+   charging. Named as Hurdle 16: a `:secure` outcome carries no frequency
+   criterion (`docs/plans/README.md`).

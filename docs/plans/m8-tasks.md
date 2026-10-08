@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–6 done (step 6 on 2026-10-07)**; step 7 (close) next. Step 6 left **5268 core / 1262 reference / 568 UI** (gated), **5316 core by count** after its review follow-up (test-only). Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
+Status: **COMPLETE (closed 2026-10-08)** — steps 0–7 done; closed on re-resolved manifests at **5316 core / 1262 reference / 568 UI**, both captures bit-identical before and after. Step 6 left **5268 core / 1262 reference / 568 UI** (gated), **5316 core by count** after its review follow-up (test-only). Step 5 left **5091 core / 1262 reference / 568 UI** (follow-up gate). Its gate is
 recorded in its own section. Step 4 left **4869
 core / 1262 reference / 568 UI**, all three gates run (+125 in `test/m8_screening.jl`,
 +1 in M7's surface walk); the review follow-up added 16 test-only (grid-following),
@@ -530,13 +530,38 @@ Every prediction, band and outcome below was written to
       +48 test-only (**5316 core by count**; full gate not re-run, nothing under
       `src/` changed; step-6 file 223/223 on the M8 runner).
 
-## Step 7 — close
+## Step 7 — close (2026-10-08)
 
-- [ ] Manifests deleted and re-resolved in all three environments; counts re-measured.
-- [ ] **After the re-resolve, re-run both captures** (`criterion_snapshot.jl`,
-      `ac_snapshot.jl` in `W:\temp\claude\gridsim-m8\`) and record the new
-      digests beside the old ones. Re-measuring only the test counts is how M5's
-      values moved unseen at M7's close (step 1's finding).
-- [ ] Ledger rows; `SPEC.md` §9 item 8 annotation; README row and hurdle list; memory.
-- [ ] **Hurdle list gets the frequency gap** (the user's choice at step 6, D9): `:secure`
-      has no frequency criterion; the mesh's G1 loss settles 10.94 Hz low and passes.
+- [x] **A baseline before anything was deleted.** Both captures re-run at `0886cf6`
+      on the manifests steps 2–6 ran on (`criterion-PRECLOSE.txt`,
+      `ac-PRECLOSE.txt`): value-line MD5 `1eeed2cc84937cb544eee5c35d0091cf` (169
+      values) and file MD5 `5a5873deefd295a470dc5f71260be7ba` (526 lines), the
+      same as step 1's. So steps 2–6 moved neither, and any change after the
+      re-resolve would belong to the re-resolve alone.
+- [x] **Manifests re-resolved**, all three deleted (copies kept in
+      `W:\temp\claude\m8-close\`) and re-resolved in sequence, root first, never
+      concurrently, each suite at below-normal priority: **5316 core / 1262 reference
+      (82 + 235 + 135 + 116 + 418 + 154 + 3 + 66 + 42 + 11) / 568 UI**, 0 failed, 0
+      errored. The counts are the predicted ones (step 6's follow-up count; the
+      reference and UI unchanged since steps 2 and M7). Counted as `[[deps.` entries:
+      **191 → 191 / 301 → 301 / 366 → 366**, nothing added or removed. Bumps 5 / 8 /
+      7, all small: `Adapt`, `Atomix`, `CpuId`, `KernelAbstractions`,
+      `SparseConnectivityTracer` everywhere, plus `ArrayLayouts`, `Hwloc_jll`,
+      `Symbolics` (reference) and `PlotUtils`, `libpng_jll` (UI). No solver or
+      network package moved (`SciMLBase`, `NetworkDynamics`, `PowerDynamics`,
+      `PowerFlows`, `PowerNetworkMatrices`, `JuMP`, `HiGHS` all as before). No
+      `Project.toml` changed.
+- [x] **Both captures re-run after the re-resolve** (`criterion-CLOSE.txt`,
+      `ac-CLOSE.txt`): **`1eeed2cc…` and `5a5873de…`, bit-identical** to the baseline,
+      no precompilation lines in either (the suites ran first). Unlike M7's close,
+      this re-resolve moved nothing in M5's criterion values, which is what step 1's
+      finding asked to see, not assume.
+- [x] **Ledger**: `docs/validation-ledger.md` gains an M8 section (it had no M8 rows),
+      with the one stated-not-checked claim (the reactive part's sign) and the
+      missing frequency criterion written down rather than implied.
+- [x] **SPEC** §9 item 8 marked delivered, with what was not built. **README**s:
+      the top-level status, a "what you can do" line, the layout; the plans index's
+      M8 row.
+- [x] **Hurdle list**: 13, 14 and 15 marked closed with what closed each, and **16
+      added — a secure screen is not a surviving grid** (the user's choice at step 6,
+      D9). The list does **not** end empty this time.

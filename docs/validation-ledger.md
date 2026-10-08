@@ -530,6 +530,35 @@ read. The aggregate tier's nadir overlay is not drawn (`coi_model` refuses a `Lo
 | The editor carries inverters, and apply writes nothing on a refusal | Round trip with every field off its default, both modes; one rebuild per apply (`_inverter_with`). Eleven sabotages red | **structural** |
 | The low-inertia window is the study, not a copy | The script `include`d; the read-out `isequal` the study's row; zero share gives two inverter runs `==` sample for sample. Eight sabotages red, two only after a sweep of every setting | **structural** |
 
+## Single-outage screening — M8, `src/steadystate/screening.jl`
+
+Every line and every generator lost in turn, at the DC-factor and AC fidelities.
+Each outage is reported as an outcome (`:secure` / `:voltage` / `:overload` /
+`:no_solution`, or a split), never thrown (`plans/m8-context.md` D3). test: the
+testsets in `test/m8_screening.jl` and `test/m8_outage_screen.jl`.
+
+| Claim | Checked against | Label |
+|---|---|---|
+| `ac_powerflow` did not move when its checks were split into verdict-returning pieces (step 1) | An 83-case capture of every `ACPowerFlow` field at round-trip precision or the full refusal, MD5 `5a5873de…` before the first edit, after steps 1 and 5, and at the close on re-resolved manifests. M5's criterion harness never reaches `ac_powerflow`, so its digest could not see this | **structural** |
+| The outcome and the throw are one solve read two ways | 56 fixtures, `==` on every field when secure and the named message otherwise. Seven sabotages red where predicted; the check-order one green in this test **as predicted** (both entry points read one body) | **structural** |
+| DC line-outage factors are exact against rebuild-and-re-solve (Hurdle 13.1) | Meshed fixture with a degree-3 bus and unequal reactances, 0.06 of a `100·eps·max|f|` band; near a bridge inside `…/(1 − PTDF_kk)`, and the whole gap is the factors' (the rebuild sits 1.1e-16 from an exact answer). Five sabotages; one (reference row kept) is an equivalent change only the `nnz` check sees | **derived** |
+| case9's ring is blind to a **consistent** wrong reactance set, in its flows only (Hurdle 13.2, corrected at step 2) | Ring factors 0 or ±1 to 1e-12; ring margins against the closed form `X_k/ΣX_ring` to 100·eps — the one margin check sharing no code with the rebuild. The plan named the wrong sabotage; the right one is green on case9's flows and red on its margins | **closed form** |
+| …and against an outside implementation | `PowerNetworkMatrices` 0.24.3 `LODF` (reference): 0.012 of its `Float32` storage band on ordinary reactances, 0.031 of round-off on `Float32`-exact ones; reading the transpose is 7.1e5 times the band. At a bridge it answers "nothing else moves" (diagonal −1.0) where ours reports a split | **external** |
+| Splits are found from the graph, never a threshold (Hurdle 14) | `Graphs.bridges` matched on the unordered bus pair; split set = rebuild refusal set on both fixtures. case9's bridge margins measured −2.2e-16, 0.0, 0.0 — a threshold would need the sign handled | **structural** |
+| Each AC line outage IS the outcome solve on the rebuilt model | `==` on every field at four case9 loadings and the mesh; solutions read **by branch id** (a position read is invisible on branches before the outaged one — sabotage T1) | **structural** |
+| What the DC screen misses, split into a part with a sign and a part without (Hurdle 13.3) | Reactive part `|S| − |P| ≥ 0`: **stated, not checked** (a check of it cannot fail). Real-power part measured along a five-rung ladder, one change per rung: at every bus held at 1 pu, lossless, AC − DC is a pure loop flow (≤ 2.5e-14), so case9's ring outages are blind there. DC exceeds AC on default loads (to 23 MW) and on the helper-machine rungs on constant power; claims re-scoped twice at review | **derived**, scoped |
+| DC cannot see voltage (Hurdle 13.4) | case9 at 315 MW: L45 and L94 pass DC and are AC voltage refusals (B5 0.873, B9 0.757 pu). **No line charging in this model**, stated wherever a case9 voltage appears | **derived** |
+| A lost generator is shared by `min(−Δω/R, headroom) − Δω·D` (Hurdle 15, D2) | The swing tier's settled `TripGenerator`: shares ≤ 1.5e-10 and speeds ≤ 1.5e-12 against a 1e-7 band stated first, at 300 s and 450 s, uncapped, capped (G3 settles 1.45 MW above `Pmax` in both) and with a grid-forming inverter. Zero damping checked in closed form only, because that swing run never settles. Four sabotages red in both checks | **cross-fidelity** |
+| The AC generator screen's shared reference degenerates to `ac_powerflow` | All weight on the slack against `ac_powerflow` on the rebuilt model: bit-identical on two fixtures, asserted inside a 1e-10 band (it rests on elimination order). Pickup = lost power + Δlosses + **Δload draw**, per outage, three fixtures | **derived** |
+| …and agrees with the DC screen where it should, and the detailed tier where it can | Lossless constant power: AC shares = DC shares, caps included, ≤ 1e-15. Detailed tier settled: ≤ 4.4e-11 on constant power; on default loads the gap is **load relief exactly** (the rule fed the tier's own settled load draw, inside 1e-7). Rodas5P stalls at a governor cap there; FBDF completes | **cross-fidelity** |
+| A bridge to a lone source is that source's outage (D9) | The mapped line carries nothing in its generator's outage (DC ≤ 9.3e-16 pu, AC 0.0); the cut-off bus sits at its near end's voltage. Six sabotages, one red only after the fixture was fixed | **structural** |
+| The report's five claims | Every printed number asserted at its printed precision (`test/m8_outage_screen.jl`), prose written after the four tables | **derived** |
+
+**Not checked, and said:** `:secure` has **no frequency criterion**. Losing the
+mesh's G1 settles 10.94 Hz low in DC (−11.22 / −11.06 Hz in AC) and both screens
+pass it. This is named as an open problem on the hurdle list, not a claim
+(`plans/m8-context.md` D9, the user's choice).
+
 ## Owed rows
 
 - SPEC §7.6's third lesson, **IBR behaviour**: **scheduled as M7** (2026-09-29) and
