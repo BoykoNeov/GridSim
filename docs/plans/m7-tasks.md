@@ -24,7 +24,7 @@ runs.
       that is not, 12 time scales a phasor tier cannot honestly hold. Added to
       `docs/plans/README.md`'s list.
 - [x] **Both outside inverter components built and run before the plan named
-      them** (D1; spike `W:\temp\claude\m7-step0\spike_pd_inverters.jl`, reference
+      them** (D1; spike `docs/evidence/m7-step0/spike_pd_inverters.jl`, reference
       environment at its current manifest, nothing added). `IdealDroopInverter` and
       `ComposableInverter.SimpleGFL` both initialise from PowerDynamics' own power
       flow and hold flat (residuals 1.3e-13 / 2.0e-13).
@@ -44,8 +44,8 @@ runs.
       form**: `i_d = 0.502545`, `V_t = √(1 − X²i_d²) = 0.99494`, `P = V_t·i_d = 0.5`.
 - [x] Plan trio written (`m7-plan.md`, `m7-context.md`, `m7-tasks.md`).
 - [x] **M5's criterion values captured at HEAD before any code edit**, for step 1's
-      gate: `W:\temp\claude\m7\criterion-HEAD.txt` (harness
-      `W:\temp\claude\m7\criterion_snapshot.jl`, M6's, unchanged). **169 values,
+      gate: `docs/evidence/m7/criterion-HEAD.txt` (harness
+      `docs/evidence/m7/criterion_snapshot.jl`, M6's, unchanged). **169 values,
       identical line for line to M6 step 7's capture**; digest of the value lines
       (`grep " = " | md5sum`) `bfea9f4b81d80dfba5b7ba97ee1e5cb1`. (M6's recorded
       `c79b7c07…` digest was taken over differently filtered text, so the two
@@ -107,11 +107,11 @@ runs.
       intersection empty.
 - [x] **Gate (a):** all **3602** pre-existing core tests green (the run before the
       new file was wired in), then **3714** with it (+112), exit 0
-      (`W:\temp\claude\m7\core-step1-a.log`, `core-step1-b.log`).
+      (`docs/evidence/m7/core-step1-a.log`, `core-step1-b.log`).
 - [x] **Gate (b):** M5's 169 criterion values **bit-identical** to the HEAD capture
-      — empty diff (`W:\temp\claude\m7\criterion-STEP1.txt`).
+      — empty diff (`docs/evidence/m7/criterion-STEP1.txt`).
 - [x] **Anti-vacuity, five mutations executed**, each turning the step's tests red
-      (runner `W:\temp\claude\m7\mutate.py`, restoring from a backup after each):
+      (runner `docs/evidence/m7/mutate.py`, restoring from a backup after each):
       the balance ignoring inverters (9 errors); `dc_powerflow`'s refusal removed
       (2 failures — the refusal is per consumer, not shared by accident);
       `dispatch_schedule` dropping inverters (1); the writer skipping `K_q` (1);
@@ -157,7 +157,7 @@ runs.
       (2 failures); virtual inertia on the wrong base (3); a tripped unit's damping
       staying (2); the zero-inertia trip refusal removed (2).
 - [x] Gates: **3753 core** (3730 − 2 retired step-1 refusal tests + 25), M5 criterion
-      **bit-identical** (`W:\temp\claude\m7\criterion-STEP2.txt`).
+      **bit-identical** (`docs/evidence/m7/criterion-STEP2.txt`).
 - **Found, not planned:** `FrequencyResponseEngine` would have stepped on into
   `Inf`/`NaN` after a trip that left no inertia online — dividing by `2·H_sys = 0`.
   No pre-M7 fixture could reach it (every M1 system keeps a machine online); a
@@ -204,7 +204,7 @@ runs.
 - [x] `SPEC.md` §7.6 amended **after** the measurement: "no swing equation" is true
       of grid-following only. §9 item 7 marked taken.
 - [x] Gates: **3778 core**, M5 criterion **bit-identical**
-      (`W:\temp\claude\m7\criterion-STEP3.txt`), **1143 reference / 449 UI**.
+      (`docs/evidence/m7/criterion-STEP3.txt`), **1143 reference / 449 UI**.
 - **Found, not planned (1):** M2's `V5` tripwire — which counts every array the
   swing engine holds, to catch an all-pairs structure — moved by exactly `n`
   (1122 → 1162 at n = 40): the one new per-vertex `droop` vector. Accounted for in
@@ -251,7 +251,7 @@ runs.
       its own base, virtual inertia out of the COI weight, re-init re-solving `E`,
       relay lookup by machine index); **B7, `Q` measured at the bus, GREEN in-house as
       pre-registered** — only the PowerDynamics comparison can see it.
-- [x] Gates: core **3832**, M5 criterion **bit-identical** (`W:\temp\claude\m7\criterion-STEP4.txt`).
+- [x] Gates: core **3832**, M5 criterion **bit-identical** (`docs/evidence/m7/criterion-STEP4.txt`).
 - [x] PowerDynamics `IdealDroopInverter` + line `X_c`, `K_q` live, band stated
       before the gap is seen (commit C). `build_oracle(:sauer_pai)` puts each
       grid-forming inverter on its own internal vertex after the buses, joined by a
@@ -325,7 +325,7 @@ runs.
       step 7's grid-forming sweep has a PLL to read: an engine keyword, channels
       `θmeter_<bus>`/`ωmeter_<bus>`, one PLL law (`_pll_rhs`) shared with the
       grid-following vertex. Refactor gate: a captured step-5 grid-following run `==`
-      before and after (`W:\temp\claude\m7\step6\gfl_capture.jl`). Meter checks:
+      before and after (`docs/evidence/m7/step6/gfl_capture.jl`). Meter checks:
       injects nothing (meter states kicked, every other RHS row `==`); the positive
       control — `PLLMeter(inv)` at the inverter's bus reads `ωpll_` to round-off
       (6e-17, NOT bit for bit as predicted: the Rosenbrock linear solve; does not fall
@@ -356,9 +356,9 @@ runs.
 - [x] **Anti-vacuity: a PLL averaged into `ω_coi`** moves the centre of inertia on the
       phase-jump fixture, where it measurably does not move (`coi_rocof` 5.6e-17 Hz/s,
       `f_coi` flat to exactly 0.0).
-- [x] **Mutations, eight executed, each red** (`W:\temp\claude\m7\step6\mutate6.py`,
+- [x] **Mutations, eight executed, each red** (`docs/evidence/m7/step6/mutate6.py`,
       log `mut6.log`): S6-1 a PLL averaged into `ω_coi` (4 failures — the flat `f_coi` and the zero windowed COI); S6-2 a meter re-seeded to the new bus angle at re-initialisation (7 — the spike vanishes); S6-3 a meter on the neighbouring bus (6); S6-4 the PLL error normalised by |V| (5 — the leftover at the smallest τ); S6-5 the detailed `coi_rocof`'s grid-forming term sign-flipped (2); S6-6 the swing `coi_rocof` reading an inverter's raw state rate (2); S6-7 `rocof_readouts`' zero-weight guard removed (1); S6-8 PLL frequency not converted to Hz (10).
-- [x] **Step 6 gates:** core **3950** (3868 + 82), reference **1251**, UI **449** (both unchanged — no meter is armed outside the new tests, so no channel list moved), M5 criterion **bit-identical** (`W:\temp\claude\m7\criterion-STEP6.txt`).
+- [x] **Step 6 gates:** core **3950** (3868 + 82), reference **1251**, UI **449** (both unchanged — no meter is armed outside the new tests, so no channel list moved), M5 criterion **bit-identical** (`docs/evidence/m7/criterion-STEP6.txt`).
 - **Found, not planned — step 7 cannot run as written**: the detailed tier refuses
   `TripGenerator`, `StepLoad` is aggregate-only and has no bus, and grid-following
   inverters live only in the detailed tier, so "the largest-unit trip at each share"
@@ -379,7 +379,7 @@ runs.
       Gates: core **3994** (3950 + 43 + 1), reference **1251** unchanged, M5 criterion
       bit-identical, step 6's grid-following capture `==`.
 - [x] **Trip sabotages, nine executed, each red, predictions written first**
-      (`W:\temp\claude\m7\step7\mutate7.py`, log `mut7.log`): T7-1 the `E = 0`
+      (`docs/evidence/m7/step7/mutate7.py`, log `mut7.log`): T7-1 the `E = 0`
       shortcut (predicted: the "exports nothing" check; actually caught EARLIER — the
       leftover X′d is a shunt that pulls B1 to 0.505 pu and the re-solve's band refuses
       it); T7-2 weight not removed; T7-3 static machine status not zeroed, T7-4
@@ -453,14 +453,14 @@ runs.
       sharing one row above a bus, solve's schedule counting an inverter on the slack
       bus, run's status counting inverters and catching the swing tier's
       grid-following refusal (an `ArgumentError`, already caught).
-- [x] **Rendered and looked at** (`W:\temp\claude\m7\step8\ed-*.png`). Found: a machine's and an
+- [x] **Rendered and looked at** (`docs/evidence/m7/step8/ed-*.png`). Found: a machine's and an
       inverter's labels on one bus written through each other (spacing 0.9 → 1.9
       offsets); the first fixture REFUSED by solve (two `V_set`s on one bus — the
       refusal path, working); and the multi-machine window that **run ▶** opens drew a
       grid-forming inverter's trace with NO trip button and counted it as a machine —
       it now has one, under **trip a source**, and the status counts inverters.
 - [x] Precompile workload renders the editor with an inverter selected.
-- [x] **Sabotages, eleven, each red** (`W:\temp\claude\m7\step8\mutate8.py`, logs `mut8*.log`):
+- [x] **Sabotages, eleven, each red** (`docs/evidence/m7/step8/mutate8.py`, logs `mut8*.log`):
       S8-1 balance ignores inverters; S8-2 derived slack in insertion order; S8-3
       deleting a bus keeps its inverters; S8-4 renaming a bus strands them; S8-5
       `_inverter_with` drops `τ_pll`; S8-6 open does not carry inverters; S8-7 apply
@@ -509,7 +509,7 @@ runs.
 ## Step 9 — close (2026-10-06)
 
 - [x] **Manifests re-resolved**, all three deleted (copies kept in
-      `W:\temp\claude\m7-close\`) and re-resolved in sequence, root first, never
+      `docs/evidence/m7-close/`) and re-resolved in sequence, root first, never
       concurrently, each suite at below-normal priority: **4134 core / 1251 reference /
       568 UI**, 0 failed, 0 errored — identical to step 8 (core, UI) and step 7
       (reference, 82 + 235 + 135 + 116 + 418 + 154 + 3 + 66 + 42). Counted as

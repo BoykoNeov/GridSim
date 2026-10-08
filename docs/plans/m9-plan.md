@@ -56,7 +56,7 @@ reads both ends honestly; `_assert_lossless_branches` is lifted for this tier on
 and its docstring's list shrinks by one.
 
 - **Before the first edit:** capture at HEAD M5's 169 criterion values and the
-  83-case AC digest (`W:\temp\claude\gridsim-m8\criterion_snapshot.jl`,
+  83-case AC digest (`docs/evidence/gridsim-m8/criterion_snapshot.jl`,
   `ac_snapshot.jl`), M8's screen outputs on both report fixtures, and step 0's
   lossless dip table. **Gate:** all four bit-identical after the change.
 - **Flat run:** a lossy `ac_powerflow` seeds the tier and nothing moves (no event).

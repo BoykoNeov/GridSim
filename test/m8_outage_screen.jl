@@ -7,7 +7,7 @@
 # Then the script's claims, asserted against the script's own functions (the
 # `OutageScreenScript` module in `runtests.jl`), never a second copy of its fixtures.
 # Every claim was written AFTER the four tables were read
-# (`W:\temp\claude\gridsim-m8\step6_predictions.md` holds what was predicted first).
+# (`docs/evidence/gridsim-m8/step6_predictions.md` holds what was predicted first).
 # ─────────────────────────────────────────────────────────────────────────────
 
 const _OS = OutageScreenScript

@@ -30,7 +30,7 @@ runs.
       picks up a lost generator and what the dynamic tiers settle to. Added to
       `docs/plans/README.md`'s list.
 - [x] **The outside checker measured before the plan named it** (D1; spike
-      `W:\temp\claude\gridsim-m8\step0_probe.jl`, reference environment, nothing
+      `docs/evidence/gridsim-m8/step0_probe.jl`, reference environment, nothing
       added). `PowerNetworkMatrices` 0.24.3 `LODF` indexes `[monitored, outaged]`.
       It agrees with our brute force to 2e-9–4e-9 pu on ordinary reactances and
       to ≤ 1.1e-15 when every `1/X` is exact in `Float32`. That is single-precision
@@ -39,7 +39,7 @@ runs.
       "nothing else moves", the far bus's load vanishing. Its 1e-6 clamp also
       misfires on a connected grid, but only at a path reactance of ~1e5 pu.
 - [x] **case9's single-outage table measured** (D1; spike
-      `W:\temp\claude\gridsim-m8\case9_n1.jl`). Three bridges, the generator
+      `docs/evidence/gridsim-m8/case9_n1.jl`). Three bridges, the generator
       connections. At 315 MW, DC passes all six ring outages while AC refuses two
       for voltage (0.873 / 0.757 pu). At 400 MW, DC flags one overload (100.7 %),
       AC refuses four for voltage, fails to converge on one, and passes L67. No
@@ -71,7 +71,7 @@ runs.
 ## Step 1 — the AC checks split into named pieces, `ac_powerflow` unmoved (D3) — done 2026-10-06
 
 - [x] M5's recorded criterion values captured at HEAD **before the first edit**
-      (`W:\temp\claude\gridsim-m8\criterion-HEAD.txt`, M6's harness unchanged):
+      (`docs/evidence/gridsim-m8/criterion-HEAD.txt`, M6's harness unchanged):
       169 values, value-line MD5 `1eeed2cc84937cb544eee5c35d0091cf`.
 - [x] **Found, not planned: that capture differs from every M7 capture in 89 of
       169 lines.** The differences are about 1e-5 relative, `av.n_steps` goes from
@@ -83,7 +83,7 @@ runs.
       settled"). Step 7 re-captures after its re-resolve.
 - [x] **Found, not planned: the M5 gate cannot see this step's code.** The
       criterion harness never calls `ac_powerflow`. A second HEAD capture was taken
-      before the first edit (`W:\temp\claude\gridsim-m8\ac_snapshot.jl`). It holds
+      before the first edit (`docs/evidence/gridsim-m8/ac_snapshot.jl`). It holds
       83 cases: every `ACPowerFlow` field at round-trip precision, or the full
       refusal. 20 solved, 20 voltage, 6 overload, 11 Newton failures, 2 named
       refusals, 24 bridges.
@@ -122,7 +122,7 @@ runs.
       has no overload, and `:secure` was unreachable. It runs on L89 at 400 MW,
       where B9 sits at 0.854 pu and L56 carries 152.6 MVA on the same solve. Five
       sabotages were executed with predictions written first
-      (`W:\temp\claude\gridsim-m8\mutate1.py`, `mut-S*.log`). All five went red
+      (`docs/evidence/gridsim-m8/mutate1.py`, `mut-S*.log`). All five went red
       exactly where predicted:
       - **S1**, ratings before band: red in the 400 MW table and the precedence
         test. The agreement test stayed **green, as predicted**, because both
@@ -148,7 +148,7 @@ runs.
 ## Step 2 — DC line-outage factors, bridges from the graph — done 2026-10-06
 
 Every prediction, band and outcome below was written to
-`W:\temp\claude\gridsim-m8\step2_predictions.md` before the run it describes
+`docs/evidence/gridsim-m8/step2_predictions.md` before the run it describes
 (spikes `step2_spike.jl`, `step2_attrib.jl`; sabotages `mutate3.py`, `mut-M*.log`;
 reference numbers `ref_m8_numbers.jl`).
 
@@ -248,7 +248,7 @@ reference numbers `ref_m8_numbers.jl`).
 ## Step 3 — the AC line screen, and what the shortcut missed — done 2026-10-06
 
 Every prediction, band and outcome below was written to
-`W:\temp\claude\gridsim-m8\step3_predictions.md` before the run it describes
+`docs/evidence/gridsim-m8/step3_predictions.md` before the run it describes
 (spikes `step3_spike.jl`, `step3_pc.jl`, `step3_pc2.jl`, `step3_fa.jl`; sabotages
 `mutate4.py`, `mut-T*.log`). Nothing in `ac_powerflow.jl` changed, so the 83-case
 AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
@@ -411,7 +411,7 @@ AC digest was not re-run; the screen only calls `_ac_powerflow_outcome`.
 ## Step 5 — generator outages in the AC screen: a shared reference — done 2026-10-07
 
 Every prediction, band and outcome below was written to
-`W:\temp\claude\gridsim-m8\step5_predictions.md` before the run it describes
+`docs/evidence/gridsim-m8/step5_predictions.md` before the run it describes
 (spikes `step5_spike.jl` … `step5_spike4.jl`, `step5_diag.jl`; fixture
 `step5_fixture.jl`; sabotages `mutate5.py`, `mut5-*.log`). Decisions in
 `m8-context.md` D8, written before the code.
@@ -503,7 +503,7 @@ Every prediction, band and outcome below was written to
       `compare_generator_screens` (DC generator flows judged against ratings, two new
       classes `:refused` / `:refusals_differ`), `outage_screen`.
 - [x] Claims in `test/m8_outage_screen.jl`, prose written after reading the table.
-      Predictions first (`W:\temp\claude\gridsim-m8\step6_predictions.md`): every
+      Predictions first (`docs/evidence/gridsim-m8/step6_predictions.md`): every
       case9 and mesh row as predicted; L45 on default loads, left open, comes back
       inside the band. Claim (d) prints step 5's note: `:secure` has no frequency
       criterion (the mesh's G1 settles 10.94 Hz low and both screens pass it).
@@ -539,7 +539,7 @@ Every prediction, band and outcome below was written to
       same as step 1's. So steps 2–6 moved neither, and any change after the
       re-resolve would belong to the re-resolve alone.
 - [x] **Manifests re-resolved**, all three deleted (copies kept in
-      `W:\temp\claude\m8-close\`) and re-resolved in sequence, root first, never
+      `docs/evidence/m8-close/`) and re-resolved in sequence, root first, never
       concurrently, each suite at below-normal priority: **5316 core / 1262 reference
       (82 + 235 + 135 + 116 + 418 + 154 + 3 + 66 + 42 + 11) / 568 UI**, 0 failed, 0
       errored. The counts are the predicted ones (step 6's follow-up count; the

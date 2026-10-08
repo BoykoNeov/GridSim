@@ -84,7 +84,7 @@ deliberately unaffected.
 
 **Gate — the invariant, two claims:** (a) every pre-existing core test passes; (b)
 M5's recorded criterion values are **bit-identical** to the capture taken at HEAD
-before the first edit (`W:\temp\claude\m7\criterion-HEAD.txt`). Anti-vacuity: an
+before the first edit (`docs/evidence/m7/criterion-HEAD.txt`). Anti-vacuity: an
 inverter-carrying fixture is refused by each consumer above (a test per consumer,
 asserting the refusal *names the inverter*), and one fixture shows the balance
 guard counting the inverter's `P0` (a model balanced only with the inverter

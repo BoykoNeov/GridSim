@@ -38,7 +38,7 @@ step 8's mutation found its own check's premise wrong.
       (D1). `PowerSystems` 5.12.3 + `PowerFlows` 0.25.2 resolve alongside our exact
       stack — 258 packages against 184, nothing of ours moved — and are *usable*,
       not merely resolvable: a two-bus case solved by both the AC and DC entry
-      points. Probes kept in `W:\temp\claude\gridsim-m6-resolve\`.
+      points. Probes kept in `docs/evidence/gridsim-m6-resolve/`.
       **Hurdle 9 closed**, in the direction that removes the excuse.
 - [x] `NonlinearSolve` 4.29.2 and `SparseArrays` 1.12.0 confirmed already present
       transitively — both become direct dependencies at zero new packages (D2).
@@ -107,7 +107,7 @@ Done 2026-09-07. Entered at **2835 core / 382 UI / 986 reference**; leaves
       suite passes with every one of the 2835 pre-existing tests green** (2899 total,
       exit 0, no failures); and (b) **M5's criterion numbers are bit-identical**.
       (b) was checked the only way it can be — a harness
-      (`W:\temp\claude\gridsim-m6\criterion_snapshot.jl`) that prints the slip
+      (`docs/evidence/gridsim-m6/criterion_snapshot.jl`) that prints the slip
       boundary, the classical / frozen / flux-only / criterion cells and all 14 swept
       cells at shortest-round-trip precision, **captured at HEAD before the first
       edit** (the numbers stop existing the moment the tree changes) and diffed after.
@@ -645,7 +645,7 @@ suite green, exit 0, with all 986 pre-existing reference tests unchanged.
       The mapping table is in the file header.
 - [x] **Conventions answered from their source BEFORE the comparison ran**
       (M4 D13/D14), all measured on 2026-09-08, probes in
-      `W:\temp\claude\gridsim-m6-oracleb\`: constructors take **DEVICE base
+      `docs/evidence/gridsim-m6-oracleb/`: constructors take **DEVICE base
       regardless of the system unit setting**; results export voltages in pu and
       powers in **MW/MVAr**; the REF bus's `angle` is **honoured, not pinned** (set
       it to 0.3 and every angle shifts), so this builder pins 0.0 and a test holds
@@ -1064,7 +1064,7 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       number moved**: all 3312 pre-existing core tests green, and M5's 169 criterion
       values **bit-identical** — MD5 `c79b7c07d039b66efdeff10e45e88305` at HEAD
       before the first edit and again after the re-resolve, the same digest step 1
-      recorded (captures: `W:\temp\claude\m6s7\criterion-HEAD.txt` /
+      recorded (captures: `docs/evidence/m6s7/criterion-HEAD.txt` /
       `criterion-STEP7.txt`). **Departure from D16 §3, recorded:** the cost is stored
       in the source's units and converted in the compiled view `cost_arrays`, not
       "at the constructor boundary" — `Machine` stores `P0`/`Pmax` in MW and does
@@ -1112,7 +1112,7 @@ added; the 446 is that suite re-run on the same manifest. Code: `src/steadystate
       `ε`, with one stated undecided factor of 2. Measured against them: see F1.
       Survives tightening: `τ ∈ {1e-7, 1e-9, 1e-10}` × `ε ∈ {1e-7, 0}`, all inside.
 - [x] **The mutation set — all red, each on a named check** (harness:
-      `W:\temp\claude\m6s7\mutate.py`, `mutate2.py`; logs `mut-*.txt`):
+      `docs/evidence/m6s7/mutate.py`, `mutate2.py`; logs `mut-*.txt`):
 
       | Mutation | Caught by |
       |---|---|

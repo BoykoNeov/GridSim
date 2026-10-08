@@ -52,7 +52,7 @@ layer out from where the line put it.
 
 M4's PSID attempt failed on a dependency floor, so the first question was whether
 this one even *could* be adopted. Measured in a throwaway environment under
-`W:\temp\claude\gridsim-m6-resolve\`, on Julia 1.12.6:
+`docs/evidence/gridsim-m6-resolve/`, on Julia 1.12.6:
 
 | probe | result |
 |---|---|

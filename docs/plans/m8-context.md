@@ -198,7 +198,7 @@ independent dynamic oracle already in the repo.
 `PTDF`/`LODF` from a `PowerSystems.System`. The model was converted through the
 existing `to_powersystems`. Results were mapped **by arc**, `(from, to)` bus
 numbers, which `to_powersystems` makes the vertex indices, so a reordering cannot
-pass for a match. Spike: `W:\temp\claude\gridsim-m8\step0_probe.jl`. The fixture
+pass for a match. Spike: `docs/evidence/gridsim-m8/step0_probe.jl`. The fixture
 is five buses: a meshed core A–B–C–D (`X` = 0.10, 0.20, 0.15, 0.25, 0.30;
 B and C of degree 3), plus a radial spur D–E (`X = 0.10`), so it has exactly one
 bridge. G1 at A is the slack (150 MW) and G2 at C carries 60 MW; the loads are
@@ -239,7 +239,7 @@ What that settles:
 
 ### Also measured at step 0: case9's single-outage table
 
-Spike `W:\temp\claude\gridsim-m8\case9_n1.jl`, run on the case9-without-line-charging
+Spike `docs/evidence/gridsim-m8/case9_n1.jl`, run on the case9-without-line-charging
 network from `test/m6_economic_dispatch.jl` with constant-power loads and the
 machines on the Pmax-share schedule. Its three bridges (L14, L36, L82) are refused
 by construction. The six ring outages are in Hurdle 13 claim 4. That table is why
@@ -347,7 +347,7 @@ on a solution outside the band is not a flow anyone asked about.
 criterion harness (`scripts/iberia_two_area.jl`) never calls `ac_powerflow`. It
 reaches only the detailed tier's `_check_power_flow`, so it covers the split pieces
 on their passing path and nothing else. A second capture was therefore taken at
-HEAD before the first edit (`W:\temp\claude\gridsim-m8\ac_snapshot.jl`). It records
+HEAD before the first edit (`docs/evidence/gridsim-m8/ac_snapshot.jl`). It records
 83 cases: case9 at 315 and 400 MW, constant-power and default loads, `±0.3` pu
 reactive limits (switching binds), ratings at 60 % (overloads), every outage, the
 grid-forming slack at 50 and 60 MVA, and a slack with no source. For each it prints
@@ -367,7 +367,7 @@ re-captured them.** Today's HEAD capture differs from every M7 capture in 89 of
 - the pre-rename commit `bf52e09` on today's manifest gives today's values (0
   differ), so the `derivative_discontinuity!` rename moved nothing;
 - today's code on the manifest saved before M7's close
-  (`W:\temp\claude\m7-close\Manifest-root.toml`, `SciMLBase` 3.56.1) reproduces
+  (`docs/evidence/m7-close/Manifest-root.toml`, `SciMLBase` 3.56.1) reproduces
   M7 step 6's capture exactly (0 differ).
 
 So the dependency re-resolve at M7's close moved them (`SciMLBase` 3.56.1 →
@@ -468,7 +468,7 @@ disagreement (below), so it is not left possible.
 
 ## D6 — The AC line screen and the comparison: four decisions taken at step 3 (2026-10-06), and what it measured
 
-Taken before any run, and written to `W:\temp\claude\gridsim-m8\step3_predictions.md`
+Taken before any run, and written to `docs/evidence/gridsim-m8/step3_predictions.md`
 with the predictions:
 
 1. **The comparison takes the model: `compare_line_screens(net, dc, ac)`**, not the
@@ -578,8 +578,8 @@ and no rung is secretly a different switching state.
 ## D7 — Generator outages in the DC screen: what step 4 decided and measured (2026-10-07)
 
 Predictions and the band were written first, to
-`W:\temp\claude\gridsim-m8\step4_predictions.md`; the spike is
-`W:\temp\claude\gridsim-m8\step4_spike.jl`.
+`docs/evidence/gridsim-m8/step4_predictions.md`; the spike is
+`docs/evidence/gridsim-m8/step4_spike.jl`.
 
 ### Hurdle 15.1, answered from the source before any assertion
 
@@ -671,7 +671,7 @@ So below 1e-10 the uncapped and inverter gaps stop moving: what is left is the
 round-off of angles that grow for ever after a generator trip, not the solver. The
 capped gap keeps shrinking with the overshoot past the headroom, so it is the step
 size. And **the band is a statement at reltol 1e-10**: at 1e-8 the capped case would
-breach it. Script: `W:\temp\claude\gridsim-m8\step4_tol.jl`.
+breach it. Script: `docs/evidence/gridsim-m8/step4_tol.jl`.
 
 **The zero-damping swing run never settles.** With `D = 0` only the governors act,
 and in this fixture the machines are still swinging against each other after 300 s
@@ -806,7 +806,7 @@ the terminal output this solve reports.
 
 ### What step 5 measured (2026-10-07)
 
-Predictions, bands and outcomes: `W:\temp\claude\gridsim-m8\step5_predictions.md`.
+Predictions, bands and outcomes: `docs/evidence/gridsim-m8/step5_predictions.md`.
 The fixture is invented and declared (step 4's mesh with `Load`s at B and D, one
 source per bus so the detailed tier can run it).
 
@@ -922,7 +922,7 @@ ratings", not "acceptable". Losing G1 on this mesh is `:secure` at `Δω` ≈ �
 ### What step 6 measured
 
 Predictions, written before the first run:
-`W:\temp\claude\gridsim-m8\step6_predictions.md`. Fixtures: case9 without line
+`docs/evidence/gridsim-m8/step6_predictions.md`. Fixtures: case9 without line
 charging with INVENTED droop and damping (R 5 %, D 1, each machine rated at its
 Pmax), and step 5's invented mesh, lossy; both on constant-power and default loads.
 

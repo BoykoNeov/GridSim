@@ -20,7 +20,7 @@ runs.
 
 - [x] **Topic chosen by the user:** Hurdle 16 as M9 (`m9-context.md` D0).
 - [x] **The dip measured before the plan named it** (D1; spike
-      `W:\temp\claude\gridsim-m9\step0_dips.jl`, predictions first in
+      `docs/evidence/gridsim-m9/step0_dips.jl`, predictions first in
       `step0_predictions.md`). Dip 1.20–1.65× the settled value wherever governors
       stay uncapped; equal to it (monotone, ~100 s) where they cap; worst machine
       up to 7.7 % deeper than the COI dip; initial rate within 2–3 % of
@@ -54,7 +54,7 @@ runs.
 
 - [x] Entry counts re-measured at HEAD (`40b9acf`) before the first edit: 5316 / 1262 /
       568, M8's close counts (the commits since were docs only).
-- [x] Captures at HEAD, `W:\temp\claude\gridsim-m9\step1\*-HEAD.txt`: M5's criterion
+- [x] Captures at HEAD, `docs/evidence/gridsim-m9/step1/*-HEAD.txt`: M5's criterion
       values and the 83-case AC digest (both byte-identical to M8's close captures as
       well), every field of `outage_screen` on both report grids and both load models
       (`screen_snapshot.jl`, new), step 0's lossless dip table at full precision
@@ -80,7 +80,7 @@ runs.
 - [x] `t⁺` identity with the losses term: four outages (case9 G3, mesh G1–G3),
       residual ≤ 6.7e-14 against a losses change of 1.9e-3 to 1.7e-2 pu.
 - [x] Antisymmetry audit, list recorded (`m9-context.md` D5).
-- [x] Sabotages, predictions first (`W:\temp\claude\gridsim-m9\step1\predictions.md`),
+- [x] Sabotages, predictions first (`docs/evidence/gridsim-m9/step1/predictions.md`),
       each red where predicted, with one prediction wrong in the safe direction and
       one check found too lenient and tightened (D5). Nothing is shared with the
       power flow's admittance code — but **corrected at review**: a resistance misread
@@ -90,10 +90,10 @@ runs.
 ## Step 2 — line resistance in the swing tier (Hurdle 17.6) — done 2026-10-08
 
 - [x] Entry counts: 5453 / 1262 / 568, step 1's close (core measured on the `c81cf79`
-      tree, `W:\temp\claude\gridsim-m9\step1\core-STEP1b.log`; reference and UI on
+      tree, `docs/evidence/gridsim-m9/step1/core-STEP1b.log`; reference and UI on
       `666b857`, whose follow-up `c81cf79` changed no test).
 - [x] Captures at HEAD (`c81cf79`) before the first edit,
-      `W:\temp\claude\gridsim-m9\step2\*-HEAD.txt`: step 1's four (each byte-identical
+      `docs/evidence/gridsim-m9/step2/*-HEAD.txt`: step 1's four (each byte-identical
       to step 1's own) plus a new full-precision swing-tier capture
       (`swing_snapshot.jl`: seven fixtures including M8 step 4's mesh, every generator
       and line trip, both ends of every branch, `coi_rocof`, one playback series).

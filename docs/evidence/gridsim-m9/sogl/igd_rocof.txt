@@ -1,0 +1,311 @@
+Rate of Change of Frequency
+(ROCOF) withstand capability
+
+ENTSO-E guidance document for national
+implementation for network codes on grid connection
+
+29 March 2017
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+Rate of Change of Frequency (ROCOF) withstand
+capability
+
+DESCRIPTION
+
+Code(s) &     NC RfG: Articles 13 (1) (b) and 15 (5) (b) (iii)
+Article(s)    NC DCC: Articles 28 (2) (k) and 29 (2) (g)
+Introduction  NC HVDC: Articles 12 and 39 (3)
+
+NC frame      The requirement aims at ensuring that power generating modules (NC RfG),
+              demand units offering Demand Response (DR) services (DCC), HVDC systems
+              and DC-connected power park modules shall not disconnect from the network
+              up to a maximum rate of change of frequency (df/dt). A large rate of change of
+              frequency (RoCoF) may occur after a severe system incident (e.g. system split
+              or loss of large generator in a smaller system). The facilities shall remain
+              connected to contribute to stabilize and restore the network to normal operating
+              states.
+
+              NC RfG and DCC require that the Relevant TSO shall define/require the df/dt
+              (RoCoF), which a power generating module (RfG) or a Demand Unit (DCC)
+              shall at least be capable of withstanding.
+
+              NC HVDC
+                   Article 12: An HVDC system shall be capable of staying connected to
+                       the network and operable if the network frequency changes at a rate
+                       between ­ 2,5 and + 2,5 Hz/s (measured at any point in time as an
+                       average of the rate of change of frequency for the previous 1 sec).
+                   Article 39 (3): DC-connected power park module shall be capable of
+                       staying connected to the remote-end HVDC converter station network
+                       and operable if the system frequency changes at a rate up to +/­ 2 Hz/s
+                       (measured at any point in time as an average of the rate of change of
+                       frequency for the previous 1 second) at the HVDC interface point of the
+                       DC-connected power park module at the remote end HVDC converter
+                       station for the 50 Hz nominal system.
+
+              NC DCC, Article 28 (2) (k):
+                   Demand units with demand response active power control (...) shall
+                       have the withstand capability to not disconnect from the system due to
+                       the rate-of-change-of-frequency up to a value specified by the relevant
+                       TSO. With regard to this withstand capability, the value of rate-of-
+                       change-of- frequency shall be calculated over a 500 ms time frame.
+
+Further info  Further implementation guidance on NC RfG, NC DCC and NC HVDC:
+              Supporting documentation of HVDC network code:
+
+                        Network Code for HVDC Connections and DC-connected Power
+                            Park Modules - Requirement Outlines (30. April 2014)
+
+              External supporting documents:
+                        All Island TSO Facilitation of Renewables Studies(see attachment)
+
+                                                                                                                                      2
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+Rate of Change of Frequency (ROCOF) withstand
+capability
+
+                    Summary of Studies on Rate of Change of Frequency events on the
+                       All-Island System (Aug 2012) (see attachment)
+
+                    Chapter 4 of GB ETYS 2012 diagram on severe reduction in total
+                       system inertia 2012 to 2030 (see attachment)
+
+                    Loss of Mains Protection (see attachment)
+                    RoCoF Alternative Solutions Technology Assessment (see
+
+                       attachment)
+                    Increased Wind Generation in Ireland and Northern Ireland and the
+
+                       Impact on Rate of Change of Frequency1
+                    Frequency Stability Evaluation Criteria for the Synchronous Zone
+
+                       of Continental Europe2
+                    IGD on High Penetration of Power Electronic Interfaced Power
+
+                       Sources
+
+INTERDEPENDENCIES
+
+Between CNCs
+
+                 The selection of the maximum (df/dt) values to be withstood needs to be chosen
+                 by collaboration between the connection codes in order to ensure equitable
+                 behaviour of the relevant system users in case of rapid frequency changes
+                 bearing in mind the different scope of application of the CNCs. NC HVDC
+                 introduces an explicit limit for HVDC systems (2.5 Hz/s), which is above the
+                 limit for DC-connected power park modules (2.0 Hz/s). The rationale behind
+                 these choices is to have a margin between the capability of HVDC systems and
+                 power generating modules to ensure that HVDC systems will disconnect last in
+                 order to enable power generating modules and demand units to contribute to
+                 stabilize and restore the network to normal operating states as long as possible.
+
+With other NCs
+
+                 COMMISSION REGULATION (EU) .../... of XXX establishing a Guideline
+                 on Electricity Transmission System Operation, adopted by the EC on
+                 04.05.2016, Article 39 ("Dynamic stability management ")
+
+System           Rate of change of frequency (ROCOF) is the time derivative of the power
+characteristics  system frequency (df/dt). This quantity was traditionally of minor relevance for
+                 systems with generation mainly based on synchronous generators, because of
+                 the inertia of these generators, which inherently counteract to load imbalances
+                 and thus limit RoCoF in these cases. It however becomes relevant now during
+                 significant load-generation imbalances (caused by disconnection of either large
+                 loads or generators, or by system splits), when larger ROCOF values may be
+                 observed because of low system inertia caused by (amongst others) disposal of
+                 synchronous generation in case of high instantaneous penetration of non-
+                 synchronously connected generation facilities.
+
+                 In the absence of any control, inverter-based generation does not possess such
+                 inherent characteristics and high inverter penetration could therefore lead to
+
+1 http://www.eirgridprojects.com/site-files/library/EirGrid/Increased Wind Generation in Ireland and Northern Ireland
+
+and the Impact on Rate of Change of Frequency.pdf
+2 https://www.entsoe.eu/Documents/SOC%20documents/RGCE_SPD_frequency_stability_criteria_v10.pdf
+
+                                                                                                                                      3
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+Rate of Change of Frequency (ROCOF) withstand
+capability
+
+higher ROCOF in a power system. The relationship between inverter penetration
+and ROCOF is, however, not straightforward, and countermeasures ­ mostly in
+the form of control algorithms ­ need to be implemented carefully.
+
+Large ROCOF values may endanger secure system operation because of
+mechanical limitations of individual synchronous machines (inherent
+capability), protection devices triggered by a particular ROCOF threshold value
+or timing issues related to load shedding schemes.
+
+Initial ROCOF is the instantaneous ROCOF just after the disconnection of either
+
+a generator or load from a power system, before any controls become active.
+
+This is theoretically the highest system ROCOF. Its average for an
+
+interconnection of N synchronous loads and generators can be computed as
+
+follows:
+
+                                               |     =        0 
+                                                        2 =1, 
+                                                =0+
+
+wherein f is the deviation of the frequency f from its nominal value f0, 0+ is the
+moment just after disconnection of the load/generation Pk is the lost
+generation/load (the machine carrying the index k), and Hi and Si are the inertial
+constant and apparent power rating of synchronous machine i, with i ranging
+from 1 to N3.
+
+Additional frequency oscillations may occur locally on top of the average
+behavior. It should be noted that any system that relies on measuring frequency
+and ROCOF will most likely not detect a ROCOF as high as the theoretical
+maximum. This is due to the inevitable filtering involved in frequency
+measurement4. As a result, ROCOF relays with measurement windows of
+several hundred ms may not be triggered if the initial ROCOF breaches their
+threshold, but ROCOF is lower subsequently.
+
+To define the RoCoF withstand capability correctly, the characteristics of an
+entire synchronous area must be considered. The capability shall be determined
+based on analysis of a normative incident for the network concerned. Such a
+normative incident could be a defined system split of a large synchronous area
+with a significant change of inertia and power imbalance in the resulting
+subsystems (e.g. historic events like the Italy blackout in 2003 and the
+Continental Europe 3-way split in November 2006). With regard to smaller
+synchronous areas with low inertia the loss of the largest power generating
+module or HVDC link may define the normative incident instead (e.g. increase
+of loss of a single unit up to 1800 MW in GB which would commonly exceed
+the until recent existing GB threshold level of RoCoF-based Loss of Mains
+(LOM) protection [0.125 Hz/s]5).
+
+Since one main concern is the decrease of system inertia, chosen scenarios
+should reflect situations with low inertia, e.g. high share of non-synchronous
+
+3 M. Chan, R. Dunlop, F. Schweppe: "Dynamic Equivalents for Average System Frequency Behaviour Following
+Major Disturbances," IEEE Transactions on Power Apparatus and Systems
+4 S. Engelken, C. Strafiel, E. Quitmann: "Frequency Measurement for Inverter-based Frequency Control," in Wind
+Integration Workshop, Vienna, 2016
+5 Frequency Changes during Large Disturbances WG ppt (see attachments)
+
+                                                                                                                                      4
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+Rate of Change of Frequency (ROCOF) withstand
+capability
+
+                 renewable generation or high import/export scenarios in case of system splits.
+                 For example, on 23rd of August 2015, renewable energy generation in Germany
+                 covered 84% of domestic demand6.
+
+                 The RoCoF withstand capability should be assessed on not only the present
+                 network but also account for the expected capability that will be required over
+                 the asset life of concerned installations accounting for future changes in the
+                 network and its demand and generation portfolio. Also the capability of existing
+                 connected generators will be taken into account.
+
+                 The RoCoF withstand capability should ideally be provided as a change in
+                 frequency over a defined time period which negates short term transients and
+                 therefore reflects the actual change in synchronous network frequency).
+                 However, in practice this may interfere with protective controls of generators or
+                 LOM schemes. Hence, changes relevant to protections, e.g. LOM, using RoCoF
+                 but driven by other needs can be considered. Other LOM protection systems
+                 (e.g. inter-tripping, satellite protection and load shedding7) might also be
+                 considered as alternative measures.
+
+                 Finally, All-Island studies show large df/dt deviation between different bus-bars
+                 for the first few cycles, eventually converging to one value, pointing to the
+                 importance of the length of the measurement time window for calculation of
+                 df/dt8.
+
+Technology       Given the uncertainty on system characteristics and their future evolution, power
+characteristics  generating modules need to be robust against changes to the system and shall
+                 provide RoCoF withstand capability which accounts for these varying system
+                 conditions (e.g. in Ireland, analysis has shown that there will be on average a
+                 25% reduction in on-line synchronous inertia by 2020 which has significant
+                 implications for the RoCoF)
+
+                 The scenarios which define the minimum RoCoF withstand capability
+                 requirements have to reflect technological changes (e.g. share of generation in
+                 operation contributing to system inertia) on the network. Hence, it is important
+                 that the RoCoF withstand capability requirement accounts for reduced network
+                 strength due to higher penetration of converter-connected components like
+                 PPMs, HVDC systems, and demand, when defining these scenarios.
+
+                 The identified minimum RoCoF withstand capability shall apply to all
+                 installations regardless of technology.
+
+                 Although the inherent capability may vary for different generation technologies,
+                 a single minimum RoCoF withstand capability needs to be required to ensure
+                 stability of the network. A common value of RoCoF withstand capability of a
+                 synchronous area shall not inhibit a TSO requiring further inherent withstand
+                 capabilities not to be unreasonably withheld e.g. to manage system operation of
+                 parts of its network which may be exposed to a higher risk of islanding.
+
+6 https://energy-charts.de/power_de.htm
+7 see attachment on Loss of Mains Protection
+8 see attachment (Summary of studies on Rate of Change of Frequency events on the All-Island System)
+
+                                                                                                                                      5
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+Rate of Change of Frequency (ROCOF) withstand
+capability
+
+                          DNV KEMA studies for Irish TSOs9 also show the dependency of individual
+                          unit stability on time window size, which higher df/dt values are bearable by
+                          generators if the time window is small enough and vice versa. This again
+                          indicates the importance of time window size. In addition, leading power factor
+                          of generators will increase their vulnerability to high RoCoF values.
+
+                          According to CENELEC TS50549-1/-2 generating units connected to LV
+                          networks with rated current above 16A as well as those connected to MV
+                          networks shall be able to operate with rates of change of frequency up to 2,5
+                          Hz/s10 11.
+
+                          Loss of Mains RoCoF type protection & settings, although not explicitly part of
+                          Article 13 (1) (b) of NC RfG, are covered in Article 14 (5) (b) on Protection
+                          Coordination. These requirements should be carefully set by collaboration.
+COLLABORATION
+
+TSO ­ TSO
+
+                 Although not explicitly requested in the connection network codes, it would be
+                 reasonable to consider collaboration for the RoCoF withstand capability criteria
+                 (including) within each synchronous area. This includes the maximum RoCoF
+                 value to be withstood, the size of measurement rolling window but also
+                 frequency and RoCoF measurement technique. Therefore, TSO ­ TSO
+                 collaboration within a synchronous control area would ensure that a minimum
+                 RoCoF withstand requirement is applied to all relevant system users.
+
+TSO ­ DSO
+
+                 Based on article 13 (b), a power-generating module shall be capable of staying
+                 connected to the network and operate at rates of change of frequency up to a
+                 value specified by the relevant TSO, unless disconnection was triggered by rate-
+                 of-change-of-frequency-type loss of mains protection. The relevant system
+                 operator, in coordination with the relevant TSO, shall specify this rate-of-
+                 change-of-frequency-type loss of mains protection.
+
+RSO ­ Grid User
+
+                 The relevant system operator needs to take care, that the parameters of RoCoF
+                 withstand capability defined by the relevant TSO are applied to system users.
+
+9 https://thales.entsoe.eu/sites/al/ImplementationGuidances/XIGD09_8.pdf?Web=1
+
+10
+
+https://www.cenelec.eu/dyn/www/f?p=104:110:1376998791841501::::FSP_ORG_ID,FSP_PROJECT,FSP_LANG_ID:1258595,53
+799,25
+
+11
+
+https://www.cenelec.eu/dyn/www/f?p=104:110:1376998791841501::::FSP_ORG_ID,FSP_PROJECT,FSP_LANG_ID:1258595,45
+870,25
+
+                                                                                                                                      6
+
+ENTSO-E AISBL · Avenue de Cortenbergh 100 · 1000 Brussels · Belgium · Tel + 32 2 741 09 50 · Fax + 32 2 741 09 51 · info@entsoe.eu · www. entsoe.eu
+

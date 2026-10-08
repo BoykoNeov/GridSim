@@ -67,7 +67,7 @@
 #
 # M4 D13/D14's lesson, scheduled rather than discovered. Every line below is a
 # measurement taken on 2026-09-08 against PowerSystems 5.12.3 / PowerFlows 0.25.2,
-# with the probe scripts kept in `W:\temp\claude\gridsim-m6-oracleb\`.
+# with the probe scripts kept in `docs/evidence/gridsim-m6-oracleb/`.
 #
 # **Per-unit bases.** A `System`'s default unit setting is `SYSTEM_BASE`. But a
 # component CONSTRUCTOR takes its arguments in **DEVICE BASE regardless of the

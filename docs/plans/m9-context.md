@@ -61,7 +61,7 @@ written (D1).
      regulator; the AC screen checks it after settling, with every `V_set` held.
      Measured at step 0 (first written here, wrongly, as "the same set" — the spike
      had not printed the AC outcome for the refused runs; corrected the same day by
-     `W:\temp\claude\gridsim-m9\step0_refusals.jl`): case9's G1 is refused by both,
+     `docs/evidence/gridsim-m9/step0_refusals.jl`): case9's G1 is refused by both,
      on both load models; **case9-constant-power G2 is refused dynamically (B2 at
      0.889 pu) and `:secure` in the AC screen**, lossless and lossy alike. So "the
      dynamic run refused at the trip" is a named outcome of the frequency verdict —
@@ -116,8 +116,8 @@ written (D1).
 
 ## D1 — Step 0 measured the dip before the plan named it (2026-10-08)
 
-Spike `W:\temp\claude\gridsim-m9\step0_dips.jl`, predictions written first in
-`W:\temp\claude\gridsim-m9\step0_predictions.md` (outcomes appended there). Every
+Spike `docs/evidence/gridsim-m9/step0_dips.jl`, predictions written first in
+`docs/evidence/gridsim-m9/step0_predictions.md` (outcomes appended there). Every
 generator outage of `scripts/outage_screen.jl`'s two fixtures, both load models, in
 the detailed tier (the one dynamic tier that takes `Load`), trip at 1 s, FBDF at
 reltol 1e-8, 150 s.
@@ -179,7 +179,7 @@ between tiers, never on a fixture's verdict.
 
 ## D3 — The limits, from their sources (read 2026-10-08)
 
-Copies under `W:\temp\claude\gridsim-m9\sogl\`.
+Copies under `docs/evidence/gridsim-m9/sogl/`.
 
 - **Commission Regulation (EU) 2017/1485 (SO GL), Annex III Table 1, OJ L 220/116**
   (read from the page image): Continental Europe — standard frequency range ±50 mHz,
@@ -245,7 +245,7 @@ report grids and load models, and step 0's lossless dip table at full precision 
 are byte-identical after the change.
 
 **What was measured on the lossy report grids** (spike
-`W:\temp\claude\gridsim-m9\step1\spike.jl`, log beside it):
+`docs/evidence/gridsim-m9/step1/spike.jl`, log beside it):
 
 - **Each end at its own terminal.** At the seed, each branch's two end powers sum
   to `ac_powerflow`'s `loss` within 2.2e-16, from separately written admittance code.
@@ -305,7 +305,7 @@ current in this tier, and every hand-written copy of `ΔV/(jX)`:
 | the windows (`ui/`) | none — no window calls `branch_power` | nothing to fix |
 | `branch_power(::SwingEngine, …)` | the classical tier | step 2's — audited in D6 |
 
-**Sabotages** (predictions written first, `W:\temp\claude\gridsim-m9\step1\predictions.md`):
+**Sabotages** (predictions written first, `docs/evidence/gridsim-m9/step1/predictions.md`):
 
 | | Sabotage | Red | Green |
 |---|---|---|---|
@@ -363,7 +363,7 @@ the static solve decides). Pinned: a 6 pu absorber behind X = 0.1, R = 0.05 buil
 lossless and is refused lossy (bound −4.94 pu).
 
 **Measured** (`test/m9_line_resistance.jl`, step-2 testsets; probes under
-`W:\temp\claude\gridsim-m9\step2\`):
+`docs/evidence/gridsim-m9/step2/`):
 
 - **Dispatch.** On five lossy fixtures (the reversed pair with each end as reference,
   a ring, M8 step 4's mesh, the mesh with a grid-forming inverter) every
@@ -415,7 +415,7 @@ lossless and is refused lossy (bound −4.94 pu).
    own refusal, and a test reaches it: two exporters each inside its own reach bound
    that a shared lossy ring cannot carry at once.
 
-**Sabotages** (predictions first, `W:\temp\claude\gridsim-m9\step2\predictions.md`;
+**Sabotages** (predictions first, `docs/evidence/gridsim-m9/step2/predictions.md`;
 runner `mutate.py`, logs `mut-S*.log`):
 
 | | Sabotage | Red | Green | Against the prediction |

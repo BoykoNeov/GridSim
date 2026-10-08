@@ -117,7 +117,7 @@ where the milestone admits what it cannot see.
 M4's plan named the wrong PowerDynamics component and the source said so
 (`m4-context.md` D13). So both inverter components were **built and run** in
 `reference/`'s environment at its current manifest before this plan mentions them.
-Spike: `W:\temp\claude\m7-step0\spike_pd_inverters.jl`. Case: a two-bus system,
+Spike: `docs/evidence/m7-step0/spike_pd_inverters.jl`. Case: a two-bus system,
 `SlackAlgebraic` at `V = 1∠0`, one lossless line `X = 0.2` pu, the device at bus 2
 dispatched at `P = 0.5` pu, `S_base = 100` MVA, `f0 = 50` Hz; disturbance a
 0.1 rad step in the slack's voltage angle at `t = 0.5` s (a **network-side**
@@ -505,7 +505,7 @@ wrapper (`_Metered`) that appends three states and three gains to whatever verte
 kind the bus already is and leaves that kind's equations untouched; with no meter
 armed the network is the four vertex models it was, and a captured step-5
 grid-following run is `==` before and after the refactor
-(`W:\temp\claude\m7\step6\gfl_capture.jl`).
+(`docs/evidence/m7/step6/gfl_capture.jl`).
 
 How it is checked: (a) INJECTS NOTHING, structurally — kick every meter state far off
 and every other row of the right-hand side is `==` unchanged; (b) the positive
@@ -663,7 +663,7 @@ is counted (`Σ 2Hω̇ = ΔP_pv − P_lost`), and without it the formula misses 
 1 %.
 
 **Gates:** M5's criterion values bit-identical to the capture at HEAD before the first
-edit (`W:\temp\claude\m7\step7\criterion-HEAD7.txt` / `criterion-TRIP.txt`); step 6's
+edit (`docs/evidence/m7/step7/criterion-HEAD7.txt` / `criterion-TRIP.txt`); step 6's
 captured grid-following run `==` after the new `istat` parameter.
 
 ## D16 — Step 7's study: TWO events, default loads, and an exact control (taken 2026-10-03, the user's choice)

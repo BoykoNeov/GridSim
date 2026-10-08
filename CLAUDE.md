@@ -63,6 +63,9 @@ clamping of the state variable (which corrupts the integration).
   (it did to `ui/Project.toml` on 2026-09-05) — `git diff` it afterwards and
   put the comments back.
 - `Manifest.toml` is gitignored (this is a package, not a pinned app).
+- **Evidence** the plan docs cite (predictions, spikes, gate captures) lives in
+  `docs/evidence/`; the runnable gate harness is `docs/evidence/gridsim-m9/harness/`.
+  Scratch output still goes to `W:\temp\claude`, never into the repo.
 
 ## Workflow
 

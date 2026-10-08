@@ -416,7 +416,7 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 3: the AC line screen (`ac_line_outages`) and what the DC shortcut missed
 # (`compare_line_screens`). Every number below was predicted or measured BEFORE this
-# file was written (`W:\temp\claude\gridsim-m8\step3_predictions.md`). case9 here is
+# file was written (`docs/evidence/gridsim-m8/step3_predictions.md`). case9 here is
 # `_ed_case9`: NO LINE CHARGING, so every case9 voltage carries that caveat — part of
 # each sag is the missing shunt and not the outage (m8-context.md D0, Hurdle 13.4).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -777,7 +777,7 @@ end
 # very same object.
 #
 # Closed-form values and the cross-tier band were written down before the first run
-# (`W:\temp\claude\gridsim-m8\step4_predictions.md`): BAND 1e-7 pu on every pickup and
+# (`docs/evidence/gridsim-m8/step4_predictions.md`): BAND 1e-7 pu on every pickup and
 # on every survivor's speed. Measured: ≤ 1.5e-10 and ≤ 1.5e-12.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1039,7 +1039,7 @@ end
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 5 — generator outages in the AC screen, the lost power shared (m8-context.md D8).
-# Predictions and bands were written first: W:\temp\claude\gridsim-m8\step5_predictions.md.
+# Predictions and bands were written first: docs/evidence/gridsim-m8/step5_predictions.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Step 4's mesh with real `Load`s at B and D (130 + j30, 120 + j25), one source per
