@@ -141,12 +141,14 @@ end
 end
 
 # ── the five readers of Branch.X, each stated ───────────────────────────────────
-@testset "the five readers of Branch.X: X itself unchanged by R (M6), R read by the detailed tier (M9)" begin
+@testset "the five readers of Branch.X: X itself unchanged by R (M6), R read by both dynamic tiers (M9)" begin
     # M9 STEP 1 ANNOTATION. What follows was M6 step 1's decision, and four of its
     # five sites still hold it. The two detailed-tier edge models no longer do: their
     # current is (Vf − Vt)/(R + jX) now, with `R` carried by `branch_topology` beside
-    # an unchanged `X`. The `===` checks on `X` below are still the point — wiring `R`
-    # in did not touch the reactance any reader sees.
+    # an unchanged `X`. From M9 step 2 neither does `SwingEngine`'s, on a lossy model
+    # (a lossless one keeps the old edge). The `===` checks on `X` and `K` below are
+    # still the point — wiring `R` in did not touch the reactance or the lossless
+    # coupling any reader sees.
     # `Branch.X` is read in five places (m6-plan.md step 1): `branch_arrays`,
     # `SwingEngine`'s edge model, `DetailedEngine`'s static and dynamic edge models,
     # and `branch_power`. Adding `R` beside it is a five-site decision, and on all
@@ -174,15 +176,20 @@ end
     @test all(ba.X .=== bb.X) && all(ba.K .=== bb.K)
 
     # AND THE ANTI-VACUITY HALF, which is what stops the paragraph above from being
-    # a way of saying "nothing reads the field". A model whose branches are lossy is
-    # REFUSED by every tier, by name — because a tier that ignored it would silently
-    # simulate a lossless network where the data says a lossy one (M5's `Load` ZIP
-    # shares, exactly). So setting `R` DOES change what the repo does; what it does
-    # not change is any number a run produces, because there is no such run.
-    m = argerr_msg(() -> SwingEngine(ring_R; dt = 0.01))
-    @test occursin("SwingEngine", m) && occursin("R = 0.03", m) && occursin("L12", m)
-    # The guard names where `R` IS read, so a boundary is never read as a bug.
-    @test occursin("power flow", m) && occursin("DetailedEngine", m)
+    # a way of saying "nothing reads the field". Through M8 a model whose branches are
+    # lossy was REFUSED by every tier, by name — because a tier that ignored it would
+    # silently simulate a lossless network where the data says a lossy one (M5's
+    # `Load` ZIP shares, exactly).
+    #
+    # M9 STEP 2: the classical tier reads `R` too, so the same ring RUNS there
+    # (`test/m9_line_resistance.jl` checks it reads it correctly). The refusal is left
+    # with one caller, the reference oracle's `build_oracle` (M9 step 3), and its
+    # message still names where `R` IS read, so a boundary is never read as a bug.
+    @test SwingEngine(ring_R; dt = 0.01) isa SwingEngine
+    m = argerr_msg(() -> GridSim._assert_lossless_branches(ring_R, "build_oracle"))
+    @test occursin("build_oracle", m) && occursin("R = 0.03", m) && occursin("L12", m)
+    @test occursin("power flow", m) && occursin("DetailedEngine", m) &&
+          occursin("SwingEngine", m)
     # M9 STEP 1: the detailed tier reads `R` now, so the same model RUNS there, and
     # `branch_topology` carries `R` beside an `X` that is still bit-for-bit the
     # lossless one (the `===` above). `test/m9_line_resistance.jl` holds the checks

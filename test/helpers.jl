@@ -281,10 +281,15 @@ function terminal_bus_reduced(net::NetworkModel)
             "machines' internal reactances exceed the tie, so there is no line left " *
             "to put between them and the reduction does not exist for this model."))
     end
-    branches = [Branch(br.id, br.from, br.to, Xr[e], br.rating)
+    # `R` and the reference bus carried through (M9 step 2): rebuilt from positional
+    # arguments alone, a lossy line came back lossless and the slack came back as the
+    # default — and the lossy cross-tier check would have compared a lossy swing tier
+    # against a lossless detailed one, or two different references. The resistance is
+    # in the line, not the machine, so the reduction leaves it whole.
+    branches = [Branch(br.id, br.from, br.to, Xr[e], br.rating; R = br.R)
                 for (e, br) in pairs(net.branches)]
     return NetworkModel(net.S_base, net.f0, net.buses, branches,
-                        net.machines, net.loads)
+                        net.machines, net.loads; slack = net.slack)
 end
 
 # One disturbance, applied identically to a classical and a detailed engine, and

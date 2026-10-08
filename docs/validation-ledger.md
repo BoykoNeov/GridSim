@@ -337,7 +337,7 @@ overlooked. The nonlinear solve and its rows arrive with step 3.
 | Mechanism | Checked by | Label |
 |---|---|---|
 | `Branch.R`, `Machine.V_set`/`Q_min`/`Q_max`, `NetworkModel.slack` added without moving a number (step 1) | Full suite green with all 2835 pre-existing tests passing, **and** M5's 169 recorded criterion values bit-identical by MD5 against a capture taken at HEAD before the first edit — a tolerance-based suite cannot see a float move underneath it | structural |
-| Those fields are read by nothing that integrates **(true through M8; from M9 step 1 the detailed tier reads `R` — see the M9 section)** | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) — from M9 step 1, the classical tier and `build_oracle` only | structural |
+| Those fields are read by nothing that integrates **(true through M8; from M9 step 1 the detailed tier reads `R`, from step 2 the classical tier — see the M9 section)** | `branch_topology`/`branch_arrays` equal under `===` with and without `R`; all three tiers and `build_oracle` refuse `R ≠ 0` by name (`_assert_lossless_branches`) — from M9 step 1, the classical tier and `build_oracle` only; from M9 step 2, `build_oracle` alone | structural |
 | `bus_roles` / `bus_role` derived, never stored | Rejection cases (slack naming a missing bus; a bus not in the model); a declared slack carrying no machine, which the model accepts and the engine refuses | structural |
 | DC susceptance matrix `B` is sparse **structurally** | `SparseMatrixCSC`, `nnz == n + 2m` on three fixtures, symmetric, `max|B·1| < 1e-12`; and on a five-bus radial where 13 of 25 entries can tell sparse from dense — on the three-bus ring, a complete graph, the same count passes against a dense matrix | structural |
 | DC solve `B·θ = P`, two buses | `θ₂ = −P/b` asserted **exactly** (`==`): one unknown makes the solve a single division, so a tolerance could only hide a solver change | closed form |
@@ -559,10 +559,11 @@ mesh's G1 settles 10.94 Hz low in DC (−11.22 / −11.06 Hz in AC) and both scr
 pass it. This is named as an open problem on the hurdle list, not a claim
 (`plans/m8-context.md` D9, the user's choice).
 
-## Line resistance in the dynamic tiers — M9, `src/engines/detailed.jl`
+## Line resistance in the dynamic tiers — M9, `src/engines/detailed.jl`, `src/engines/swing.jl`
 
 The detailed tier's edge current is `(Vf − Vt)/(R + jX)` from M9 step 1
-(`plans/m9-context.md` D5). test: `test/m9_line_resistance.jl`.
+(`plans/m9-context.md` D5); the classical tier's coupling gains its conductance from
+step 2 (D6). test: `test/m9_line_resistance.jl`.
 
 | Claim | Checked against | Label |
 |---|---|---|
@@ -573,10 +574,19 @@ The detailed tier's edge current is `(Vf − Vt)/(R + jX)` from M9 step 1
 | The tier and the AC screen settle apart by the losses alone (Hurdle 17.4) | `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw`, uncapped constant power (case9 G3, mesh G3 — the only two that qualify): ≤ 5e-14 against gaps of ~3e-5 pu, at 400 s | **cross-fidelity** |
 | The two compiled networks hold the same `R` | The tier's own steady state on a lossy mesh (sabotage S4, `R` in one network only: refused, residual 0.15) and the dynamic-Kirchhoff check at a trip (0.26) | **structural** |
 
+| **Classical tier (step 2):** nothing lossless moved | Five captures at HEAD — step 1's four plus a full-precision swing-tier capture (seven fixtures, every trip, both ends of every branch) — byte-identical after, but for one line: `branch_power_series` now honours the caller's order (an exact negation; it ignored it before, unseen because every caller named the stored order). Anti-vacuity: with the lossless path removed, 225 of 312 swing lines and 3 of 182 criterion lines move | **structural** |
+| The reference bus picks up the losses | Non-reference `Pm == P0` exactly; the reference's extra equals the losses at both ends of every branch, 1e-12, five fixtures. Not in the plan: without it a lossy grid had no steady state at this tier | **derived** (reads our own edge — blind to a wrong edge equation, S2) |
+| Each end at its own terminal | `Re(Va·conj((Va − Vb)/(R + jX)))` from the phasors, sharing no code, to 1e-13 — a branch written against the graph's order between unequal `E′` | **derived, independent** |
+| The classical tier IS the detailed tier's frozen-flux limit on a lossy line | M5 step 2's oracle on the reduced pair: dispatch to 1e-12 first, then four channels inside `convergence_band` at two tolerances, each end as reference | **cross-fidelity** |
+| Swing against DC: the losses and nothing else | `ω_swing − Δω_DC = (L_pre − L_post − [reference lost]·L_pre)/Σw`, uncapped, three outages, rtol 1e-6 | **derived** (internal — green under S2) |
+| A dead branch carries nothing | Both ends `== 0.0` after a line trip and a generator trip (S4 red) | **structural** |
+
 **Not checked, and said:** (1) a resistance misread *the same way* by the tier and
 by the AC solve is invisible to every check in this section — each compares one
 against the other; step 3's outside check (PowerDynamics' `PiLine`) is the one that
-can see it. (2) The detailed tier's line-rating check reads the sending end only,
+can see it. The classical tier's cross-tier oracle has the same blindness one level
+up: a resistance misread the same way by both tiers' builders is green in step 2, and
+is step 3's too. (2) The detailed tier's line-rating check reads the sending end only,
 where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive power)
 and is carried, not changed, because widening it would move lossless refusals.
 

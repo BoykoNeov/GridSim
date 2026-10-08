@@ -291,6 +291,167 @@ One branch's transferred power `P = K·sin(δ_src − δ_dst)`, wrapped by the c
 """
 swing_edge!(e, v_src, v_dst, p, t) = (e[1] = p[1] * sin(v_src[1] - v_dst[1]); nothing)
 
+# --- line resistance (M9 step 2, `docs/plans/m9-context.md` D6) -----------------
+#
+# A lossy branch's two ends no longer carry equal and opposite power — the
+# difference is the I²R it burns — so it cannot be `AntiSymmetric`. It gets an edge
+# with an output at EACH end, `swing_edge_lossy!`, and the parameters
+# `(K, Kc, Gs, Gd)`:
+#
+#     K  = EᵢEⱼ·X/|Z|²   the synchronising term (EᵢEⱼ/X when R = 0)
+#     Kc = EᵢEⱼ·R/|Z|²   the conductance cross term
+#     Gs = E_src²·R/|Z|², Gd = E_dst²·R/|Z|²   each end's self term
+#
+# **The self terms belong to the GRAPH edge's ends**, not the branch's: `Graphs`
+# holds every edge in sorted `(src, dst)` order (the edge-ordering hazard in the file
+# header), and the self term at an end is that end's own voltage squared. With equal
+# `E′` the swap is invisible; with unequal ones it moves the dispatch and every flow,
+# which is why the step-2 fixture writes its branch against the graph's order.
+#
+# **A model with every `R == 0` never builds this edge.** It keeps `swing_edge!`
+# inside `AntiSymmetric`, the parameters `(K)` and the fixpoint path it had before
+# M9, textually — `EᵢEⱼ·X/X²` and `EᵢEⱼ/X` are the same number in exact arithmetic
+# and not always in floating point, so "the same formula at R = 0" would not have
+# been the same run. The gate is five captures compared byte for byte.
+
+"""
+    _end_power(G_a, Kc, K, Δ)
+
+Active power flowing INTO a lossy branch at its end `a`, `Δ = δa − δb`:
+`P_a = G_a − Kc·cos Δ + K·sin Δ` — `Re(Va·conj((Va − Vb)/(R + jX)))` written out with
+`Va = Ea·e^{jδa}`. The far end is the same expression with `Δ → −Δ` and its own self
+term; the two sum to the branch's loss, `|Va − Vb|²·R/|Z|²`. One function, read by
+the edge and by `branch_power`, so the two cannot come to disagree about a sign.
+"""
+@inline function _end_power(G_a, Kc, K, Δ)
+    s, c = sincos(Δ)
+    return G_a - Kc * c + K * s
+end
+
+"""
+    swing_edge_lossy!(osrc, odst, v_src, v_dst, p, t)
+
+A lossy branch, both ends. Each output is MINUS the power flowing into the branch at
+that end — the sign `swing_vertex!` adds (`esum` is minus the export; the file
+header's sign note). `p = (K, Kc, Gs, Gd)`, the self terms by the graph edge's ends.
+"""
+function swing_edge_lossy!(osrc, odst, v_src, v_dst, p, t)
+    K, Kc, Gs, Gd = p[1], p[2], p[3], p[4]
+    Δ = v_src[1] - v_dst[1]
+    osrc[1] = -_end_power(Gs, Kc, K, Δ)
+    odst[1] = -_end_power(Gd, Kc, K, -Δ)
+    return nothing
+end
+
+# The four parameters of one lossy branch, `Ea` at the graph edge's src, `Eb` at its dst.
+function _lossy_coeffs(Ea::Float64, Eb::Float64, R::Float64, X::Float64)
+    z2 = R^2 + X^2
+    g, b = R / z2, X / z2
+    return (K = Ea * Eb * b, Kc = Ea * Eb * g, Gs = Ea^2 * g, Gd = Eb^2 * g)
+end
+
+_swing_lossy(net::NetworkModel) = any(br -> br.R != 0.0, net.branches)
+
+# The bounds on what each vertex can export through its branches on a lossy grid
+# (the reach guard's lossy form): per branch, `P_a = Ea²g − EaEb(g·cos Δ − b·sin Δ)`,
+# and the bracket ranges over `±|y|`, `|y| = 1/|Z|`. Not symmetric about zero — the
+# self term shifts it — so the lossless `|P| ≤ Σ K` would refuse some feasible
+# exporters and pass some infeasible absorbers.
+function _lossy_reach(E::Vector{Float64}, src::Vector{Int}, dst::Vector{Int},
+                      R::Vector{Float64}, X::Vector{Float64})
+    lo = zeros(length(E)); hi = zeros(length(E))
+    for e in eachindex(src)
+        i, j = src[e], dst[e]
+        z2 = R[e]^2 + X[e]^2
+        g, y = R[e] / z2, 1 / sqrt(z2)
+        for (a, b) in ((i, j), (j, i))
+            lo[a] += E[a]^2 * g - E[a] * E[b] * y
+            hi[a] += E[a]^2 * g + E[a] * E[b] * y
+        end
+    end
+    return lo, hi
+end
+
+# THE SLACK. A lossless schedule balances (`Σ P0 = 0`, the model's guard) and has a
+# steady state as it stands. A lossy one cannot: the lines burn power, so somebody
+# must make it up, and with every `Pm` a fixed parameter `find_fixpoint` would be
+# handed a system with no equilibrium. The model's reference bus makes it up — the
+# detailed tier's own rule (`init!(::Type{DetailedEngine})`), which is also what makes
+# the frozen-flux comparison between the two tiers a comparison of one dispatch.
+#
+# Solved on a STATIC network first: one state per vertex, `δ`, the reference pinned at
+# zero and every other vertex held at its scheduled power, over the very edge the
+# dynamic network uses. The reference's power is then read off those edges, written
+# into its `Pm`, and the dynamic fixpoint is solved from the static angles. Never run
+# on a lossless model (it would return `P0` plus rounding, and the gate is
+# bit-identity).
+function _swing_static_bus!(dv, v, esum, p, t)
+    dv[1] = p[2] > 0.5 ? v[1] : p[1] + esum[1]
+    return nothing
+end
+
+function _swing_slack_solve!(s, g, edge, vref::Int, t0f::Float64)
+    nb, ne = Graphs.nv(g), Graphs.ne(g)
+    vstat = NetworkDynamics.VertexModel(f = _swing_static_bus!,
+                                        g = NetworkDynamics.StateMask(1:1),
+                                        sym = [:δ], psym = [:Pm, :mode],
+                                        mass_matrix = LinearAlgebra.Diagonal(zeros(1)),
+                                        name = :pf_classical_bus)
+    nws = NetworkDynamics.Network(g, [vstat for _ in 1:nb], [edge for _ in 1:ne])
+    ss = NetworkDynamics.NWState(nws)
+    for i in 1:nb
+        ss.v[i, :δ] = 0.0
+        ss.p.v[i, :Pm] = s.p.v[i, :Pm]
+        ss.p.v[i, :mode] = i == vref ? 1.0 : 0.0
+    end
+    for ei in 1:ne, sym in (:K, :Kc, :Gs, :Gd)
+        ss.p.e[ei, sym] = s.p.e[ei, sym]
+    end
+    nosteady(what) = ArgumentError(
+        "SwingEngine: the lossy network has no steady state with the reference bus " *
+        "picking up the losses ($what). Every other source holds its schedule; lower " *
+        "the transfers or the resistance.")
+    # The library throws its own error when the solve does not converge, which names
+    # neither the reference bus nor the losses; re-thrown as this tier's refusal
+    # (measured under step 2's sabotage S3, which leaves a mesh no steady state).
+    fp = try
+        NetworkDynamics.find_fixpoint(nws, ss; t = t0f)
+    catch e
+        e isa NetworkDynamics.NetworkInitError || rethrow()
+        throw(nosteady("the static solve did not converge: " * sprint(showerror, e)))
+    end
+    u = collect(NetworkDynamics.uflat(fp))
+    p = collect(NetworkDynamics.pflat(fp))
+    du = similar(u)
+    nws(du, u, p, t0f)
+    res = maximum(abs, du)
+    res < 1e-10 || throw(nosteady("static residual $res pu"))
+    SII = NetworkDynamics.SII
+    iδ(i) = SII.variable_index(nws, NetworkDynamics.VIndex(i, :δ))
+    # The reference's export, read off the same edges: with its pin off and its own
+    # `Pm` zeroed, its residual IS `esum`, minus the power it sends into the network.
+    p[SII.parameter_index(nws, NetworkDynamics.VPIndex(vref, :mode))] = 0.0
+    p[SII.parameter_index(nws, NetworkDynamics.VPIndex(vref, :Pm))] = 0.0
+    nws(du, u, p, t0f)
+    s.p.v[vref, :Pm] = -du[iδ(vref)]
+    for i in 1:nb
+        s.v[i, :δ] = u[iδ(i)]
+    end
+    return nothing
+end
+
+# The lossy edges' extra bookkeeping: the three parameters a trip must zero beside
+# `K`, and each graph edge's own ends (which end a self term belongs to). All empty on
+# a lossless model, which is how the engine tells the two apart.
+struct _SwingLoss
+    Kc_pidx::Vector{Int}
+    Gs_pidx::Vector{Int}
+    Gd_pidx::Vector{Int}
+    src::Vector{Int}
+    dst::Vector{Int}
+end
+_SwingLoss() = _SwingLoss(Int[], Int[], Int[], Int[], Int[])
+
 """
     SwingEngine{NW,I,R} <: SimulationEngine
 
@@ -356,6 +517,26 @@ mutable struct SwingEngine{NW,I,R} <: SimulationEngine
     # `K_p` for a grid-forming inverter, whose `ω_idx` points at `P_filt` and whose
     # speed is `−K_p·(P_filt − P_set)`. All zero on every pre-M7 model.
     droop::Vector{Float64}
+    # M9 step 2 — a lossy model's extra edge bookkeeping (`_SwingLoss`); empty on
+    # every lossless one, which is what `_is_lossy` reads.
+    loss::_SwingLoss
+end
+
+_is_lossy(eng::SwingEngine) = !isempty(eng.loss.Kc_pidx)
+
+# Take one graph edge out of the running system: every coefficient it carries, so a
+# dead lossy branch keeps neither its conductance coupling nor its self terms (a trip
+# that zeroed `K` alone would leave the dead bus coupled through `Kc` and burning
+# `Gs`/`Gd`). On a lossless model this is the one assignment it always was.
+function _zero_edge!(eng::SwingEngine, e::Int)
+    p = eng.params
+    p[eng.K_pidx[e]] = 0.0
+    if _is_lossy(eng)
+        p[eng.loss.Kc_pidx[e]] = 0.0
+        p[eng.loss.Gs_pidx[e]] = 0.0
+        p[eng.loss.Gd_pidx[e]] = 0.0
+    end
+    return nothing
 end
 
 # `isoutofdomain` predicate, built per engine because it has to close over the
@@ -656,7 +837,16 @@ function _assert_classical_tier(net::NetworkModel)
         end
     end
     _assert_frozen_flux(net, "SwingEngine")
-    _assert_lossless_branches(net, "SwingEngine")   # M6 step 1 — R is validated, not read
+    # M9 step 2: `R` is read (the lossy edge and the slack above `SwingEngine`), so
+    # the refusal M6 step 1 put here is gone. What a lossy model needs instead is a
+    # reference that can pick up the losses, and a reach test with the conductance in.
+    lossy = _swing_lossy(net)
+    vref = net.bus_index[net.slack]
+    lossy && !isempty(net.inverters_at_bus[vref]) && throw(ArgumentError(
+        "SwingEngine: on a lossy network the reference bus picks up the losses, and " *
+        "the reference bus :$(net.slack) carries a grid-forming inverter. Its droop " *
+        "setpoint would have to move to absorb them, a rule no tier has validated. " *
+        "Make a machine's bus the reference (NetworkModel(…; slack = …))."))
     isempty(net.loads) || throw(ArgumentError(
         "SwingEngine: the model carries $(length(net.loads)) Load(s) " *
         "($(join([l.id for l in net.loads], ", "))). The classical tier represents " *
@@ -670,6 +860,28 @@ function _assert_classical_tier(net::NetworkModel)
     # M7 step 3: with grid-forming inverters the vertex arrays come from
     # `_swing_vertices`, and the reachability test below reads them instead. The
     # machine-index identity is a pre-M7 statement, checked on the pre-M7 path.
+    if lossy
+        # The machine-index identity the lossless path asserts below, asserted here
+        # too: the engine reads `machine_arrays` by vertex whenever no inverter is
+        # present, lossy or not.
+        isempty(net.inverters) && machine_arrays(net).bus != collect(1:length(net.buses)) &&
+            throw(ArgumentError("SwingEngine: machine k does not sit on bus k; this " *
+                                "engine indexes machines BY VERTEX throughout."))
+        sv = _swing_vertices(net)
+        bt = branch_topology(net)
+        lo, hi = _lossy_reach(sv.E, bt.src, bt.dst, bt.R, bt.X)
+        # The reference is not tested: its power is whatever the losses make it, and
+        # the static solve refuses a dispatch with no steady state by its residual.
+        for v in eachindex(net.buses)
+            v == vref && continue
+            lo[v] ≤ sv.Pm[v] ≤ hi[v] || throw(ArgumentError(
+                "SwingEngine: $(sv.ids[v]) injects $(sv.Pm[v]) pu, outside what its " *
+                "lossy branches can carry, [$(lo[v]), $(hi[v])] pu — each branch moves " *
+                "Ea²g ± EaEb|y|, which is not symmetric about zero once g ≠ 0. Since " *
+                "P = Σ (Ea²g − Kc·cos Δδ + K·sin Δδ), no steady state exists."))
+        end
+        return nothing
+    end
     if !isempty(net.inverters)
         sv = _swing_vertices(net)
         for v in eachindex(net.buses)
@@ -818,6 +1030,15 @@ armed here and read by the RHS. `t_start` must be at or after `t0` (see
 `_bind_ramps` for what a mis-signed one would do to the flat start). Default: no
 ramps, which is `rate = 0` and is the machine every earlier model described, to the
 bit.
+
+**A branch with series resistance** (M9 step 2) is read, not refused: the coupling
+gains its conductance and each end its own self term (`swing_edge_lossy!`), and the
+model's **reference bus** (`net.slack`) picks up the losses — its `Pm` is its
+schedule plus whatever the lines burn at the steady state, while every other source
+holds its schedule (the detailed tier's rule). Headroom stays `Pmax − P0`: it caps
+the governor's deviation, not the dispatch. A grid-forming inverter on the reference
+bus of a lossy model is refused by name. A model with every `R = 0` is compiled
+exactly as before.
 """
 function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                      dt::Real = _SWING_DT0,
@@ -872,8 +1093,18 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                                          psym = [:Pm, :H, :D, :ω₀, :invR, :headroom, :Tg,
                                                  :rate, :t_start, :duration],
                                          name = :machine)
-    edge = NetworkDynamics.EdgeModel(g = NetworkDynamics.AntiSymmetric(swing_edge!),
-                                     outsym = [:P], psym = [:K], name = :branch)
+    # M9 step 2: a lossy model takes the two-ended edge on EVERY branch (a lossless
+    # branch in it simply has `Kc = Gs = Gd = 0`); a lossless model takes the edge it
+    # always had. `K` stays the first parameter's name in both, so `K_pidx` resolves
+    # the same way.
+    lossy = _swing_lossy(net)
+    E_v = has_inv ? sv.E : ma.E
+    edge = lossy ?
+        NetworkDynamics.EdgeModel(g = swing_edge_lossy!,
+                                  outsym = (src = [:P_src], dst = [:P_dst]),
+                                  psym = [:K, :Kc, :Gs, :Gd], name = :lossy_branch) :
+        NetworkDynamics.EdgeModel(g = NetworkDynamics.AntiSymmetric(swing_edge!),
+                                  outsym = [:P], psym = [:K], name = :branch)
     # M7 step 3 — the grid-forming vertex, built from its own droop states. Its
     # parameter list carries `invR`, `headroom` and `rate` unread, so a generator
     # trip zeroes them through the same flat indices as a machine's (`gfm_vertex!`).
@@ -960,10 +1191,25 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
 
     branch_to_edge = Vector{Int}(undef, length(ba.K))
     incident = [Int[] for _ in 1:nb]
+    esrc = lossy ? zeros(Int, ne) : Int[]
+    edst = lossy ? zeros(Int, ne) : Int[]
     for (ei, ed) in enumerate(Graphs.edges(g))
         i, j = Graphs.src(ed), Graphs.dst(ed)
         key = minmax(i, j)
-        s.p.e[ei, :K] = K_of_pair[key]
+        if lossy
+            # The self terms by THIS edge's ends, `i` its src and `j` its dst — not the
+            # branch's `from`/`to`, which may be the other way round (see the note
+            # above `_end_power`).
+            br = net.branches[branch_of_pair[key]]
+            c = _lossy_coeffs(E_v[i], E_v[j], br.R, br.X)
+            s.p.e[ei, :K]  = c.K
+            s.p.e[ei, :Kc] = c.Kc
+            s.p.e[ei, :Gs] = c.Gs
+            s.p.e[ei, :Gd] = c.Gd
+            esrc[ei], edst[ei] = i, j
+        else
+            s.p.e[ei, :K] = K_of_pair[key]
+        end
         branch_to_edge[branch_of_pair[key]] = ei
         push!(incident[i], ei)
         push!(incident[j], ei)
@@ -994,6 +1240,9 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # `t_start` and `duration` are set once at construction and never move, so an
     # index into them would be a handle to something nothing may write.
     rate_pidx = [SII.parameter_index(nw, NetworkDynamics.VPIndex(i, :rate)) for i in 1:nb]
+    epidx(sym) = lossy ?
+        [SII.parameter_index(nw, NetworkDynamics.EPIndex(e, sym)) for e in 1:ne] : Int[]
+    loss = _SwingLoss(epidx(:Kc), epidx(:Gs), epidx(:Gd), esrc, edst)
 
     # Built BEFORE the integrator and shared with it, the same construction order
     # M1 uses: the callbacks close over these exact ladders and the engine keeps the
@@ -1033,9 +1282,21 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
     # `t_start < t0`, so `clamp(t0 − t_start, 0, duration)` is exactly `0` here for
     # every armed ramp: the fixpoint is the equilibrium of the un-ramped system, the
     # engine starts flat on it, and the ramp begins from that flat start.
+    #
+    # M9 step 2: on a lossy model the reference bus's `Pm` is solved first (see
+    # `_swing_slack_solve!`), and the dynamic fixpoint starts from the static angles.
+    # A lossless model skips both, so its solve is the one it always was.
+    lossy && _swing_slack_solve!(s, g, edge, net.bus_index[net.slack], t0f)
     fp = NetworkDynamics.find_fixpoint(nw, s; t = t0f)
     u0 = collect(NetworkDynamics.uflat(fp))
     p0 = collect(NetworkDynamics.pflat(fp))
+    if lossy
+        du0 = similar(u0)
+        nw(du0, u0, p0, t0f)
+        maximum(abs, du0) < 1e-10 || throw(ArgumentError(
+            "SwingEngine: the dynamic fixpoint on the lossy network did not converge " *
+            "(residual $(maximum(abs, du0))) from the static solve's dispatch."))
+    end
     # The one relay guard that needs the steady state, so it runs here rather than
     # with the other three.
     _guard_out_of_step_start(bound_oos, u0)
@@ -1105,7 +1366,7 @@ function SwingEngine(net::NetworkModel; t0::Real = 0.0,
                       branch_to_edge, incident, branch_of_buses, H, w, sum(w), traj,
                       Vector{Float64}(undef, length(channels)),
                       EngineEvent[], 0, net.f0, ladders, relays, ramps,
-                      Float64[is_gfm(i) ? ma.K_p[i] : 0.0 for i in 1:nb])
+                      Float64[is_gfm(i) ? ma.K_p[i] : 0.0 for i in 1:nb], loss)
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -1435,10 +1696,11 @@ out_of_step_relay(eng::SwingEngine, from::Symbol, to::Symbol) =
     branch_power(eng::SwingEngine, from::Symbol, to::Symbol) -> Float64
 
 Active power flowing **from** bus `from` **into** the branch, per unit on
-`model.S_base`, right now. Negative is flow the other way; the branch is lossless,
-so the far end receives the same number. **The argument order decides the sign** —
-`branch_power(eng, :A, :B) == -branch_power(eng, :B, :A)` — while the branch itself
-is looked up on the unordered pair, `TripLine`'s contract.
+`model.S_base`, right now. Negative is flow the other way. **The argument order
+decides which end is read** — on a lossless model `branch_power(eng, :A, :B) ==
+-branch_power(eng, :B, :A)`; on a lossy one (M9 step 2) each end is read at its own
+terminal and the two sum to the branch's loss — while the branch itself is looked up
+on the unordered pair, `TripLine`'s contract.
 
 At this tier that is `K·sin(δ_from − δ_to)` with the LIVE coupling — the parameter
 in the running system, which a line trip and a generator trip both zero — so a
@@ -1452,6 +1714,9 @@ an orientation mistake writing them out twice at two call sites.
 """
 function branch_power(eng::SwingEngine, from::Symbol, to::Symbol)
     b = _find_branch(eng, from, to)
+    # M9 step 2: a lossy branch's two ends carry different powers, so the end named
+    # first is read at its own terminal rather than as minus the other.
+    _is_lossy(eng) && return _lossy_end(eng, b, from, eng.integrator.u)
     # `branch_topology`, not `branch_arrays`: only the ends are read, and
     # `branch_arrays` computes `K` from a machine at every bus, so it refused every
     # model with a grid-forming inverter and took this read-out with it (found at M8
@@ -1471,6 +1736,19 @@ function branch_power(eng::SwingEngine, from::Symbol, to::Symbol)
     # every branch that happens to be stored the way the caller wrote it, and
     # silently negates on the ones that are not.
     return _oriented(eng.model.branches[b], from) ? p : -p
+end
+
+# The power into lossy branch `b` at bus `from`, from the state `u` and the LIVE
+# parameters (so a tripped branch reads 0.0 at both ends). Which self term is `from`'s
+# is decided by the graph edge's own ends, the way the edge was filled.
+function _lossy_end(eng::SwingEngine, b::Int, from::Symbol, u::AbstractVector)
+    e = eng.branch_to_edge[b]
+    L, p = eng.loss, eng.params
+    i, j = L.src[e], L.dst[e]
+    Δ = u[eng.δ_idx[i]] - u[eng.δ_idx[j]]
+    K, Kc = p[eng.K_pidx[e]], p[L.Kc_pidx[e]]
+    return eng.model.bus_index[from] == i ? _end_power(p[L.Gs_pidx[e]], Kc, K, Δ) :
+                                            _end_power(p[L.Gd_pidx[e]], Kc, K, -Δ)
 end
 
 # Is `from` the branch's own `from`? Both ends are checked rather than one, so a
@@ -1541,12 +1819,21 @@ post-event coupling for pre-event samples.
 function branch_power_series(eng::SwingEngine, from::Symbol, to::Symbol)
     b = _find_branch(eng, from, to)
     _branch_series_guard(eng.log, eng.model, b, from, to)
+    sol = eng.integrator.sol
+    # M9 step 2: a lossy branch, each end at its own terminal — `branch_power`'s read.
+    _is_lossy(eng) && return (t = copy(sol.t),
+                              P = Float64[_lossy_end(eng, b, from, u) for u in sol.u])
     ba = branch_topology(eng.model)     # the ends only; see `branch_power`
     K = eng.params[eng.K_pidx[eng.branch_to_edge[b]]]
     i, j = eng.δ_idx[ba.src[b]], eng.δ_idx[ba.dst[b]]
-    sol = eng.integrator.sol
+    # The CALLER's order decides the sign, as in `branch_power`. Until M9 step 2 this
+    # returned the branch's own direction whatever was asked — the exact bug
+    # `branch_power`'s comment describes, unseen because every caller named the
+    # branch in its stored order (found writing the lossy read, which must honour
+    # `from` because its two ends differ).
+    sgn = _oriented(eng.model.branches[b], from) ? 1.0 : -1.0
     return (t = copy(sol.t),
-            P = Float64[K * sin(u[i] - u[j]) for u in sol.u])
+            P = Float64[sgn * (K * sin(u[i] - u[j])) for u in sol.u])
 end
 
 """
@@ -1649,7 +1936,7 @@ function inject!(eng::SwingEngine, ev::TripGenerator)
     p = eng.params                           # === eng.integrator.p (shared object)
     p[eng.Pm_pidx[v]] = 0.0
     for e in eng.incident[v]
-        p[eng.K_pidx[e]] = 0.0
+        _zero_edge!(eng, e)                  # every coefficient, on a lossy model too
     end
     # The governor leaves with the machine: no droop command, no reserve.
     p[eng.invR_pidx[v]] = 0.0
@@ -1765,7 +2052,7 @@ function inject!(eng::SwingEngine, ev::TripLine)
     # `branch_to_edge` is the reverse of the graph's own edge ordering, which is
     # NOT branch order (see the header). This is the one place that map is read,
     # and `test/` asserts it is a permutation *and* that the right line goes dead.
-    eng.params[eng.K_pidx[eng.branch_to_edge[b]]] = 0.0
+    _zero_edge!(eng, eng.branch_to_edge[b])
     # Any out-of-step relay on this branch is latched, whoever opened it — the user
     # here, another relay, or this relay itself firing (M3 step 4). One rule covers
     # all three, which is what makes "a relay logs a trip only if it opened

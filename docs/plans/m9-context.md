@@ -329,3 +329,110 @@ read each side's losses from its own, equally wrong, solution. Only PowerDynamic
 set hides from the flows" one level up, and it is **step 3's mutation**: red there,
 green in every check here. Not sharing code does not make two copies independent
 when both make the same mistake.
+
+## D6 — Step 2 measured: line resistance in the swing tier (2026-10-08)
+
+**The change.** A lossy model (any `R ≠ 0`) compiles every branch to a two-ended edge
+(`swing_edge_lossy!`) with parameters `(K, Kc, Gs, Gd)` = `(EᵢEⱼX/|Z|², EᵢEⱼR/|Z|²,
+E_src²R/|Z|², E_dst²R/|Z|²)`; the power into the branch at an end is
+`G_a − Kc·cos Δ + K·sin Δ` (`_end_power`, read by the edge and by `branch_power`
+alike). The self terms are filled by the **graph edge's** ends, never the branch's.
+A lossless model compiles exactly the pre-M9 network — the `AntiSymmetric` edge, the
+one parameter, the same fixpoint call — so `_assert_lossless_branches` is gone from
+the tier and its only caller left is `build_oracle` (step 3).
+
+**Found at orientation, not in the plan: a lossy grid has no steady state at this
+tier as it stood.** Every `Pm` is a fixed parameter and the schedule sums to zero
+(`NetworkModel`'s guard), so with losses nobody makes them up and `find_fixpoint` is
+handed a system with no equilibrium. Decided (advisor-reviewed, not the user's
+call — the step's own cross-tier oracle only works under this rule): **the model's
+reference bus picks up the losses, the detailed tier's own rule.** A static network
+(one state per vertex, `δ`; the reference pinned, every other vertex at its
+schedule; the same lossy edge) is solved first, the reference's power read off the
+edges, and the dynamic fixpoint solved from the static angles. Never run on a
+lossless model. Headroom stays `(Pmax − P0)/S_base`, as in the detailed tier — it
+caps the governor's DEVIATION, so a reference whose dispatch rises by the losses
+keeps its headroom. A grid-forming inverter on a lossy model's reference bus is
+refused by name (its droop setpoint would have to move; no rule validated).
+
+**The reach guard changed shape.** Per branch an end moves `Ea²g ± EaEb|y|`, which is
+not symmetric about zero once `g ≠ 0`, so the lossless `|P| ≤ Σ K` would refuse some
+feasible exporters and pass some infeasible absorbers. On a lossy model the bound is
+`[Σ(Ea²g − EaEb|y|), Σ(Ea²g + EaEb|y|)]`, every vertex but the reference (whose power
+the static solve decides). Pinned: a 6 pu absorber behind X = 0.1, R = 0.05 builds
+lossless and is refused lossy (bound −4.94 pu).
+
+**Measured** (`test/m9_line_resistance.jl`, step-2 testsets; probes under
+`W:\temp\claude\gridsim-m9\step2\`):
+
+- **Dispatch.** On five lossy fixtures (the reversed pair with each end as reference,
+  a ring, M8 step 4's mesh, the mesh with a grid-forming inverter) every
+  non-reference source holds its schedule exactly (`==`) and the reference's extra
+  equals the losses read at both ends of every branch, to 1e-12.
+- **Each end against a formula that shares no code** —
+  `Re(Va·conj((Va − Vb)/(R + jX)))` from the phasors — to 1e-13, on the three
+  machine-only fixtures, one branch written against the graph's order between unequal
+  `E′`.
+- **The flat run, and a gate that was wrong first.** Written at step 1's 1e-10 per
+  state and red: the drift is the explicit Runge–Kutta's, in an absolute angle, and
+  **the lossless twin drifts as much** (`probe_flat.jl`, 50 s: ring 2.0e-6 lossless
+  against 3.2e-7 lossy at reltol 1e-6; mesh 6.4e-7 / 6.6e-7; ~3e-10 for both at
+  1e-10). The start's residual is at machine precision in both (≤ 1.1e-15). So the
+  check is the residual at the start (< 1e-13) and drift that falls with the
+  tolerance; the radial pair is flat to the bit at both.
+- **The cross-tier oracle.** The detailed tier at the frozen-flux degeneration on the
+  reduced pair (`terminal_bus_reduced`, which **dropped `R` and the reference bus**
+  when it rebuilt the model — fixed, and asserted): the two tiers' dispatch agrees to
+  1e-12 with each end as reference, then all four channels inside `convergence_band`
+  at two tolerances — M5 step 2's oracle, unchanged, now on a lossy line.
+- **Swing against DC, exactly.** With every surviving governor uncapped,
+  `ω_swing − Δω_DC = (L_pre − L_post − [reference lost]·L_pre)/Σw`, the last term
+  because a lost reference takes the losses it carried. Mesh G3 and LB lost
+  (reference elsewhere) and G3 lost as the reference: to rtol 1e-6, with the gap
+  more than 10³ × the residual. At `R = 0` the gap is zero and M8 step 4's check is
+  unchanged (the gate).
+- **A trip leaves nothing on a dead branch** at either end, line or generator.
+
+**Found, not planned.**
+
+1. **`branch_power_series` ignored the caller's order on a lossless model** — asked
+   for `(:B2, :B1)` it returned the `(:B1, :B2)` series. The swing capture written for
+   this step's gate printed both and showed it. Every caller in the repo names the
+   stored order, so nothing moved; the sign now follows the caller, as
+   `branch_power`'s does, and the capture differs from HEAD in exactly that line, by
+   an exact negation (verified line by line).
+2. **`terminal_bus_reduced` (test helper) silently made the reduced model lossless**
+   and reset its reference bus — the lossy cross-tier check would have compared a
+   lossy swing tier against a lossless detailed one. Fixed and asserted.
+3. **The gate.** Five captures at HEAD before the first edit — step 1's four (each
+   byte-identical to step 1's own) plus a new full-precision swing-tier capture
+   (`swing_snapshot.jl`: seven fixtures, every generator and line trip, the state,
+   both ends of every branch, `coi_rocof`, one playback series) — are byte-identical
+   after the change, but for finding 1's one line.
+4. **The no-steady-state refusal was the library's, not ours.** Under sabotage S3 the
+   static solve did not converge and NetworkDynamics' `NetworkInitError` surfaced,
+   naming neither the reference bus nor the losses. It is now re-thrown as the tier's
+   own refusal, and a test reaches it: two exporters each inside its own reach bound
+   that a shared lossy ring cannot carry at once.
+
+**Sabotages** (predictions first, `W:\temp\claude\gridsim-m9\step2\predictions.md`;
+runner `mutate.py`, logs `mut-S*.log`):
+
+| | Sabotage | Red | Green | Against the prediction |
+|---|---|---|---|---|
+| S1 | self term dropped from `_end_power` | independent end formula, cross-tier dispatch and trajectories, the losses themselves (negative), dead-branch residual, the playback ends; swing-against-DC — **through its precondition** (a governor capped once the dispatch moved, then the run failed), not through the identity | — | predicted the identity green; it is, in itself — red only because its precondition broke |
+| S2 | conductance with the wrong sign | independent formula, cross-tier, the losses (negative), playback ends, live-branch residual | flat run, dispatch identity, **swing-against-DC** | as predicted |
+| S3 | `cos`/`sin` swapped on the conductance term | independent formula, cross-tier; and every mesh build — the mesh has no steady state under the wrong formula (finding 4) | the pair's flat run | predicted dispatch and flat run green; they are red on the mesh by refusal — safe direction |
+| S4 | a trip zeroes `K` only | both dead-branch checks; swing-against-DC (the dead bus stays coupled, the run fails at MaxIters) | everything without a trip | as predicted |
+| S5 | self terms by the BRANCH's ends | independent formula (reversed branch, unequal `E′`), cross-tier | everything else | as predicted |
+| S6 | the lossless path removed (lossy edge and slack on every model) | **the gate**: 225 of 312 swing-capture lines and 3 of 182 criterion lines move | every check with a tolerance (289 / 289) | as predicted |
+
+S7 (the slack solve alone on lossless models) could not be run separately — the
+static solve reads the lossy edge's parameters — and was folded into S6, written down
+before any sabotage ran. **What sees what:** the dispatch identity and the
+swing-against-DC identity read losses through the engine's own `_end_power`, so a
+wrong edge equation leaves them self-consistent (S2 is green there). The independent
+end formula and the detailed tier at the frozen-flux degeneration are the two checks
+that see the equation, and between them they are red under all five edge sabotages.
+The step-1 lesson stands one level up: a resistance misread the same way in BOTH
+tiers' builders would be green here too, and is step 3's to catch.

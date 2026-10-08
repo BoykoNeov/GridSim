@@ -94,6 +94,12 @@ or left with an empty list on purpose.
 - **Sabotages:** drop the self term `E′ᵢ²Gᵢᵢ`; `G` with the wrong sign; `cos` and
   `sin` swapped on the conductance term.
 
+**Done 2026-10-08 (`m9-context.md` D6). What this plan missed:** a lossy grid has no
+steady state at this tier until somebody picks up the losses — the reference bus
+does, as in the detailed tier, through a static solve before the fixpoint. The
+function was not deleted: `build_oracle` still calls it (step 3). Two sabotages were
+added at review — a trip that zeroes `K` only, and self terms by the branch's ends.
+
 ### Step 3 — The outside check on both tiers (Hurdle 17.5)
 
 `reference/src/oracle.jl` passes `R = br.R` to `Library.PiLine`. Both tiers are run

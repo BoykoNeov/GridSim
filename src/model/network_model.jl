@@ -501,9 +501,10 @@ unrelated quantities that share a letter by convention, and they share a key nam
 (`R`) in the scenario file's `[[branches]]` and `[[machines]]` records. Said here
 because the file makes them look like one field.
 
-**Who reads `R`.** The AC power flow (M6 step 3) and the detailed tier, whose edge
-current is `(Vf − Vt)/(R + jX)` from M9 step 1. The classical tier still REFUSES it
-(`_assert_lossless_branches`), as does the reference oracle: a resistance that
+**Who reads `R`.** The AC power flow (M6 step 3), the detailed tier, whose edge
+current is `(Vf − Vt)/(R + jX)` from M9 step 1, and the classical tier, whose coupling
+gained its conductance in M9 step 2. The reference oracle still REFUSES it
+(`_assert_lossless_branches`): a resistance that
 silently reached a lossless edge model would simulate a different network with
 nothing to say so — the shape M5's `Load` ZIP shares already used, data that is only
 sometimes read being exactly the data that gets set wrong and noticed a milestone
@@ -1007,8 +1008,9 @@ struct NetworkModel
         # `Σ P0_machines = Σ P0_loads` still constructs and still should. What a lossy
         # model's balance actually is gets checked somewhere else entirely: by M6
         # step 3's identity that the slack's pickup equals the summed branch losses.
-        # (The detailed tier reads `R` from M9 step 1; the classical tier still
-        # refuses it. Neither touches this guard: it is the schedule, not a run.)
+        # (The detailed tier reads `R` from M9 step 1 and the classical tier from step
+        # 2, where the reference bus picks the losses up. Neither touches this guard:
+        # it is the schedule, not a run.)
         # Widened for `Load`, whose sign convention is the opposite of a machine's:
         # a machine's `P0` is an INJECTION (negative = absorbing, M2a's load) and a
         # load's `P0` is a DRAW. On every M2/M3 model `loads` is empty and this is
@@ -1503,13 +1505,13 @@ end
 Refuse a branch carrying a series resistance, by name — the M6 step 1 half of the
 `_assert_frozen_flux` family, and there for exactly the same reason.
 
-**This function is the list of what still has to learn `R`**, and it is shorter by
-one from M9 step 1: the AC power flow reads it (M6 step 3) and so does the detailed
-tier (`_branch_current!`). What still calls this is the classical tier, whose
-coupling is `E′ᵢE′ⱼ/X` (M9 step 2), and the reference oracle's `build_oracle`, which
-passes `R = 0` to PowerDynamics (M9 step 3). A model with `R ≠ 0` run at either is a
-*different network* than its data describes — a lossless one — silently and with a
-plausible answer.
+**This function is the list of what still has to learn `R`**, and it is down to
+one: the AC power flow reads it (M6 step 3), the detailed tier from M9 step 1
+(`_branch_current!`) and the classical tier from M9 step 2 (`swing_edge_lossy!`, with
+the reference bus picking up the losses). What still calls this is the reference
+oracle's `build_oracle`, which passes `R = 0` to PowerDynamics (M9 step 3). A model
+with `R ≠ 0` run there is a *different network* than its data describes — a lossless
+one — silently and with a plausible answer.
 """
 function _assert_lossless_branches(net::NetworkModel, who::AbstractString)
     for br in net.branches
@@ -1517,8 +1519,8 @@ function _assert_lossless_branches(net::NetworkModel, who::AbstractString)
             "$who: branch $(br.id) carries a series resistance R = $(br.R) pu, and " *
             "$who does not read it — its model is lossless. Running it here would " *
             "silently simulate a lossless line where the data says a lossy one. Set " *
-            "R = 0.0, or use the M6 power flow or the detailed tier (DetailedEngine), " *
-            "which do read it."))
+            "R = 0.0, or use the M6 power flow or a dynamic tier (DetailedEngine, " *
+            "SwingEngine), which do read it."))
     end
     return nothing
 end

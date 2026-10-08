@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–1 done (2026-10-08); step 2 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–2 done (2026-10-08); step 3 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**.
+**5453 core / 1262 reference / 568 UI**; after step 2 **5603 core / 1262 reference / 568 UI** (+149 step-2 checks, +1 from the reworked M6 refusal test).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -87,13 +87,45 @@ runs.
       the same way in both is green in every step-1 check, so that consistent
       two-site sabotage is step 3's mutation (D5).
 
-## Step 2 — line resistance in the swing tier (Hurdle 17.6)
+## Step 2 — line resistance in the swing tier (Hurdle 17.6) — done 2026-10-08
 
-- [ ] Conductance in the classical coupling, sparse; refusal lifted.
-- [ ] Gate: captures and M8 step 4's swing-against-DC agreement bit-identical at `R = 0`.
-- [ ] Frozen-flux detailed tier matches on a lossy network.
-- [ ] Swing ≠ DC on a lossy grid by the losses alone, pinned.
-- [ ] Sabotages.
+- [x] Entry counts: 5453 / 1262 / 568, step 1's close (core measured on the `c81cf79`
+      tree, `W:\temp\claude\gridsim-m9\step1\core-STEP1b.log`; reference and UI on
+      `666b857`, whose follow-up `c81cf79` changed no test).
+- [x] Captures at HEAD (`c81cf79`) before the first edit,
+      `W:\temp\claude\gridsim-m9\step2\*-HEAD.txt`: step 1's four (each byte-identical
+      to step 1's own) plus a new full-precision swing-tier capture
+      (`swing_snapshot.jl`: seven fixtures including M8 step 4's mesh, every generator
+      and line trip, both ends of every branch, `coi_rocof`, one playback series).
+- [x] **Found at orientation, not planned — the slack.** A lossy grid has no steady
+      state at this tier (fixed `Pm`, a schedule summing to zero). The model's
+      reference bus picks up the losses, the detailed tier's rule, through a static
+      solve before the dynamic fixpoint; headroom stays `Pmax − P0`; a grid-forming
+      inverter as a lossy model's reference is refused by name (D6).
+- [x] Conductance in the classical coupling, built edge by edge (no matrix); every
+      branch of a lossy model takes the two-ended edge, self terms by the GRAPH edge's
+      ends; a lossless model compiles exactly as before; refusal lifted
+      (`_assert_lossless_branches` left with `build_oracle` alone). The reach guard
+      takes its lossy, asymmetric form.
+- [x] **Gate: all five captures byte-identical** but for one line — found, not planned:
+      `branch_power_series` ignored the caller's order on a lossless model; fixed, and
+      that line differs by an exact negation. **Anti-vacuity (S6):** with the lossless
+      path removed, 225 of 312 swing-capture lines and 3 of 182 criterion lines move.
+      M8 step 4's swing-against-DC agreement is inside the swing capture (the mesh,
+      every outage) and in the suite unchanged.
+- [x] Frozen-flux detailed tier matches on a lossy network: dispatch to 1e-12 first,
+      then four channels inside `convergence_band` at two tolerances, each end of the
+      pair as reference. `terminal_bus_reduced` had been dropping `R` and the
+      reference — fixed and asserted.
+- [x] Swing ≠ DC on a lossy grid by the losses alone, pinned as an identity:
+      `(L_pre − L_post − [reference lost]·L_pre)/Σw`, three outages including the
+      reference's, rtol 1e-6, gap > 10³ × residual.
+- [x] Each end against a formula sharing no code (1e-13); dispatch (`==` off the
+      reference, losses to 1e-12); flat start (residual < 1e-13, drift falling with
+      tolerance — first written at 1e-10 and wrong: the lossless twin drifts as much);
+      both ends of a dead branch exactly zero.
+- [x] Sabotages S1–S6, predictions first, every one red somewhere; S3's refusal was
+      the solver library's and is now the tier's own (D6).
 
 ## Step 3 — the outside check on both tiers (Hurdle 17.5)
 
