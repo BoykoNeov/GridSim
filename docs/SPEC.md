@@ -502,4 +502,7 @@ end
    against the swing and detailed tiers' settled trips; `scripts/outage_screen.jl`
    prints the report. Not built: the map, batched/GPU runs, double outages, line
    charging. Named as Hurdle 16: a `:secure` outcome carries no frequency
-   criterion (`docs/plans/README.md`).
+   criterion (`docs/plans/README.md`). **Taken as M9** (2026-10-08, the user's
+   choice): a frequency verdict beside each generator outage (settled, dip, rate of
+   fall), with line resistance taught to both dynamic tiers so the dip can be
+   measured on lossy grids (`docs/plans/m9-context.md` D0).
