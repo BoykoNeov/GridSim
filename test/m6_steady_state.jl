@@ -540,14 +540,12 @@ end
                           for br in lossless.branches],
                          lossless.machines, lossless.loads; slack = :B1)
 
-    # The classical engine refuses this model by name, because a lossy model run at
-    # a lossless tier is a different network than its data describes (the detailed
-    # tier reads `R` from M9 step 1, so it is no longer the one to ask)…
-    # …and it refuses it for THIS reason, not for some other property of the
-    # fixture: asserting only `ArgumentError` here would pass against a model
-    # rejected for its bare junction bus.
-    @test occursin("series resistance",
-                   argerr_msg(() -> GridSim._assert_lossless_branches(lossy, "SwingEngine")))
+    # Through M8 an engine refusal of this model was asserted here (the detailed
+    # tier's, for THIS reason and not the fixture's bare junction bus). From M9 step 1
+    # the detailed tier reads `R`, and the classical tier cannot build this fixture
+    # for an unrelated reason (the junction bus), so there is no engine left to ask
+    # here; the classical tier's refusal of `R` is pinned on `ring_R` in "the five
+    # readers of Branch.X" above.
     # …but the DC power flow is not a tier, it is an APPROXIMATION that states it
     # drops R. Refusing here would refuse exactly the cases step 3 exists for.
     @test dc_powerflow(lossy).θ == dc_powerflow(lossless).θ

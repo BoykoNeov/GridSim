@@ -979,12 +979,17 @@ const _DETAILED_EDGE_PSYM = [:X, :status, :R]
 
 `status·d/(R + jX)` as a phasor — `_branch_current!`'s expression for the read-outs
 that work in complex arithmetic (`_branch_flows`, `branch_power`,
-`branch_power_series`). At `R = 0` it is the pre-M9 `status·d/(jX)` textually, for
-the reason `_branch_current!` gives: the lossy form rounds differently even when
-`R` is zero, and every lossless number is pinned bit for bit.
+`branch_power_series`).
+
+**No `R == 0` branch here, and none needed — measured.** Unlike `_branch_current!`,
+whose real-arithmetic expansion `bX/X²` rounds differently from the old `b/X`, this
+divides by the complex number `complex(R, X)`, and at `R = 0` that is `im·X` to the
+bit — the same operation on the same operands as the pre-M9 `status·d/(jX)`. Written
+first with the branch, on the edge's reasoning; removing it moved none of M5's 169
+criterion values (sabotage S6b, M9 step 1), which read the tie through this function.
 """
 @inline _series_current(d::ComplexF64, R::Float64, X::Float64, status::Float64) =
-    R == 0 ? status * d / (im * X) : status * d / complex(R, X)
+    status * d / complex(R, X)
 
 _detailed_edge() = NetworkDynamics.EdgeModel(
     g = NetworkDynamics.AntiSymmetric(_branch_current!),
@@ -2446,7 +2451,9 @@ end
 # The active power entering a branch at the end the caller named: the sending end
 # `Re(Vf·conj(I))` when the caller's order is the branch's own, else the receiving end
 # `Re(Vt·conj(−I))`. At `R = 0` the receiving end is the negated sending end, as it
-# was before M9 — equal in exact arithmetic, and kept for the bits (`_series_current`).
+# was before M9 — equal in exact arithmetic, not in floating point, and kept for the
+# bits. UNGATED BY MEASUREMENT: no full-precision capture reads a lossless branch
+# against its orientation, so this branch's bit-preservation rests on inspection.
 @inline function _end_power(Vf::ComplexF64, Vt::ComplexF64, I::ComplexF64, R::Float64,
                             oriented::Bool)
     oriented && return real(Vf * conj(I))

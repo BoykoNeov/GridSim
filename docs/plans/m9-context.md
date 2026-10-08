@@ -227,14 +227,22 @@ is the power, and that is read where power is read. `branch_power` and
 `_assert_lossless_branches` now names what is left (the classical tier, step 2, and
 `build_oracle`, step 3).
 
-**Bit-identity needed the old arithmetic kept, on purpose.** `bX/X²` and `b/X` are
-the same number in exact arithmetic and not in floating point, so at `R = 0` the
-edge and every read-out run the pre-M9 expressions textually (`_series_current`,
-`_end_power`). Removing that fast path (sabotage S6) moves 86 of M5's 169 recorded
-criterion values in their last digits. With it, all four captures taken at HEAD
-before the first edit — M5's criterion values, the 83-case AC digest, every field
-of `outage_screen` on both report grids and load models, and step 0's lossless dip
-table at full precision — are byte-identical after the change.
+**Bit-identity needed the old arithmetic kept — in one place out of the three
+where it was first kept.** In the edge equation, written in real arithmetic, `bX/X²`
+and `b/X` are the same number in exact arithmetic and not in floating point, so at
+`R = 0` `_branch_current!` runs the pre-M9 expressions textually. Removing that path
+(sabotage S6) moves 86 of M5's 169 recorded criterion values in their last digits.
+The current read-out (`_series_current`) was first written with the same branch, and
+it is **not needed**: dividing by `complex(0, X)` is dividing by `im·X`, the same
+operation on the same operands, and removing the branch (S6b) moved none of the 169
+values, which read the tie through it — so the branch was deleted, measured rather
+than argued. The receiving-end read (`_end_power`) does need its branch (`−Re(Vf·I*)`
+and `Re(Vt·(−I)*)` round differently), and **no capture gates it**: no full-precision
+capture reads a lossless branch against its orientation, so its bit-preservation
+rests on inspection. With these, all four captures taken at HEAD before the first edit
+— M5's criterion values, the 83-case AC digest, every field of `outage_screen` on both
+report grids and load models, and step 0's lossless dip table at full precision —
+are byte-identical after the change.
 
 **What was measured on the lossy report grids** (spike
 `W:\temp\claude\gridsim-m9\step1\spike.jl`, log beside it):
@@ -306,12 +314,18 @@ current in this tier, and every hand-written copy of `ΔV/(jX)`:
 | S3 | `R` scaled by a machine base | as S1 | as S1 |
 | S4 | `R` in the dynamic network only | own steady state (residual 0.15), `t⁺` and settled (dynamic Kirchhoff check at the trip, 0.26) | seeded flat run, both-ends check (the seeded path never solves the static network before an event) |
 | S5 | `R` in the static network only | every seeded check, own steady state | — |
-| S6 | `R = 0` fast path removed | the gate: 86 / 169 criterion values move | every check with a tolerance |
+| S6 | the edge's `R = 0` path removed | the gate: 86 / 169 criterion values move | every check with a tolerance |
+| S6b | the current read-out's `R = 0` path removed | nothing — 0 / 169 move: the path was not needed, and is deleted | everything (an equivalent change) |
 
-**For step 3.** The tier's edge model and `ac_powerflow`'s admittance are written
-separately, and nothing is shared, so no sabotage hides from the seeded flat run
-behind a shared builder. Step 3's "only the outside check sees it" mutation is
-therefore the plan's fallback, the conductance sign — recorded here before step 3
-starts. **S1 is that sign, and the seeded flat run already sees it**, so on the
-detailed tier step 3 will have no mutation that only the outside check catches.
-Said now, so step 3 states it rather than discovers it.
+**For step 3 — corrected at review the same day.** First written here as "step 3
+will have no mutation that only the outside check catches", because the tier's edge
+and `ac_powerflow`'s admittance share no code and S1 (the sign) is already caught
+by the seeded flat run. **Wrong.** Get `R` wrong *the same way* in both — scale it
+×2 in `_branch_current!`/`_series_current` and in `_ac_branch_flows` and the AC
+admittance — and every step-1 check stays green: the seeded run is flat against an
+equally wrong solution, the two ends sum to an equally wrong loss, and both identities
+read each side's losses from its own, equally wrong, solution. Only PowerDynamics'
+`PiLine`, reading `br.R` itself, sees it. That is M8's "a consistent wrong reactance
+set hides from the flows" one level up, and it is **step 3's mutation**: red there,
+green in every check here. Not sharing code does not make two copies independent
+when both make the same mistake.

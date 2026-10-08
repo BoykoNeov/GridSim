@@ -8,7 +8,7 @@ the plan did not anticipate**.
 Status: **steps 0–1 done (2026-10-08); step 2 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5454 core / 1262 reference / 568 UI**.
+**5453 core / 1262 reference / 568 UI**.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -66,9 +66,11 @@ runs.
       refusal lifted for this tier only (`_assert_lossless_branches` now names the
       classical tier and `build_oracle` as what is left).
 - [x] **Gate: all four captures byte-identical** after the change. **Anti-vacuity
-      (S6):** with the `R = 0` fast path removed (the lossy formula at `R = 0`), 86 of
-      the 169 criterion values move in their last digits — the fast path is what
-      keeps them, and the gate sees it.
+      (S6):** with the edge equation's `R = 0` path removed, 86 of the 169 criterion
+      values move in their last digits. The current read-out's identical path moved
+      none (S6b) — dividing by `complex(0, X)` IS dividing by `im·X` — so it was
+      deleted at review; the receiving-end read's path is needed and is gated by no
+      capture (D5).
 - [x] Flat run from a lossy `ac_powerflow`: both report grids, both load models, two
       tolerances, worst drift 4.2e-13 per state (gate 1e-10).
 - [x] Settled lossy trip against the AC screen: the identity holds to 4e-14 on case9
@@ -81,8 +83,9 @@ runs.
 - [x] Sabotages, predictions first (`W:\temp\claude\gridsim-m9\step1\predictions.md`),
       each red where predicted, with one prediction wrong in the safe direction and
       one check found too lenient and tightened (D5). Nothing is shared with the
-      power flow's admittance code, so step 3's mutation is the plan's fallback, the
-      conductance sign.
+      power flow's admittance code — but **corrected at review**: a resistance misread
+      the same way in both is green in every step-1 check, so that consistent
+      two-site sabotage is step 3's mutation (D5).
 
 ## Step 2 — line resistance in the swing tier (Hurdle 17.6)
 

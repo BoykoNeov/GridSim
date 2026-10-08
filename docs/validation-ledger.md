@@ -566,16 +566,19 @@ The detailed tier's edge current is `(Vf − Vt)/(R + jX)` from M9 step 1
 
 | Claim | Checked against | Label |
 |---|---|---|
-| Nothing lossless moved (Hurdle 17.1) | Four captures at round-trip precision taken at HEAD before the first edit — M5's 169 criterion values, the 83-case AC digest, every field of `outage_screen` on both report grids and load models, step 0's lossless dip table — byte-identical after. Anti-vacuity: with the `R = 0` fast path removed, 86 of the 169 criterion values move | **structural** |
+| Nothing lossless moved (Hurdle 17.1) | Four captures at round-trip precision taken at HEAD before the first edit — M5's 169 criterion values, the 83-case AC digest, every field of `outage_screen` on both report grids and load models, step 0's lossless dip table — byte-identical after. Anti-vacuity: with the edge equation's `R = 0` path removed, 86 of the 169 criterion values move. The receiving-end read's `R = 0` path is gated by no capture (inspection only) | **structural** |
 | Each end of a branch read at its own terminal (Hurdle 17.7) | At the seed, `branch_power(a,b) + branch_power(b,a)` against `ac_powerflow`'s `loss` from separately written admittance code, ≤ 2.2e-16 on both lossy report grids, both load models; the audit of every reader and hand copy is recorded in D5 | **cross-fidelity** |
 | A lossy power flow seeds the tier flat (Hurdle 17.2) | `init!`'s own dynamic-network residual, then 50 s at two tolerances: worst 4.2e-13 per state against a 1e-10 gate | **cross-fidelity** |
 | The initial rate accounts for the change in losses (Hurdle 17.3) | `Σ2H·ω̇(t⁺) = −(P_lost + ΔL)` read from the right-hand side and both ends of every branch, constant power, four outages: ≤ 6.7e-14 against ΔL of 1.9e-3 – 1.7e-2 pu | **derived** |
 | The tier and the AC screen settle apart by the losses alone (Hurdle 17.4) | `Δω_dyn − Δω_AC = −(L_dyn − L_AC)/Σw`, uncapped constant power (case9 G3, mesh G3 — the only two that qualify): ≤ 5e-14 against gaps of ~3e-5 pu, at 400 s | **cross-fidelity** |
 | The two compiled networks hold the same `R` | The tier's own steady state on a lossy mesh (sabotage S4, `R` in one network only: refused, residual 0.15) and the dynamic-Kirchhoff check at a trip (0.26) | **structural** |
 
-**Not checked, and said:** the detailed tier's line-rating check reads the sending
-end only, where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive
-power) and is carried, not changed, because widening it would move lossless refusals.
+**Not checked, and said:** (1) a resistance misread *the same way* by the tier and
+by the AC solve is invisible to every check in this section — each compares one
+against the other; step 3's outside check (PowerDynamics' `PiLine`) is the one that
+can see it. (2) The detailed tier's line-rating check reads the sending end only,
+where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive power)
+and is carried, not changed, because widening it would move lossless refusals.
 
 ## Owed rows
 
