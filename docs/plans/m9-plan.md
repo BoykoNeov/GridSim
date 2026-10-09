@@ -114,6 +114,15 @@ less accurate side.
   this goes red. If nothing is shared, that is recorded and the mutation is the
   conductance sign.
 
+**Done 2026-10-09 (`m9-context.md` D7).** Not as planned in two places: the
+detailed-tier transient is judged by the stator-ω residual's signature, not "inside
+the band" (lossless, it sits outside one by design since M5 step 3); and no `src/`
+sabotage turned out invisible in-house, because step 2 had put two independent readers
+of `R` beside the detailed tier's — so the sabotage only this check sees is the
+misreading written into every reader, the test's own formula included (T5). The
+swing-tier seed handed PowerDynamics the schedule rather than our loss-carrying
+dispatch; fixed.
+
 ### Step 4 — The frequency verdict and its limits, on the settled value (Hurdle 16.1)
 
 A limits type (`FrequencyLimits` or similar): settled, dip and rate limits, each

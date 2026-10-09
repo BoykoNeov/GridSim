@@ -2468,3 +2468,182 @@ end
 end
 
 end # M8 step 2
+
+# ===========================================================================
+# M9 step 3 — line resistance reaches PowerDynamics (Hurdle 17.5)
+# ===========================================================================
+#
+# Steps 1–2 taught both dynamic tiers `R`, and every check they shipped is ours
+# against ours: the detailed tier against the AC power flow, the swing tier against
+# a formula written in the test, the two tiers against each other. A resistance
+# misread the SAME way by every one of our readers would pass all of them. Here
+# `build_oracle` hands `Branch.R` to PowerDynamics' `PiLine` itself — current
+# `(V₁ − V₂)/(R + jX)`, read from their source — so their network is lossy by their
+# own arithmetic, and our steady state and transient are judged against it.
+#
+# Mapped at `:swing` and `:sauer_pai`, the two tiers M9 taught `R`; `:classical`
+# (its line reduction was derived lossless) and `:sauer_pai_avr` still refuse it,
+# by name.
+#
+# THE DISPATCH IS OURS AS WELL AS THE ANGLES. On a lossy grid the reference bus
+# picks up the losses (step 2, both tiers), so its `Pm` is NOT `Machine.P0`. The
+# swing-tier builder seeded `Pm` from the schedule until this step; it now reads
+# our engine's, as the detailed tier always did. C2 below is the control that
+# says the seed matters.
+#
+# THE DETAILED TIER IS NOT JUDGED BY A BAND ON ITS TRANSIENT. Lossless, its
+# transient sits outside its convergence band by design — the stator-ω residual
+# (M5 step 3) — so on that tier the sharp checks are the flat run, per state, and
+# the residual's signature, which must survive the resistance unchanged.
+
+# The ring with a DIFFERENT resistance on each branch, so no uniform rescaling of
+# `R` is a symmetry of the fixture. Meshed, governor-free, load-free: valid at both
+# mapped tiers.
+const M9_R = (0.05, 0.08, 0.10)
+function m9_lossy_ring(Rs = M9_R)
+    n = three_machine_ring()
+    NetworkModel(n.S_base, n.f0, n.buses,
+                 [Branch(b.id, b.from, b.to, b.X, b.rating; R = r)
+                  for (b, r) in zip(n.branches, Rs)], n.machines)
+end
+m9_flat_gap(s, ch::Function) = (a = ch(s); maximum(abs, a .- a[1]))
+m9_flat_gap(s, k::Symbol) = m9_flat_gap(s, chan(k))
+
+@testset "M9 step 3 — PowerDynamics with resistance in the line" begin
+
+@testset "R is mapped where M9 taught it, and refused by name where it did not" begin
+    net = m9_lossy_ring()
+    for tier in (:swing, :sauer_pai)
+        case = build_oracle(net; tier = tier)
+        # THEIR parameter, read back from their network — not our copy of it.
+        @test [case.s0.p.e[e, :pibranch₊R] for e in 1:3] == collect(M9_R)
+        @test all(case.s0.p.e[e, :pibranch₊r_src] == 1.0 for e in 1:3)
+    end
+    two = two_machine_system()
+    pair = NetworkModel(two.S_base, two.f0, two.buses,
+                        [Branch(:L12, :B1, :B2, 0.25, 500.0; R = 0.02)], two.machines)
+    m = argerr_msg(() -> build_oracle(pair; tier = :classical))
+    @test occursin("build_oracle(tier = :classical)", m) && occursin("L12", m)
+    ib = infinite_bus_system(; K_A = 20.0, T_E = 0.5)
+    ibR = NetworkModel(ib.S_base, ib.f0, ib.buses,
+                       [Branch(b.id, b.from, b.to, b.X, b.rating; R = 0.01)
+                        for b in ib.branches], ib.machines)
+    m = argerr_msg(() -> build_oracle(ibR; tier = :sauer_pai_avr))
+    @test occursin("build_oracle(tier = :sauer_pai_avr)", m)
+    # …and a lossless model is mapped exactly as before: `R = 0` on every line.
+    @test all(build_oracle(three_machine_ring()).s0.p.e[e, :pibranch₊R] == 0.0 for e in 1:3)
+end
+
+# ===========================================================================
+@testset "swing tier: the flat run — their lossy network holds our steady state" begin
+    net  = m9_lossy_ring()
+    grid = collect(0.0:0.05:5.0)
+    eng  = SwingEngine(net; reltol = 1.0e-9, abstol = 1.0e-12)
+    vref = net.bus_index[net.slack]
+    case = build_oracle(net)
+    # The dispatch handed over is our engine's, the reference's carrying the losses.
+    for v in 1:3
+        @test case.s0.p.v[v, :mach₊Pm] == eng.params[eng.Pm_pidx[v]]
+    end
+    @test eng.params[eng.Pm_pidx[vref]] - machine_arrays(net).Pm[vref] > 1.0e-3
+    flat = oracle_solve(case, (0.0, 5.0); saveat = grid)
+    for id in (:G1, :G2, :G3)
+        @test m9_flat_gap(flat, Symbol(:ω_, id)) < 1.0e-10
+    end
+    @test m9_flat_gap(flat, δ12) < 1.0e-10
+    @test m9_flat_gap(flat, :f_coi) < 1.0e-8
+
+    # C1 — R REACHES THEM, AND IS WHAT HOLDS THE STATE. Their resistance zeroed, our
+    # lossy seed kept: their run leaves it.
+    c1 = build_oracle(net)
+    for e in 1:3; c1.s0.p.e[e, :pibranch₊R] = 0.0; end
+    t1 = oracle_solve(c1, (0.0, 5.0); saveat = grid)
+    @test m9_flat_gap(t1, δ12) > 1.0e-3
+    # C2 — THE DISPATCH MATTERS. The schedule at the reference (the pre-step-3 seed):
+    # nobody makes up the losses and their run leaves the state.
+    c2 = build_oracle(net)
+    c2.s0.p.v[vref, :mach₊Pm] = machine_arrays(net).Pm[vref]
+    t2 = oracle_solve(c2, (0.0, 5.0); saveat = grid)
+    @test maximum(abs, t2.f_coi .- net.f0) > 1.0e-4
+end
+
+# ===========================================================================
+@testset "swing tier: the transient inside a band stated before the gap is seen" begin
+    net  = m9_lossy_ring()
+    grid = collect(0.0:0.02:10.0)
+    for pert in ([1.0 => TripLine(:B3, :B1)], [1.0 => TripGenerator(:G2)])
+        o, t   = both(net, (0.0, 10.0), grid; perturbations = pert)
+        of, tf = both(net, (0.0, 10.0), grid; perturbations = pert,
+                      reltol = 1.0e-12, abstol = 1.0e-15)
+        # Per machine as well as the aggregate (an aggregate can hide two machines
+        # wrong in opposite directions), and the gauge-free angle difference — all
+        # between machines still on the grid after the event.
+        live = pert[1][2] isa TripLine ? (:G1, :G2, :G3) : (:G1, :G3)
+        chans = Any[chan(:f_coi), s -> s.δ_G1 .- s.δ_G3]
+        append!(chans, [chan(Symbol(:ω_, i)) for i in live])
+        for ch in chans
+            band = oracle_band(o, of, t, tf; channel = ch)
+            @test band > 0
+            d = divergence(o, t; band = band, channel = ch)
+            @test d.max < band
+            @test isnan(d.t_depart)
+        end
+        # ANTI-VACUITY: the band is far narrower than what the resistance does to
+        # the run — the same event on the lossless ring lands elsewhere.
+        ol, _ = both(three_machine_ring(), (0.0, 10.0), grid; perturbations = pert)
+        band = oracle_band(o, of, t, tf)
+        @test divergence(o, ol; band = band).max > 1.0e3 * band
+    end
+end
+
+# ===========================================================================
+@testset "detailed tier: the flat run, per state, on the lossy ring" begin
+    net  = m9_lossy_ring()
+    grid = collect(0.0:0.02:5.0)
+    for (rtol, atol) in ((1.0e-9, 1.0e-12), (1.0e-6, 1.0e-9))
+        o, t = both_detailed(net, (0.0, 5.0), grid; reltol = rtol, abstol = atol)
+        @test keys(o) == keys(t)
+        for k in keys(o)
+            k === :t && continue
+            a, b = getproperty(o, k), getproperty(t, k)
+            @test maximum(abs, a .- a[1]) < 1.0e-8
+            @test maximum(abs, b .- b[1]) < 1.0e-8
+            @test maximum(abs, a .- b)    < 1.0e-8
+        end
+    end
+    # The reference machine's mechanical power carries the losses on this tier too.
+    eng = init!(DetailedEngine, net)
+    k1 = findfirst(m -> m.bus === net.slack, net.machines)
+    @test eng.params[eng.Pm_pidx[k1]] - machine_arrays(net).Pm[k1] > 1.0e-3
+    # C1 — their resistance zeroed under our lossy seed: their bus voltages move.
+    case = build_oracle(net; tier = :sauer_pai)
+    for e in 1:3; case.s0.p.e[e, :pibranch₊R] = 0.0; end
+    t1 = oracle_solve(case, (0.0, 5.0); saveat = grid, reltol = 1.0e-9, abstol = 1.0e-12)
+    @test m9_flat_gap(t1, :V_B1) > 1.0e-4
+end
+
+# ===========================================================================
+@testset "detailed tier: the stator-ω residual keeps its signature with R in the line" begin
+    # M5 step 3 identified the one known difference by its scaling: linear in the
+    # peak slip, coefficient ≈ 1 on the voltage channel. The resistance changes the
+    # network, not the stator, so the same signature is the prediction — and a
+    # mapping error in R would add a slip-independent floor the ratio test sees.
+    net  = m9_lossy_ring()
+    grid = collect(0.0:0.02:5.0)
+    ids  = [m.id for m in net.machines]
+    slips, gaps = Float64[], Float64[]
+    for ΔP in (0.02, 0.04, 0.08)
+        o, t = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, ΔP))
+        push!(slips, peak_slip(o, ids))
+        push!(gaps,  gap(o, t, :V_B1))
+    end
+    @test gaps[2] / gaps[1] ≈ slips[2] / slips[1] rtol = 0.02
+    @test gaps[3] / gaps[2] ≈ slips[3] / slips[2] rtol = 0.02
+    for (s, g) in zip(slips, gaps)
+        @test g / s ≈ 1.0 rtol = 0.05
+    end
+    o, t = both_detailed(net, (0.0, 5.0), grid; ΔPm = (:G1, 0.08))
+    @test gap(o, t, :ω_G1) < gap(o, t, :V_B1) / 100
+end
+
+end # M9 step 3

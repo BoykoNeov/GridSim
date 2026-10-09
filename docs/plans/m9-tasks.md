@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–2 done (2026-10-08); step 3 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–3 done (2026-10-08/09); step 4 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -129,11 +129,32 @@ runs.
 - [x] **Found at review:** `coi_model` accepted a lossy model in silence — now refused
       by name; the antisymmetry audit for this tier recorded (D6, findings 5–6).
 
-## Step 3 — the outside check on both tiers (Hurdle 17.5)
+## Step 3 — the outside check on both tiers (Hurdle 17.5) — done 2026-10-09
 
-- [ ] `PiLine` with `R`; band stated before the gap.
-- [ ] Detailed tier and swing tier inside it on a lossy mesh.
-- [ ] The sabotage only this check sees: red here, green in steps 1–2.
+- [x] Entry count at HEAD (`037c935`): 1262 reference. Six captures at HEAD before the
+      first edit — step 2's five plus `oracle_snapshot.jl` (eight lossless oracle runs,
+      every channel; copy in `docs/evidence/gridsim-m9/step3/oracle-HEAD.txt`) — all
+      **byte-identical after**.
+- [x] `PiLine` handed `Branch.R` at `:swing` and `:sauer_pai`; `:classical` and
+      `:sauer_pai_avr` refuse it by name; transformer ratios passed explicitly.
+      **Found at orientation:** the swing-tier seed handed PowerDynamics the schedule,
+      not our loss-carrying dispatch — fixed, with control C2 (0.10 Hz off if undone).
+- [x] Swing tier on the lossy ring: flat to 4e-16; a line trip and a generator trip
+      inside `convergence_band` (gap 0.25–0.30 of it) on the COI, an angle difference
+      and every surviving speed; the lossless run lands 6e6–1e8 bands away. C1 (their
+      `R` zeroed) moves the angle 1e-2.
+- [x] Detailed tier on the lossy ring: flat to 9.5e-15 per state at two tolerances;
+      C1 moves `V_B1` 2.7e-3. **Not "inside the band" as planned** — its transient is
+      outside one by design (the stator-ω residual, M5 step 3); judged instead by that
+      residual's signature, which holds (coefficient 1.014–1.015).
+- [x] Sabotages T1–T5, predictions first (`docs/evidence/gridsim-m9/step3/`): every
+      `src/`-only misreading of `R` is red in-house somewhere (cross-tier, the test's
+      own end formula, the losses' positivity, or by refusal); **T5 — the same ×1.1
+      misreading in every reader, the test formula included — is red only here.**
+      Two predictions wrong (T1's step-1 identities red by refusal; T4 caught by the
+      positivity checks), recorded in D7.
+- [x] **Carried to step 5:** a detailed-tier re-initialisation that stalls surfaces as
+      the library's `NetworkInitError`, not the tier's refusal (D7 finding 2).
 
 ## Step 4 — the frequency verdict and its limits (Hurdle 16.1)
 

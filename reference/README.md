@@ -68,6 +68,14 @@ and `Pm` conversions stay checked by M1/M2's closed forms alone.
 The practical consequence: an anti-vacuity mutation for this suite belongs in
 `swing_vertex!`, never in the shared data path.
 
+**Line resistance (M9 step 3)** is the one branch quantity the builder reads from
+`Branch` itself and hands to PowerDynamics' `PiLine`, at `:swing` and `:sauer_pai`
+(`:classical` and `:sauer_pai_avr` refuse it by name). Every in-house check of `R`
+reads it through one of our own tiers or a formula written beside them, so a
+resistance misread the same way by all of them is green everywhere else; this is the
+check that sees it (`../docs/plans/m9-context.md` D7, sabotage T5). The same rule
+applies: a sabotage of `R` goes in the arithmetic that reads it, never in `Branch`.
+
 ## Running it
 
 ```

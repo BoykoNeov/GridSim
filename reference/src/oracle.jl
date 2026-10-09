@@ -165,6 +165,24 @@ function _assert_radial(net::NetworkModel)
     return nothing
 end
 
+# M9 step 3. Line resistance is mapped at `:swing` and `:sauer_pai`, the two tiers M9
+# taught it, and nowhere else — each of the other two carries something derived or
+# measured lossless only. Unbuilt work, said by name rather than run silently.
+function _assert_lossless_oracle(net::NetworkModel, tier::Symbol)
+    why = tier === :classical ?
+        "its line reduction (`reduced_line_reactance`) and its torque-against-power " *
+        "residual were derived and measured on lossless lines only. Use tier = :swing, " *
+        "which reads R" :
+        "the exciter comparison was measured on lossless lines only. Use tier = " *
+        ":sauer_pai, which reads R, for the network"
+    for br in net.branches
+        br.R == 0.0 || throw(ArgumentError(
+            "build_oracle(tier = :$tier): branch $(br.id) carries a series resistance " *
+            "R = $(br.R) pu, which this tier does not map: $why (M9 step 3)."))
+    end
+    return nothing
+end
+
 # `Swing` and `ClassicalMachine` both carry (δ, ω) and nothing else. M3's governor
 # state `ΔPm` has no counterpart in either, so a governed model is not expressible
 # here — and a silently-ungoverned oracle would look like a physics disagreement.
@@ -318,10 +336,10 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         "build_oracle: tier must be :swing, :classical, :sauer_pai or " *
         ":sauer_pai_avr, got :$tier."))
     _assert_governor_free(net)
-    # M6 step 1. The oracle's own line model is `(Vf − Vt)/(jX)` too (see the tier
-    # sections below), so a lossy branch is refused here for the same reason
-    # `SwingEngine` and `DetailedEngine` refuse it: it would be silently dropped.
-    GridSim._assert_lossless_branches(net, "build_oracle")
+    # M6 step 1 refused a lossy branch here at every tier, while our own tiers were
+    # lossless. M9 step 3: `PiLine` is handed `Branch.R` (the edge loop below) at the
+    # two tiers M9 taught `R` — `:swing` and `:sauer_pai`. The other two refuse it.
+    tier in (:classical, :sauer_pai_avr) && _assert_lossless_oracle(net, tier)
     # M7 step 1 refused every inverter. Step 4 maps the grid-forming kind at
     # `:sauer_pai` — `IdealDroopInverter` behind an explicit line of `X_c`, which is
     # what `DetailedEngine` builds (m7-context.md D3) — and nowhere else: the swing
@@ -573,11 +591,19 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     inv_H = Float64[inv.τ_p / (2 * inv.K_p) * inv.S_rated / Sb for inv in gfm_inv]
 
     # --- edges ---------------------------------------------------------------
-    # `R` and all four shunt terms are passed explicitly as zero rather than left
-    # to PowerDynamics' defaults (which are zero today). The classical tier's
-    # network is lossless — that is what makes `Σ P0 = 0` exact and the model
-    # constructor's balance check meaningful — and a shunt susceptance would move
-    # the equilibrium our fixpoint was solved for. A default is not a guarantee.
+    # All four shunt terms are passed explicitly as zero rather than left to
+    # PowerDynamics' defaults (which are zero today): our branch has no shunt, and a
+    # shunt susceptance would move the equilibrium our fixpoint was solved for. The
+    # two transformer ratios likewise, as one (M9 step 3, read from their source:
+    # `PiLine` scales each end's voltage AND current by them). A default is not a
+    # guarantee.
+    #
+    # `R` is `Branch.R`, READ FROM THE BRANCH ITSELF (M9 step 3) — not from a view our
+    # tiers build — and their current is `(V₁ − V₂)/(R + jX)`, so their network is
+    # lossy by their own arithmetic. That is the point: every in-house check of `R`
+    # reads it through one of our tiers, and a resistance misread the same way by
+    # all of them is invisible to every one. Zero at `:classical` and `:sauer_pai_avr`,
+    # which refuse anything else above.
     lines = NetworkDynamics.EdgeModel[]
     for e in eachindex(ba.src)
         # The detailed tier needs NO reduction: `SauerPaiMachine` sits behind its
@@ -585,8 +611,9 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
         # are handed the same line — which is also why the meshed ring, invalid
         # for `:classical`, is a valid case here (`m5-prestudy.md` §2a).
         X = tier === :classical ? reduced_line_reactance(net, e) : ba.X[e]
-        pl = Library.PiLine(; name = :pibranch, R = 0.0, X = X,
-                              G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0)
+        pl = Library.PiLine(; name = :pibranch, R = net.branches[e].R, X = X,
+                              G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0,
+                              r_src = 1.0, r_dst = 1.0)
         l = compile_line(MTKLine(pl); src = ba.src[e], dst = ba.dst[e],
                          name = net.branches[e].id)
         if !isempty(line_off_times[e])
@@ -601,7 +628,8 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
     # shunt-free like every other line here, converted from its own rating.
     for (j, inv) in pairs(gfm_inv)
         pl = Library.PiLine(; name = :pibranch, R = 0.0, X = inv.X_c * Sb / inv.S_rated,
-                              G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0)
+                              G_src = 0.0, B_src = 0.0, G_dst = 0.0, B_dst = 0.0,
+                              r_src = 1.0, r_dst = 1.0)
         push!(lines, compile_line(MTKLine(pl); src = inv_vertex[j],
                                   dst = net.bus_index[inv.bus], name = Symbol(inv.id, :_Xc)))
     end
@@ -621,6 +649,17 @@ function build_oracle(net::NetworkModel; tier::Symbol = :swing, perturbations = 
             s0.v[v, angsym] = δ0[v]
             s0.v[v, :mach₊ω] = 1.0              # PowerDynamics' ω is absolute pu…
         end                                     # …ours is the deviation from it.
+        # THE DISPATCH IS OURS TOO (M9 step 3), as `_seed_sauer_pai!` has always
+        # done at the detailed tier. On a lossy model the reference bus picks up the
+        # losses (`SwingEngine`, M9 step 2), so its `Pm` is not `Machine.P0`; handed
+        # the schedule, their run would start with nobody making up the losses and
+        # drift off a state that is not theirs. On a lossless model this writes the
+        # very number the component was built with (`Pm = ma.Pm[v]` above).
+        if tier === :swing
+            for v in 1:nb
+                s0.p.v[v, _ms(mpfx, "Pm")] = eng.params[eng.Pm_pidx[v]]
+            end
+        end
     end
 
     return OracleCase(net, tier, nw, s0, ids, angsym, copy(ma.H), trips,

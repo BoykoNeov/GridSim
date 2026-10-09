@@ -503,9 +503,9 @@ because the file makes them look like one field.
 
 **Who reads `R`.** The AC power flow (M6 step 3), the detailed tier, whose edge
 current is `(Vf − Vt)/(R + jX)` from M9 step 1, and the classical tier, whose coupling
-gained its conductance in M9 step 2. The reference oracle and `coi_model` (the
-classical tier's aggregate) still REFUSE it (`_assert_lossless_branches`): a
-resistance that
+gained its conductance in M9 step 2, and the reference oracle hands it to
+PowerDynamics from M9 step 3. `coi_model` (the classical tier's aggregate) still
+REFUSES it (`_assert_lossless_branches`): a resistance that
 silently reached a lossless edge model would simulate a different network with
 nothing to say so — the shape M5's `Load` ZIP shares already used, data that is only
 sometimes read being exactly the data that gets set wrong and noticed a milestone
@@ -1509,12 +1509,13 @@ Refuse a branch carrying a series resistance, by name — the M6 step 1 half of 
 **This function is the list of what still has to learn `R`**: the AC power flow
 reads it (M6 step 3), the detailed tier from M9 step 1 (`_branch_current!`) and the
 classical tier from M9 step 2 (`swing_edge_lossy!`, with the reference bus picking up
-the losses). Two callers are left: the reference oracle's `build_oracle`, which
-passes `R = 0` to PowerDynamics (M9 step 3), and `coi_model`, the classical tier's
-aggregate, which reads no branch and balances a schedule summing to zero — **it was
-never on this list until step 2's review found it accepting a lossy model in
-silence**. A model with `R ≠ 0` run at either is a *different network* than its data
-describes — a lossless one — silently and with a plausible answer.
+the losses). One caller is left: `coi_model`, the classical tier's aggregate, which
+reads no branch and balances a schedule summing to zero — **it was never on this list
+until step 2's review found it accepting a lossy model in silence**. A model with
+`R ≠ 0` run there is a *different network* than its data describes — a lossless one —
+silently and with a plausible answer. (The reference oracle's `build_oracle` called
+this too until M9 step 3, which hands `R` to PowerDynamics at the two tiers M9 taught
+it; its two other tiers refuse `R` with their own message.)
 """
 function _assert_lossless_branches(net::NetworkModel, who::AbstractString)
     for br in net.branches

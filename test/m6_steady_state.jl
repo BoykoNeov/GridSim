@@ -182,12 +182,14 @@ end
     # `Load` ZIP shares, exactly).
     #
     # M9 STEP 2: the classical tier reads `R` too, so the same ring RUNS there
-    # (`test/m9_line_resistance.jl` checks it reads it correctly). The refusal is left
-    # with one caller, the reference oracle's `build_oracle` (M9 step 3), and its
-    # message still names where `R` IS read, so a boundary is never read as a bug.
+    # (`test/m9_line_resistance.jl` checks it reads it correctly). M9 STEP 3 took the
+    # reference oracle off the refusal too, so its one caller left is `coi_model`, the
+    # classical tier's aggregate — reached through that caller here, not called by
+    # hand — and its message still names where `R` IS read, so a boundary is never
+    # read as a bug.
     @test SwingEngine(ring_R; dt = 0.01) isa SwingEngine
-    m = argerr_msg(() -> GridSim._assert_lossless_branches(ring_R, "build_oracle"))
-    @test occursin("build_oracle", m) && occursin("R = 0.03", m) && occursin("L12", m)
+    m = argerr_msg(() -> coi_model(ring_R))
+    @test occursin("coi_model", m) && occursin("R = 0.03", m) && occursin("L12", m)
     @test occursin("power flow", m) && occursin("DetailedEngine", m) &&
           occursin("SwingEngine", m)
     # M9 STEP 1: the detailed tier reads `R` now, so the same model RUNS there, and

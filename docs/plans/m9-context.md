@@ -463,3 +463,77 @@ tiers' builders would be green here too, and is step 3's to catch.
 | `test/m8_screening.jl` `export_of` | the bus's own end of each branch | correct with losses as it stands |
 | `ui/` windows | none call `branch_power`; the network and playback windows build `SwingEngine` | a lossy model now runs in the network window; the playback window refuses it through `coi_model` (finding 5); the voltage window's tier-pair guard compares branches with `==`, `R` included |
 
+
+## D7 — Step 3 measured: line resistance reaches PowerDynamics (2026-10-09)
+
+**The change.** `build_oracle` hands `Branch.R` — read from the branch itself, not
+from a view our tiers build — to `Library.PiLine` at `:swing` and `:sauer_pai`, the
+two tiers M9 taught `R`. Their line current is `(V₁ − V₂)/(R + jX)` (read from their
+source, `Library/Branches/PiLine.jl`), so their network is lossy by their own
+arithmetic. `:classical` (its line reduction was derived lossless) and
+`:sauer_pai_avr` (the exciter comparison was measured lossless) refuse `R` by name
+with their own message; `_assert_lossless_branches` is left with one caller,
+`coi_model`. The two transformer ratios `PiLine` carries are now passed as `1.0`
+explicitly (their default; the file's rule that a default is not a guarantee).
+
+**Found at orientation (advisor-flagged): the swing-tier seed handed PowerDynamics
+the SCHEDULE.** `Library.Swing` was built with `Pm = Machine.P0`, while since step 2
+our reference bus's `Pm` is the schedule plus the losses. The seed now reads our
+engine's `Pm`, as `_seed_sauer_pai!` always did at the detailed tier. Control C2 is
+what says it matters: handed the schedule, their run leaves our state by 0.10 Hz.
+
+**The gate.** Five captures (step 2's set) and a new one — `oracle_snapshot.jl`, every
+channel of eight lossless oracle runs across all four tiers and the inverter case at
+full precision — taken at HEAD (`037c935`) before the first edit, byte-identical after.
+Reference entry count re-measured at HEAD: 1262 (unchanged from step 2's close).
+
+**Measured** (fixture `m9_lossy_ring`: `three_machine_ring()` with `R` = 0.05, 0.08,
+0.10 pu on its three branches, so no uniform rescaling of `R` is a symmetry of it;
+the reference picks up 0.0655 pu of losses at the swing tier, 0.0606 at the detailed):
+
+| Check | Tier | Result | Control |
+|---|---|---|---|
+| flat run, per state | swing | ω flat to 4e-16, angle difference 3.5e-15 | C1 (their `R` zeroed under our seed): angle moves 1.0e-2; C2 (schedule seed): frequency moves 0.10 Hz |
+| line trip `B3–B1`, band stated before the gap | swing | gap 0.30 of `convergence_band` on `f_coi`, the angle difference and all three speeds | the same trip on the lossless ring lands 1.1e8 bands away (the loss change after the trip moves the COI 0.19 Hz) |
+| generator trip `G2` | swing | gap 0.25–0.29 of the band on every surviving channel | 6.1e6 bands from the lossless run |
+| flat run, per state | detailed | every state agrees to 9.5e-15 | C1: `V_B1` moves 2.7e-3 |
+| stator-ω residual | detailed | still linear in slip, coefficient 1.014–1.015 (lossless ring: ≈ 1) | — the transient is NOT judged by a band: lossless, it sits outside one by design (M5 step 3) |
+
+**Sabotages** (predictions first, `docs/evidence/gridsim-m9/step3/predictions.md`;
+runner `mutate.py` beside it; every sabotage in the ARITHMETIC that reads `R`, never
+in `Branch`/`branch_topology`, which the oracle reads too):
+
+| | Sabotage | In-house red | PowerDynamics | Against the prediction |
+|---|---|---|---|---|
+| T1 | `R` ×2 in the detailed tier and the AC solve | cross-tier (dispatch 0.630 against 0.616); `t⁺` and settled **by refusal** (×2 leaves report-grid outages no steady state); M6/M8 pinned numbers; oracle B | detailed red (flat run off by 2.4; signature coefficient 5–21); swing green | step-1 identities predicted green: red, but only by refusal |
+| T1b | T1 at ×1.1 | cross-tier; `t⁺` errors on case9 G1 (refused anyway — now a stalled solve instead of the voltage-band refusal); **settled green** | detailed red | as predicted once refusal is set aside |
+| T2 | `R` ×2 in the swing tier | the test's end formula; cross-tier | swing red (flat and transient); detailed green | as predicted |
+| T3 | T1 + T2 | end formula; `t⁺`, settled by refusal; M6/M8; oracle B; **cross-tier green** | both red | as predicted |
+| T4 | conductance sign, swing tier AND the test's end formula | **the losses' positivity** (the reference's pickup, `Pf + Pt > 0`, the playback ends, a live branch's losses); cross-tier | swing red | predicted green but for cross-tier — **wrong**: four checks that the losses are positive see a sign error that every identity reads consistently |
+| T5 | T3 at ×1.1 AND the test's end formula ×1.1 | **nothing but case9 G1's stalled refusal** — all 151 step-2 checks, every identity, the cross-tier check green | both red (72 failures) | as predicted |
+
+**What this establishes.** No single `src/` sabotage of `R` is invisible in-house:
+step 2 put two readers of `R` beside the detailed tier's that share none of its
+arithmetic — the swing tier (seen through the cross-tier check) and a formula
+written in the test (which no `src/` edit can reach) — and a sign error is caught by
+the losses having to be positive. The plan's "the sabotage only this check can see"
+is therefore **T5**: one misreading of `R` written the same way into every reader we
+have, test included — the "same hands" failure M4 built this package for, one level up
+from D5's "not sharing code does not make two copies independent". PowerDynamics is
+the only check that sees it.
+
+**Found, not planned.**
+
+1. **The swing-tier seed** (above): a lossy model would have been compared from a
+   dispatch nobody had solved for, and read as a line-model disagreement.
+2. **A stalled re-initialisation surfaces as the library's `NetworkInitError`**, not
+   as the tier's refusal. At HEAD case9 G1 is refused by name (B1 at 0.646 pu after
+   the trip); at ×1.1 `R` the same re-initialisation stalls (residual 1.5e-3) and the
+   library's error comes out. Step 2 re-threw the swing tier's static-solve failure
+   as its own refusal; the detailed tier's re-initialisation does not. **Carried to
+   step 5**, whose "refused at the trip" and "solver failure" outcomes must tell
+   these apart — not changed here, since no step-3 check depends on it.
+3. **A line trip on a lossy ring moves the COI by 0.19 Hz where the lossless ring
+   moves it by 1e-3 Hz**: the trip changes the losses, the reference's `Pm` is held,
+   and a governor-free grid settles off nominal by the change over its damping. A
+   loss change is a load change — the mechanism step 1's `t⁺` identity accounts for.
