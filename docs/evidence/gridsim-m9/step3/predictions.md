@@ -88,7 +88,7 @@ the AC power flow, the swing tier AND the test's own end formula — at ×1.1 (T
   stalled re-initialisation after a trip, which T5 also contains).
 - reference step 3: **red** on both tiers' flat runs.
 
-## Outcomes (appended after the runs; logs `mut-T*-*.log` in scratch)
+## Outcomes (appended after the runs)
 
 - T1: as predicted except the step-1 identities, which went red — **by refusal**
   (`R` ×2 leaves report-grid outages with no steady state), not by the identity.
@@ -97,6 +97,8 @@ the AC power flow, the swing tier AND the test's own end formula — at ×1.1 (T
 - T2, T3: as predicted.
 - T4: **wrong** — four in-house checks that the losses are positive see the sign
   error. Red in-house, so not "only PiLine".
-- T5: as predicted — the only check that sees it is PowerDynamics.
+- T5: as predicted — no in-house identity, comparison or formula sees it; the one
+  in-house red is case9 G1's stalled re-initialisation (refused at HEAD anyway).
+  PowerDynamics sees it on both tiers.
 
 Full table: `docs/plans/m9-context.md` D7.

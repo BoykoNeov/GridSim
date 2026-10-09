@@ -487,7 +487,8 @@ channel of eight lossless oracle runs across all four tiers and the inverter cas
 full precision — taken at HEAD (`037c935`) before the first edit, byte-identical after.
 Reference entry count re-measured at HEAD: 1262 (unchanged from step 2's close).
 
-**Measured** (fixture `m9_lossy_ring`: `three_machine_ring()` with `R` = 0.05, 0.08,
+**Measured** (`reference/test/runtests.jl`, M9 step 3; values printed by
+`docs/evidence/gridsim-m9/step3/probe_values.jl`; fixture `m9_lossy_ring`: `three_machine_ring()` with `R` = 0.05, 0.08,
 0.10 pu on its three branches, so no uniform rescaling of `R` is a symmetry of it;
 the reference picks up 0.0655 pu of losses at the swing tier, 0.0606 at the detailed):
 
@@ -519,8 +520,10 @@ written in the test (which no `src/` edit can reach) — and a sign error is cau
 the losses having to be positive. The plan's "the sabotage only this check can see"
 is therefore **T5**: one misreading of `R` written the same way into every reader we
 have, test included — the "same hands" failure M4 built this package for, one level up
-from D5's "not sharing code does not make two copies independent". PowerDynamics is
-the only check that sees it.
+from D5's "not sharing code does not make two copies independent". No in-house
+identity, comparison or formula sees it; its one in-house red is case9 G1's
+re-initialisation stalling where at HEAD it is refused by name — a convergence failure
+on an outage refused either way, not a detection. PowerDynamics sees it on both tiers.
 
 **Found, not planned.**
 
@@ -529,7 +532,8 @@ the only check that sees it.
 2. **A stalled re-initialisation surfaces as the library's `NetworkInitError`**, not
    as the tier's refusal. At HEAD case9 G1 is refused by name (B1 at 0.646 pu after
    the trip); at ×1.1 `R` the same re-initialisation stalls (residual 1.5e-3) and the
-   library's error comes out. Step 2 re-threw the swing tier's static-solve failure
+   library's error comes out (`docs/evidence/gridsim-m9/step3/probe_trip_refusals.jl`,
+   run at HEAD and under T1b). Step 2 re-threw the swing tier's static-solve failure
    as its own refusal; the detailed tier's re-initialisation does not. **Carried to
    step 5**, whose "refused at the trip" and "solver failure" outcomes must tell
    these apart — not changed here, since no step-3 check depends on it.

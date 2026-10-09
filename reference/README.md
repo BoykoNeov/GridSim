@@ -72,8 +72,9 @@ The practical consequence: an anti-vacuity mutation for this suite belongs in
 `Branch` itself and hands to PowerDynamics' `PiLine`, at `:swing` and `:sauer_pai`
 (`:classical` and `:sauer_pai_avr` refuse it by name). Every in-house check of `R`
 reads it through one of our own tiers or a formula written beside them, so a
-resistance misread the same way by all of them is green everywhere else; this is the
-check that sees it (`../docs/plans/m9-context.md` D7, sabotage T5). The same rule
+resistance misread the same way by all of them passes every in-house identity,
+comparison and formula (its one in-house red is a convergence failure on an outage
+refused anyway); this is the check that sees it (`../docs/plans/m9-context.md` D7, sabotage T5). The same rule
 applies: a sabotage of `R` goes in the arithmetic that reads it, never in `Branch`.
 
 ## Running it

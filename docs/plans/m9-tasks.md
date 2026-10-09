@@ -150,7 +150,10 @@ runs.
 - [x] Sabotages T1–T5, predictions first (`docs/evidence/gridsim-m9/step3/`): every
       `src/`-only misreading of `R` is red in-house somewhere (cross-tier, the test's
       own end formula, the losses' positivity, or by refusal); **T5 — the same ×1.1
-      misreading in every reader, the test formula included — is red only here.**
+      misreading in every reader, the test formula included — is seen by no in-house
+      identity, comparison or formula, and is red here on both tiers.** Its one
+      in-house red is case9 G1's re-initialisation stalling instead of being refused by
+      name (an outage refused at HEAD anyway) — a convergence failure, not detection.
       Two predictions wrong (T1's step-1 identities red by refusal; T4 caught by the
       positivity checks), recorded in D7.
 - [x] **Carried to step 5:** a detailed-tier re-initialisation that stalls surfaces as
@@ -173,6 +176,11 @@ runs.
 - [ ] "Refused at the trip" outcome; mismatch set reported (predicted lossless:
       case9-constant-power G2 only; lossy measured).
 - [ ] Sabotages.
+- [ ] **Carried from step 3 (D7 finding 2):** a detailed-tier re-initialisation that
+      STALLS after a trip comes out as a solver-failure outcome, distinct from the named
+      voltage-band refusal — today it surfaces as the library's `NetworkInitError`.
+      Reproducer: case9 G1 on constant-power loads with `R` ×1.1 (`step3/mutate.py`
+      T1b; `step3/probe_trip_refusals.jl`).
 
 ## Step 6 — the rate of fall (Hurdle 16.7)
 

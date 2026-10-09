@@ -167,6 +167,10 @@ gains a per-machine running minimum beside `eng.nadir`.
   refuses at re-initialisation while the AC screen says `:secure` get the named
   outcome "dynamic run refused at the trip". Step 0 predicts exactly one on the
   lossless copies, case9-constant-power G2; the lossy grids are measured.
+- **A re-initialisation that STALLS is not a refusal (carried from step 3, D7
+  finding 2):** today it surfaces as the library's `NetworkInitError`, not the tier's
+  voltage-band refusal; it must come out as the solver-failure outcome, told apart
+  from "refused at the trip". Reproducer: case9 G1, constant power, `R` ×1.1.
 - **Exactness:** the per-machine running minimum equals a dense-`saveat` minimum on
   a short run, and is never shallower than it (a decimated read can only miss a
   minimum, never invent one).

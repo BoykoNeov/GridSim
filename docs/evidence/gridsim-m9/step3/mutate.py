@@ -4,7 +4,8 @@
 # Runs: 'm9' = core M9 testsets (harness run_m9.jl), 's3' = the reference step-3
 # testsets with the helpers they need, 'oB' = the reference M6 oracle-B testsets,
 # 'core' = the whole core Pkg.test(). The two reference runners are cut from
-# reference/test/runtests.jl into scratch (see the step-3 notes in m9-context.md D7).
+# reference/test/runtests.jl into scratch by `cut_runners.sh` (beside this file), by
+# section markers, before anything runs. Logs go to scratch.
 import subprocess, sys, re
 sys.stdout.reconfigure(encoding='utf-8')
 R = 'W:/Claude_projects/GridSim/'
@@ -41,6 +42,7 @@ def sh(c):
     p = subprocess.run(['cmd', '/v:on', '/c', 'start /belownormal /b /wait ' + c + ' & exit !errorlevel!'],
                        capture_output=True, text=True, encoding='utf-8', errors='replace')
     return p.stdout + p.stderr
+subprocess.run(['bash', R + 'docs/evidence/gridsim-m9/step3/cut_runners.sh', S], check=True)
 # Arguments: KEY or KEY=run,run (a subset of that sabotage's runs).
 only = dict((a.split('=') + [''])[:2] for a in sys.argv[1:])
 for key, (edits, runs) in MUTS.items():
