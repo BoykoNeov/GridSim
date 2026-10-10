@@ -132,6 +132,8 @@ include("steadystate/economic_dispatch.jl")
 # line-outage factors are dc_powerflow's base case plus one solve per outage; step
 # 3's AC screen is ac_powerflow's classified solve, once per outage.
 include("steadystate/screening.jl")
+# M9 step 4 - the frequency verdict, read from a finished screen and never inside it.
+include("steadystate/frequency_verdict.jl")
 
 # --- post-processing reads over a recorded trajectory ---
 # Engine-agnostic; notably the 500 ms windowed RoCoF that report figures use.
@@ -209,6 +211,9 @@ export ACGeneratorOutages, ac_generator_outages
 # `ui/` environment before being added (2026-10-07).
 export lone_source_bridges, GeneratorScreenComparison, compare_generator_screens
 export OutageScreen, outage_screen
+# M9 step 4 - the frequency verdict. All four checked clear against `names(GLMakie)`
+# in the `ui/` environment before being added (2026-10-10).
+export FrequencyLimits, continental_europe_limits, FrequencyVerdicts, frequency_verdicts
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

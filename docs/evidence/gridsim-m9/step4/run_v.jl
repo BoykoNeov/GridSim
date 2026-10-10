@@ -21,7 +21,6 @@ let src = read(raw"W:\Claude_projects\GridSim\test\m8_outage_screen.jl", String)
     include_string(Main, src[i:findnext("\nend\n", src, i).stop])
 end
 cd(raw"W:\Claude_projects\GridSim")
-ts = @testset "m9" begin
-    include(raw"W:\Claude_projects\GridSim\test\m9_line_resistance.jl")
+ts = @testset "m9v" begin
     include(raw"W:\Claude_projects\GridSim\test\m9_frequency_verdict.jl")
 end

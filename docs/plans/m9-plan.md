@@ -141,6 +141,13 @@ generator screen's outcome gains a frequency verdict beside it, on its **own** `
 - **The disagreement class reached:** a fixture where DC and AC sit on opposite
   sides of a limit (M8 claim (e) says one exists; build it, do not assume it).
 
+**Done 2026-10-10 (`m9-context.md` D8).** Not as planned in two places: no
+disagreement fixture had to be built — the preset alone splits DC and AC both ways on
+the report grids; and "a few mHz either side" cannot tell `<` from `≤`, so a limit set
+exactly on the value was added. The verdict is a separate function over a finished
+screen, so the gate holds by construction; machine ids alone could not tell two
+fixtures' screens apart.
+
 ### Step 5 — The dip (Hurdles 16.2–16.6)
 
 Per generator outage, a dynamic run in the detailed tier on the screened grid

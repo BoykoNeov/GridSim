@@ -541,3 +541,80 @@ on an outage refused either way, not a detection. PowerDynamics sees it on both 
    moves it by 1e-3 Hz**: the trip changes the losses, the reference's `Pm` is held,
    and a governor-free grid settles off nominal by the change over its damping. A
    loss change is a load change — the mechanism step 1's `t⁺` identity accounts for.
+
+## D8 — Step 4 measured: the settled verdict and its limits (2026-10-10)
+
+**The change.** A new file, `src/steadystate/frequency_verdict.jl`, and nothing in
+M8's code: `FrequencyLimits` (settled, dip, rate + window; each optional, Hz deviations
+from `f0`), the preset `continental_europe_limits()` (D3's 0.2 / 0.8 Hz, no rate,
+cited with the design-value caveat), and `frequency_verdicts(net, screen, limits)`,
+which reads a FINISHED screen — the generator comparison or the whole
+`OutageScreen` — and returns a separate `FrequencyVerdicts`. The limits are a required
+positional argument (D2.4); the verdict never enters an M8 struct, so the gate (D2.5)
+holds by construction and the capture confirms it.
+
+**The decisions, each a rule now:**
+
+- **Reaching a limit exactly passes** (`|Δf| ≤ limit`): SO GL states a *maximum*
+  deviation. Judged on the size, so a rising frequency is judged too.
+- **Each screen on its own `Δω`**, never the other's; the pair gets its own class
+  (`:both_pass`, `:both_fail`, `:dc_only_fails`, `:ac_only_fails`, `:one_unjudged`,
+  `:unjudged`, `:no_limit`), separate from M8's `class`, whose priority order it would
+  otherwise tangle with.
+- **No value is never a verdict.** DC stands behind its `Δω` when it shares
+  (`:secure`/`:overload`); AC when it solved an operating point
+  (`:secure`/`:overload`/`:voltage`). A refusal, and AC's `:no_solution` even where the
+  solve got as far as a `Δω` (a switching backoff), is `:no_value` and its number is
+  not reported. A screen that claims a solved outcome with a non-finite `Δω` is thrown.
+- **The dip and the rate are `:not_run`** where a limit is given — never `:pass`, and
+  never the settled value read in their place, even where a capped grid's dip equals
+  it. Steps 5–6 fill those two vectors; the shape does not change.
+- **Rows of the outage screen:** a line is `:not_applicable` (D4); a line that IS a
+  lone generator's outage carries that generator's verdict.
+- **A limit set with no limit at all is refused**, as is a rate without its window and
+  a window without a rate; every limit must be finite and positive.
+
+**Found, not planned.**
+
+1. **The preset alone splits the two screens, both ways** — the plan expected to
+   *build* a disagreement fixture with a chosen limit (M8 claim (e)); none was needed.
+   Mesh, constant power, losing G3: DC 0.19324 Hz passes 0.2, AC 0.20022 Hz fails (its
+   losses deepen it past the limit by 0.2 mHz). case9, default loads, losing G1: DC
+   0.40116 Hz fails, AC 0.19505 Hz passes (the sagging voltage sheds load). On the
+   two report grids with the preset, every other generator outage fails at both
+   fidelities except the mesh's default-load G3, which passes at both. This is a
+   statement about the invented droop (D3), not a result.
+2. **Machine ids cannot tell two screens apart**: case9 and the mesh both have G1–G3,
+   so the first identity check let a case9 comparison be judged against the mesh. The
+   comparison carries only machine ids and, per solved outage, one entry per branch, so
+   the check now reads both; the `OutageScreen` form checks branch ids as well. Found by
+   the test's own refusal check, before any sabotage.
+3. **The plan's "a few mHz either side" cannot tell `<` from `≤`.** The anti-vacuity
+   pair (±2 mHz around the closed form `−P₃/Σ(1/R + D)`, exact to 1e-14 relative) is
+   kept, and a limit set to exactly `|Δf|` — read from the verdict's own arithmetic —
+   passes while one ulp below fails. That is the check that caught S2.
+4. **Every fixture runs at 50 Hz**, so a missing or hard-coded `f0` is invisible on
+   all of them; a 60 Hz copy of the mesh (same per-unit `Δω`, bit for bit) crosses a
+   0.21 Hz limit that the 50 Hz grid passes.
+
+**The gate.** `screen_snapshot.jl` (every field of `outage_screen` on both report grids
+and both load models, then the script's report) at HEAD (`330ddb5`) before the first
+edit and after: byte-identical.
+
+**Sabotages** (`docs/evidence/gridsim-m9/step4/`, where S1–S11 are `mutate.py`'s
+M1–M11; each written down before the run, each red; the check that went red is the
+one written for it):
+
+| | Sabotage | Red |
+|---|---|---|
+| S1 | `Δf ≤ lim` (no `abs`) | 12 — the positive control (−10.94 Hz "passes") |
+| S2 | `<` for `≤` | 1 — the limit set exactly on the value |
+| S3 | `f0` dropped | 15 |
+| S4 | `f0` hard-coded to 50 | 2 — only the 60 Hz copy |
+| S5 | the no-value guard dropped | 6 — the refusals and AC's `:no_solution` come out `:fail` |
+| S6 | DC judged on AC's `Δω` | 14 + 1 error |
+| S7 | only falls judged (`−Δf ≤ lim`) | 1 — the rising frequency |
+| S8 | AC's `:no_solution` judged | 2 |
+| S9 | the dip given the settled verdict | 3 |
+| S10 | a lone-source line ignores its machine | 12 |
+| S11 | the identity check by machine ids only | 1 — case9's screen against the mesh |

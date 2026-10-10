@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–3 done (2026-10-08/09); step 4 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–4 done (2026-10-08/09/10); step 5 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -159,12 +159,28 @@ runs.
 - [x] **Carried to step 5:** a detailed-tier re-initialisation that stalls surfaces as
       the library's `NetworkInitError`, not the tier's refusal (D7 finding 2).
 
-## Step 4 — the frequency verdict and its limits (Hurdle 16.1)
+## Step 4 — the frequency verdict and its limits (Hurdle 16.1) — done 2026-10-10
 
-- [ ] Limits type; rate refused without a window; Continental Europe preset cited.
-- [ ] Verdict beside each generator outcome, per screen; comparison class added.
-- [ ] Gate: no limits → M8 bit-identical.
-- [ ] Positive control, near-limit anti-vacuity, a DC/AC disagreement fixture.
+- [x] `FrequencyLimits` (settled, dip, rate + window; Hz deviations, so 60 Hz works);
+      a rate without its window, a window without a rate, a non-finite or non-positive
+      limit and an empty set each refused by name. `continental_europe_limits()`:
+      0.2 / 0.8 Hz, no rate, SO GL Annex III cited with the design-value caveat.
+- [x] `frequency_verdicts(net, screen, limits)` — a separate `FrequencyVerdicts` read
+      from a finished screen (the generator comparison, or every `OutageScreen` row:
+      lines `:not_applicable`, a lone-source line carrying its machine's verdict);
+      each screen judged on its own `Δω`; the pair classed on its own
+      (`:dc_only_fails`/`:ac_only_fails`/...); no value is `:no_value`, never a
+      verdict; dip and rate `:not_run` until steps 5–6.
+- [x] Gate: `screen_snapshot.jl` byte-identical before (`330ddb5`) and after. No M8
+      struct, function or test was touched.
+- [x] Positive control (the mesh's G1, both load models, both fidelities `:fail`);
+      anti-vacuity at the closed form ±2 mHz AND a limit set exactly on the value
+      (`≤` passes, one ulp below fails); a 60 Hz copy; a rising frequency.
+      **Disagreement fixtures not built — the preset splits the screens both ways on
+      the report grids** (mesh-cp G3: DC passes, AC fails; case9-default G1: the
+      reverse, D8 finding 1). Sabotages S1–S11 all red, each by its own check (D8).
+- [x] **Found:** machine ids alone cannot tell case9's screen from the mesh's; the
+      identity check reads branch counts too (D8 finding 2).
 
 ## Step 5 — the dip (Hurdles 16.2–16.6)
 
