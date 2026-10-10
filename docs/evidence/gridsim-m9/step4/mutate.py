@@ -16,6 +16,9 @@ M = {
  'M8_judge_nosol': ('const _AC_SETTLED = (:secure, :overload, :voltage)', 'const _AC_SETTLED = (:secure, :overload, :voltage, :no_solution)'),
  'M9_dip_settled': ('fill(_pending(limits.dip), nm)', 'copy(settled_dc)'),
  'M10_ignore_via': ('(s.via[r] === :none ? 0 : findfirst(==(s.via[r]), g.id))', '0'),
+ 'M12_ac_f0_is_50': ('gens.Δω_ac[k] * net.f0 : NaN', 'gens.Δω_ac[k] * 50.0 : NaN'),
+ 'M13_ac_no_f0':    ('gens.Δω_ac[k] * net.f0 : NaN', 'gens.Δω_ac[k] : NaN'),
+ 'M14_ac_reads_dc': ('gens.Δω_ac[k] * net.f0 : NaN', 'gens.Δω_dc[k] * net.f0 : NaN'),
  'M11_ids_only':   ('(gens.machines == ids && all(v -> isempty(v) || length(v) == nb, gens.reactive))', '(gens.machines == ids)'),
 }
 ORIG = 'W:/temp/claude/gridsim-m9-step4/frequency_verdict.jl.orig'

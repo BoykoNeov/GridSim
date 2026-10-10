@@ -8,7 +8,7 @@ the plan did not anticipate**.
 Status: **steps 0–4 done (2026-10-08/09/10); step 5 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -175,10 +175,11 @@ runs.
       struct, function or test was touched.
 - [x] Positive control (the mesh's G1, both load models, both fidelities `:fail`);
       anti-vacuity at the closed form ±2 mHz AND a limit set exactly on the value
-      (`≤` passes, one ulp below fails); a 60 Hz copy; a rising frequency.
+      (`≤` passes, one ulp below fails); a 60 Hz copy, at BOTH fidelities (the AC half
+      added at review — S12 was green without it); a rising frequency.
       **Disagreement fixtures not built — the preset splits the screens both ways on
       the report grids** (mesh-cp G3: DC passes, AC fails; case9-default G1: the
-      reverse, D8 finding 1). Sabotages S1–S11 all red, each by its own check (D8).
+      reverse, D8 finding 1). Sabotages S1–S14 all red, each with its own check among the red (D8).
 - [x] **Found:** machine ids alone cannot tell case9's screen from the mesh's; the
       identity check reads branch counts too (D8 finding 2).
 

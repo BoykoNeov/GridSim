@@ -594,16 +594,18 @@ holds by construction and the capture confirms it.
    kept, and a limit set to exactly `|Δf|` — read from the verdict's own arithmetic —
    passes while one ulp below fails. That is the check that caught S2.
 4. **Every fixture runs at 50 Hz**, so a missing or hard-coded `f0` is invisible on
-   all of them; a 60 Hz copy of the mesh (same per-unit `Δω`, bit for bit) crosses a
-   0.21 Hz limit that the 50 Hz grid passes.
+   all of them; a 60 Hz copy of the mesh (same per-unit `Δω` at both fidelities, bit
+   for bit) crosses a 0.21 Hz limit that the 50 Hz grid passes. **First built for the
+   DC side only** — caught at review: `f0` hard-coded on the AC line alone (S12) was
+   green until the AC half was added, and is red only there.
 
 **The gate.** `screen_snapshot.jl` (every field of `outage_screen` on both report grids
 and both load models, then the script's report) at HEAD (`330ddb5`) before the first
 edit and after: byte-identical.
 
 **Sabotages** (`docs/evidence/gridsim-m9/step4/`, where S1–S11 are `mutate.py`'s
-M1–M11; each written down before the run, each red; the check that went red is the
-one written for it):
+M1–M14, the red lines per sabotage in `results.txt` there; each written down before
+the run, each red, and the check written for it among the red ones):
 
 | | Sabotage | Red |
 |---|---|---|
@@ -618,3 +620,6 @@ one written for it):
 | S9 | the dip given the settled verdict | 3 |
 | S10 | a lone-source line ignores its machine | 12 |
 | S11 | the identity check by machine ids only | 1 — case9's screen against the mesh |
+| S12 | `f0` hard-coded to 50 on the AC side only | 2 — only the 60 Hz copy's AC half (added at review; green before it) |
+| S13 | `f0` dropped on the AC side only | 9 |
+| S14 | AC judged on DC's `Δω` | 10 |

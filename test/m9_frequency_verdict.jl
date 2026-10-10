@@ -83,12 +83,15 @@ end
 @testset "the limit is in Hz: the same per-unit deviation at 60 Hz crosses it" begin
     a, b = _OSV.mesh(), _v_at(_OSV.mesh(), 60.0)
     ga, gb = _v_gens(a), _v_gens(b)
-    @test ga.Δω_dc == gb.Δω_dc                    # f0 enters nowhere but the verdict
+    # f0 enters neither solve, only the verdict — checked at both fidelities, not assumed.
+    @test ga.Δω_dc == gb.Δω_dc && ga.Δω_ac == gb.Δω_ac
     lim = FrequencyLimits(; settled = 0.21)
     va, vb = frequency_verdicts(a, ga, lim), frequency_verdicts(b, gb, lim)
-    @test vb.f0 === 60.0 && vb.Δf_dc == gb.Δω_dc .* 60.0
+    @test vb.f0 === 60.0 && vb.Δf_dc == gb.Δω_dc .* 60.0 && vb.Δf_ac == gb.Δω_ac .* 60.0
     @test va.settled_dc[3] === :pass              # 0.193 Hz
     @test vb.settled_dc[3] === :fail              # 0.232 Hz
+    @test va.settled_ac[3] === :pass              # 0.200 Hz
+    @test vb.settled_ac[3] === :fail              # 0.240 Hz
 end
 
 @testset "frequency can rise: losing a load-as-machine is judged by its size" begin
