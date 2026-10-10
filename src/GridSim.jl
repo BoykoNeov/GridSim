@@ -132,6 +132,10 @@ include("steadystate/economic_dispatch.jl")
 # line-outage factors are dc_powerflow's base case plus one solve per outage; step
 # 3's AC screen is ac_powerflow's classified solve, once per outage.
 include("steadystate/screening.jl")
+# M9 step 5 - the dip: one detailed-tier run per generator outage, at two tolerances.
+# After the screens (it starts from the AC screen's base) and before the verdict, whose
+# `dips =` keyword takes its result.
+include("steadystate/generator_dips.jl")
 # M9 step 4 - the frequency verdict, read from a finished screen and never inside it.
 include("steadystate/frequency_verdict.jl")
 
@@ -214,6 +218,9 @@ export OutageScreen, outage_screen
 # M9 step 4 - the frequency verdict. All four checked clear against `names(GLMakie)`
 # in the `ui/` environment before being added (2026-10-10).
 export FrequencyLimits, continental_europe_limits, FrequencyVerdicts, frequency_verdicts
+# M9 step 5 - the dip. All three checked clear against `names(GLMakie)` in the `ui/`
+# environment before being added (2026-10-10).
+export GeneratorDips, generator_dips, speed_extremes
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

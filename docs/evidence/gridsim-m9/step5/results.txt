@@ -1,0 +1,62 @@
+# M9 step 5 sabotages, run 2026-10-10 (mutate_all.sh; focused run_d.jl, 238 checks green unsabotaged)
+## D1_extremes_from_recorder
+m9d                                                                                  |  237     1    238  1m00.3s
+      1 Test Failed m9_dips.jl:248  [the per-machine extremes: exact over the grid, never shallower than the recorder]
+## D2_coi_for_machines
+m9d                                                                                  |  223    15    238  1m03.4s
+      1 Test Failed m9_dips.jl:101  [every machine judged: the worst is not the average]
+      1 Test Failed m9_dips.jl:104  [every machine judged: the worst is not the average]
+      1 Test Failed m9_dips.jl:182  [the verdict counts only where both tolerances agree]
+      1 Test Failed m9_dips.jl:184  [the verdict counts only where both tolerances agree]
+      1 Test Failed m9_dips.jl:185  [the verdict counts only where both tolerances agree]
+      1 Test Failed m9_dips.jl:186  [the verdict counts only where both tolerances agree]
+      8 Test Failed m9_dips.jl:57  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:95  [every machine judged: the worst is not the average]
+## D3_last_sample
+m9d                                                                                  |  236     2    238  59.6s
+      1 Test Failed m9_dips.jl:85  [the stopping rule leaves at most its shortfall on the slowest case]
+      1 Test Failed m9_dips.jl:86  [the stopping rule leaves at most its shortfall on the slowest case]
+## D4_one_tolerance
+m9d                                                                                  |  236     2    238  1m07.9s
+      1 Test Failed m9_dips.jl:182  [the verdict counts only where both tolerances agree]
+      1 Test Failed m9_dips.jl:185  [the verdict counts only where both tolerances agree]
+## D5_no_hold
+m9d                                                                                  |  235     3    238  58.0s
+      1 Test Failed m9_dips.jl:54  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:55  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:76  [the stopping rule leaves at most its shortfall on the slowest case]
+## D6_loose_shortfall
+m9d                                                                                  |  233     5    238  56.4s
+      2 Test Failed m9_dips.jl:54  [step 0's lossless table, reproduced from the new code]
+      2 Test Failed m9_dips.jl:55  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:57  [step 0's lossless table, reproduced from the new code]
+## D7_coarse_settles_itself
+m9d                                                                                  |  233     5    238  59.9s
+      1 Test Failed m9_dips.jl:53  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:54  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:55  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:56  [step 0's lossless table, reproduced from the new code]
+      1 Test Failed m9_dips.jl:57  [step 0's lossless table, reproduced from the new code]
+## D8_refusal_as_failure
+m9d                                                                                  |  226     6    232  59.6s
+      2 Test Failed m9_dips.jl:124  [refused at the trip: every outage run, and the mismatch with the AC screen]
+      2 Test Failed m9_dips.jl:126  [refused at the trip: every outage run, and the mismatch with the AC screen]
+      1 Test Failed m9_dips.jl:134  [refused at the trip: every outage run, and the mismatch with the AC screen]
+      1 Test Failed m9_dips.jl:144  [a solver failure is an outcome, never a verdict (Hurdle 16.5)]
+## D9_stall_as_refusal
+m9d                                                                                  |  237     1    238  59.1s
+      1 Test Failed m9_dips.jl:144  [a solver failure is an outcome, never a verdict (Hurdle 16.5)]
+## D10_strict
+m9d                                                                                  |  237     1    238  1m04.8s
+      1 Test Failed m9_dips.jl:184  [the verdict counts only where both tolerances agree]
+## D11_no_identity
+m9d                                                                                  |  237     1    238  1m08.2s
+      1 Test Failed m9_dips.jl:191  [the verdict counts only where both tolerances agree]
+## D12_tripped_counted
+m9d           |  238    238  1m09.3s
+## D13_fine_only
+m9d                                                                                  |  237     1    238  1m10.5s
+      1 Test Failed m9_dips.jl:185  [the verdict counts only where both tolerances agree]
+## D14_nothing_passes
+m9d                                                                                  |  237     1    238  1m10.0s
+      1 Test Failed m9_dips.jl:134  [refused at the trip: every outage run, and the mismatch with the AC screen]

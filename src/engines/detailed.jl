@@ -1305,10 +1305,26 @@ check takes magnitudes, which is what the AC power flow solves in directly.
 function _check_power_flow(net::NetworkModel, V::Vector{ComplexF64},
                            flows::Vector{Float64}, residual::Float64,
                            what::AbstractString)
-    _check_voltage_band(net, abs.(V), what)
-    _check_branch_ratings(net, flows, what)
-    _check_residual(residual, what)
+    _, err = _power_flow_violation(net, V, flows, residual, what)
+    err === nothing || throw(err)
     return nothing
+end
+
+# `_check_power_flow`'s three checks in its order, the first failure RETURNED as
+# `(reason, error)` — `:voltage`, `:rating`, `:residual` — or `(:ok, nothing)` (M9
+# step 5). The thrower above is this plus `throw`, so a caller that classifies (the
+# dip screen's trip, `_trip_generator!`) and one that throws cannot come to disagree
+# on the order or the message.
+function _power_flow_violation(net::NetworkModel, V::Vector{ComplexF64},
+                               flows::Vector{Float64}, residual::Float64,
+                               what::AbstractString)
+    Vm = abs.(V)
+    bad = _voltage_band_violations(net, Vm)
+    isempty(bad) || return (:voltage, _voltage_band_error(net, Vm, first(bad), what))
+    bad = _rating_violations(net, flows)
+    isempty(bad) || return (:rating, _branch_rating_error(net, flows, first(bad), what))
+    _residual_ok(residual) || return (:residual, _residual_error(residual, what))
+    return (:ok, nothing)
 end
 
 # |S| on each branch, from the solved bus voltages: `S = V_from · conj(I)`.
@@ -1475,6 +1491,12 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     log::Vector{EngineEvent}
     n_dropped::Int
     nadir::Float64
+    # M9 step 5 (`m9-context.md` D0 16.3–16.4) — each machine's own lowest and highest
+    # speed deviation, pu, over every recorded sample WHILE IT IS ONLINE. Tracked here
+    # for `nadir`'s reason: the recorder decimates, so its minimum is the lowest
+    # retained sample, not the lowest one. `±Inf` until the first sample.
+    ω_min::Vector{Float64}
+    ω_max::Vector{Float64}
     # M3's protection, wired at this tier (M5 step 7, D8). Owned by the engine for
     # `SwingEngine`'s reason: a ladder and a relay are LIVE — they latch what has
     # fired — so the caller must not be able to hold a second reference to one and
@@ -2174,7 +2196,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          branch_to_edge, branch_of_buses,
                          copy(ma.H), copy(ma.H), Σw, traj,
                          Vector{Float64}(undef, length(channels)),
-                         EngineEvent[], 0, net.f0, ladders, relays, ramps, gfm, gfl,
+                         EngineEvent[], 0, net.f0, fill(Inf, nm), fill(-Inf, nm),
+                         ladders, relays, ramps, gfm, gfl,
                          mtr, mstat_pidx, smstat_pidx, invR_pidx, hr_pidx, rate_pidx,
                          Set{Symbol}(vcat(ids, ia.id, fa.id)))
     _record!(eng)                                 # seed the pre-disturbance point
@@ -2303,8 +2326,28 @@ function _record_at!(eng::DetailedEngine, t::Real, u::AbstractVector{<:Real})
     eng.sample[o + nb + 2] = f_coi
     record!(eng.traj, t, eng.sample)
     f_coi < eng.nadir && (eng.nadir = f_coi)
+    # A tripped machine's weight is zeroed at the trip (`inject!(::TripGenerator)`),
+    # and every sample drained here is on the right side of it (`_playback!`'s
+    # drain-then-apply), so an undriven rotor never enters its own extremes.
+    @inbounds for k in 1:n
+        eng.w[k] > 0 || continue
+        x = u[eng.ω_idx[k]]
+        x < eng.ω_min[k] && (eng.ω_min[k] = x)
+        x > eng.ω_max[k] && (eng.ω_max[k] = x)
+    end
     return nothing
 end
+
+"""
+    speed_extremes(eng::DetailedEngine) -> (; ids, Δf_min, Δf_max)
+
+Each machine's lowest and highest speed deviation from nominal, Hz, over every
+recorded sample while it was online (M9 step 5) — tracked as the samples are recorded,
+like `eng.nadir`, so a decimated recorder cannot hide one. Machine order, as
+`machine_ids`. Exact over the output grid, not between its points.
+"""
+speed_extremes(eng::DetailedEngine) =
+    (; ids = copy(eng.ids), Δf_min = eng.ω_min .* eng.f0, Δf_max = eng.ω_max .* eng.f0)
 
 _record!(eng::DetailedEngine) = _record_at!(eng, eng.integrator.t, eng.integrator.u)
 
@@ -2529,6 +2572,22 @@ What this function has today is the weaker guarantee that the re-solved point
 satisfies the network's own residual, asserted below with a number.
 """
 function _reinitialise_algebraic!(eng::DetailedEngine)
+    _, err = _reinitialise_outcome!(eng)
+    err === nothing || throw(err)
+    return nothing
+end
+
+# `_reinitialise_algebraic!`, its refusals RETURNED as `(reason, error)` rather than
+# thrown (M9 step 5, D0 16.5–16.6): `:voltage`, `:rating`, `:residual` from
+# `_power_flow_violation`, and `:stalled` when the static solve itself gives up (the
+# library's `NetworkInitError`, caught by TYPE — D7 finding 2's reproducer). `(:ok,
+# nothing)` on success. The thrower above is this plus `throw`, so every caller that
+# throws sees exactly the error it always did.
+#
+# The DYNAMIC-network Kirchhoff check stays a throw, here too: it fails only when an
+# event wrote its change into one parameter vector and not the other — a bug in this
+# file, not an outcome of the network, and classifying it would hide exactly that.
+function _reinitialise_outcome!(eng::DetailedEngine)
     u = eng.integrator.u
     for k in eachindex(eng.sδ_idx)
         eng.p_static[eng.smode_pidx[k]]    = _PF_HOLD
@@ -2564,14 +2623,20 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
         eng.u_static[eng.sVre_idx[v]] = u[eng.Vre_idx[v]]
         eng.u_static[eng.sVim_idx[v]] = u[eng.Vim_idx[v]]
     end
-    res = _run_static!(eng.nw_static, eng.u_static, eng.p_static)
+    res = try
+        _run_static!(eng.nw_static, eng.u_static, eng.p_static)
+    catch e
+        e isa NetworkDynamics.NetworkInitError || rethrow()
+        return (:stalled, e)
+    end
     bt = branch_topology(eng.model)
     ma = machine_arrays(eng.model)
     V, _, _, _, flows = _read_static(eng.model, bt, eng.u_static, eng.p_static,
                                      eng.sVre_idx, eng.sVim_idx, eng.sδ_idx,
                                      eng.sstatus_pidx, ma)
-    _check_power_flow(eng.model, V, flows, res,
+    reason, err = _power_flow_violation(eng.model, V, flows, res,
                       "DetailedEngine re-initialisation at t = $(eng.integrator.t)")
+    err === nothing || return (reason, err)
     for v in eachindex(eng.Vre_idx)
         u[eng.Vre_idx[v]] = real(V[v])
         u[eng.Vim_idx[v]] = imag(V[v])
@@ -2604,7 +2669,7 @@ function _reinitialise_algebraic!(eng::DetailedEngine)
     # pre-event dynamics.
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
-    return nothing
+    return (:ok, nothing)
 end
 
 """
@@ -2677,12 +2742,24 @@ same `_PF_HOLD` path a line trip takes). Tripping a unit already out is a no-op;
 unknown id is a `KeyError`, and the lookup happens first so that error is reachable.
 """
 function inject!(eng::DetailedEngine, ev::TripGenerator)
+    _, err = _trip_generator!(eng, ev)
+    err === nothing || throw(err)
+    return nothing
+end
+
+# `inject!(::TripGenerator)` with the re-initialisation's refusal RETURNED as
+# `(reason, error)` (`_reinitialise_outcome!`), for the dip screen (M9 step 5), which
+# must tell a refusal at the trip from a stalled solve without reading an error's
+# text. One body: `inject!` is this plus `throw`. An unknown id and the last-source
+# refusal still THROW — both are the caller's mistake, not an outcome of the network.
+# Nothing is logged unless the re-initialisation succeeded, as before.
+function _trip_generator!(eng::DetailedEngine, ev::TripGenerator)
     id = ev.id
     k = findfirst(==(id), eng.ids)
     j = findfirst(==(id), eng.gfm.ids)
     f = findfirst(==(id), eng.gfl.ids)
     k === nothing && j === nothing && f === nothing && throw(KeyError(id))
-    id in eng.online || return nothing
+    id in eng.online || return (:ok, nothing)
     # Refused BEFORE anything moves: is any voltage source left once this one goes?
     any(x -> x != id && x in eng.online, eng.ids) ||
         any(x -> x != id && x in eng.online, eng.gfm.ids) || throw(ArgumentError(
@@ -2725,9 +2802,10 @@ function inject!(eng::DetailedEngine, ev::TripGenerator)
         (r.from === bus || r.to === bus) && disarm!(r)
     end
     eng.Σw = isempty(eng.gfm.ids) ? sum(eng.w) : sum(eng.w) + sum(eng.gfm.H)
-    _reinitialise_algebraic!(eng)
+    reason, err = _reinitialise_outcome!(eng)
+    err === nothing || return (reason, err)
     _log_event!(eng, :trip_generator, id, Symbol(""))
-    return nothing
+    return (:ok, nothing)
 end
 
 # M7 step 6. A machine's `ω` row and a grid-forming inverter's `P_filt` row both have

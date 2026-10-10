@@ -623,3 +623,133 @@ the run, each red, and the check written for it among the red ones):
 | S12 | `f0` hard-coded to 50 on the AC side only | 2 — only the 60 Hz copy's AC half (added at review; green before it) |
 | S13 | `f0` dropped on the AC side only | 9 |
 | S14 | AC judged on DC's `Δω` | 10 |
+
+## D9 — Step 5 measured: the dip (2026-10-10)
+
+**The change.** A new file, `src/steadystate/generator_dips.jl`: `generator_dips(net,
+base | ac | screen)` runs every generator outage in the detailed tier from the AC
+screen's own base solution, trip at 1 s, FBDF at reltol 1e-6 and 1e-8 (abstol
+reltol/100), and returns a separate `GeneratorDips`; `frequency_verdicts` takes it as
+`dips =` and judges the dip from it (no runs → `:not_run`, exactly as step 4 left it).
+In the detailed tier: per-machine running extremes beside `nadir` (`speed_extremes`,
+over every output sample while the machine is online), and the post-trip
+re-initialisation split into a CLASSIFIER and a thin thrower
+(`_power_flow_violation` under `_check_power_flow`, `_reinitialise_outcome!` under
+`_reinitialise_algebraic!`, `_trip_generator!` under `inject!(::TripGenerator)`), so
+every existing caller throws exactly what it threw. Predictions first, in
+`docs/evidence/gridsim-m9/step5/predictions.md`, outcomes appended there.
+
+**The rules, and where each came from:**
+
+- **Every outage runs, whatever the AC screen said** (the column step 0 skipped).
+- **Every surviving machine is judged**, on its largest deviation either way (step 4's
+  `abs` rule); the COI dip is reported beside it.
+- **The stopping rule:** the run stops once `τ·|ḟ_coi| ≤ 1e-5 Hz` has held at every
+  0.5 s read for one more `τ`, `τ = 2ΣH/ΣD` over the survivors — the damping-only slide
+  of a capped grid, whose remaining shortfall `τ·|ḟ|` is exactly what the bound
+  limits. Horizon `40τ`, then `:not_reached` with no value. Every run waits for
+  settling: the plan's "a minimum followed by a recovery fixes the dip" is NOT used,
+  because a governor that caps later can slide below the first trough.
+- **The fine run alone decides when to stop; the coarse run covers the same span.**
+  Found, not planned: at 1e-6 the detailed tier keeps a numerical wobble of ~3e-7 Hz
+  with a ~6 s period that never decays — mesh-default G3, `τ·|ḟ|` near 2e-5 Hz for
+  400 s at 1e-6 while the 1e-8 run is below 1e-7 by 40 s
+  (`step5/probe_mesh_g3.jl`). Asked to settle on its own, the coarse run never does,
+  and the first table called that outage `:not_reached` on both grids.
+- **The verdict counts only where both tolerances agree — the user's choice
+  (2026-10-10), asked with the gap already seen.** The plan said "the two dips agree
+  within `convergence_band`"; that function needs a coarse/fine pair for each of TWO
+  integrations, so the rule first written (before any run) was `tolerance_band` of the
+  fine run at the coarse reltol. It failed the headline case on the first lossless
+  probe: mesh constant-power G1, 1e-8 dip −10.937499879, 1e-6 dip −10.937463848 Hz, a
+  gap of 3.60e-5 against a band of 3.28e-5 (ratio 1.098) — the 1e-6 run's global
+  error over a 100 s slide, which a factor meant for two runs at one tolerance never
+  bounded. Kept, it would have left a 10.94 Hz dip unjudged against a 0.8 Hz limit over
+  the fifth significant figure. Now: `:pass` only if both runs' worst machine is
+  within the limit, `:fail` only if both exceed it, `:tolerance_dependent` otherwise.
+  The fine run's own accuracy is pinned against the closed form instead.
+- **Classified, never text-matched:** the voltage band or a branch rating at the trip
+  is `:refused_at_trip` (reasons `:voltage`/`:rating` kept apart — the rating check is
+  still sending-end only); a stalled static solve (`NetworkInitError`, by type) or a
+  residual over threshold is `:solver_failure`, as is a failed integration, read off
+  the integrator's retcode; an error raised while the retcode reads success is
+  rethrown. The dynamic-network Kirchhoff check stays a throw: it means an event wrote
+  one parameter vector and not the other — a bug, which classifying would hide.
+- **Refused by name:** a model with inverters (`τ` has no inverter terms), an outage
+  that leaves no machine or no damping.
+
+**Found, not planned.**
+
+1. **The 16.5 positive control vanished under chunking — the stated risk happened.**
+   Mesh-default G2 at FBDF 1e-8 fails one-shot (`dt` below epsilon at 5.6015 s, step 0
+   reproduced exactly) and runs chunked, agreeing with 1e-6 (−0.39116 / −0.39115 Hz).
+   The failure moves with where the steps land — itself the evidence for 16.5 — but it
+   is no longer a control. The design was kept (it was written before the probe) and
+   the control replaced: (a) **a stall from model data**, case9 constant power with
+   every `R` ×1.1 — losing G1 stalls the re-initialisation (`:solver_failure`,
+   `:stalled`), told apart from G2's voltage refusal on the next row; (b) **a failed
+   integration** from `init!`'s own `maxiters` (`MaxIters` retcode). Both
+   `step5/probe_stall.jl`.
+2. **Step 0's table reproduced to 1e-5 Hz** (the stopping rule's bound, stated before
+   the comparison) on every outage it judged, and to 3.4e-6 Hz at worst (mesh-cp G1,
+   where the slide is stopped short by the rule, as designed); every other value to
+   under 2e-7. Mesh-default G2, which step 0 could not judge at 1e-8, is now −0.391 Hz
+   at both tolerances, as step 0's three other settings said.
+3. **The refusal mismatch, measured on the lossy grids:** the tier refuses case9's G1
+   (both load models) and case9-constant-power G2 at the trip, all on the voltage band;
+   the one the AC screen calls `:secure` is case9-constant-power G2 — the same set
+   lossless and lossy, as step 0 predicted.
+4. **Stop times:** mesh-constant-power G1 stops 63.5 s after the trip (predicted
+   60–65); mesh-default G1 86.5 s (predicted 40–50 — wrong: load relief did not speed
+   the slide past the rule).
+5. **Lossy dips against lossless:** within 5 % on every row but one (mesh-cp G1
+   −11.26 against −10.94, +2.9 %; mesh-cp G3 +4.4 %) — **mesh-default G3 is 13 %
+   SHALLOWER lossy** (−0.1455 against −0.1672 Hz), against the prediction "within 5 %,
+   deeper where losses deepen".
+6. **Cost:** 0.1–6 s per run; a whole report grid's six runs in 0.2–3.4 s once
+   compiled.
+
+7. **Found by the step's own test, before any sabotage: the integration classifier
+   called a caller's mistake a solver failure.** An integrator that has not finished
+   reads `ReturnCode.Default`, which `successful_retcode` calls unsuccessful, so a
+   refused `tspan` before the first step came out `:integration`. Failure now means a
+   retcode that is neither `Default` nor successful (`_integration_failed`).
+8. **The online guard on the extremes has nothing to catch at this tier.** A tripped
+   machine's torque and current are both zeroed, so its rotor sits at its trip-instant
+   speed (~1e-17 pu); the test's "its undriven rotor moved after" premise was wrong and
+   was removed, and the guard's sabotage (D12) is green, as predicted. Kept: it is
+   one comparison, and a tier where a tripped rotor does move would need it.
+9. **The hold is load-bearing, by a hair** (predicted green, came out red). Without the
+   extra `τ` of quiet, the capped slide stops one read early with a shortfall of
+   1.018e-5 Hz against the 1e-5 bound: `τ·|ḟ|` slightly under-reads what is left there
+   (the slide is not one pure exponential), and the hold is the margin.
+
+**The gate.** The five captures at HEAD (`030d143`) before the first edit and after
+the engine and classifier changes: byte-identical, and each also identical to step 2's committed set
+(`docs/evidence/gridsim-m9/step2/*-STEP2.txt`), which is therefore the record. The
+later edits touch only the new file and its tests.
+
+**Sabotages** (`docs/evidence/gridsim-m9/step5/`: `mutate.py`, red lines in
+`results.txt`; each predicted in `predictions.md` before any ran):
+
+| | Sabotage | Red |
+|---|---|---|
+| D1 | extremes read from the recorder | 1 — the decimating recorder |
+| D2 | COI in place of every machine | 15 |
+| D3 | last sample reported at the horizon | 2 — the `horizon = 1` control |
+| D4 | one tolerance | 2 |
+| D5 | no hold | 3 — predicted green (finding 9) |
+| D6 | shortfall bound ×100 | 5 |
+| D7 | the coarse run settles on its own | 5 — mesh-default G3 not reached |
+| D8 | a voltage refusal as a failure | 6 |
+| D9 | a stall as a refusal | 1 — the stall control |
+| D10 | `<` for `≤` | 1 — the limit exactly on the value |
+| D11 | the runs' model check dropped | 1 |
+| D12 | the online guard dropped | **green**, as predicted (finding 8) |
+| D13 | only the fine run judged | 1 |
+| D14 | a run that measured nothing passes | 1 |
+
+On the report grids with the preset's 0.8 Hz dip: the mesh's G1 fails at both
+tolerances (11.26 Hz constant power, 8.91 Hz default loads); every other measured
+dip passes; case9's three refusals carry no dip verdict. A statement about the invented
+dynamics (D3), not a result.

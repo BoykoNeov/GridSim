@@ -187,6 +187,16 @@ gains a per-machine running minimum beside `eng.nadir`.
   machine (mesh G2's 7.7 % is the fixture that sees it); the last sample reported
   when the horizon runs out; a single tolerance.
 
+**Done 2026-10-10 (`m9-context.md` D9).** Not as planned in four places: the
+agreement is not a band — the one first stated (`tolerance_band`; `convergence_band`
+is for two integrations) failed the 10.94 Hz case by 9 %, and the user chose to judge
+the dip at both tolerances and count it only where the two verdicts agree; the
+16.5 control vanished (the 1e-8 failure moved with step placement once the run was
+chunked) and was replaced by a stall built from model data and a failed integration;
+the fine run alone decides when to stop, because the 1e-6 run carries a wobble that
+never settles; and every run waits for settling rather than taking a recovered
+minimum as final.
+
 ### Step 6 — The rate of fall (Hurdle 16.7)
 
 From the dip step's runs, the rate over the caller's window, COI and per machine,

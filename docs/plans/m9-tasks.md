@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–4 done (2026-10-08/09/10); step 5 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–5 done (2026-10-08/09/10); step 6 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -183,21 +183,29 @@ runs.
 - [x] **Found:** machine ids alone cannot tell case9's screen from the mesh's; the
       identity check reads branch counts too (D8 finding 2).
 
-## Step 5 — the dip (Hurdles 16.2–16.6)
+## Step 5 — the dip (Hurdles 16.2–16.6) — done 2026-10-10
 
-- [ ] Per-machine running minimum in the engine.
-- [ ] Stopping rule on the run's own settling, and "not reached".
-- [ ] Frozen pair FBDF 1e-6 / 1e-8; mesh-default G2 (lossless) returns the
-      solver-failure outcome as predicted.
-- [ ] Step 0's table reproduced wherever the pair judges.
-- [ ] "Refused at the trip" outcome; mismatch set reported (predicted lossless:
-      case9-constant-power G2 only; lossy measured).
-- [ ] Sabotages.
-- [ ] **Carried from step 3 (D7 finding 2):** a detailed-tier re-initialisation that
-      STALLS after a trip comes out as a solver-failure outcome, distinct from the named
-      voltage-band refusal — today it surfaces as the library's `NetworkInitError`.
-      Reproducer: case9 G1 on constant-power loads with `R` ×1.1 (`step3/mutate.py`
-      T1b; `step3/probe_trip_refusals.jl`).
+- [x] Per-machine running extremes in the engine (`speed_extremes`, beside `nadir`,
+      every output sample while online); exact against the recorded series inside the
+      recorder's capacity, never shallower when it decimates (D1 red only there).
+- [x] Stopping rule on the run's own settling (`τ·|ḟ| ≤ 1e-5 Hz` held for one more
+      `τ`, horizon `40τ`) and `:not_reached` with no value; **the fine run alone decides,
+      the coarse one covers its span** (the 1e-6 run's wobble never settles, D9). Every
+      run waits for settling.
+- [x] Frozen pair FBDF 1e-6 / 1e-8. **Not as predicted:** mesh-default G2 (lossless)
+      runs once chunked — the 1e-8 failure moved with step placement. Control replaced
+      by a stall from model data (case9-cp, `R` ×1.1) and a failed integration
+      (`maxiters`). **The agreement band failed the 10.94 Hz case (ratio 1.098); the
+      user chose verdict agreement at both tolerances** (`:tolerance_dependent`).
+- [x] Step 0's table reproduced to 1e-5 Hz (the stopping rule's bound, stated first)
+      on every outage it judged; mesh-default G2 now −0.391 Hz at both tolerances.
+- [x] `:refused_at_trip` with reason; mismatch set measured, lossless and lossy alike:
+      case9-constant-power G2 only (as predicted).
+- [x] Sabotages D1–D14: thirteen red, D12 green as predicted (a tripped rotor does not
+      move at this tier); D5 red against a "probably green" prediction (D9).
+- [x] **Carried from step 3 (D7 finding 2):** a stalled re-initialisation is
+      `:solver_failure` / `:stalled`, caught by type, told apart from the voltage refusal
+      on the next row; the thrower beneath still raises `NetworkInitError` unchanged.
 
 ## Step 6 — the rate of fall (Hurdle 16.7)
 

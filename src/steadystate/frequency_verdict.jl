@@ -12,9 +12,12 @@
 #
 # ONE PART PER CRITERION. The settled value is judged here, per screen, on that
 # screen's own Δω (D0 16.1: neither screen is the reference). The dip and the rate need
-# a dynamic run (steps 5–6); until it exists a limit given for them is reported
-# `:not_run`, never `:pass`, and the settled value is never read in their place — not
-# even where a capped grid's dip happens to equal it.
+# a dynamic run: the dip is judged from `generator_dips`' runs when the caller hands
+# them in (`dips =`, M9 step 5), at BOTH of their tolerances, and counts only where the
+# two verdicts agree (the user's choice, m9-context.md D9). Without the runs, and for
+# the rate until step 6, a limit given is reported `:not_run`, never `:pass`, and the
+# settled value is never read in their place — not even where a capped grid's dip
+# happens to equal it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Optional limits are `Union{Nothing,Float64}`, not a sentinel: a NaN sentinel would
@@ -117,8 +120,17 @@ order.
     `:ac_only_fails`, `:one_unjudged` (one screen has no value), `:unjudged` (neither
     has), `:no_limit`, `:not_applicable`. A disagreement is reported, never resolved:
     neither screen is the reference (D0 16.1).
-  - `dip`, `rate` — `:not_run` where a limit is given (the dynamic run that judges
-    them is not built yet), `:no_limit` where none is, `:not_applicable` on line rows.
+  - `dip` — judged from [`generator_dips`](@ref)' runs on every surviving machine's
+    largest deviation (M9 step 5): `:pass` where BOTH tolerances' worst machine is
+    within the dip limit, `:fail` where both exceed it, `:tolerance_dependent` where
+    they split; or the runs' own outcome where they measured nothing
+    (`:refused_at_trip`, `:solver_failure`, `:tolerance_dependent`, `:not_reached`) —
+    never a pass. `:not_run` where a limit is given and no runs were handed in,
+    `:no_limit` where none is, `:not_applicable` on line rows.
+  - `Δf_dip` — the fine run's worst surviving machine, Hz, signed; `NaN` where the runs
+    measured nothing or were not handed in.
+  - `rate` — `:not_run` where a limit is given (step 6), `:no_limit` where none is,
+    `:not_applicable` on line rows.
 
 A line row that [`lone_source_bridges`](@ref) maps to a machine carries that
 machine's verdict, as `OutageScreen` carries its outcome.
@@ -134,6 +146,7 @@ struct FrequencyVerdicts
     settled_ac::Vector{Symbol}
     settled::Vector{Symbol}
     dip::Vector{Symbol}
+    Δf_dip::Vector{Float64}
     rate::Vector{Symbol}
 end
 
@@ -165,10 +178,39 @@ end
 
 _pending(lim::_OptHz) = lim === nothing ? :no_limit : :not_run
 
+# The dip verdict of outage `k`, from both tolerances' runs (D9): a value only where
+# the runs measured, and a pass or a fail only where the two runs say the same.
+function _dip_verdict(d::GeneratorDips, k::Int, lim::Float64)
+    d.outcome[k] === :measured || return d.outcome[k]
+    (isfinite(d.Δf_worst[k]) && isfinite(d.Δf_worst_coarse[k])) || error(
+        "frequency_verdicts: the dip runs report `:measured` for $(d.machines[k]) " *
+        "with no value ($(d.Δf_worst[k]), $(d.Δf_worst_coarse[k]) Hz).")
+    f, c = abs(d.Δf_worst[k]) <= lim, abs(d.Δf_worst_coarse[k]) <= lim
+    return f == c ? (f ? :pass : :fail) : :tolerance_dependent
+end
+
+function _dip_column(net::NetworkModel, ids::Vector{Symbol}, lim::_OptHz,
+                     dips::Union{Nothing,GeneratorDips})
+    nm = length(ids)
+    if dips !== nothing
+        (dips.machines == ids && dips.branches == Symbol[b.id for b in net.branches] &&
+         dips.f0 === net.f0) || throw(ArgumentError(
+            "frequency_verdicts: the dip runs are not of this model — machines " *
+            "$(dips.machines) against $ids, branches $(dips.branches), f0 $(dips.f0) " *
+            "against $(net.f0)."))
+    end
+    Δf = dips === nothing ? fill(NaN, nm) :
+         [dips.outcome[k] === :measured ? dips.Δf_worst[k] : NaN for k in 1:nm]
+    lim === nothing && return fill(:no_limit, nm), Δf
+    dips === nothing && return fill(:not_run, nm), Δf
+    return [_dip_verdict(dips, k, lim) for k in 1:nm], Δf
+end
+
 """
-    frequency_verdicts(net, gens::GeneratorScreenComparison, limits::FrequencyLimits)
+    frequency_verdicts(net, gens::GeneratorScreenComparison, limits::FrequencyLimits;
+                       dips = nothing) -> FrequencyVerdicts
+    frequency_verdicts(net, s::OutageScreen, limits::FrequencyLimits; dips = nothing)
         -> FrequencyVerdicts
-    frequency_verdicts(net, s::OutageScreen, limits::FrequencyLimits) -> FrequencyVerdicts
 
 Judge every generator outage's frequency against `limits`, per screen, on that
 screen's **own** settled deviation (`m9-context.md` D0 16.1), converted to Hz with
@@ -181,12 +223,14 @@ generator's verdict. Both forms take the model, for `f0` and to refuse a screen 
 another model — the `OutageScreen` by its branch and machine ids, the comparison by
 what it carries (machine ids, and one entry per branch in each solved outage's miss).
 
-The limits are required; [`continental_europe_limits`](@ref) is the one preset. Only
-the settled value is judged so far — see [`FrequencyVerdicts`](@ref) for the dip and
-the rate.
+The limits are required; [`continental_europe_limits`](@ref) is the one preset. The
+dip is judged only from runs handed in as `dips` ([`generator_dips`](@ref), of the
+same model — refused otherwise); the rate is not judged yet. See
+[`FrequencyVerdicts`](@ref).
 """
 function frequency_verdicts(net::NetworkModel, gens::GeneratorScreenComparison,
-                            limits::FrequencyLimits)
+                            limits::FrequencyLimits;
+                            dips::Union{Nothing,GeneratorDips} = nothing)
     ids = Symbol[m.id for m in net.machines]
     # The comparison carries machine ids and, per solved outage, one miss per branch:
     # that is all there is to check it against (two fixtures can share machine ids).
@@ -203,18 +247,20 @@ function frequency_verdicts(net::NetworkModel, gens::GeneratorScreenComparison,
     Δf_ac = [has_ac[k] ? gens.Δω_ac[k] * net.f0 : NaN for k in 1:nm]
     settled_dc = [_settled_verdict(Δf_dc[k], has_dc[k], limits.settled, "DC") for k in 1:nm]
     settled_ac = [_settled_verdict(Δf_ac[k], has_ac[k], limits.settled, "AC") for k in 1:nm]
+    dip, Δf_dip = _dip_column(net, ids, limits.dip, dips)
     return FrequencyVerdicts(fill(:machine, nm), ids, limits, net.f0, Δf_dc, Δf_ac,
                              settled_dc, settled_ac, _settled_pair.(settled_dc, settled_ac),
-                             fill(_pending(limits.dip), nm), fill(_pending(limits.rate), nm))
+                             dip, Δf_dip, fill(_pending(limits.rate), nm))
 end
 
-function frequency_verdicts(net::NetworkModel, s::OutageScreen, limits::FrequencyLimits)
+function frequency_verdicts(net::NetworkModel, s::OutageScreen, limits::FrequencyLimits;
+                            dips::Union{Nothing,GeneratorDips} = nothing)
     bids = Symbol[b.id for b in net.branches]
     nb = length(bids)
     (length(s.id) == nb + length(net.machines) && s.id[1:nb] == bids) || throw(ArgumentError(
         "frequency_verdicts: the screen is not of this model — rows $(s.id) against " *
         "branches $bids then the machines."))
-    g = frequency_verdicts(net, s.generators, limits)
+    g = frequency_verdicts(net, s.generators, limits; dips)
     N = length(s.id)
     # Row `r` → the machine whose verdict it carries, or 0 for a line that loses none.
     src = [r <= nb ? (s.via[r] === :none ? 0 : findfirst(==(s.via[r]), g.id)) : r - nb
@@ -223,5 +269,5 @@ function frequency_verdicts(net::NetworkModel, s::OutageScreen, limits::Frequenc
     pick(v::Vector{Symbol}) = [k == 0 ? :not_applicable : v[k] for k in src]
     return FrequencyVerdicts(copy(s.kind), copy(s.id), limits, net.f0, pick(g.Δf_dc),
                              pick(g.Δf_ac), pick(g.settled_dc), pick(g.settled_ac),
-                             pick(g.settled), pick(g.dip), pick(g.rate))
+                             pick(g.settled), pick(g.dip), pick(g.Δf_dip), pick(g.rate))
 end
