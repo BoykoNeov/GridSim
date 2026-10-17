@@ -9,6 +9,7 @@ M = {
     "W3": ("        foreach(o -> o[] = Point2f[], mach); foreach(o -> o[] = Point2f[], mach_z)\n        coi[] = Point2f[]; coi_z[] = Point2f[]\n", ""),
     "W4": ("lim_lines = (; settled = f0 - lim.settled, dip = f0 - lim.dip)",
            "lim_lines = (; settled = f0 - lim.settled, dip = f0 - lim.settled)"),
+    "W5": ("    caveat = Label(gc[9, 1], caveat_text;", "    caveat = Label(Figure()[1, 1], caveat_text;"),
 }
 old, new = M[sys.argv[1]]
 s = open(P, encoding="utf-8", newline="").read()

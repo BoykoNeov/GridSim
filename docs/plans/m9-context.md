@@ -978,3 +978,15 @@ tallies in `results.txt`): all four red, each exactly where predicted.
 the first edit are byte-identical to step 2's committed set; after: `swing`, `criterion`,
 `ac` and `dips` byte-identical, and the old `screen` capture (152,062 bytes) an exact
 byte prefix of the new one (158,584) — sections 4–5 appended, nothing before them moved.
+
+**Follow-up at review: the caveat, wherever the preset's numbers are used.** Section 4
+and the window printed the caveat, but no test read it: deleting it left every check
+green. Section 5's claims rest on the same verdicts and did not carry it. Section 5 now
+repeats it in one line. Section 4's heading (`print_frequency_header`) and section 5
+now print to a stream, so `test/m9_report.jl` reads what each printer prints rather than
+a constant a printer might skip. The window's caveat `Label` is returned and checked to
+be placed in the layout (`in_layout`), not just built. Sabotages P6 (section 5's caveat
+deleted), P7 (section 4's reworded) and W5 (the Label never placed) were all red exactly
+where predicted (`step7/predictions.md`). Gate re-taken: `swing`, `criterion`, `ac` and
+`dips` byte-identical to step 7's; the old M8 `screen` capture is still an exact prefix
+of the new one (158,812 bytes), which differs from step 7's only by those four lines.

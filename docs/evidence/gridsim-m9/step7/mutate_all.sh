@@ -8,7 +8,7 @@
 O=$1; BS='\'; S=/w/Claude_projects/GridSim/scripts/outage_screen.jl
 H='W:\Claude_projects\GridSim\docs\evidence\gridsim-m9'
 U=$(cygpath -u "$O"); mkdir -p "$U"
-for m in P1 P2 P3 P4 P5; do
+for m in ${MUTS:-P1 P2 P3 P4 P5 P6 P7}; do
   cp "$S" "$U/outage_screen_$m.jl"
   python "$(cygpath -u "$H")/step7/mutate.py" $m "$U/outage_screen_$m.jl" || exit 1
   export GRIDSIM_OS_SCRIPT="$(cygpath -w "$U/outage_screen_$m.jl")"

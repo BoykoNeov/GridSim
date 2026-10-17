@@ -8,7 +8,7 @@ the plan did not anticipate**.
 Status: **steps 0–7 done (2026-10-08/09/10/17); step 8 (close) next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree). After step 7 **6712 core / 1439 reference / 741 UI** (+180 step-7 report checks, +173 for the frequency-screen window; core and UI run on step 7's tree, reference not re-run — no reference code changed).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree). After step 7 **6712 core / 1439 reference / 741 UI** (+180 step-7 report checks, +173 for the frequency-screen window; core and UI run on step 7's tree, reference not re-run — no reference code changed). After the caveat follow-up at review **6718 core by count** (+6 printed-caveat checks; the focused step-5 + step-7 run green, the full core suite not re-run because only the script's printing and its tests changed) **/ 745 UI** (+4, full suite run).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -245,7 +245,17 @@ runs.
       3 s, and all twelve outages side by side. Read-out and traces asserted `isequal`/`==`
       to the script's rows and the runs' samples; sabotages W1–W4 all red. Precompile
       241 s with it, 264 s without (D11).
+- [x] Follow-up at review: the caveat was printed but read by NO test, and section 5's
+      claims did not carry it. Section 5 now points back to it; both headings print to a
+      stream and the test reads them; the window's caveat is checked placed in the layout.
+      Sabotages P6, P7, W5 red (`step7/predictions.md`).
 
 ## Step 8 — close
 
-- [ ] Re-resolve, counts, captures before/after, ledger, README, SPEC, memory.
+- [ ] Re-resolve, counts, captures before/after, ledger, README, SPEC, memory. The
+      count in `ui/README.md`'s Tests section is hand-written: re-measure it.
+- [ ] Ask the user, before closing: under the preset the dip decides no verdict (largest
+      dip/settled 1.66 against the limits' 4) and the rate is never judged (no sourced
+      limit), so the screen's answers equal a settled-only check. Keep it, or add a
+      limit of their own (a rate limit with its window, or a tighter dip)? Their call,
+      not a default (D3: an unsourced number would read as a result).

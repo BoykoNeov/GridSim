@@ -106,3 +106,28 @@ guards the cache, not the builder.
 
 All four red, each exactly and only where predicted: W1 traces 1, W2 overview 2, W3
 controls 2, W4 limits 1.
+
+## Follow-up at review: the caveat, wherever the preset's numbers are used
+
+The plan asks for the preset's caveat wherever its numbers are used. Section 4 and the
+window printed it, but no test read it (deleting it left every check green), and section
+5's claims, which rest on the same verdicts, did not repeat it. Section 5 now carries one
+line pointing back to it. Section 4's heading and section 5 now print to a stream, so the
+test reads what each printer actually prints. The window keeps its caveat `Label` and
+checks it is placed in the figure's layout.
+
+### Caveat sabotages, predicted before any ran
+
+| | Sabotage | Predicted red |
+|---|---|---|
+| P6 | section 5's caveat lines deleted | the caveat testset only, 2 (both phrases, section 5's output) |
+| P7 | section 4's "DESIGN VALUES" sentence reworded away | the caveat testset only, 1 (section 4's other phrase survives) |
+| W5 | the caveat `Label` built in a figure of its own, never placed | the limits testset only, 1 (`in_layout`; its text is unchanged) |
+
+### Caveat sabotages, outcomes (`results.txt`)
+
+All three red, each exactly and only where predicted: P6 caveat testset 2, P7 caveat
+testset 1, W5 limits testset 1. Clean runs green: the step-5 + step-7 testsets, and the
+window's 177. The first window runs did not run at all: the scratch runner cut the
+`in_layout` helper out of `ui/test/runtests.jl` by searching for `"\nend\n"`, and that file
+has CRLF endings in the working copy. It was rerun after normalising the line endings.

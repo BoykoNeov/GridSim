@@ -15,6 +15,14 @@ M = {
     "P4": ('              "$(r.dyn) ($(r.reason))"', '              "pass"'),
     # P5: AC's settled deviation read from DC
     "P5": ("Δf_ac = v.Δf_ac[nb + k],", "Δf_ac = v.Δf_dc[nb + k],"),
+    # P6: section 5's caveat lines deleted
+    "P6": (""" Every verdict below is judged against the preset and carries section 4's caveat: its
+ numbers are DESIGN VALUES for a whole synchronous area after a 3,000 MW incident, and
+ not a pass/fail rule for one outage on a small grid.
+
+""", ""),
+    # P7: section 4's caveat sentence reworded away
+    "P7": ("THESE ARE DESIGN VALUES for a whole", "THESE ARE the limits for a whole"),
 }
 old, new = M[sys.argv[1]]
 s = open(P, encoding="utf-8", newline="").read()

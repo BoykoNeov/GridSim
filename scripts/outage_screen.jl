@@ -362,8 +362,10 @@ function print_frequency_table(io::IO, name, rows)
 end
 print_frequency_table(name, rows) = print_frequency_table(stdout, name, rows)
 
-function print_frequency()
-    println("""
+# The preset's caveat is part of this heading, and section 5 repeats it: wherever the
+# preset's numbers are used (`test/m9_report.jl` asserts both).
+function print_frequency_header(io::IO = stdout)
+    println(io, """
 
 == 4. The frequency verdict beside the screens (M9 step 7; m9-context.md D2, D3) ==
 
@@ -376,6 +378,10 @@ function print_frequency()
    deviation in a detailed-tier run (lossy, with the loads), judged only where both
    solver tolerances agree; the COI dip beside it. DC/AC: M8's line-and-voltage
    outcome, unchanged. A line that cuts off a lone generator carries its row.""")
+end
+
+function print_frequency()
+    print_frequency_header()
     for (name, loads, net) in screens()
         print_frequency_table("$name — $loads loads", frequency_rows(net))
     end
@@ -383,10 +389,14 @@ end
 
 # Written AFTER section 4's tables were read, each asserted in `test/m9_report.jl`. The
 # predictions made before the first run are in docs/evidence/gridsim-m9/step7/.
-function print_frequency_claims()
-    println("""
+function print_frequency_claims(io::IO = stdout)
+    println(io, """
 
 == 5. What section 4 says (each asserted in test/m9_report.jl) ==
+
+ Every verdict below is judged against the preset and carries section 4's caveat: its
+ numbers are DESIGN VALUES for a whole synchronous area after a 3,000 MW incident, and
+ not a pass/fail rule for one outage on a small grid.
 
  f. Claim (d), revisited. Losing the mesh's G1 is still "secure" in both screens on
     both load models, and section 4 fails it on every part it judges: the settled

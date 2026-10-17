@@ -60,6 +60,13 @@ end
     l = win.axes.f.finallimits[]
     @test l.origin[2] <= win.plots.settle_ac[][1]
     @test win.plots.coi[][end][2] > win.plots.settle_ac[][1]
+    # The preset's caveat is on screen wherever its lines are: in the figure's layout,
+    # not just a Label built and never placed, and naming the preset's own numbers.
+    @test in_layout(win.fig.layout, win.caveat)
+    t = win.caveat.text[]
+    @test occursin("DESIGN VALUES", t)
+    @test occursin("not a pass/fail rule for one outage on a small grid", t)
+    @test occursin("settled $(lim.settled) Hz, dip $(lim.dip) Hz", t)
 end
 
 @testset "frequency-screen window: every overview cell says what its row says" begin

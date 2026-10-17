@@ -203,7 +203,7 @@ function _build_frequency_screen_window_impl(; grid::Symbol = :mesh,
          "dip COI\ndynamic run\nrate 500 ms\nrate 1 s"
     gr = gc[8, 1] = GridLayout()
     ro = readout_block!(gr, rk; fontsize = 12)
-    Label(gc[9, 1], "Limits: continental_europe_limits() — settled $(lim.settled) Hz, dip " *
+    caveat_text = "Limits: continental_europe_limits() — settled $(lim.settled) Hz, dip " *
           "$(lim.dip) Hz, from SO GL Annex III Table 1. These are DESIGN VALUES for a " *
           "whole synchronous area after its 3,000 MW reference incident, not a pass/fail " *
           "rule for one outage on a small grid: with the invented droop and damping here, " *
@@ -211,9 +211,10 @@ function _build_frequency_screen_window_impl(; grid::Symbol = :mesh,
           "rate is reported and not judged. The dip and the rate are every surviving " *
           "machine's, from a detailed-tier run (reltol 1e-8 drawn); a verdict counts only " *
           "where the 1e-6 run agrees. \"lines/V\" is M8's outcome, unchanged: secure means " *
-          "the lines and voltages are within limits, and nothing about frequency.";
-          halign = :left, tellwidth = false, fontsize = 11, color = C_MUTED,
-          word_wrap = true, justification = :left)
+          "the lines and voltages are within limits, and nothing about frequency."
+    caveat = Label(gc[9, 1], caveat_text;
+                   halign = :left, tellwidth = false, fontsize = 11, color = C_MUTED,
+                   word_wrap = true, justification = :left)
 
     # ---- drawing ------------------------------------------------------------------
     row = Observable{Any}(nothing)
@@ -299,7 +300,7 @@ function _build_frequency_screen_window_impl(; grid::Symbol = :mesh,
     plots = (; mach, mach_z, coi, coi_z, settle_dc, settle_ac, refusal, selected_box,
                lim_lines, cell_text, cell_colour, overview)
     return (; fig, axes = (; f = ax_f, z = ax_z, o = ax_o), choice, row, cache, widgets,
-              plots, readout = ro, redraw!)
+              plots, readout = ro, caveat, redraw!)
 end
 
 # The read-out for one row: the script's own numbers, formatted as its table prints them.

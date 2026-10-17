@@ -93,3 +93,37 @@ fs                                                                           |  
   frequency-screen window: every overview cell says what its row says        |  125          125     0.6s
   frequency-screen window: the controls, and a refusal leaves nothing behind |   15           15     0.4s
   frequency_screen_render writes a PNG of the same window                    |    2            2    12.2s
+
+# Follow-up at review (caveat), 2026-10-17. P6/P7 on scratch copies (mutate_all.sh,
+# MUTS="P6 P7"); W5 in place with restore (mutate_window.sh, MUTS="W5").
+
+== P6
+  M9 step 7 — the report: the frequency verdict beside the screens             |  184     2    186     8.6s
+    the script's default path is the one tested                                |    1            1     3.9s
+    each column reads what its header says                                     |  105          105     0.3s
+    the printed table: a refusal is named, never a pass or a number            |   24           24     0.9s
+    the preset's caveat is printed wherever its numbers are used               |    4     2      6     1.2s
+    claim f: claim (d) revisited — secure, and failing every part judged       |   15           15     0.1s
+    claim g: under the preset the settled limit decides, the dip never         |   13           13     1.4s
+    claim h: on default loads the dip can be shallower than AC's settled value |    8            8     0.1s
+    claim i: the window matters more than whose frequency                      |   10           10     0.1s
+    claim j: no verdict depends on the tolerance; three rows have no dip       |    4            4     0.7s
+
+== P7
+  M9 step 7 — the report: the frequency verdict beside the screens             |  185     1    186    10.0s
+    the script's default path is the one tested                                |    1            1     5.9s
+    each column reads what its header says                                     |  105          105     0.6s
+    the printed table: a refusal is named, never a pass or a number            |   24           24     1.1s
+    the preset's caveat is printed wherever its numbers are used               |    5     1      6     0.9s
+    claim f: claim (d) revisited — secure, and failing every part judged       |   15           15     0.0s
+    claim g: under the preset the settled limit decides, the dip never         |   13           13     0.9s
+    claim h: on default loads the dip can be shallower than AC's settled value |    8            8     0.1s
+    claim i: the window matters more than whose frequency                      |   10           10     0.1s
+    claim j: no verdict depends on the tolerance; three rows have no dip       |    4            4     0.5s
+
+== W5
+fs                                                                           |  176     1    177  2m32.9s
+  frequency-screen window: the row is the script's, the traces are the runs' |   14           14  1m40.9s
+  frequency-screen window: the limits are the preset's, and always in view   |   20     1     21     3.0s
+  frequency-screen window: every overview cell says what its row says        |  125          125     2.8s
+  frequency-screen window: the controls, and a refusal leaves nothing behind |   15           15     0.5s

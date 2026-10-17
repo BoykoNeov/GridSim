@@ -77,6 +77,19 @@ end
     end
 end
 
+# The preset's numbers are used in section 4's verdicts and in section 5's claims; the
+# plan asks for its caveat wherever they are, so both headings must print it. Read from
+# the printers themselves (with a stream), not from a constant the printers might skip.
+@testset "the preset's caveat is printed wherever its numbers are used" begin
+    for out in (sprint(_OSR.print_frequency_header), sprint(_OSR.print_frequency_claims))
+        @test occursin("DESIGN VALUES", out)
+        @test occursin("not a pass/fail rule for one outage on a small grid", out)
+    end
+    hdr = sprint(_OSR.print_frequency_header)
+    @test occursin("No rate of fall limit is sourced", hdr)
+    @test occursin("SO GL Annex", hdr)
+end
+
 # ── The claims (`scripts/outage_screen.jl` section 5), each as printed ─────────────
 
 @testset "claim f: claim (d) revisited — secure, and failing every part judged" begin
