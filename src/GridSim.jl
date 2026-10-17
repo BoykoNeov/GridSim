@@ -221,6 +221,9 @@ export FrequencyLimits, continental_europe_limits, FrequencyVerdicts, frequency_
 # M9 step 5 - the dip. All three checked clear against `names(GLMakie)` in the `ui/`
 # environment before being added (2026-10-10).
 export GeneratorDips, generator_dips, speed_extremes
+# M9 step 6 - the rate. All three checked clear against `names(GLMakie)` in the `ui/`
+# environment before being committed (2026-10-17).
+export FrequencyTrace, GeneratorRates, generator_rates
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

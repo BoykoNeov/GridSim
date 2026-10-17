@@ -44,6 +44,18 @@
 #      `:refused_at_trip`; a stalled static solve or a residual over threshold is
 #      `:solver_failure` (D7 finding 2). A failed integration is read off the
 #      integrator's own retcode. Nothing here matches an error's text.
+#
+# M9 STEP 6 — THE RATE OF FALL (16.7, D10) is read from these same runs; nothing new is
+# integrated. Each measured run keeps its output-grid samples (`FrequencyTrace`) and
+# the window is applied when the rate is read (`generator_rates`), so runs and a limit
+# can never disagree on it. Every surviving machine's rate is judged, the COI's reported
+# beside it (the user's choice, D10 — rule 1 again). Differenced by `windowed_rocof`
+# and nothing else, handed the window HALF A SAMPLE SHORT, so the sample exactly one
+# window back is found whatever the grid's rounding: handed the window itself,
+# `t[i] − w` can round to just below a grid point and the read reaches one sample
+# further, a bias that grows as the window shrinks. A window off the 0.01 s grid is
+# refused (5 ms would become 10 ms), and so is a trace the recorder decimated (every
+# window would silently widen).
 # ─────────────────────────────────────────────────────────────────────────────
 
 # The frozen pair, coarse first: (reltol, abstol). Changing it after a run has been
@@ -53,6 +65,23 @@ const _DIP_DT = 0.01            # s — the output grid the running extremes see
 const _DIP_CHUNK = 0.5          # s — between settling reads
 const _DIP_SHORTFALL = 1.0e-5   # Hz — the most dip the stopping rule may leave unseen
 const _DIP_HORIZON = 40         # time constants after the trip (the default)
+
+"""
+    FrequencyTrace
+
+One dip run's output-grid samples (M9 step 6), what [`generator_rates`](@ref)
+differences: `t`, s, from the run's start every `0.01` s; `f_coi`, Hz, the
+centre-of-inertia frequency; `f`, Hz, one column per machine in model order (the
+machine lost included — its column is never read after the trip). Empty for an outage
+that measured nothing. Never decimated: [`generator_dips`](@ref) refuses a run that
+could fill the recorder.
+"""
+struct FrequencyTrace
+    t::Vector{Float64}
+    f_coi::Vector{Float64}
+    f::Matrix{Float64}
+end
+FrequencyTrace() = FrequencyTrace(Float64[], Float64[], zeros(0, 0))
 
 """
     GeneratorDips
@@ -79,9 +108,12 @@ each at the two frozen tolerances (FBDF, reltol 1e-6 and 1e-8).
     `|Δf_machine|` at the fine tolerance, and each run's own largest (which may be
     another machine's).
   - `Δf_end` — the fine run's COI deviation where it stopped; `t_stop` — when, s.
+  - `trace`, `trace_coarse` — each run's samples ([`FrequencyTrace`](@ref)), what the
+    rate of fall is read from ([`generator_rates`](@ref), M9 step 6). The coarse run
+    covers the fine run's span.
 
-Every number is `NaN` (and `worst` is `:none`) unless the outcome is `:measured`. No
-value is ever a verdict.
+Every number is `NaN` (and `worst` is `:none`, each trace empty) unless the outcome is
+`:measured`. No value is ever a verdict.
 """
 struct GeneratorDips
     machines::Vector{Symbol}
@@ -99,6 +131,24 @@ struct GeneratorDips
     Δf_worst_coarse::Vector{Float64}
     Δf_end::Vector{Float64}
     t_stop::Vector{Float64}
+    trace::Vector{FrequencyTrace}
+    trace_coarse::Vector{FrequencyTrace}
+end
+
+# A run's samples, for the rate of fall. A decimated recorder has thinned its samples,
+# so a window measured over them is wider than it says; `generator_dips` refuses a
+# horizon that could fill the recorder, so reaching this is a bug, not an outcome.
+function _frequency_trace(eng::DetailedEngine)
+    eng.traj.keep_every == 1 || error(
+        "generator_dips: the run's recorder decimated (every $(eng.traj.keep_every) " *
+        "samples kept), so a windowed rate over it would be over a wider window than " *
+        "stated. The horizon check should have refused this run.")
+    s = state_series(eng)
+    f = Matrix{Float64}(undef, length(s.t), length(eng.ids))
+    for (k, id) in enumerate(eng.ids)
+        f[:, k] .= eng.f0 .* (1 .+ getproperty(s, Symbol(:ω_, id)))
+    end
+    return FrequencyTrace(copy(s.t), copy(s.f_coi), f)
 end
 
 # A run's integration over `(t0, t1)`, a failure read off the integrator's own retcode
@@ -193,6 +243,7 @@ function generator_dips(net::NetworkModel, base::ACPowerFlow; t_trip::Real = 1.0
     Δf_coi, Δf_coi_c, Δf_worst, Δf_worst_c, Δf_end, t_stop =
         (fill(NaN, nm) for _ in 1:6)
     Δf_mach, Δf_mach_c = [fill(NaN, nm) for _ in 1:nm], [fill(NaN, nm) for _ in 1:nm]
+    trace, trace_c = [FrequencyTrace() for _ in 1:nm], [FrequencyTrace() for _ in 1:nm]
     (rc, ac), (rf, af) = _DIP_TOLERANCES
     for k in 1:nm
         others = [j for j in 1:nm if j != k]
@@ -205,6 +256,16 @@ function generator_dips(net::NetworkModel, base::ACPowerFlow; t_trip::Real = 1.0
             "so a governor-capped slide never settles and the stopping rule has no time " *
             "constant (m9-context.md D9)."))
         τ = 2 * sum(ma.H[others]) / ΣD
+        # The rate of fall is read off every sample (step 6), so a run must not be able
+        # to fill the recorder: the seed, then one sample per `_DIP_DT` to the horizon.
+        n = 1 + ceil(Int, (tt + horizon * τ) / _DIP_DT)
+        n <= _TRAJ_CAPACITY || throw(ArgumentError(
+            "generator_dips: losing $(ids[k]) could run for " *
+            "$(round(tt + horizon * τ; sigdigits = 4)) s ($horizon time constants of " *
+            "$(round(τ; sigdigits = 4)) s) — " *
+            "$n samples, past the recorder's $(_TRAJ_CAPACITY). The recorder would " *
+            "decimate and the rate of fall would be read over wider windows than stated. " *
+            "Use a shorter horizon."))
         # The fine run decides when to stop; the coarse one covers the same span
         # (through the trip only, where the fine run did not get past it).
         sf, why_f, ef, ts = _dip_run(net, base, ids[k], tt, τ, rf, af; horizon)
@@ -230,14 +291,105 @@ function generator_dips(net::NetworkModel, base::ACPowerFlow; t_trip::Real = 1.0
             Δf_worst_c[k] = Δf_mach_c[k][others[argmax(abs.(Δf_mach_c[k][others]))]]
             Δf_coi[k], Δf_coi_c[k] = ef.nadir - net.f0, ec.nadir - net.f0
             Δf_end[k], t_stop[k] = current_state(ef).f_coi - net.f0, ts
+            trace[k], trace_c[k] = _frequency_trace(ef), _frequency_trace(ec)
         end
     end
     return GeneratorDips(ids, Symbol[b.id for b in net.branches], net.f0, tt, outcome,
                          reason, Δf_coi, Δf_coi_c, Δf_mach, Δf_mach_c, worst, Δf_worst,
-                         Δf_worst_c, Δf_end, t_stop)
+                         Δf_worst_c, Δf_end, t_stop, trace, trace_c)
 end
 
 generator_dips(net::NetworkModel, ac::ACGeneratorOutages; kw...) =
     generator_dips(net, ac.base; kw...)
 generator_dips(net::NetworkModel, s::OutageScreen; kw...) =
     generator_dips(net, s.ac_generators; kw...)
+
+"""
+    GeneratorRates
+
+The rate of fall of every generator outage over one window ([`generator_rates`](@ref),
+M9 step 6), read from a [`GeneratorDips`](@ref)'s runs, in model order.
+
+  - `machines`, `f0`, Hz; `t_trip`, s; `window`, s — the window every rate here is
+    measured over; `outcome` — the runs' own (see `GeneratorDips`).
+  - `rate_coi`, `rate_coi_coarse` — the centre-of-inertia rate, Hz/s, at each
+    tolerance: the largest `|windowed rate|` over every window ending after the trip
+    (those straddling it included — what a relay sees), kept signed (negative when
+    frequency falls). Reported beside the machines', never judged in their place.
+  - `rate_machine`, `rate_machine_coarse` — the same read per machine; `NaN` for the
+    machine lost.
+  - `worst`, `rate_worst`, `rate_worst_coarse` — the surviving machine with the largest
+    `|rate|` at the fine tolerance, and each run's own largest (which may be another
+    machine's).
+
+Every number is `NaN` (and `worst` is `:none`) unless the outcome is `:measured`.
+"""
+struct GeneratorRates
+    machines::Vector{Symbol}
+    f0::Float64
+    t_trip::Float64
+    window::Float64
+    outcome::Vector{Symbol}
+    rate_coi::Vector{Float64}
+    rate_coi_coarse::Vector{Float64}
+    rate_machine::Vector{Vector{Float64}}
+    rate_machine_coarse::Vector{Vector{Float64}}
+    worst::Vector{Symbol}
+    rate_worst::Vector{Float64}
+    rate_worst_coarse::Vector{Float64}
+end
+
+# The largest |windowed rate| over windows ending after the trip, signed. The window is
+# handed over half a sample short (this file's header); `windowed_rocof` divides by the
+# actual span.
+function _largest_rate(t::Vector{Float64}, f::AbstractVector{Float64}, window::Float64,
+                       t_trip::Float64)
+    r = windowed_rocof(t, f; window = window - _DIP_DT / 2)
+    best = NaN
+    for i in eachindex(t)
+        (t[i] > t_trip && !isnan(r[i])) || continue
+        (isnan(best) || abs(r[i]) > abs(best)) && (best = r[i])
+    end
+    isnan(best) && error("generator_rates: no window of $window s ends after the trip " *
+                         "inside the run ($(t[end]) s).")
+    return best
+end
+
+"""
+    generator_rates(dips::GeneratorDips; window) -> GeneratorRates
+
+The rate of fall of every outage in `dips`, over `window` seconds, at both tolerances,
+from the runs' own samples — nothing is integrated again. See
+[`GeneratorRates`](@ref). [`frequency_verdicts`](@ref) calls this with the limit's own
+`rate_window`.
+
+`window` must be a whole number of the runs' 0.01 s output samples, at least one:
+anything else is refused, since a read on that grid could only round it.
+"""
+function generator_rates(d::GeneratorDips; window::Real)
+    w = Float64(window)
+    m = w / _DIP_DT
+    (isfinite(w) && round(m) >= 1 && abs(m - round(m)) <= 1e-9 * m) || throw(ArgumentError(
+        "generator_rates: the window ($window s) must be a whole number of the runs' " *
+        "$(_DIP_DT) s output samples, at least one — a read on that grid would round it."))
+    nm = length(d.machines)
+    rc, rcc, rw, rwc = (fill(NaN, nm) for _ in 1:4)
+    rm, rmc = [fill(NaN, nm) for _ in 1:nm], [fill(NaN, nm) for _ in 1:nm]
+    worst = fill(:none, nm)
+    for k in 1:nm
+        d.outcome[k] === :measured || continue
+        tr, tc = d.trace[k], d.trace_coarse[k]
+        rc[k] = _largest_rate(tr.t, tr.f_coi, w, d.t_trip)
+        rcc[k] = _largest_rate(tc.t, tc.f_coi, w, d.t_trip)
+        others = [j for j in 1:nm if j != k]
+        for j in others
+            rm[k][j] = _largest_rate(tr.t, view(tr.f, :, j), w, d.t_trip)
+            rmc[k][j] = _largest_rate(tc.t, view(tc.f, :, j), w, d.t_trip)
+        end
+        jw = others[argmax(abs.(rm[k][others]))]
+        worst[k], rw[k] = d.machines[jw], rm[k][jw]
+        rwc[k] = rmc[k][others[argmax(abs.(rmc[k][others]))]]
+    end
+    return GeneratorRates(copy(d.machines), d.f0, d.t_trip, w, copy(d.outcome), rc, rcc,
+                          rm, rmc, worst, rw, rwc)
+end

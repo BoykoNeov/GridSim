@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–5 done (2026-10-08/09/10); step 6 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–6 done (2026-10-08/09/10/17); step 7 next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -207,11 +207,25 @@ runs.
       `:solver_failure` / `:stalled`, caught by type, told apart from the voltage refusal
       on the next row; the thrower beneath still raises `NetworkInitError` unchanged.
 
-## Step 6 — the rate of fall (Hurdle 16.7)
+## Step 6 — the rate of fall (Hurdle 16.7) — done 2026-10-17
 
-- [ ] Windowed rate, COI and per machine; verdict names its read.
-- [ ] Closed form at `t⁺`, gap direction predicted first.
-- [ ] Sabotages.
+- [x] Windowed rate, COI and per machine, read from step 5's runs (no new
+      integration): the runs keep their output-grid samples and `generator_rates` applies
+      the window at judgement, so runs and limit cannot disagree on it. **Every surviving
+      machine is judged — the user's choice**, asked before any rate was measured; the
+      verdict names its read (`rate_read = :worst_machine`) and carries the value
+      (`rocof`). One differencer (`windowed_rocof`, half a sample short of the window),
+      checked `===` against a by-index read on every channel at six windows. Refused by
+      name: a window off the 0.01 s grid, a horizon that could fill the recorder, a
+      decimated trace. Both tolerances must agree, as for the dip (D10).
+- [x] Closed form at `t⁺`, gap direction predicted first: **from below at every window,
+      first order** — 9–20 % under at 500 ms, 0.05–0.13 % at 10 ms, gap(20 ms)/gap(10 ms)
+      2.12–2.19; ΣHS from the raw `Machine` fields, and the engine's own instantaneous
+      rate agrees with it to 1e-8. **Not predicted:** the worst machine reads 0–4 % above
+      the COI at 500 ms but up to 52 % above it at 10 ms; and one lossy closed form
+      (mesh G3) is 6.1 % from step 0's lossless value against a predicted 5 % (D10).
+- [x] Sabotages R1–R11 all red; R5 (the half-sample guard) by 2 of 460 reads — the slip
+      is real and rare (D10).
 
 ## Step 7 — the report
 

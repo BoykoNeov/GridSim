@@ -753,3 +753,113 @@ On the report grids with the preset's 0.8 Hz dip: the mesh's G1 fails at both
 tolerances (11.26 Hz constant power, 8.91 Hz default loads); every other measured
 dip passes; case9's three refusals carry no dip verdict. A statement about the invented
 dynamics (D3), not a result.
+
+## D10 — Step 6 measured: the rate of fall (2026-10-17)
+
+**The change.** No new integration: the rate is read from step 5's runs.
+`generator_dips` now keeps each measured run's output-grid samples (`FrequencyTrace`:
+time, COI frequency, every machine's frequency, Hz) at both tolerances, and a new
+`generator_rates(dips; window)` returns a `GeneratorRates` — per outage, the COI rate
+and every machine's, at both tolerances, each the largest `|windowed rate|` over every
+window ending after the trip, kept signed. `frequency_verdicts` judges the rate from
+the runs handed in as `dips =`, over the limit's own `rate_window`, and reports which
+rate it judged (`rate_read = :worst_machine`) and its value (`rocof`, Hz/s). The
+engine is untouched. Predictions first, in
+`docs/evidence/gridsim-m9/step6/predictions.md`, outcomes appended there.
+
+**The rules, and where each came from:**
+
+- **Every surviving machine's rate is judged — the user's choice (2026-10-17)**, asked
+  before any rate was measured: "each machine" (what a generator's own relay sees,
+  the dip's rule) over "the whole-grid average" (what reports quote). The COI rate is
+  in `GeneratorRates`, beside it, never in its place.
+- **The window is applied at judgement, not at the run.** The first design (the
+  advisor's) handed `generator_dips` a `rate_window` and refused runs measured over a
+  different one; keeping the samples instead removes that failure mode — runs and limit
+  cannot disagree — and lets one set of runs serve a window sweep (the closed-form
+  check below sweeps seven). Cost: a few hundred kB per grid.
+- **One differencer.** `windowed_rocof`, handed the window half a sample short so the
+  sample exactly one window back is found whatever the grid's rounding (handed the
+  window itself, `t[i] − w` can round just below a grid point and reach one sample
+  further — a bias that grows as the window shrinks). The divisor stays the actual
+  span. The test reads every channel by index, `m` samples back, and asserts the
+  library's value `===` it at six windows on every measured row.
+- **Refused by name:** a window that is not a whole number of the 0.01 s samples (5 ms
+  would become 10 ms); a horizon whose run could fill the recorder (checked per outage
+  before it runs — the recorder halves its samples when full, which would widen every
+  window silently); and, as a bug guard, a decimated trace. "A limit without a window is
+  refused" was built at step 4 (`FrequencyLimits`); nothing was added there.
+- **Same agreement rule as the dip:** a pass or a fail only where both tolerances say
+  the same; a run that measured nothing passes its own outcome through. The dip's
+  verdict function became one shared `_pair_verdict`.
+
+**Measured** (`step6/rates_table.jl`; constant-power rows carry the closed form
+`−(P_lost + ΔL)·f0/(2ΣHS)`, ΣHS from the raw `Machine` fields):
+
+| outage (lossy) | closed form Hz/s | COI 500 ms | worst 500 ms | COI 1 s | worst 1 s | COI 10 ms | worst 10 ms |
+|---|---|---|---|---|---|---|---|
+| case9 cp G3 | −0.9508 | −0.8611 | G2 −0.8659 | −0.6876 | G1 −0.6926 | −0.9503 | G1 −0.9993 |
+| case9 def G2 | — | −0.7621 | G1 −0.7629 | −0.6085 | G3 −0.6092 | −0.8414 | G3 −0.8470 |
+| case9 def G3 | — | −0.6771 | G2 −0.6802 | −0.5408 | G1 −0.5440 | −0.7484 | G1 −0.7769 |
+| mesh cp G1 | −3.7459 | −3.0009 | G3 −3.0947 | −2.5830 | G3 −2.6301 | −3.7411 | G2 −3.8154 |
+| mesh cp G2 | −0.7899 | −0.6715 | G1 −0.6910 | −0.4923 | G1 −0.4982 | −0.7894 | G3 −1.2022 |
+| mesh cp G3 | −0.4966 | −0.4051 | G1 −0.4203 | −0.2656 | G1 −0.2737 | −0.4962 | G2 −0.7334 |
+| mesh def G1 | — | −2.5531 | G3 −2.6549 | −2.1249 | G3 −2.1709 | −3.2165 | G2 −3.3655 |
+| mesh def G2 | — | −0.5157 | G1 −0.5275 | −0.3720 | G1 −0.3753 | −0.6140 | G3 −0.8788 |
+| mesh def G3 | — | −0.2213 | G1 −0.2296 | −0.1454 | G1 −0.1502 | −0.2726 | G2 −0.4113 |
+
+case9's G1 (both load models) and constant-power G2 are refused at the trip and carry
+`:refused_at_trip`, as step 5 found.
+
+**Found, and against the predictions:**
+
+1. **The closed form is approached from below, first order, as predicted** — the gap at
+   500 ms is 9–20 %, at 10 ms 0.05–0.13 %, and gap(20 ms)/gap(10 ms) = 2.12–2.19. Higher
+   up the sweep the ratio exceeds 2 (2.7–2.8 from 200 to 100 ms): the governors' term,
+   which starts with zero slope, is second order and dominates long windows. The stated
+   risk — the losses swinging with the inter-machine oscillation and a later window
+   reading larger — did not happen on any row.
+2. **The per-machine read barely matters at 500 ms and matters a great deal at short
+   windows.** Worst over COI: 1.001–1.040 at 500 ms, but up to 1.52 at 10 ms (mesh G2/G3,
+   both load models) — the inter-machine swing, which a long window averages out. Which
+   machine is worst changes with the window on most rows.
+3. **The lossy closed form against step 0's lossless RoCoF₀: one row past the predicted
+   5 %** — mesh G3 +6.1 % (0.497 against 0.468 Hz/s); the others +1.7 to +4.1 %. Both the
+   losses and step 0's 0.1 s read push the same way.
+4. **The engine's instantaneous rate agrees with the raw-field closed form to 1e-8** on
+   all four constant-power rows — the check step 1's t⁺ test could not make, because it
+   takes `H` from `machine_arrays`, which the H-base sabotage moves on both sides.
+
+On the report grids, an illustration (no rate limit is sourced, D3): at 1 Hz/s over
+500 ms the mesh's G1 fails on both load models and every other measured row passes; at
+2.5 Hz/s over 1 s (NC HVDC's numbers, which are for HVDC systems) the mesh's G1 fails at
+constant power (2.63 Hz/s) and passes on default loads (2.17). A statement about the
+invented dynamics, not a result.
+
+**The gate.** The engine is untouched. The five captures at HEAD (`65e21b1`) before the
+first edit are byte-identical to step 2's committed set (`step2/*-STEP2.txt`), and so are
+the five taken after the change.
+
+**Sabotages** (`docs/evidence/gridsim-m9/step6/`: `mutate.py`, per-testset tallies in
+`results.txt`; each predicted in `predictions.md` before any ran):
+
+| | Sabotage | Red |
+|---|---|---|
+| R1 | the verdict reads 500 ms whatever the limit says | 2 — the 1 s/500 ms window control, and the 5 ms refusal through the verdict (predicted 1) |
+| R2 | `H` left on the machine base | 42 + 3 errors — t⁺ (10, the raw-field formula) and the weighted-mean identity (8); step 5's table moves |
+| R3 | the lost machine's inertia kept in the COI weights | 39 — t⁺ (12), the identity (9), step 5's COI dips |
+| R4 | `abs` dropped in the pair verdict | 8 — rate (4) and dip (4) |
+| R5 | the half-sample guard dropped | **2 of 460 by-index reads** — one machine channel of the mesh's G1 outage (a rate near −3.0 Hz/s) at one window, both tolerances, off by 3e-6 Hz/s: the slip is real and rare (predicted "uncertain, may be green") |
+| R6 | the COI rate judged in place of the machines | 11 |
+| R7 | only the fine run judged | 2 — rate and dip |
+| R8 | a run that measured nothing passes | 2 — rate and dip |
+| R9 | a window off the grid accepted | 1 — the 15 ms refusal (5 ms still refused: it rounds to zero samples, as predicted) |
+| R10 | the horizon check dropped | 1 |
+| R11 | the decimation guard dropped | 1 |
+
+**5. The half-sample guard is load-bearing, by a hair (R5).** Without it, a read that
+lands `t[i] − w` a few ulps under a grid point reaches one sample further; across six
+windows, nine outages, three or four channels and two tolerances that happened on
+exactly one channel at one window, moving the largest rate by 1e-6 of itself. Invisible
+to any tolerance a test would choose; visible to the `===` read by index, which is why
+that read is bit-for-bit.

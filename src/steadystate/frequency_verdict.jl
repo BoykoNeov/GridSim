@@ -12,12 +12,13 @@
 #
 # ONE PART PER CRITERION. The settled value is judged here, per screen, on that
 # screen's own Δω (D0 16.1: neither screen is the reference). The dip and the rate need
-# a dynamic run: the dip is judged from `generator_dips`' runs when the caller hands
-# them in (`dips =`, M9 step 5), at BOTH of their tolerances, and counts only where the
-# two verdicts agree (the user's choice, m9-context.md D9). Without the runs, and for
-# the rate until step 6, a limit given is reported `:not_run`, never `:pass`, and the
-# settled value is never read in their place — not even where a capped grid's dip
-# happens to equal it.
+# a dynamic run: both are judged from `generator_dips`' runs when the caller hands
+# them in (`dips =`, M9 steps 5–6), at BOTH of their tolerances, and count only where
+# the two verdicts agree (the user's choice, m9-context.md D9). The rate is every
+# surviving machine's, over the limit's own window (the user's choice, D10). Without
+# the runs a limit given is reported `:not_run`, never `:pass`, and the settled value
+# is never read in their place — not even where a capped grid's dip happens to equal
+# it.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Optional limits are `Union{Nothing,Float64}`, not a sentinel: a NaN sentinel would
@@ -35,10 +36,12 @@ The frequency limits an outage is judged against, each optional and each a
 the verdict converts with the model's own `f0`.
 
   - `settled` — Hz, the largest allowed settled deviation, either direction.
-  - `dip` — Hz, the largest allowed instantaneous deviation (judged from step 5's
-    dynamic run; until then reported `:not_run`).
+  - `dip` — Hz, the largest allowed instantaneous deviation (judged from
+    [`generator_dips`](@ref)' runs; without them reported `:not_run`).
   - `rate` — Hz/s, the largest allowed rate of change, **with** `rate_window`, s, the
-    time over which it is measured. A rate without a window is refused: the sources
+    time over which it is measured (judged from the same runs, every surviving
+    machine's windowed rate; the window must then be a whole number of the runs'
+    0.01 s samples). A rate without a window is refused: the sources
     disagree on the window and a RoCoF without one is not a number (`m9-context.md`
     D0 16.7, D3). So is a window with no rate.
 
@@ -129,8 +132,17 @@ order.
     `:no_limit` where none is, `:not_applicable` on line rows.
   - `Δf_dip` — the fine run's worst surviving machine, Hz, signed; `NaN` where the runs
     measured nothing or were not handed in.
-  - `rate` — `:not_run` where a limit is given (step 6), `:no_limit` where none is,
-    `:not_applicable` on line rows.
+  - `rate` — judged like `dip`, from the same runs (M9 step 6), on every surviving
+    machine's windowed rate of change over `limits.rate_window`
+    ([`generator_rates`](@ref)): `:pass`, `:fail`, `:tolerance_dependent`, the runs'
+    own outcome where they measured nothing, `:not_run`, `:no_limit`, or
+    `:not_applicable`.
+  - `rate_read` — which rate `rate` judges: `:worst_machine`, the surviving machine
+    whose rate is largest (the user's choice, `m9-context.md` D10). The centre-of-inertia
+    rate is in [`generator_rates`](@ref), beside it.
+  - `rocof` — the fine run's worst surviving machine's rate, Hz/s, signed (negative
+    when frequency falls); `NaN` where the runs measured nothing, were not handed in,
+    or no rate limit was given.
 
 A line row that [`lone_source_bridges`](@ref) maps to a machine carries that
 machine's verdict, as `OutageScreen` carries its outcome.
@@ -148,7 +160,13 @@ struct FrequencyVerdicts
     dip::Vector{Symbol}
     Δf_dip::Vector{Float64}
     rate::Vector{Symbol}
+    rate_read::Symbol
+    rocof::Vector{Float64}
 end
+
+# What `rate` judges (D10). One read for every row, named in the result so a report
+# cannot quote it as the centre-of-inertia rate.
+const _RATE_READ = :worst_machine
 
 # The outcomes under which each screen stands behind its settled Δω. DC solves the
 # shares exactly whenever it shares; AC's `:voltage` and `:overload` are solved operating
@@ -176,16 +194,15 @@ function _settled_pair(dc::Symbol, ac::Symbol)
     return dc === :fail ? :dc_only_fails : :ac_only_fails
 end
 
-_pending(lim::_OptHz) = lim === nothing ? :no_limit : :not_run
-
-# The dip verdict of outage `k`, from both tolerances' runs (D9): a value only where
-# the runs measured, and a pass or a fail only where the two runs say the same.
-function _dip_verdict(d::GeneratorDips, k::Int, lim::Float64)
-    d.outcome[k] === :measured || return d.outcome[k]
-    (isfinite(d.Δf_worst[k]) && isfinite(d.Δf_worst_coarse[k])) || error(
-        "frequency_verdicts: the dip runs report `:measured` for $(d.machines[k]) " *
-        "with no value ($(d.Δf_worst[k]), $(d.Δf_worst_coarse[k]) Hz).")
-    f, c = abs(d.Δf_worst[k]) <= lim, abs(d.Δf_worst_coarse[k]) <= lim
+# The dip or rate verdict of outage `k`, from both tolerances' runs (D9): a value only
+# where the runs measured, and a pass or a fail only where the two runs say the same.
+function _pair_verdict(outcome::Symbol, fine::Float64, coarse::Float64, lim::Float64,
+                       what, who)
+    outcome === :measured || return outcome
+    (isfinite(fine) && isfinite(coarse)) || error(
+        "frequency_verdicts: the dip runs report `:measured` for $who with no $what " *
+        "($fine, $coarse).")
+    f, c = abs(fine) <= lim, abs(coarse) <= lim
     return f == c ? (f ? :pass : :fail) : :tolerance_dependent
 end
 
@@ -203,7 +220,19 @@ function _dip_column(net::NetworkModel, ids::Vector{Symbol}, lim::_OptHz,
          [dips.outcome[k] === :measured ? dips.Δf_worst[k] : NaN for k in 1:nm]
     lim === nothing && return fill(:no_limit, nm), Δf
     dips === nothing && return fill(:not_run, nm), Δf
-    return [_dip_verdict(dips, k, lim) for k in 1:nm], Δf
+    return [_pair_verdict(dips.outcome[k], dips.Δf_worst[k], dips.Δf_worst_coarse[k],
+                          lim, "dip", dips.machines[k]) for k in 1:nm], Δf
+end
+
+# The rate column (M9 step 6), over the limit's own window. Called after `_dip_column`,
+# which has already refused another model's runs.
+function _rate_column(nm::Int, limits::FrequencyLimits, dips::Union{Nothing,GeneratorDips})
+    limits.rate === nothing && return fill(:no_limit, nm), fill(NaN, nm)
+    dips === nothing && return fill(:not_run, nm), fill(NaN, nm)
+    r = generator_rates(dips; window = limits.rate_window)
+    return [_pair_verdict(r.outcome[k], r.rate_worst[k], r.rate_worst_coarse[k],
+                          limits.rate, "rate", r.machines[k]) for k in 1:nm],
+           copy(r.rate_worst)
 end
 
 """
@@ -224,8 +253,9 @@ another model — the `OutageScreen` by its branch and machine ids, the comparis
 what it carries (machine ids, and one entry per branch in each solved outage's miss).
 
 The limits are required; [`continental_europe_limits`](@ref) is the one preset. The
-dip is judged only from runs handed in as `dips` ([`generator_dips`](@ref), of the
-same model — refused otherwise); the rate is not judged yet. See
+dip and the rate are judged only from runs handed in as `dips`
+([`generator_dips`](@ref), of the same model — refused otherwise), the rate over the
+limit's own window on every surviving machine ([`generator_rates`](@ref)). See
 [`FrequencyVerdicts`](@ref).
 """
 function frequency_verdicts(net::NetworkModel, gens::GeneratorScreenComparison,
@@ -248,9 +278,10 @@ function frequency_verdicts(net::NetworkModel, gens::GeneratorScreenComparison,
     settled_dc = [_settled_verdict(Δf_dc[k], has_dc[k], limits.settled, "DC") for k in 1:nm]
     settled_ac = [_settled_verdict(Δf_ac[k], has_ac[k], limits.settled, "AC") for k in 1:nm]
     dip, Δf_dip = _dip_column(net, ids, limits.dip, dips)
+    rate, rocof = _rate_column(nm, limits, dips)
     return FrequencyVerdicts(fill(:machine, nm), ids, limits, net.f0, Δf_dc, Δf_ac,
                              settled_dc, settled_ac, _settled_pair.(settled_dc, settled_ac),
-                             dip, Δf_dip, fill(_pending(limits.rate), nm))
+                             dip, Δf_dip, rate, _RATE_READ, rocof)
 end
 
 function frequency_verdicts(net::NetworkModel, s::OutageScreen, limits::FrequencyLimits;
@@ -269,5 +300,6 @@ function frequency_verdicts(net::NetworkModel, s::OutageScreen, limits::Frequenc
     pick(v::Vector{Symbol}) = [k == 0 ? :not_applicable : v[k] for k in src]
     return FrequencyVerdicts(copy(s.kind), copy(s.id), limits, net.f0, pick(g.Δf_dc),
                              pick(g.Δf_ac), pick(g.settled_dc), pick(g.settled_ac),
-                             pick(g.settled), pick(g.dip), pick(g.Δf_dip), pick(g.rate))
+                             pick(g.settled), pick(g.dip), pick(g.Δf_dip), pick(g.rate),
+                             g.rate_read, pick(g.rocof))
 end

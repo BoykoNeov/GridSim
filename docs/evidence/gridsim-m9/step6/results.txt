@@ -1,0 +1,135 @@
+# M9 step 6 sabotages, focused run (steps 4-6 testsets, 927 checks), 2026-10-17.
+# Per-testset tallies under each sabotage (a red one has a Fail or Error column); the m9r line is the total.
+### R1_window_ignored
+m9r                                                                                 |  925     2    927  1m35.3s
+    the traces are the runs' own samples, on the output grid, never decimated       |  113          113     0.8s
+    the windows: the library's read is the by-index read, bit for bit               |  460          460     0.2s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.6s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   48           48     0.8s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   10     2     12     1.8s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.3s
+### R2_H_machine_base
+m9r                                                                                  |  743    42      3    788  1m22.6s
+    step 0's lossless table, reproduced from the new code                            |   24    18            42     1.4s
+    the stopping rule leaves at most its shortfall on the slowest case               |    6     1             7     0.1s
+    every machine judged: the worst is not the average                               |    4     1             5     0.4s
+    refused at the trip: every outage run, and the mismatch with the AC screen       |   12     1            13     0.3s
+    a solver failure is an outcome, never a verdict (Hurdle 16.5)                    |    8                   8    11.3s
+    the verdict counts only where both tolerances agree                              |    3     3      3      9     0.8s
+    the OutageScreen form: the screen's own base, and lone-source lines              |   11                  11     1.6s
+    the per-machine extremes: exact over the grid, never shallower than the recorder |    6                   6     1.6s
+    refused by name                                                                  |    3                   3     0.9s
+    the traces are the runs' own samples, on the output grid, never decimated        |   91                  91     1.0s
+    the windows: the library's read is the by-index read, bit for bit                |  364                 364     1.1s
+    t⁺: the windowed COI rate approaches the closed form from below                  |   24    10            34     0.8s
+    every machine judged: the COI rate is the machines' inertia-weighted mean        |   30     8            38     1.1s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing  |   12                  12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate              |   11                  11     0.2s
+### R3_lost_inertia_kept
+m9r                                                                                  |  888    39    927  1m40.3s
+    step 0's lossless table, reproduced from the new code                            |   25    17     42     2.0s
+    the stopping rule leaves at most its shortfall on the slowest case               |    6     1      7     0.4s
+    every machine judged: the worst is not the average                               |    5            5     0.7s
+    refused at the trip: every outage run, and the mismatch with the AC screen       |   13           13     0.5s
+    a solver failure is an outcome, never a verdict (Hurdle 16.5)                    |    8            8    17.9s
+    the verdict counts only where both tolerances agree                              |    9            9     0.1s
+    the OutageScreen form: the screen's own base, and lone-source lines              |   11           11     1.6s
+    the per-machine extremes: exact over the grid, never shallower than the recorder |    6            6     0.9s
+    refused by name                                                                  |    3            3     0.3s
+    the traces are the runs' own samples, on the output grid, never decimated        |  113          113     0.8s
+    the windows: the library's read is the by-index read, bit for bit                |  460          460     0.5s
+    t⁺: the windowed COI rate approaches the closed form from below                  |   33    12     45     0.6s
+    every machine judged: the COI rate is the machines' inertia-weighted mean        |   39     9     48     0.7s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing  |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate              |   11           11     0.2s
+### R4_no_abs
+m9r                                                                                  |  919     8    927  1m40.0s
+    step 0's lossless table, reproduced from the new code                            |   42           42     0.2s
+    the stopping rule leaves at most its shortfall on the slowest case               |    7            7     0.1s
+    every machine judged: the worst is not the average                               |    4     1      5     1.7s
+    refused at the trip: every outage run, and the mismatch with the AC screen       |   13           13     0.3s
+    a solver failure is an outcome, never a verdict (Hurdle 16.5)                    |    8            8    11.4s
+    the verdict counts only where both tolerances agree                              |    6     3      9     0.0s
+    the OutageScreen form: the screen's own base, and lone-source lines              |   11           11     0.8s
+    the per-machine extremes: exact over the grid, never shallower than the recorder |    6            6     0.4s
+    refused by name                                                                  |    3            3     0.2s
+    the traces are the runs' own samples, on the output grid, never decimated        |  113          113     0.7s
+    the windows: the library's read is the by-index read, bit for bit                |  460          460     0.5s
+    t⁺: the windowed COI rate approaches the closed form from below                  |   45           45     0.5s
+    every machine judged: the COI rate is the machines' inertia-weighted mean        |   47     1     48     0.7s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing  |    9     3     12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate              |   11           11     0.2s
+### R5_no_half_sample
+m9r                                                                                 |  925     2    927  1m28.2s
+    the traces are the runs' own samples, on the output grid, never decimated       |  113          113     0.7s
+    the windows: the library's read is the by-index read, bit for bit               |  458     2    460     1.6s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.6s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   48           48     0.7s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.2s
+### R6_coi_for_machines
+m9r                                                                                 |  916    11    927  1m16.2s
+    the traces are the runs' own samples, on the output grid, never decimated       |  113          113     0.7s
+    the windows: the library's read is the by-index read, bit for bit               |  460          460     0.5s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.5s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   37    11     48     1.8s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.2s
+### R7_fine_only
+m9r                                                                                  |  925     2    927  1m13.9s
+    step 0's lossless table, reproduced from the new code                            |   42           42     0.2s
+    the stopping rule leaves at most its shortfall on the slowest case               |    7            7     0.1s
+    every machine judged: the worst is not the average                               |    5            5     0.4s
+    refused at the trip: every outage run, and the mismatch with the AC screen       |   13           13     0.2s
+    a solver failure is an outcome, never a verdict (Hurdle 16.5)                    |    8            8     9.2s
+    the verdict counts only where both tolerances agree                              |    8     1      9     1.1s
+    the OutageScreen form: the screen's own base, and lone-source lines              |   11           11     0.7s
+    the per-machine extremes: exact over the grid, never shallower than the recorder |    6            6     0.4s
+    refused by name                                                                  |    3            3     0.2s
+    the traces are the runs' own samples, on the output grid, never decimated        |  113          113     0.7s
+    the windows: the library's read is the by-index read, bit for bit                |  460          460     0.5s
+    t⁺: the windowed COI rate approaches the closed form from below                  |   45           45     0.9s
+    every machine judged: the COI rate is the machines' inertia-weighted mean        |   48           48     1.1s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing  |   11     1     12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate              |   11           11     0.2s
+### R8_nothing_passes
+m9r                                                                                  |  925     2    927  1m31.7s
+    step 0's lossless table, reproduced from the new code                            |   42           42     0.3s
+    the stopping rule leaves at most its shortfall on the slowest case               |    7            7     0.2s
+    every machine judged: the worst is not the average                               |    5            5     0.5s
+    refused at the trip: every outage run, and the mismatch with the AC screen       |   12     1     13     1.5s
+    a solver failure is an outcome, never a verdict (Hurdle 16.5)                    |    8            8    10.9s
+    the verdict counts only where both tolerances agree                              |    9            9     0.0s
+    the OutageScreen form: the screen's own base, and lone-source lines              |   11           11     1.1s
+    the per-machine extremes: exact over the grid, never shallower than the recorder |    6            6     0.4s
+    refused by name                                                                  |    3            3     0.3s
+    the traces are the runs' own samples, on the output grid, never decimated        |  113          113     0.7s
+    the windows: the library's read is the by-index read, bit for bit                |  460          460     0.5s
+    t⁺: the windowed COI rate approaches the closed form from below                  |   45           45     0.7s
+    every machine judged: the COI rate is the machines' inertia-weighted mean        |   48           48     1.0s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing  |   11     1     12     0.2s
+    the OutageScreen form: lone-source lines carry their machine's rate              |   11           11     0.3s
+### R9_offgrid_window
+m9r                                                                                 |  926     1    927  1m35.0s
+    the traces are the runs' own samples, on the output grid, never decimated       |  113          113     1.8s
+    the windows: the library's read is the by-index read, bit for bit               |  459     1    460     2.5s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.7s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   48           48     0.9s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.2s
+### R10_no_horizon_check
+m9r                                                                                 |  926     1    927  1m33.6s
+    the traces are the runs' own samples, on the output grid, never decimated       |  112     1    113     6.2s
+    the windows: the library's read is the by-index read, bit for bit               |  460          460     0.6s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.6s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   48           48     0.7s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.2s
+### R11_no_decimation_guard
+m9r                                                                                 |  926     1    927  1m23.9s
+    the traces are the runs' own samples, on the output grid, never decimated       |  112     1    113     2.8s
+    the windows: the library's read is the by-index read, bit for bit               |  460          460     0.6s
+    t⁺: the windowed COI rate approaches the closed form from below                 |   45           45     0.5s
+    every machine judged: the COI rate is the machines' inertia-weighted mean       |   48           48     0.7s
+    the verdict: the limit's own window, both tolerances, never a pass from nothing |   12           12     0.1s
+    the OutageScreen form: lone-source lines carry their machine's rate             |   11           11     0.2s

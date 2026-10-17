@@ -1,0 +1,92 @@
+== case9 constant_power
+  G1: refused_at_trip (voltage)  verdicts refused_at_trip / refused_at_trip
+  G2: refused_at_trip (voltage)  verdicts refused_at_trip / refused_at_trip
+  G3: closed form -0.950846 Hz/s
+    w= 1.00 s  coi -0.687574 (coarse -0.687574)  worst G1 -0.692614 (coarse -0.692614)  worst/coi 1.0073  gap 2.633e-01 (27.688 %)
+    w= 0.50 s  coi -0.861134 (coarse -0.861134)  worst G2 -0.865899 (coarse -0.865899)  worst/coi 1.0055  gap 8.971e-02 (9.435 %)
+    w= 0.20 s  coi -0.929644 (coarse -0.929644)  worst G1 -0.963050 (coarse -0.963050)  worst/coi 1.0359  gap 2.120e-02 (2.230 %)
+    w= 0.10 s  coi -0.943072 (coarse -0.943073)  worst G1 -0.987725 (coarse -0.987725)  worst/coi 1.0473  gap 7.773e-03 (0.817 %)
+    w= 0.04 s  coi -0.948452 (coarse -0.948452)  worst G1 -0.996687 (coarse -0.996687)  worst/coi 1.0509  gap 2.394e-03 (0.252 %)
+    w= 0.02 s  coi -0.949771 (coarse -0.949771)  worst G1 -0.998560 (coarse -0.998560)  worst/coi 1.0514  gap 1.075e-03 (0.113 %)
+    w= 0.01 s  coi -0.950339 (coarse -0.950339)  worst G1 -0.999280 (coarse -0.999280)  worst/coi 1.0515  gap 5.065e-04 (0.053 %)
+    gap ratios (w / w/2-ish): 2.935 4.231 2.728 3.247 2.228 2.122
+    verdict 1 Hz/s over 0.5 s: pass (-0.8658991482071343);  2.5 Hz/s over 1 s: pass (-0.6926144501940499)
+== case9 default
+  G1: refused_at_trip (voltage)  verdicts refused_at_trip / refused_at_trip
+  G2: closed form — Hz/s
+    w= 1.00 s  coi -0.608542 (coarse -0.608542)  worst G3 -0.609188 (coarse -0.609188)  worst/coi 1.0011
+    w= 0.50 s  coi -0.762073 (coarse -0.762074)  worst G1 -0.762923 (coarse -0.762924)  worst/coi 1.0011
+    w= 0.20 s  coi -0.822974 (coarse -0.822974)  worst G3 -0.826707 (coarse -0.826707)  worst/coi 1.0045
+    w= 0.10 s  coi -0.834928 (coarse -0.834928)  worst G3 -0.840023 (coarse -0.840023)  worst/coi 1.0061
+    w= 0.04 s  coi -0.839710 (coarse -0.839710)  worst G3 -0.845241 (coarse -0.845241)  worst/coi 1.0066
+    w= 0.02 s  coi -0.840881 (coarse -0.840881)  worst G3 -0.846479 (coarse -0.846479)  worst/coi 1.0067
+    w= 0.01 s  coi -0.841385 (coarse -0.841385)  worst G3 -0.847001 (coarse -0.847001)  worst/coi 1.0067
+    verdict 1 Hz/s over 0.5 s: pass (-0.7629232204376706);  2.5 Hz/s over 1 s: pass (-0.6091879917226564)
+  G3: closed form — Hz/s
+    w= 1.00 s  coi -0.540834 (coarse -0.540834)  worst G1 -0.544029 (coarse -0.544028)  worst/coi 1.0059
+    w= 0.50 s  coi -0.677087 (coarse -0.677087)  worst G2 -0.680248 (coarse -0.680249)  worst/coi 1.0047
+    w= 0.20 s  coi -0.731776 (coarse -0.731776)  worst G1 -0.750934 (coarse -0.750934)  worst/coi 1.0262
+    w= 0.10 s  coi -0.742564 (coarse -0.742564)  worst G1 -0.768528 (coarse -0.768528)  worst/coi 1.0350
+    w= 0.04 s  coi -0.746866 (coarse -0.746866)  worst G1 -0.775005 (coarse -0.775005)  worst/coi 1.0377
+    w= 0.02 s  coi -0.747915 (coarse -0.747915)  worst G1 -0.776389 (coarse -0.776389)  worst/coi 1.0381
+    w= 0.01 s  coi -0.748365 (coarse -0.748365)  worst G1 -0.776931 (coarse -0.776931)  worst/coi 1.0382
+    verdict 1 Hz/s over 0.5 s: pass (-0.6802483843134439);  2.5 Hz/s over 1 s: pass (-0.5440287303367128)
+== mesh constant_power
+  G1: closed form -3.745864 Hz/s
+    w= 1.00 s  coi -2.582961 (coarse -2.582960)  worst G3 -2.630116 (coarse -2.630115)  worst/coi 1.0183  gap 1.163e+00 (31.045 %)
+    w= 0.50 s  coi -3.000947 (coarse -3.000947)  worst G3 -3.094744 (coarse -3.094744)  worst/coi 1.0313  gap 7.449e-01 (19.886 %)
+    w= 0.20 s  coi -3.523774 (coarse -3.523774)  worst G3 -3.525212 (coarse -3.525212)  worst/coi 1.0004  gap 2.221e-01 (5.929 %)
+    w= 0.10 s  coi -3.665526 (coarse -3.665526)  worst G2 -3.714852 (coarse -3.714852)  worst/coi 1.0135  gap 8.034e-02 (2.145 %)
+    w= 0.04 s  coi -3.722150 (coarse -3.722150)  worst G2 -3.791775 (coarse -3.791775)  worst/coi 1.0187  gap 2.371e-02 (0.633 %)
+    w= 0.02 s  coi -3.735499 (coarse -3.735499)  worst G2 -3.808700 (coarse -3.808700)  worst/coi 1.0196  gap 1.037e-02 (0.277 %)
+    w= 0.01 s  coi -3.741062 (coarse -3.741062)  worst G2 -3.815355 (coarse -3.815355)  worst/coi 1.0199  gap 4.801e-03 (0.128 %)
+    gap ratios (w / w/2-ish): 1.561 3.354 2.764 3.388 2.288 2.159
+    verdict 1 Hz/s over 0.5 s: fail (-3.094744230438181);  2.5 Hz/s over 1 s: fail (-2.6301157532765913)
+  G2: closed form -0.789944 Hz/s
+    w= 1.00 s  coi -0.492347 (coarse -0.492347)  worst G1 -0.498239 (coarse -0.498238)  worst/coi 1.0120  gap 2.976e-01 (37.673 %)
+    w= 0.50 s  coi -0.671495 (coarse -0.671495)  worst G1 -0.691025 (coarse -0.691024)  worst/coi 1.0291  gap 1.184e-01 (14.995 %)
+    w= 0.20 s  coi -0.762287 (coarse -0.762287)  worst G3 -0.931762 (coarse -0.931760)  worst/coi 1.2223  gap 2.766e-02 (3.501 %)
+    w= 0.10 s  coi -0.780054 (coarse -0.780054)  worst G3 -1.118235 (coarse -1.118235)  worst/coi 1.4335  gap 9.890e-03 (1.252 %)
+    w= 0.04 s  coi -0.787025 (coarse -0.787025)  worst G3 -1.186772 (coarse -1.186773)  worst/coi 1.5079  gap 2.920e-03 (0.370 %)
+    w= 0.02 s  coi -0.788666 (coarse -0.788666)  worst G3 -1.198584 (coarse -1.198584)  worst/coi 1.5198  gap 1.278e-03 (0.162 %)
+    w= 0.01 s  coi -0.789352 (coarse -0.789352)  worst G3 -1.202209 (coarse -1.202209)  worst/coi 1.5230  gap 5.925e-04 (0.075 %)
+    gap ratios (w / w/2-ish): 2.512 4.283 2.796 3.388 2.285 2.157
+    verdict 1 Hz/s over 0.5 s: pass (-0.6910253427606676);  2.5 Hz/s over 1 s: pass (-0.4982386099374807)
+  G3: closed form -0.496636 Hz/s
+    w= 1.00 s  coi -0.265593 (coarse -0.265593)  worst G1 -0.273665 (coarse -0.273662)  worst/coi 1.0304  gap 2.310e-01 (46.522 %)
+    w= 0.50 s  coi -0.405115 (coarse -0.405115)  worst G1 -0.420310 (coarse -0.420309)  worst/coi 1.0375  gap 9.152e-02 (18.428 %)
+    w= 0.20 s  coi -0.473635 (coarse -0.473635)  worst G2 -0.555213 (coarse -0.555212)  worst/coi 1.1722  gap 2.300e-02 (4.631 %)
+    w= 0.10 s  coi -0.488494 (coarse -0.488494)  worst G2 -0.676886 (coarse -0.676886)  worst/coi 1.3857  gap 8.142e-03 (1.639 %)
+    w= 0.04 s  coi -0.494324 (coarse -0.494324)  worst G2 -0.722838 (coarse -0.722839)  worst/coi 1.4623  gap 2.312e-03 (0.466 %)
+    w= 0.02 s  coi -0.495649 (coarse -0.495649)  worst G2 -0.730872 (coarse -0.730873)  worst/coi 1.4746  gap 9.866e-04 (0.199 %)
+    w= 0.01 s  coi -0.496186 (coarse -0.496186)  worst G2 -0.733363 (coarse -0.733363)  worst/coi 1.4780  gap 4.499e-04 (0.091 %)
+    gap ratios (w / w/2-ish): 2.524 3.979 2.825 3.522 2.343 2.193
+    verdict 1 Hz/s over 0.5 s: pass (-0.42030996329852144);  2.5 Hz/s over 1 s: pass (-0.2736645751296365)
+== mesh default
+  G1: closed form — Hz/s
+    w= 1.00 s  coi -2.124850 (coarse -2.124846)  worst G3 -2.170861 (coarse -2.170857)  worst/coi 1.0217
+    w= 0.50 s  coi -2.553109 (coarse -2.553109)  worst G3 -2.654924 (coarse -2.654922)  worst/coi 1.0399
+    w= 0.20 s  coi -3.031130 (coarse -3.031130)  worst G2 -3.059414 (coarse -3.059414)  worst/coi 1.0093
+    w= 0.10 s  coi -3.152014 (coarse -3.152014)  worst G2 -3.262165 (coarse -3.262165)  worst/coi 1.0349
+    w= 0.04 s  coi -3.200274 (coarse -3.200274)  worst G2 -3.342337 (coarse -3.342337)  worst/coi 1.0444
+    w= 0.02 s  coi -3.211692 (coarse -3.211692)  worst G2 -3.359154 (coarse -3.359154)  worst/coi 1.0459
+    w= 0.01 s  coi -3.216465 (coarse -3.216465)  worst G2 -3.365502 (coarse -3.365503)  worst/coi 1.0463
+    verdict 1 Hz/s over 0.5 s: fail (-2.6549236477238765);  2.5 Hz/s over 1 s: pass (-2.170861189189324)
+  G2: closed form — Hz/s
+    w= 1.00 s  coi -0.372002 (coarse -0.372002)  worst G1 -0.375266 (coarse -0.375265)  worst/coi 1.0088
+    w= 0.50 s  coi -0.515655 (coarse -0.515655)  worst G1 -0.527464 (coarse -0.527462)  worst/coi 1.0229
+    w= 0.20 s  coi -0.589384 (coarse -0.589384)  worst G3 -0.693771 (coarse -0.693770)  worst/coi 1.1771
+    w= 0.10 s  coi -0.605788 (coarse -0.605788)  worst G3 -0.821032 (coarse -0.821032)  worst/coi 1.3553
+    w= 0.04 s  coi -0.612067 (coarse -0.612067)  worst G3 -0.868078 (coarse -0.868078)  worst/coi 1.4183
+    w= 0.02 s  coi -0.613464 (coarse -0.613464)  worst G3 -0.876253 (coarse -0.876253)  worst/coi 1.4284
+    w= 0.01 s  coi -0.614024 (coarse -0.614024)  worst G3 -0.878788 (coarse -0.878788)  worst/coi 1.4312
+    verdict 1 Hz/s over 0.5 s: pass (-0.5274635814299842);  2.5 Hz/s over 1 s: pass (-0.3752663667807994)
+  G3: closed form — Hz/s
+    w= 1.00 s  coi -0.145439 (coarse -0.145440)  worst G1 -0.150152 (coarse -0.150150)  worst/coi 1.0324
+    w= 0.50 s  coi -0.221266 (coarse -0.221267)  worst G1 -0.229628 (coarse -0.229627)  worst/coi 1.0378
+    w= 0.20 s  coi -0.259261 (coarse -0.259261)  worst G2 -0.306156 (coarse -0.306155)  worst/coi 1.1809
+    w= 0.10 s  coi -0.268071 (coarse -0.268071)  worst G2 -0.377987 (coarse -0.377987)  worst/coi 1.4100
+    w= 0.04 s  coi -0.271510 (coarse -0.271510)  worst G2 -0.405137 (coarse -0.405138)  worst/coi 1.4922
+    w= 0.02 s  coi -0.272276 (coarse -0.272276)  worst G2 -0.409856 (coarse -0.409856)  worst/coi 1.5053
+    w= 0.01 s  coi -0.272582 (coarse -0.272582)  worst G2 -0.411307 (coarse -0.411307)  worst/coi 1.5089
+    verdict 1 Hz/s over 0.5 s: pass (-0.22962758276968032);  2.5 Hz/s over 1 s: pass (-0.15015191346815726)
