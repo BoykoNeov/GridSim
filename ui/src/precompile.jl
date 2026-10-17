@@ -75,6 +75,10 @@ using PrecompileTools
                 # window measured 57 s before it was here.
                 low_inertia_render(; path = tmp, T = 2.0)
 
+                # The frequency-screen window (M9 step 7): the report's four grids, each
+                # with its six dynamic runs, the overview and both trace panels.
+                frequency_screen_render(; path = tmp)
+
                 rm(tmp; force = true)
             catch err
                 @warn "GridSimUI precompile workload skipped" exception = (err, catch_backtrace())

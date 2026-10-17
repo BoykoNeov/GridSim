@@ -254,6 +254,8 @@ function main()
         print_table("$name — $loads loads", net, outage_screen(net))
     end
     print_claims()
+    print_frequency()
+    print_frequency_claims()
 end
 
 # Written AFTER the four tables were read, each asserted in `test/m8_outage_screen.jl`.
@@ -292,6 +294,126 @@ function print_claims()
     must be covered too; case9's G1: 0.401 against 0.463 Hz). On the default loads it is
     shallower in five of six, down to half (case9's G1: 0.195 Hz), and deeper only for
     the mesh's G1.
+""")
+end
+
+# ---------------------------------------------------------------------------
+# Section 4: the frequency verdict, beside the screens (M9 step 7)
+# ---------------------------------------------------------------------------
+#
+# Appended after M8's report, which is left exactly as it was: `:secure` keeps meaning
+# "the lines and voltages are within limits" (m9-context.md D2.5). The verdict sits
+# beside it, judged against the one sourced preset, and the two are never combined here
+# — what an outage that the dynamic tier refuses, or a part with no limit, counts as is
+# a rule nobody has chosen yet.
+#
+# The rate of fall is printed, never judged: no area-wide limit is published (D3), so
+# the preset has none. It is shown over the two windows the sources name — 500 ms
+# (NC DCC Art. 28(2)(k)) and 1 s (NC HVDC Art. 12) — because the window moves the
+# number more than anything else here (D10).
+
+const RATE_WINDOWS = (0.5, 1.0)     # s
+
+"""
+    frequency_rows(net; s = outage_screen(net), dips = generator_dips(net, s))
+        -> Vector{NamedTuple}
+
+One row per generator outage of `net`, in model order: M8's outcomes (`dc`, `ac`) and
+the frequency verdict against `continental_europe_limits()` — the settled deviation at
+each fidelity, the dip from the dynamic runs (`dyn`, their outcome and `reason`), and
+the windowed rate over each of `RATE_WINDOWS`, worst surviving machine and COI, as
+values. A line that cuts off a lone generator carries that generator's row (section 1),
+so lines are not repeated here. Hz and Hz/s, signed.
+"""
+function frequency_rows(net::NetworkModel; s::OutageScreen = outage_screen(net),
+                        dips::GeneratorDips = generator_dips(net, s))
+    v = frequency_verdicts(net, s, continental_europe_limits(); dips)
+    rates = [generator_rates(dips; window = w) for w in RATE_WINDOWS]
+    nb = length(net.branches)
+    return [(; id = m.id, dc = s.dc_outcome[nb + k], ac = s.ac_outcome[nb + k],
+             Δf_dc = v.Δf_dc[nb + k], Δf_ac = v.Δf_ac[nb + k],
+             settled_dc = v.settled_dc[nb + k], settled_ac = v.settled_ac[nb + k],
+             settled = v.settled[nb + k],
+             dyn = dips.outcome[k], reason = dips.reason[k], dip = v.dip[nb + k],
+             Δf_dip = v.Δf_dip[nb + k], dip_worst = dips.worst[k], Δf_dip_coi = dips.Δf_coi[k],
+             rate_worst = [r.worst[k] for r in rates], rate = [r.rate_worst[k] for r in rates],
+             rate_coi = [r.rate_coi[k] for r in rates])
+            for (k, m) in pairs(net.machines)]
+end
+
+_v(x::Symbol) = x === :pass ? "pass" : x === :fail ? "FAIL" : String(x)
+
+function print_frequency_table(io::IO, name, rows)
+    println(io, "\n### $name")
+    @printf(io, "%-4s | %-7s %-7s | %8s %-4s %8s %-4s %-13s | %-36s | %-24s | %-24s\n",
+            "lost", "DC", "AC", "settled", "", "", "", "", "dip (0.8 Hz)", "rate 500 ms", "rate 1 s")
+    @printf(io, "%-4s | %-7s %-7s | %8s %-4s %8s %-4s %-13s | %-36s | %-24s | %-24s\n",
+            "", "", "", "DC Hz", "", "AC Hz", "", "(0.2 Hz)", "worst machine, COI", "worst machine, COI", "worst machine, COI")
+    for r in rows
+        dip = r.dyn === :measured ?
+              @sprintf("%s %7.3f, COI %7.3f  %s", r.dip_worst, r.Δf_dip, r.Δf_dip_coi, _v(r.dip)) :
+              "$(r.dyn) ($(r.reason))"
+        rate(i) = r.dyn === :measured ?
+                  @sprintf("%s %6.3f, COI %6.3f", r.rate_worst[i], r.rate[i], r.rate_coi[i]) : "—"
+        @printf(io, "%-4s | %-7s %-7s | %8s %-4s %8s %-4s %-13s | %-36s | %-24s | %-24s\n",
+                r.id, r.dc, r.ac, _f(r.Δf_dc, "%.4f"), _v(r.settled_dc), _f(r.Δf_ac, "%.4f"),
+                _v(r.settled_ac), r.settled, dip, rate(1), rate(2))
+    end
+end
+print_frequency_table(name, rows) = print_frequency_table(stdout, name, rows)
+
+function print_frequency()
+    println("""
+
+== 4. The frequency verdict beside the screens (M9 step 7; m9-context.md D2, D3) ==
+
+   Limits: continental_europe_limits() — settled 0.2 Hz, dip 0.8 Hz, from SO GL Annex
+   III Table 1. THESE ARE DESIGN VALUES for a whole synchronous area after its 3,000 MW
+   reference incident, not a pass/fail rule for one outage on a small grid; with the
+   invented droop and damping here, a pass or a FAIL describes that droop, not whether
+   a real grid survives. No rate of fall limit is sourced, so the rate is printed and
+   not judged. Settled: each screen's own value. Dip: every surviving machine's largest
+   deviation in a detailed-tier run (lossy, with the loads), judged only where both
+   solver tolerances agree; the COI dip beside it. DC/AC: M8's line-and-voltage
+   outcome, unchanged. A line that cuts off a lone generator carries its row.""")
+    for (name, loads, net) in screens()
+        print_frequency_table("$name — $loads loads", frequency_rows(net))
+    end
+end
+
+# Written AFTER section 4's tables were read, each asserted in `test/m9_report.jl`. The
+# predictions made before the first run are in docs/evidence/gridsim-m9/step7/.
+function print_frequency_claims()
+    println("""
+
+== 5. What section 4 says (each asserted in test/m9_report.jl) ==
+
+ f. Claim (d), revisited. Losing the mesh's G1 is still "secure" in both screens on
+    both load models, and section 4 fails it on every part it judges: the settled
+    value at both fidelities (10.94 Hz DC; 11.22 / 11.06 Hz AC) and the dip at both
+    solver tolerances (11.260 Hz on constant-power loads, 8.905 Hz on default loads).
+    A second way "secure" is not survival: losing case9's G2 on constant-power loads
+    is secure in both screens, and the dynamic run refuses it at the trip — a bus
+    leaves the voltage band the instant after — so there is no dip to judge at all.
+ g. Under the preset the settled limit decides every verdict and the dip decides
+    none. Nine of the twelve outages fail the settled limit at both fidelities, one
+    passes at both (the mesh's G3, default loads), and the two fidelities split twice,
+    once each way (claim e's gap, crossing the limit). The dip fails only on the mesh's
+    G1, which the settled value fails already: no measured dip is more than 1.66 times
+    its AC settled value (case9's G3, constant power: 0.7515 against 0.4515 Hz), while
+    the dip limit is 4 times the settled one.
+ h. On the default loads the dip can be SHALLOWER than the AC screen's settled value:
+    the mesh's G1 (8.905 against 11.059 Hz) and G3 (0.151 against 0.153 Hz). Neither
+    run is cut short — each stops on its own settling. It is the load relief step 0
+    measured between the dynamic run and the AC screen (m9-context.md D1).
+ i. Whose frequency matters less than which window. The worst machine dips at most
+    8.1 % deeper than the COI (the mesh's G2, constant power: G3 0.561 against 0.519
+    Hz) and falls at most 4.0 % faster over 500 ms; the 500 ms rate is 1.18–1.54 times
+    the 1 s rate on every measured row. The fastest is the mesh's G1 on constant-power
+    loads, 3.095 Hz/s over 500 ms. None of these is judged: no limit is sourced.
+ j. No verdict here depends on the solver tolerance: every measured dip passes or
+    fails at both. The only rows without a dip are the three refused at the trip
+    (case9's G1 on both load models, its G2 on constant power).
 """)
 end
 

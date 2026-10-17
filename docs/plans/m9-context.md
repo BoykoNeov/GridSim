@@ -863,3 +863,118 @@ windows, nine outages, three or four channels and two tolerances that happened o
 exactly one channel at one window, moving the largest rate by 1e-6 of itself. Invisible
 to any tolerance a test would choose; visible to the `===` read by index, which is why
 that read is bit-for-bit.
+
+## D11 — Step 7 measured: the report, and its window (2026-10-17)
+
+**The change.** `scripts/outage_screen.jl` gains section 4 — per generator outage, on
+both lossy report grids and both load models, M8's line-and-voltage outcome (DC, AC)
+beside the frequency verdict against `continental_europe_limits()` — and section 5, its
+claims (f–j). One row builder, `frequency_rows(net; s, dips)`, read by the printer, the
+test (`test/m9_report.jl`) and the window. Nothing under `src/` changed. Predictions
+first, in `docs/evidence/gridsim-m9/step7/predictions.md`, outcomes appended there.
+
+**The decisions, each a rule now:**
+
+- **A pure append.** Sections 1–3, the fixtures, `screens()` and the header line are
+  byte for byte as M8 left them, and M8's claim (d) stays printed and asserted —
+  `:secure` still carries no frequency criterion (D2.5). It is revisited in section 5
+  (claim f), the only place it is. The gate is therefore stronger than "it differs, and
+  here is why": the old `screen` capture is an exact byte PREFIX of the new one.
+- **The rate is printed, not judged.** The preset has no sourced rate limit (D3), so the
+  verdict's rate column is `:no_limit`; the report prints the worst surviving machine's
+  rate with the COI's beside it over BOTH windows the sources name (500 ms, NC DCC; 1 s,
+  NC HVDC). D10's 1 Hz/s and 2.5 Hz/s were illustrations; a column would make them
+  results.
+- **No combined "survives" column.** The plan says side by side; a combination needs a
+  rule for `:refused_at_trip`, `:tolerance_dependent` and the rate's `:no_limit`, which
+  is the user's to make. Not asked at this step, so not built.
+- **A refusal prints as its outcome's name**, never a dash or a pass.
+
+**What the table says** (claims f–j, each asserted at its printed precision):
+
+- **f — claim (d) revisited.** The mesh's G1 is secure in both screens on both load
+  models and fails every part judged: settled at both fidelities (10.94 Hz DC; 11.22 /
+  11.06 Hz AC), the dip at both tolerances (11.260 / 8.905 Hz). A second way "secure" is
+  not survival: case9 constant-power G2 is secure in both screens and refused by the
+  dynamic run at the trip — no dip exists to judge.
+- **g — under the preset the settled limit decides every verdict and the dip none.**
+  9 of 12 outages fail settled at both fidelities, 1 passes at both, the fidelities split
+  twice (once each way). The dip fails only on the mesh's G1, which settled already
+  fails: the largest dip/settled ratio is 1.66 (case9 cp G3) against the limits' 4.
+- **h — on default loads the dip can be SHALLOWER than AC's settled value**: the mesh's
+  G1 (8.905 against 11.059 Hz) and G3 (0.151 against 0.153 Hz). Load relief (D1).
+- **i — the window matters more than whose frequency.** Worst machine ≤ 8.1 % deeper
+  than the COI on the dip, ≤ 4.0 % faster over 500 ms; the 500 ms rate is 1.18–1.54×
+  the 1 s rate on every measured row. Fastest: mesh cp G1, 3.095 Hz/s over 500 ms.
+- **j — no verdict depends on the tolerance**; the three rows without a dip are the
+  three refusals at the trip.
+
+**Found, not planned.**
+
+1. **The first claims draft printed a wrong ratio, and the step's own assertion caught
+   it.** "1.67 times its AC settled value" was DC's ratio (1.674); the AC one is 1.6644.
+   Then a second trap in the same sentence: the dip there is 0.75150 Hz, on a rounding
+   boundary — the table's three places print 0.752, and 0.752 / 0.4515 reads 1.67 again
+   — so the claim prints it to four places. The prose was written after the table, as
+   M3 step 6 requires, and was still wrong until asserted.
+2. **A second row where the dip is shallower than AC's settled value** (mesh default
+   G3, 0.151 against 0.153 Hz): predicted only for the mesh's G1.
+3. **D9's stop times were the LOSSLESS copies'**, and D9 did not say so. Lossy: mesh cp G1
+   stops 71.5 s after the trip (lossless 63.5), mesh default G1 85.0 s (lossless 86.5);
+   measured both ways when the window's read-out disagreed with D9.
+
+**Sabotages, report** (`step7/`: `mutate.py` on a scratch COPY of the script — the tree
+is never edited — `mutate_all.sh`, tallies in `results.txt`; each predicted first):
+
+| | Sabotage | Red |
+|---|---|---|
+| P1 | the COI dip in the worst-machine column | columns 9, claim g 1, claim h 2 (not predicted), claim i 3 |
+| P2 | DC's settled verdict in the AC column | columns 2 |
+| P3 | every rate read over 500 ms | columns 21, claim i 2 |
+| P4 | a refusal printed as a pass | printed table 6 |
+| P5 | AC's settled deviation read from DC | columns 12, claims f 2, g 2, h 3 |
+
+The first loop wrote every run's output to one file (a quoting slip) and was stopped,
+the script restored from its backup and the loop rebuilt to mutate a copy instead; the
+tallies above are the second loop's.
+
+**The window (the user's choice, 2026-10-17, asked after the table and the claims:
+"build a window", over the recommended "no window").** `ui/src/frequency_screen_window.jl`,
+`frequency_screen()` / `frequency_screen_render(; path)`: the seventh window. It includes
+the report script into a submodule exactly as the low-inertia window includes its study,
+so its rows are `frequency_rows`' and its traces the dip runs' own `FrequencyTrace`
+samples (asserted `isequal` / `==`); no second copy of a fixture or a number.
+
+- **Three panels:** the selected outage's run (every surviving machine thin, the COI bold)
+  against the preset's two limits below nominal and the line where EACH screen says the
+  frequency settles; the first 3 s after the trip; and all twelve outages side by side,
+  cells green/red only where the report judges, grey for a refusal, a part with no limit,
+  and the rate. Only the limits below nominal are drawn — every outage here makes the
+  frequency fall (asserted).
+- **The rate is a number, never a line.** A drawn threshold would read as a limit, and
+  none is sourced (D3).
+- **A refused outage draws nothing and names its refusal**; nothing of the previous
+  selection survives a change.
+- **The y-range always holds both limits and both settled lines.** Autoscaled, mesh
+  default G3 (a 0.15 Hz dip) would cut the 0.8 Hz line off, and mesh default G1's lesson
+  — the run levelling off ABOVE both screens' settled lines (claim h) — would be clipped.
+- **Cost:** all four grids' runs at build, cached; 11 s for the first render after
+  precompile, 0.8–1.8 s for each later one. **Precompile: 241 s with the window in the
+  workload, 264 s without** (one measurement each, quiet machine) — no measurable cost,
+  so the workload builds the full window. The first build measured 545 s only because it
+  shared the machine with the sabotage runs.
+
+**Window sabotages** (`step7/mutate_window.py`, in place with a backup restored on exit;
+tallies in `results.txt`): all four red, each exactly where predicted.
+
+| | Sabotage | Red |
+|---|---|---|
+| W1 | the lost machine's trace drawn | traces 1 |
+| W2 | the settled-DC cell coloured by AC's verdict | overview 2 |
+| W3 | a selection change does not clear the traces | controls 2 |
+| W4 | the dip limit drawn at the settled limit | limits 1 |
+
+**The gate.** Nothing under `src/` changed. The five captures at HEAD (`6c9b960`) before
+the first edit are byte-identical to step 2's committed set; after: `swing`, `criterion`,
+`ac` and `dips` byte-identical, and the old `screen` capture (152,062 bytes) an exact
+byte prefix of the new one (158,584) — sections 4–5 appended, nothing before them moved.

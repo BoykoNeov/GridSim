@@ -1093,4 +1093,7 @@ end
     # --- the low-inertia window (M7 step 8): step 7's study, drawn ---------------
     include(joinpath(@__DIR__, "low_inertia_tests.jl"))
 
+    # --- the frequency-screen window (M9 step 7): the outage report, drawn --------
+    include(joinpath(@__DIR__, "frequency_screen_tests.jl"))
+
 end

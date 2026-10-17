@@ -6,11 +6,12 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **five**: two real-time windows,
+Built on `GLMakie` (native window). There are **seven**: two real-time windows,
 one per fidelity tier, chosen by the model you hand `launch` — two more for the
-other *execution mode*, the playback overlays, which have their own verbs — and
-the scenario editor, which has no engine in it at all and produces the model the
-others start from (all below).
+other *execution mode*, the playback overlays, which have their own verbs — the
+scenario editor, which has no engine in it at all and produces the model the
+others start from, and two that each draw one study script: the low-inertia
+window and the frequency screen (all below).
 
 The two real-time windows:
 
@@ -470,6 +471,39 @@ nothing visible, and a few millihertz in the one case whose frequency is still s
 30 s. `low_inertia_playback(; reltol = 1e-6, abstol = 1e-8)` gives the study's numbers
 exactly; `low_inertia_render(; path)` draws the window to a PNG. Design notes:
 `docs/plans/m7-context.md` D17. Figure: `../docs/images/fig-m7-low-inertia.png`.
+
+## The frequency-screen window — "secure" beside the frequency verdict
+
+```
+julia --project=ui -e "using GridSimUI; wait_for_close(frequency_screen())"
+```
+
+The M9 outage report (`scripts/outage_screen.jl`, sections 4–5) drawn. The bottom table
+puts every generator outage of the report's two grids side by side, one row each: whether
+the lines and voltages stay within limits afterwards (M8's "secure", at both the quick
+linear fidelity and the full one), and the frequency verdict against the Continental
+Europe preset (settled within 0.2 Hz, lowest dip within 0.8 Hz). Green and red only where
+something is judged; grey where the dynamic model refused to run the outage, or where no
+limit exists. The rate of fall is shown and never judged: no rate limit is published.
+
+Above it, for the outage selected, every surviving machine's frequency over the whole
+run, from the same dynamic run the dip and the rate were read from, with the two limits
+drawn below 50 Hz and where each static screen says the frequency settles. The middle
+plot zooms on the first 3 s after the trip. Losing the mesh's G1 is the case the window
+exists for: "secure" in both screens, and the frequency slides 11 Hz. On the default loads
+the run levels off ABOVE where the screens say it settles (the loads draw less as voltage
+sags). An outage the dynamic model refuses at the trip draws nothing and says why.
+
+**The limits are design values for a whole synchronous area, not a pass/fail rule for one
+outage on a small grid.** The grids' droop and damping are invented, so a pass or a FAIL
+here describes that droop, not a real grid. The window says so too.
+
+Controls: the grid (case9 or the mesh), the load model, the generator lost. The window
+runs all 24 dynamic simulations once when it opens (about 10 s once compiled); every click
+after that is a lookup. The read-out is the script's own row and the traces are the runs'
+own samples — a test asserts both exactly. `frequency_screen_render(; path)` draws it to a
+PNG. Design notes: `docs/plans/m9-context.md` D11. Figure:
+`../docs/images/fig-m9-frequency-screen.png`.
 
 ## Tests
 

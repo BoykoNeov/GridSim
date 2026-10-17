@@ -24,4 +24,7 @@ cd(raw"W:\Claude_projects\GridSim")
 ts = @testset "m9" begin
     include(raw"W:\Claude_projects\GridSim\test\m9_line_resistance.jl")
     include(raw"W:\Claude_projects\GridSim\test\m9_frequency_verdict.jl")
+    include(raw"W:\Claude_projects\GridSim\test\m9_dips.jl")
+    include(raw"W:\Claude_projects\GridSim\test\m9_rates.jl")
+    include(raw"W:\Claude_projects\GridSim\test\m9_report.jl")
 end

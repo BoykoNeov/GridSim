@@ -33,6 +33,11 @@ control changes (the inverter tier has no real-time loop). Its scenario is the s
 script's own (`scripts/low_inertia.jl`, included here), so it takes no model. (The
 fifth is the scenario editor, `editor_window.jl`, which has no engine at all.)
 
+A **seventh** (`frequency_screen_window.jl`, M9 step 7) draws one report: every
+generator outage of `scripts/outage_screen.jl`'s two grids, the line-and-voltage outcome
+beside the frequency verdict, and the selected outage's dynamic run against the limits.
+Its grids, runs and numbers are the script's own (included here), so it takes no model.
+
 The first two are siblings rather than one window with a runtime switch, because
 the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
@@ -130,6 +135,10 @@ using GridSim: Inverter, _inverter_with
 # rather than through the mode router; `bus_generation` is how the slack's pickup
 # reaches the read-out. Both checked clear against GLMakie's exports (2026-09-08).
 using GridSim: ac_powerflow, bus_generation
+# M9 step 7 — the frequency-screen window draws `scripts/outage_screen.jl`'s section 4:
+# the screen, the dip runs and the preset its rows are judged against. Checked clear
+# against GLMakie's exports by the standing test.
+using GridSim: outage_screen, generator_dips, continental_europe_limits
 
 # The shared look (fonts, colours, widget shapes, the two-label read-out) — one
 # file, applied by every builder through `themed`. Included first because the
@@ -142,6 +151,7 @@ include("voltage_window.jl")
 include("editor.jl")
 include("editor_window.jl")
 include("low_inertia_window.jl")
+include("frequency_screen_window.jl")
 
 export launch, smoke_render, wait_for_close
 # M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
@@ -171,6 +181,10 @@ export editor, editor_render, ScenarioEditor,
 # verb pair of its own, for M4's reason (the model type cannot say which window), and
 # it takes no model at all — its scenario IS the study's (`scripts/low_inertia.jl`).
 export low_inertia_playback, low_inertia_render
+# M9 step 7 — the frequency-screen window: the outage report's frequency verdict, drawn.
+# Its own verb pair, for M4's reason; like the low-inertia window it takes no model — its
+# grids are the report script's (`scripts/outage_screen.jl`).
+export frequency_screen, frequency_screen_render
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

@@ -5,10 +5,10 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–6 done (2026-10-08/09/10/17); step 7 next.** Entered at `7a32ae1` with M8's
+Status: **steps 0–7 done (2026-10-08/09/10/17); step 8 (close) next.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
-**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree).
+**5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree). After step 7 **6712 core / 1439 reference / 741 UI** (+180 step-7 report checks, +173 for the frequency-screen window; core and UI run on step 7's tree, reference not re-run — no reference code changed).
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -227,11 +227,24 @@ runs.
 - [x] Sabotages R1–R11 all red; R5 (the half-sample guard) by 2 of 460 reads — the slip
       is real and rare (D10).
 
-## Step 7 — the report
+## Step 7 — the report — done 2026-10-17
 
-- [ ] Both verdicts side by side on the lossy report grids; claim (d) revisited.
-- [ ] Claims asserted at printed precision; prose after the table.
-- [ ] Window: the user's call.
+- [x] Both verdicts side by side on the lossy report grids; claim (d) revisited.
+      `outage_screen.jl` sections 4–5, a pure APPEND: the old report is an exact byte
+      prefix of the new one, and M8's claim (d) stays as printed. One row builder
+      (`frequency_rows`). The rate printed over both sourced windows, never judged (no
+      sourced limit); no combined "survives" column (a rule nobody has chosen). Claim f
+      revisits (d): the mesh's G1 is secure in both screens and fails every part judged;
+      case9-cp G2 is secure and refused by the dynamic run at the trip (D11).
+- [x] Claims asserted at printed precision; prose after the table — and the prose was
+      still wrong once: "1.67" was DC's ratio, not AC's (1.66), caught by its own
+      assertion, with the dip on a rounding boundary that reproduced the error from the
+      table's digits (D11). Sabotages P1–P5 all red, on a scratch copy of the script.
+- [x] Window: **the user's call — built** (`frequency_screen`, the seventh window): the
+      selected outage's run against both limits and both screens' settled lines, the first
+      3 s, and all twelve outages side by side. Read-out and traces asserted `isequal`/`==`
+      to the script's rows and the runs' samples; sabotages W1–W4 all red. Precompile
+      241 s with it, 264 s without (D11).
 
 ## Step 8 — close
 
