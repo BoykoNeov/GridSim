@@ -592,6 +592,13 @@ after the first green run and before any sabotage), `step3_pairs.jl`, `step3_pro
     the comparison of screens.
   - S4 (a later piece's pickups overwriting an earlier one's): red on the identity and the
     lossless rung's pickups only — the two-live-piece splits.
+  - S5 (2026-10-19, added with the inverter testset, prediction written first: a grid-forming
+    inverter's bus kept as its model vertex instead of its position in the piece): red on the
+    inverter testset alone, green everywhere else. The losses identity does NOT see it — under
+    S5 the {B, C} piece of AB+CA no longer solves, so the identity has nothing to check; the
+    two explicit assertions on that piece (it solves, and the inverter picks up the load) are
+    what go red. An identity that runs only where a solve succeeded is blind to a bug that
+    stops the solve.
 - **Not expressible in this design, recorded:** one reference for the whole grid across a split
   (each piece is its own problem; a piece with no reference has none to pose), and reactive
   limits read from the whole grid (a lost machine's limits could leak only onto a bus that

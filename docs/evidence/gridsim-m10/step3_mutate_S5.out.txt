@@ -1,0 +1,16 @@
+== S5_inverter_model_vertex
+Test Summary:                                                                            | Pass  Fail  Total   Time
+M10 step 3 — every pair in AC, a split grid piece by piece                               | 1868     2   1870  12.6s
+  the pairs and pieces are step 2's; dead pieces are read from the AC base               |  233          233   7.6s
+  every live piece's solution holds its own buses and in-service branches only           |  824          824   0.3s
+  a pair that is one outage (D4) is M8's single AC outage, within B                      |  138          138   1.1s
+  four paths to G1 and G2 gone give one answer, within B                                 |   39           39   0.3s
+  the mesh's AB+AC is NOT G1's outage in AC, even in frequency                           |    9            9   0.0s
+  pickups = lost output + load shift + loss change − export across the cut, per piece    |  166          166   0.4s
+  lossless, constant power: every piece's Δω and pickups ARE step 2's, within B          |  236          236   0.1s
+  every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not |  104          104   0.4s
+  DC against AC per pair, by id                                                          |   97           97   1.2s
+  inverters: pieces as step 2's, and the identity on every piece that solved             |   21     2     23   1.1s
+  the base is refused as ac_generator_outages refuses it                                 |    1            1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x40c058247afb14c6, 0x8ec6294d35cf84bc, 0x2cd68762adc9477d, 0x1be05da5068f3273, 0x9066087caf426990)
+restored: True

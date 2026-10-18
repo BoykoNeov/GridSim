@@ -28,6 +28,11 @@ MUT = {
    "            for q in eachindex(r.ids)\n                st.alive[q] || continue\n"
    "                pk[q] = o.pickup[q]\n                cp[q] = o.capped[q]\n            end\n",
    "            pk .= o.pickup\n            cp .= o.capped\n")],
+ # S5 (added 2026-10-19 for the inverter testset): a grid-forming inverter's bus kept as
+ # its model vertex instead of its position in the piece. Run by name, to its own output.
+ "S5_inverter_model_vertex": [(SCREEN,
+   "inv_bus = loc[ia.bus[js]]",
+   "inv_bus = ia.bus[js]")],
 }
 try:
     for name, reps in MUT.items():

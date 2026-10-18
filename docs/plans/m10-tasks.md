@@ -119,8 +119,9 @@ runs.
 - [x] Inverter pieces (step 2's two triangles): kinds agree with DC, identity on every piece
       that solved, a grid-forming inverter as a piece's only responder off the reference.
 - [x] Sabotages run, predictions first (with a dated correction before they ran): all four
-      red where registered. (Run before the inverter testset was added; the sabotages
-      have not been run against that testset.)
+      red where registered. The inverter testset, added after them, got its own (S5,
+      2026-10-19, prediction first): red there alone — through its explicit assertions, not
+      the identity, which skips a piece that stopped solving.
 
 ## Step 4 — one event, one re-solve (Hurdle 20)
 
@@ -132,7 +133,10 @@ runs.
 - [ ] A generator cut off alone tripped in the same event.
 - [ ] Positive control: case9 default L45+L67 runs.
 - [ ] Per-piece settled frequency against step 3, through M9's losses identity
-      taken per piece (`Σw`, losses, settling).
+      taken per piece (`Σw`, losses, settling). (Step 3 measured which pairs can serve:
+      on constant-power loads only **L56+L78** and **L67+L89** leave two live pieces, both
+      `:secure`, one rising and one falling — L45+L67 is `:voltage` in G3's piece there; on
+      default loads L45+L67, L45+L89, L56+L78, L56+L89, L67+L89. `m10-context.md` D9.)
 - [ ] Gate: M9's captures bit-identical.
 
 ## Step 5 — fail, restore, fail again (Hurdle 21)

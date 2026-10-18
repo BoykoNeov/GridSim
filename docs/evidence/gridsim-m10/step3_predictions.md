@@ -128,3 +128,15 @@ Two first-run results, recorded here only because they change what the checks ca
   the piece.
 - **Check 4's sign was wrong**, and the reason too (see `m10-context.md`). The assertion
   is now the measured sign per load model. None of the sabotages is predicted to move it.
+
+## Added 2026-10-19, after the inverter testset was added and BEFORE S5 ran
+
+The inverter testset (step 2's two triangles) was added after S1-S4 ran, so it has no
+sabotage of its own. S5 is aimed at the code only it reaches:
+
+| # | Sabotage | Red | Green (and why) |
+|---|---|---|---|
+| S5 | a grid-forming inverter's bus kept as its MODEL vertex instead of its position in the piece (`inv_bus = ia.bus[js]`) | the inverter testset, on the grid-forming triangle's pieces that do not start at vertex 1 (AB+CA leaves {B, C}, AB+BC leaves {A, C}): the inverter is looked for at a position the piece does not have, so either its reactive capability is never found (C pinned at zero reactive output) or the rating check indexes past the piece and throws | every other testset in the focused run (the report grids carry no inverter), and every whole-grid piece (there the two numberings are the same, so M8's path is untouched by construction) |
+
+M7's surface walk would also go red (its two-bus inverter model leaves {B2} alone, position 1,
+vertex 2), but the focused runner does not load it.
