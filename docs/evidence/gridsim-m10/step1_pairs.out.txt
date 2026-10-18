@@ -1,0 +1,65 @@
+== case9
+  pair        cut        det M     gap/band shortcut/band
+  L14+L45     cut   -3.001e-17            -            -  refused=true
+  L14+L56     cut   -5.545e-17            -            -  refused=true
+  L14+L36     cut   -0.000e+00            -            -  refused=true
+  L14+L67     cut   -3.288e-17            -            -  refused=true
+  L14+L78     cut   -2.348e-17            -            -  refused=true
+  L14+L82     cut   -0.000e+00            -            -  refused=true
+  L14+L89     cut   -5.251e-17            -            -  refused=true
+  L14+L94     cut   -2.772e-17            -            -  refused=true
+  L45+L56     cut    1.388e-17            -            -  refused=true
+  L45+L36     cut    0.000e+00            -            -  refused=true
+  L45+L67     cut   -6.592e-17            -            -  refused=true
+  L45+L78     cut   -4.684e-17            -            -  refused=true
+  L45+L82     cut    0.000e+00            -            -  refused=true
+  L45+L89     cut   -1.318e-16            -            -  refused=true
+  L45+L94     cut   -4.163e-17            -            -  refused=true
+  L56+L36     cut    0.000e+00            -            -  refused=true
+  L56+L67     cut   -1.110e-16            -            -  refused=true
+  L56+L78     cut   -1.145e-16            -            -  refused=true
+  L56+L82     cut    0.000e+00            -            -  refused=true
+  L56+L89     cut   -2.567e-16            -            -  refused=true
+  L56+L94     cut   -9.021e-17            -            -  refused=true
+  L36+L67     cut    0.000e+00            -            -  refused=true
+  L36+L78     cut    0.000e+00            -            -  refused=true
+  L36+L82     cut    0.000e+00            -            -  refused=true
+  L36+L89     cut    0.000e+00            -            -  refused=true
+  L36+L94     cut    0.000e+00            -            -  refused=true
+  L67+L78     cut   -6.939e-18            -            -  refused=true
+  L67+L82     cut    0.000e+00            -            -  refused=true
+  L67+L89     cut   -4.857e-17            -            -  refused=true
+  L67+L94     cut    6.939e-18            -            -  refused=true
+  L78+L82     cut    0.000e+00            -            -  refused=true
+  L78+L89     cut   -4.163e-17            -            -  refused=true
+  L78+L94     cut    0.000e+00            -            -  refused=true
+  L82+L89     cut    0.000e+00            -            -  refused=true
+  L82+L94     cut    0.000e+00            -            -  refused=true
+  L89+L94     cut    5.898e-17            -            -  refused=true
+== mesh
+  pair        cut        det M     gap/band shortcut/band
+  AB+AC       cut   -6.939e-17            -            -  refused=true
+  AB+BC              6.215e-02        0.119    2.503e+13  refused=false
+  AB+BD              1.412e-01        0.073    2.835e+12  refused=false
+  AB+CD              1.243e-01        0.055    9.851e+12  refused=false
+  AB+DE              5.273e-02        0.040    4.256e+12  refused=false
+  AB+BE              1.055e-01        0.060    4.256e+12  refused=false
+  AC+BC              1.243e-01        0.053    7.800e+12  refused=false
+  AC+BD              2.825e-01        0.018    1.389e+12  refused=false
+  AC+CD              2.486e-01        0.027    4.427e+12  refused=false
+  AC+DE              1.055e-01        0.014    1.885e+12  refused=false
+  AC+BE              2.109e-01        0.005    9.803e+11  refused=false
+  BC+BD              2.542e-01        0.024    1.836e+12  refused=false
+  BC+CD              1.864e-01        0.029    1.016e+13  refused=false
+  BC+DE              9.605e-02        0.011    2.691e+12  refused=false
+  BC+BE              1.921e-01        0.014    2.476e+12  refused=false
+  BD+CD              2.542e-01        0.040    1.173e+13  refused=false
+  BD+DE              8.475e-02        0.049    1.679e+13  refused=false
+  BD+BE              1.695e-01        0.029    7.695e+12  refused=false
+  CD+DE              1.017e-01        0.044    1.283e+13  refused=false
+  CD+BE              2.034e-01        0.040    7.765e+12  refused=false
+  DE+BE       cut    6.939e-17            -            -  refused=true
+== near-cut (mesh + A–D at Xw), pair AB+AC
+  Xw=1e+03  cut=false  det M=4.858e-05  margins=0.243,0.486  gap=2.774e-12  gap/near-band=0.004  gap/ordinary-band=8.328e+01  rebuild-vs-exact=1.249e-11
+  Xw=1e+05  cut=false  det M=4.859e-07  margins=0.243,0.486  gap=3.643e-10  gap/near-band=0.005  gap/ordinary-band=1.094e+04  rebuild-vs-exact=1.009e-09
+  Xw=1e+07  cut=false  det M=4.859e-09  margins=0.243,0.486  gap=3.259e-08  gap/near-band=0.005  gap/ordinary-band=9.786e+05  rebuild-vs-exact=1.241e-07

@@ -115,3 +115,10 @@ S3 wrong column — [mesh] [bowtie] [near] [inverter]; [tie] [cuts] green. As pr
 S4 bridge-only cut — [cuts] (7 failures) and, downstream, [mesh] [shortcut] [bowtie]
                  [inverter] (cut pairs given flows or flows missing); [near] green (its
                  one tested pair is connected either way).
+
+**Re-run in committed form.** `step1_mutate.py` was edited after the run above (runner
+path moved into this folder; bytes in/out so the restore keeps LF). Re-run as
+committed, with two test floors relabelled as measured-after (no assertion changed in
+strength except the connected-pair `det M` floor, lowered 0.05 → 1e-3): every testset
+red/green exactly as listed above. Output `step1_mutate.out.txt`; printed numbers in
+`step1_pairs.out.txt` and `step1_gauge.out.txt`.

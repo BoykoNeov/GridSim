@@ -114,7 +114,9 @@ _m10_bowtie() = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :
         # At a cut, det M is round-off (measured ≤ 2.6e-16, negative, zero AND positive
         # among case9's 36) — which is why it is never tested for a split.
         @test all(abs.(s9.det) .<= 10eps()) && all(abs.(sm.det[sm.splits]) .<= 10eps())
-        @test all(abs.(sm.det[.!sm.splits]) .> 0.05)
+        # And a connected pair's is not: floor set AFTER measuring (smallest 0.0527, at
+        # AB+DE), not a prediction — ten orders above the cuts' round-off either way.
+        @test all(abs.(sm.det[.!sm.splits]) .> 1e-3)
     end
 
     @testset "the mesh: the two-line factors ARE rebuild-and-re-solve, to round-off" begin
@@ -122,7 +124,9 @@ _m10_bowtie() = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :
         @test _m10_vs_rebuilt(net) <= 1           # measured worst 0.119
         # Not vacuous for a transposed M: M is symmetric only when the two lines'
         # reactances are equal (AB/DE, AC/BE here), and the other connected pairs are
-        # checked too.
+        # checked too. The count is set AFTER measuring (17 of 19 above 0.01; the two
+        # equal-reactance pairs at 0.0 and 1.4e-16), not predicted; what shows the check
+        # is not vacuous is the transposition sabotage going red here.
         P = GridSim._dc_transfer_factors(net, inv.(branch_topology(net).X))
         s = dc_line_pair_outages(net)
         asym = [abs(P[k, l] - P[l, k]) for (p, (k, l)) in pairs(s.pairs) if !s.splits[p]]

@@ -1,0 +1,45 @@
+== S1_transposed
+Test Summary:                                                                | Pass  Fail  Total  Time
+M10 step 1 — two-line DC factors, cut pairs from the graph                   |  181     5    186  9.1s
+  the pair code's per-branch solve IS dc_line_outages's, bit for bit         |   15           15  4.9s
+  cut pairs come from the graph and equal the rebuild refusals               |    9            9  0.9s
+  the mesh: the two-line factors ARE rebuild-and-re-solve, to round-off      |   41     1     42  1.9s
+  the additive shortcut is measurably wrong on the mesh                      |    2            2  0.5s
+  control: two lines whose transfers do not cross — the shortcut is exact    |   59           59  0.1s
+  a nearly-cut pair: answered, not thresholded; the error grows as 1/|det M| |   13     3     16  0.6s
+  an inverter is read through the base case, and the identity still holds    |   42     1     43  0.2s
+RNG of the outermost testset: Random.Xoshiro(0x572d709877a381b5, 0x859d3396bcec97eb, 0x55c47bea87336160, 0x611976786833a93d, 0x3c8db43c2bd3d101)
+== S2_diagonal
+Test Summary:                                                                | Pass  Fail  Total  Time
+M10 step 1 — two-line DC factors, cut pairs from the graph                   |  177     9    186  8.4s
+  the pair code's per-branch solve IS dc_line_outages's, bit for bit         |   15           15  4.5s
+  cut pairs come from the graph and equal the rebuild refusals               |    8     1      9  2.2s
+  the mesh: the two-line factors ARE rebuild-and-re-solve, to round-off      |   41     1     42  0.3s
+  the additive shortcut is measurably wrong on the mesh                      |    1     1      2  0.4s
+  control: two lines whose transfers do not cross — the shortcut is exact    |   59           59  0.1s
+  a nearly-cut pair: answered, not thresholded; the error grows as 1/|det M| |   11     5     16  0.6s
+  an inverter is read through the base case, and the identity still holds    |   42     1     43  0.2s
+RNG of the outermost testset: Random.Xoshiro(0xebada1790ac85ff8, 0xdcfec41f4dcf4dc5, 0x6fd9a5e2866403d7, 0x8138495ba14a4765, 0x3a742cc4fd32503d)
+== S3_wrong_col
+Test Summary:                                                                | Pass  Fail  Total   Time
+M10 step 1 — two-line DC factors, cut pairs from the graph                   |  171    15    186  10.4s
+  the pair code's per-branch solve IS dc_line_outages's, bit for bit         |   15           15   5.6s
+  cut pairs come from the graph and equal the rebuild refusals               |    9            9   0.9s
+  the mesh: the two-line factors ARE rebuild-and-re-solve, to round-off      |   41     1     42   2.1s
+  the additive shortcut is measurably wrong on the mesh                      |    2            2   0.6s
+  control: two lines whose transfers do not cross — the shortcut is exact    |   49    10     59   0.2s
+  a nearly-cut pair: answered, not thresholded; the error grows as 1/|det M| |   13     3     16   0.8s
+  an inverter is read through the base case, and the identity still holds    |   42     1     43   0.2s
+RNG of the outermost testset: Random.Xoshiro(0xa5e63af691688335, 0xcc8a11ef73f730fa, 0x1b0c37c446f76bee, 0xb3b1955c18ca0cd9, 0x7c9c9d1efda98bb8)
+== S4_bridge_cut
+Test Summary:                                                                | Pass  Fail  Total  Time
+M10 step 1 — two-line DC factors, cut pairs from the graph                   |  161    25    186  8.5s
+  the pair code's per-branch solve IS dc_line_outages's, bit for bit         |   15           15  4.5s
+  cut pairs come from the graph and equal the rebuild refusals               |    2     7      9  2.5s
+  the mesh: the two-line factors ARE rebuild-and-re-solve, to round-off      |   40     2     42  0.3s
+  the additive shortcut is measurably wrong on the mesh                      |    1     1      2  0.4s
+  control: two lines whose transfers do not cross — the shortcut is exact    |   46    13     59  0.1s
+  a nearly-cut pair: answered, not thresholded; the error grows as 1/|det M| |   16           16  0.6s
+  an inverter is read through the base case, and the identity still holds    |   41     2     43  0.2s
+RNG of the outermost testset: Random.Xoshiro(0x773007944246fef8, 0x2632c9f9040b1c7c, 0xbb3f0a3bc3981478, 0xfdc1f6c4b1e17453, 0x8251580afd8ae909)
+restored: True
