@@ -17,6 +17,7 @@ stands; read the context file before re-litigating a decision.
 | M7 | Inverter-based resources and low-inertia grids: an `Inverter` type (grid-forming and grid-following), a grid-forming inverter in the swing and detailed tiers checked by its exact machine equivalence, a grid-following one with a PLL in the detailed tier, frequency read-outs for a grid with no rotor, and the low-inertia study the M1 lesson scaled up | **COMPLETE (closed 2026-10-06)** — all steps done (0–9). **Closed on manifests deleted and re-resolved at the close: 4134 core / 1251 reference / 568 UI**, identical to steps 7–8. Grid-forming inverters in every tier, checked as the swing machine they algebraically are (ours to solver error, PowerDynamics' `IdealDroopInverter` to ~1e-12); grid-following ones with a PLL in the detailed tier, against `SimpleGFL` with a gap that falls as 1/k in their current-loop gain; bus PLL meters and RoCoF read three ways under three names; a source trip in the detailed tier; `scripts/low_inertia.jl` on two layouts and two events, and its window; the editor holds inverters. Hurdles 10 and 11 closed, 12 closed on its main claim with one clause never checked (D13). The bump to `SciMLBase` 3.57.0 deprecates `u_modified!`; the new name already exists at our 3.30.1 floor, so the rename is owed and free | `m7-*.md` |
 | M8 | Single-outage screening: every line and every generator, at the linear-shortcut and full-flow fidelities; outcomes reported, not thrown; grid splits from the graph; a lost generator shared by droop and damping (the droop part capped at headroom), checked against what the dynamic tiers settle to | **COMPLETE (closed 2026-10-08)** — all steps done (0–7). **Closed on manifests deleted and re-resolved at the close: 5316 core / 1262 reference / 568 UI**, the predicted counts; M5's 169 criterion values and the 83-case AC capture bit-identical before and after the re-resolve (the check M7's close lacked). Every line and generator outage screened at the DC-factor and AC fidelities and reported as an outcome, never thrown. The DC factors are exact against rebuild-and-re-solve and checked against `PowerNetworkMatrices`, which answers silently at a bridge; splits come from the graph; a bridge to a lone source is that source's outage. A lost generator is shared by droop and damping (droop capped at headroom), matching the swing tier's settled trip to 1.5e-10 and the detailed tier's up to load relief, which is accounted for exactly. The AC screen's shared reference degenerates to `ac_powerflow`, measured bit-identical and asserted within 1e-10. What DC misses: voltage entirely (case9's L45, L94), and line loadings either way on default loads. `scripts/outage_screen.jl` prints the report; no window (the user's call). Hurdles 13–15 closed; **16 named: `:secure` has no frequency criterion** (the mesh's G1 loss settles 10.94 Hz low and passes) | `m8-*.md` |
 | M9 | A frequency criterion for the outage screen: line resistance in both dynamic tiers; a frequency verdict beside each generator outage's outcome — settled value from each screen, lowest dip and initial rate of fall from a dynamic run — against caller-supplied limits with a cited Continental Europe preset | **COMPLETE (closed 2026-10-18)** — all steps done (0–8). **Closed on manifests deleted and re-resolved at the close: 6718 core / 1439 reference / 745 UI**, the predicted counts (the core's first full run since step 7's follow-up, which had been a count); one package moved (`Roots` 3.0.10 → 3.0.11, UI only). Six captures plus the PowerDynamics oracle capture bit-identical before and after, among them a new one of M9's own lossy dips, rates and verdicts at full precision, which no earlier capture reached. Both dynamic tiers read line resistance with every lossless number byte-identical, and PowerDynamics' line model checks both — the only check that sees one misreading written into every reader we have. Each generator outage carries a separate frequency verdict beside M8's outcome: the settled value from each screen, the lowest dip from a detailed run (counted only where two solver tolerances agree), and the rate of fall on every surviving machine over the limit's own window; against caller limits or the cited Continental Europe preset. `scripts/outage_screen.jl` prints it and `frequency_screen()` draws it. **Under that preset, on the report grids, the dip decides no verdict and the rate is never judged** (no sourced limit), so the answers there are a settled-only check's — kept as built, the user's choice at the close (D12); three of twelve outages have no dip at all (refused at the trip). Hurdles 16 and 17 closed; the list ends empty. | `m9-*.md` |
+| M10 | Double-outage screening: every pair of elements (two lines, two generators, one of each) at the DC and AC fidelities, both lost at once and one after the other with frequency restored in between; a grid cut in two answered piece by piece, each live piece at its own frequency; one simultaneous event in the dynamic tiers | **IN PROGRESS — step 0 done (2026-10-18), step 1 next.** Hurdles 18–21 named after measuring every line pair on the report grids (case9: all 36 split it — 9 into two live pieces; the mesh: 19 of 21 stay connected) and running two simultaneous case9 line trips in the detailed tier (an intermediate network refused where the final one passes; a refused line trip found half-applied; a stranded load bus solved to 1.8e9 pu). The user chose both timings, lines and generators, each piece solved, and restoring 50 Hz between failures (`m10-context.md` D2–D3) | `m10-*.md` |
 
 Cross-cutting:
 
@@ -276,6 +277,31 @@ Hurdle 12's untested clause, the low-inertia study's aggregate nadir overlay, th
 detailed tier's line-rating check reading the sending end only (predates M9, D5),
 and a sourced area-wide rate-of-fall limit (none exists, D3). The next milestone
 names its hurdle first.
+
+**M10 (double outages, 2026-10-18, the user's choice) names four at its step 0**
+(`m10-context.md` D0), after classifying every line pair of the report grids and
+running two simultaneous line trips in the detailed tier (D1):
+
+18. **A two-element shortcut that is exact on its own model, and a pair that cuts the
+    grid decided from the graph.** The rank-two DC update, exact against
+    rebuild-and-re-solve on every connected pair (the mesh's 19; case9 has none);
+    the common shortcut of adding two single-outage factors measured wrong; a cut
+    pair found from the graph, never from a determinant at round-off; and the
+    static answer independent of the order of the two losses.
+19. **A grid cut in two keeps running as two grids.** Each live piece settles at its
+    own frequency by M8's sharing rule run inside it — one usually rising, one
+    falling — with the swing tier as the exact oracle per piece; a piece with no
+    source is load lost; a piece with no load is its sources lost; in AC each piece
+    gets its own shared reference.
+20. **"At the same instant" must be one event in the detailed tier.** Two line trips
+    in a row pass through a network that can be refused when the final one is fine;
+    a refused line trip is half-applied (predates M10); a stranded load bus is
+    solved rather than switched off.
+21. **Fail, restore, fail again.** Restoring 50 Hz after the first loss (shares in
+    proportion to governor gain, capped at headroom) is exact; it can be refused
+    where settling cannot; the second loss is a single-outage screen of the
+    restored grid; and A-then-B, B-then-A and both-at-once are three answers,
+    measured.
 
 ## Structure notes
 

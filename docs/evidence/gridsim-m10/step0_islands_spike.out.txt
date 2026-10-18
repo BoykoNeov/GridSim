@@ -1,0 +1,35 @@
+┌ Warning: Verbosity toggle: dt_epsilon 
+│  At t=1.0, dt was forced below floating point epsilon 2.220446049250313e-16. Aborting. There is either an error in your model specification or the true solution is unstable (or it cannot be represented in Float64 precision).
+└ @ DiffEqBase C:\Users\boiko\.julia\packages\DiffEqBase\2YsuI\src\check_error.jl:37
+== constant_power: two live islands, L45+L67  (B3,B5,B6 | rest)
+   trip B4-B5 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8506713609136872 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+   trip B6-B7 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8658996624672188 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+   solve to 60.0: ok  t_end=60.0
+   ω_G1       at 1.0: -2.150649110603406e-17  end: -0.0010423001603245027  at T-5: -0.0010791801796367325
+   ω_G2       at 1.0: -2.237382662450725e-17  end: -0.0010675139684723643  at T-5: -0.0010369947495034565
+   ω_G3       at 1.0: -2.182542304948642e-17  end: 0.001594030488402226  at T-5: 0.0015940304887475897
+   f_coi      at 1.0: 50.0  end: 49.99082676836865  at T-5: 49.990822851353755
+== constant_power: strands load bus B5, L45+L56
+   trip B4-B5 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8506713609136872 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+   trip B5-B6 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 1.8281514024313378e9 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residu
+   solve to 60.0: DetailedEngine playback integration failed: retcode = Unstable at t = 1.0  t_end=1.0
+   ω_G1       at 1.0: -2.150649110603406e-17  end: -2.150649110603406e-17  at T-5: -2.150649110603406e-17
+   ω_G2       at 1.0: -2.237382662450725e-17  end: -2.237382662450725e-17  at T-5: -2.237382662450725e-17
+   ω_G3       at 1.0: -2.182542304948642e-17  end: -2.182542304948642e-17  at T-5: -2.182542304948642e-17
+   f_coi      at 1.0: 50.0  end: 50.0  at T-5: 50.0
+== default: two live islands, L45+L67  (B3,B5,B6 | rest)
+   trip B4-B5 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8980754656585002 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+   trip B6-B7 at t=1.0: ok
+   solve to 60.0: ok  t_end=60.0
+   ω_G1       at 1.0: 2.1388035137855437e-17  end: -0.0011695689608297087  at T-5: -0.0011657836295839916
+   ω_G2       at 1.0: 2.1563336731095232e-17  end: -0.001169715017696503  at T-5: -0.0011728443151451
+   ω_G3       at 1.0: 2.2465397678824476e-17  end: 0.004592396028293328  at T-5: 0.0045923960660158155
+   f_coi      at 1.0: 50.0  end: 50.03638049890993  at T-5: 50.036380959505166
+== default: strands load bus B5, L45+L56
+   trip B4-B5 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8980754656585002 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+   trip B5-B6 at t=1.0: DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.0 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual is not. Either
+   solve to 60.0: ok  t_end=60.0
+   ω_G1       at 1.0: 2.1388035137855437e-17  end: 0.004569162045544402  at T-5: 0.004574005077565928
+   ω_G2       at 1.0: 2.1563336731095232e-17  end: 0.004575595695480347  at T-5: 0.004565617988727699
+   ω_G3       at 1.0: 2.2465397678824476e-17  end: 0.004559008088722973  at T-5: 0.004565630987163892
+   f_coi      at 1.0: 50.0  end: 50.22840862219423  at T-5: 50.228408965399026

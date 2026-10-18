@@ -518,3 +518,8 @@ end
    `frequency_screen()` draws it. Under that preset, on the report grids, the dip
    changes no verdict and the rate is never judged, so the answers there are a
    settled-only check's — kept as built, the user's choice (`m9-context.md` D12).
+   **Double outages taken as M10** (2026-10-18, the user's choice): every pair of
+   lines and generators at both fidelities, lost at once and one after the other
+   with frequency restored in between, and a grid cut in two solved piece by piece
+   at each piece's own frequency — hurdles 18–21 (`docs/plans/m10-context.md` D0).
+   Filtering of pairs, N-3 and beyond, and a per-pair dip verdict are not in it (D5).
