@@ -512,8 +512,9 @@ end
    from a detailed-tier run per generator outage (counted only where two solver
    tolerances agree) and the rate of fall on every surviving machine over the
    limit's own window, against caller-supplied limits or the cited
-   `continental_europe_limits()` (SO GL Annex III: 800 mHz dip, 200 mHz settled, no
-   sourced rate limit); `scripts/outage_screen.jl` prints it beside M8's outcome and
+   `continental_europe_limits()` (SO GL Annex III: 800 mHz dip, 200 mHz settled — design values for a whole
+   synchronous area after a 3 GW incident, not a pass/fail rule for one outage on a
+   small grid — and no sourced rate limit); `scripts/outage_screen.jl` prints it beside M8's outcome and
    `frequency_screen()` draws it. Under that preset, on the report grids, the dip
    changes no verdict and the rate is never judged, so the answers there are a
    settled-only check's — kept as built, the user's choice (`m9-context.md` D12).
