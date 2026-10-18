@@ -173,7 +173,8 @@ end
                        # M8 step 6 (test/m8_outage_screen.jl): an inverter on a cut-off
                        # side keeps a bridge a split; the report joins the four above
                        :lone_source_bridges, :outage_screen,
-                       :dc_line_pair_outages])    # M10 step 1 (test/m10_double_outages.jl)
+                       :dc_line_pair_outages,    # M10 step 1 (test/m10_double_outages.jl)
+                       :dc_pair_outages])    # M10 step 2: a split grid answered per piece
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)

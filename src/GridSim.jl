@@ -229,6 +229,9 @@ export FrequencyTrace, GeneratorRates, generator_rates
 # M10 step 1 - the two-line DC factors. Both checked clear against `names(GLMakie)` in
 # the `ui/` environment before being committed (2026-10-18).
 export DCLinePairOutages, dc_line_pair_outages
+# M10 step 2 - every pair of elements, a split grid answered per piece. Checked clear
+# against `names(GLMakie)` the same way (2026-10-18).
+export DCPiece, DCPairOutages, dc_pair_outages
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model
