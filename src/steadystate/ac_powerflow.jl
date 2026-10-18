@@ -89,16 +89,20 @@ charging, no taps — so `Y * 1 = 0` holds here exactly as `B * 1 = 0` does in t
 DC assembly, and it is the same statement: with nothing to ground, a uniform
 voltage draws no current.
 """
-function _ac_admittance(net::NetworkModel)
+function _ac_admittance(net::NetworkModel, out::Vector{Int} = Int[])
     n = length(net.buses)
-    m = length(net.branches)
+    m = length(net.branches) - length(out)
     rows = Vector{Int}(undef, 4m)
     cols = Vector{Int}(undef, 4m)
     vals = Vector{ComplexF64}(undef, 4m)
+    k = -3
     for (e, br) in pairs(net.branches)
+        # `out`: branches left out, as if open (M10 step 3, a pair). Empty for every
+        # caller before it, which then assembles exactly the entries it always did.
+        e in out && continue
         y = inv(complex(br.R, br.X))     # X > 0 is enforced by `Branch`, so never 1/0
         f, t = net.bus_index[br.from], net.bus_index[br.to]
-        k = 4e - 3
+        k += 4
         rows[k],   cols[k],   vals[k]   = f, f,  y
         rows[k+1], cols[k+1], vals[k+1] = t, t,  y
         rows[k+2], cols[k+2], vals[k+2] = f, t, -y
@@ -140,10 +144,11 @@ that hold a voltage, which is what `_holds_voltage` means by a generator bus.
 
 `skip_machine = k` leaves machine `k` out of every column, as if it were not in the
 model (M8 step 5): the generator screen's view of the model after losing it, which
-cannot be built as a `NetworkModel` because its schedule no longer balances. The
-default `0` skips nothing, and is what `ac_powerflow` reads.
+cannot be built as a `NetworkModel` because its schedule no longer balances. A vector
+of indices leaves out every one of them (M10 step 3, a pair). The default `0` skips
+nothing, and is what `ac_powerflow` reads.
 """
-function _ac_schedule(net::NetworkModel; skip_machine::Int = 0)
+function _ac_schedule(net::NetworkModel; skip_machine::Union{Int,Vector{Int}} = 0)
     n = length(net.buses)
     Pgen  = zeros(Float64, n)
     V_set = fill(NaN, n)
@@ -152,7 +157,7 @@ function _ac_schedule(net::NetworkModel; skip_machine::Int = 0)
     has_source = falses(n)
     ma = machine_arrays(net)
     for k in eachindex(ma.bus)
-        k == skip_machine && continue
+        k in skip_machine && continue
         v = ma.bus[k]
         m = net.machines[k]
         if has_source[v]

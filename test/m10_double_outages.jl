@@ -684,3 +684,372 @@ end
         @test all(pc.outcome === :shared for ps in s.pieces for pc in ps if pc.kind === :live)
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M10 step 3: every pair in AC, a split grid answered piece by piece (`ac_pair_outages`).
+# Predictions and bands were written first: `docs/evidence/gridsim-m10/step3_predictions.md`.
+#
+# B = 1e-10, solution against solution (M8 step 5's B1), on Δω, pickups, |V| by bus id and
+# flows by branch id — never angles: the compared solves hold different references.
+# ─────────────────────────────────────────────────────────────────────────────
+
+const _M10_B = 1e-10
+
+_m10_grid(f, loads) = f(; loads)
+_m10_ac_live(s::ACPairOutages, p::Int) = [pc for pc in s.pieces[p] if pc.kind === :live]
+
+# The pair's index by element ids, in either order (`_m10_pair` for the AC screen).
+function _m10_pair(s::ACPairOutages, a::Symbol, b::Symbol)
+    i, j = findfirst(==(a), s.id), findfirst(==(b), s.id)
+    return findfirst(==((min(i, j), max(i, j))), s.pairs)
+end
+
+# Two AC answers to one event, within B: Δω, every pickup, |V| at every bus of `a` and
+# both ends' P and Q on every branch of `a`, each read BY ID in `b`. A branch only `b`
+# has must carry nothing (an open bridge to an empty bus).
+function _m10_same_ac(a::ACPowerFlow, aΔω, apk, b::ACPowerFlow, bΔω, bpk)
+    B = _M10_B
+    @test abs(aΔω - bΔω) <= B
+    @test maximum(abs, apk .- bpk) <= B
+    @test all(bus in b.buses for bus in a.buses)
+    for (v, bus) in pairs(a.buses)
+        @test abs(a.Vm[v] - b.Vm[findfirst(==(bus), b.buses)]) <= B
+    end
+    for (e, br) in pairs(a.branches)
+        j = findfirst(==(br), b.branches)
+        @test abs(a.flow[e] - b.flow[j]) <= B && abs(a.flow_rev[e] - b.flow_rev[j]) <= B
+        @test abs(a.qflow[e] - b.qflow[j]) <= B && abs(a.qflow_rev[e] - b.qflow_rev[j]) <= B
+    end
+    for (j, br) in pairs(b.branches)
+        br in a.branches && continue
+        @test abs(b.flow[j]) <= B && abs(b.qflow[j]) <= B
+    end
+end
+
+# The same comparison on whatever both answers carry, whether or not they solved: the
+# outcome, Δω (both `NaN` when neither settled), every pickup, every out-of-band bus `a`
+# names — each read by id in `b`, which may name more (a cut-off empty bus, sitting at
+# its neighbour's voltage) — and the solutions, where there are any.
+function _m10_same_answer(apc::ACPiece, apk, b_outcome, bΔω, bpk, blow, bsol)
+    B = _M10_B
+    @test apc.outcome === b_outcome
+    @test (isnan(apc.Δω) && isnan(bΔω)) || abs(apc.Δω - bΔω) <= B
+    @test maximum(abs, apk .- bpk) <= B
+    for l in apc.low
+        j = findfirst(m -> m.bus === l.bus, blow)
+        @test j !== nothing && abs(l.Vm - blow[j].Vm) <= B
+    end
+    (apc.solution === nothing || bsol === nothing) && return nothing
+    _m10_same_ac(apc.solution, apc.Δω, apk, bsol, bΔω, bpk)
+end
+
+# The responders of a piece, by position in `s.responders`: machines on its buses that
+# the pair did not take, and its grid-forming inverters.
+function _m10_piece_responders(net::NetworkModel, s::ACPairOutages, p::Int, pc::ACPiece)
+    gone = Set(s.id[e] for e in s.pairs[p])
+    rb = GridSim._responders(net).bus
+    return [q for q in eachindex(s.responders)
+            if net.buses[rb[q]].id in pc.buses && !(s.responders[q] in gone)]
+end
+
+# The per-piece losses identity (step3_predictions.md), every term read off the base
+# solution, the piece's solution and the model — never off the screen's setup:
+#   Σ pickups = lost base output + Δ load draw + Δ internal losses − base export across the cut,
+# the export read at THIS piece's end of each cut branch. Returns (dload, dloss).
+function _m10_identity(net::NetworkModel, s::ACPairOutages, p::Int, pc::ACPiece)
+    b, sol = s.base, pc.solution
+    nb = length(net.branches)
+    inp(bus) = bus in pc.buses
+    vb(bus) = findfirst(==(bus), b.buses)
+    lostP = 0.0
+    for e in s.pairs[p]
+        e > nb || continue
+        mc = net.machines[e - nb]
+        inp(mc.bus) || continue
+        # What it produced: its schedule, or the slack's solved output (no grid-following
+        # inverter sits on a report grid's slack).
+        lostP += mc.bus === net.slack ? b.Pgen[vb(mc.bus)] : mc.P0 / net.S_base
+    end
+    dload = sum(sol.Pload) - sum(b.Pload[vb(bus)] for bus in pc.buses)
+    loss_b, exp_b = 0.0, 0.0
+    for (e, br) in pairs(net.branches)
+        f, t = inp(br.from), inp(br.to)
+        f && t && (loss_b += b.loss[e])
+        f && !t && (exp_b += b.flow[e])
+        t && !f && (exp_b += b.flow_rev[e])
+    end
+    dloss = sum(sol.loss; init = 0.0) - loss_b
+    Σpk = sum(s.pickup[p][q] for q in _m10_piece_responders(net, s, p, pc); init = 0.0)
+    bound = length(pc.buses) * (max(b.residual, eps()) + max(sol.residual, eps()))
+    @test abs(Σpk - lostP - dload - dloss + exp_b) <= bound
+    return (dload, dloss)
+end
+
+# M8's ladder rungs, copied (the focused runner does not load M8's test file): lossless;
+# every machine at V_set = 1; a zero-power, governor-free, undamped machine holding
+# 1 pu on every bus without a source.
+_m10_lossless(net::NetworkModel) = NetworkModel(net.S_base, net.f0, net.buses,
+    [Branch(b.id, b.from, b.to, b.X, b.rating) for b in net.branches], net.machines,
+    net.loads; slack = net.slack, inverters = net.inverters)
+function _m10_A0(net::NetworkModel)
+    l = _m10_lossless(net)
+    src = Set(m.bus for m in l.machines)
+    ms = [[GridSim._machine_with(m; V_set = 1.0) for m in l.machines];
+          [Machine(Symbol(:H_, b.id), b.id, 100.0, 5.0, 0.0, 0.2, 1.0, 0.0)
+           for b in l.buses if !(b.id in src)]]
+    return NetworkModel(l.S_base, l.f0, l.buses, l.branches, ms, l.loads; slack = l.slack,
+                        inverters = l.inverters)
+end
+
+@testset "M10 step 3 — every pair in AC, a split grid piece by piece" begin
+
+    @testset "the pairs and pieces are step 2's; dead pieces are read from the AC base" begin
+        for f in (_M10_CASE9, _M10_MESH), loads in (:constant_power, :default)
+            net = _m10_grid(f, loads)
+            dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+            @test ac.id == dc.id && ac.pairs == dc.pairs && ac.same_as == dc.same_as
+            @test ac.splits == dc.splits && ac.responders == dc.responders
+            for p in eachindex(dc.pairs)
+                @test [(pc.buses, pc.kind) for pc in ac.pieces[p]] ==
+                      [(pc.buses, pc.kind) for pc in dc.pieces[p]]
+            end
+        end
+        # case9's slack machine cut off alone (L14 with any ring line): what it takes with
+        # it is its SOLVED base output — the schedule plus the base losses it carried.
+        net = _m10_grid(_M10_CASE9, :constant_power)
+        dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+        p = _m10_pair(ac, :L14, :L45)
+        a1 = only(pc for pc in ac.pieces[p] if pc.buses == [:B1])
+        d1 = only(pc for pc in dc.pieces[p] if pc.buses == [:B1])
+        @test a1.kind === :sources_lost && a1.sources_lost === ac.base.Pgen[1]
+        @test a1.sources_lost - d1.sources_lost > 1e-3       # the base losses
+        @test a1.solution === nothing && isnan(a1.Δω)
+    end
+
+    @testset "every live piece's solution holds its own buses and in-service branches only" begin
+        for f in (_M10_CASE9, _M10_MESH), loads in (:constant_power, :default)
+            net = _m10_grid(f, loads)
+            s = ac_pair_outages(net)
+            for p in eachindex(s.pairs), pc in _m10_ac_live(s, p)
+                gone = Set(s.id[e] for e in s.pairs[p])
+                # An outaged branch is never judged against a rating.
+                @test !any(d -> d.id in gone, pc.over)
+                pc.solution === nothing && continue
+                sol = pc.solution
+                @test sol.buses == pc.buses
+                @test sol.branches == [br.id for br in net.branches
+                                       if br.from in pc.buses && br.to in pc.buses && !(br.id in gone)]
+                @test sol.slack === (net.slack in pc.buses ? net.slack : pc.buses[1])
+                @test sol.θ[findfirst(==(sol.slack), sol.buses)] == 0.0
+            end
+        end
+    end
+
+    @testset "a pair that is one outage (D4) is M8's single AC outage, within B" begin
+        for loads in (:constant_power, :default)
+            net = _m10_grid(_M10_CASE9, loads)
+            s, g = ac_pair_outages(net), ac_generator_outages(net)
+            ps = findall(!=(:none), s.same_as)
+            @test length(ps) == 3
+            for p in ps
+                k = findfirst(==(s.same_as[p]), g.machines)
+                pc = only(_m10_ac_live(s, p))
+                _m10_same_answer(pc, s.pickup[p], g.outcome[k], g.Δω[k], g.pickup[k], g.low[k],
+                                 g.solution[k])
+            end
+        end
+    end
+
+    @testset "four paths to G1 and G2 gone give one answer, within B" begin
+        # Measured after the first run, not predicted: no path solves. On constant-power
+        # loads G3 alone cannot hold the voltage and every Newton solve fails; on the
+        # default loads the load falls with the voltage and all four solve outside the
+        # band, to one Δω. So the comparison is on the answer each gives, solved or not.
+        for (loads, want) in ((:constant_power, :no_solution), (:default, :voltage))
+            net = _m10_grid(_M10_CASE9, loads)
+            s = ac_pair_outages(net)
+            ps = [_m10_pair(s, a, b) for (a, b) in ((:L14, :L82), (:L14, :G2), (:L82, :G1), (:G1, :G2))]
+            ref = only(_m10_ac_live(s, ps[4]))
+            @test length(ref.buses) == 9 && ref.outcome === want
+            loads === :default && @test ref.Δω < 0 && length(ref.low) == 7
+            for p in ps[1:3]
+                pc = only(_m10_ac_live(s, p))
+                _m10_same_answer(pc, s.pickup[p], ref.outcome, ref.Δω, s.pickup[ps[4]], ref.low,
+                                 ref.solution)
+            end
+            # A cut-off empty bus sits at its neighbour's voltage (M8 D9's premise).
+            V(bus) = (j = findfirst(l -> l.bus === bus, ref.low); j === nothing ? NaN : ref.low[j].Vm)
+            loads === :default && @test abs(V(:B1) - V(:B4)) <= _M10_B && abs(V(:B2) - V(:B8)) <= _M10_B
+        end
+    end
+
+    @testset "the mesh's AB+AC is NOT G1's outage in AC, even in frequency" begin
+        # Step 2 found them equal in DC frequency and different only in flows (a loop flow
+        # through A). In AC they differ in frequency too — predicted. The prediction gave
+        # the reason as the loop flow's own losses, and had the SIGN wrong: A is a parallel
+        # path, so keeping it LOWERS the total losses (measured 0.0270 against 0.0341 pu on
+        # constant power). Which way Δω then moves depends on the load model, measured:
+        # constant power, the pair settles lower (more loss to pick up); default loads, the
+        # pair settles HIGHER, because its lower voltages cut the load draw by more than the
+        # losses rise.
+        for loads in (:constant_power, :default)
+            net = _m10_grid(_M10_MESH, loads)
+            s, g = ac_pair_outages(net), ac_generator_outages(net)
+            pc = only(_m10_ac_live(s, _m10_pair(s, :AB, :AC)))
+            k = findfirst(==(:G1), g.machines)
+            @test pc.outcome === g.outcome[k] === :secure
+            @test abs(pc.Δω - g.Δω[k]) > 1e3 * _M10_B
+            a, b = pc.solution, g.solution[k]
+            @test sum(a.loss) > sum(b.loss)
+            if loads === :constant_power
+                @test pc.Δω < g.Δω[k]
+            else
+                @test pc.Δω > g.Δω[k]
+                @test sum(b.Pload) - sum(a.Pload) > sum(a.loss) - sum(b.loss)
+            end
+        end
+    end
+
+    @testset "pickups = lost output + load shift + loss change − export across the cut, per piece" begin
+        moved_load = moved_loss = checked = 0
+        for f in (_M10_CASE9, _M10_MESH), loads in (:constant_power, :default)
+            net = _m10_grid(f, loads)
+            s = ac_pair_outages(net)
+            for p in eachindex(s.pairs), pc in _m10_ac_live(s, p)
+                (isfinite(pc.Δω) && pc.solution !== nothing) || continue
+                dload, dloss = _m10_identity(net, s, p, pc)
+                loads === :constant_power && @test abs(dload) <= 1e-14
+                moved_load += abs(dload) > 1e-3
+                moved_loss += abs(dloss) > 1e-3
+                checked += 1
+            end
+        end
+        @test checked > 0 && moved_load > 0 && moved_loss > 0
+    end
+
+    @testset "lossless, constant power: every piece's Δω and pickups ARE step 2's, within B" begin
+        for f in (_M10_CASE9, _M10_MESH)
+            net = _m10_lossless(_m10_grid(f, :constant_power))
+            dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+            checked = 0
+            for p in eachindex(ac.pairs)
+                for (a, d) in zip(ac.pieces[p], dc.pieces[p])
+                    a.kind === :live || continue
+                    if a.outcome in (:no_response, :reserve_exhausted)
+                        @test a.outcome === d.outcome
+                        continue
+                    end
+                    # A whole grid that lost two lines has no Δω in AC, by design.
+                    isfinite(a.Δω) || continue
+                    @test d.outcome === :shared
+                    @test abs(a.Δω - d.Δω) <= _M10_B
+                    checked += 1
+                end
+                any(pc -> isfinite(pc.Δω), ac.pieces[p]) &&
+                    @test maximum(abs, ac.pickup[p] .- dc.pickup[p]) <= _M10_B
+            end
+            @test checked > 0
+        end
+    end
+
+    @testset "every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not" begin
+        for f in (_M10_CASE9, _M10_MESH)
+            net = _m10_A0(_m10_grid(f, :constant_power))
+            dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+            trees = loops = 0
+            for p in eachindex(ac.pairs), pc in _m10_ac_live(ac, p)
+                pc.solution === nothing && continue
+                sol = pc.solution
+                gap = maximum((abs(sol.flow[e] - dc.flow[p][findfirst(==(br), dc.id)])
+                               for (e, br) in pairs(sol.branches)); init = 0.0)
+                if length(sol.branches) == length(sol.buses) - 1
+                    @test gap <= _M10_B
+                    trees += 1
+                else
+                    loops += gap > 1e3 * _M10_B
+                end
+            end
+            # The mesh has no tree piece: any two of its seven lines leave a loop.
+            @test loops > 0
+            f === _M10_CASE9 && @test trees > 0
+        end
+        # The helpers make case9's three stranded loads live pieces with nothing that
+        # responds — at both fidelities.
+        net = _m10_A0(_m10_grid(_M10_CASE9, :constant_power))
+        dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+        for (a, b, bus) in ((:L45, :L56, :B5), (:L67, :L78, :B7), (:L89, :L94, :B9))
+            p = _m10_pair(ac, a, b)
+            pa = only(pc for pc in ac.pieces[p] if pc.buses == [bus])
+            pd = only(pc for pc in dc.pieces[p] if pc.buses == [bus])
+            @test pa.kind === pd.kind === :live
+            @test pa.outcome === pd.outcome === :no_response
+        end
+    end
+
+    @testset "DC against AC per pair, by id" begin
+        for loads in (:constant_power, :default)
+            net = _m10_grid(_M10_CASE9, loads)
+            dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+            cmp = compare_pair_screens(net, dc, ac)
+            @test length(cmp.class) == 66
+            @test all(c -> c in (:refused, :refusals_differ, :dc_blind, :agree, :dc_missed,
+                                 :dc_false_alarm, :mixed), cmp.class)
+            # A collapsed pair classifies as its machine's single outage does.
+            gc = compare_generator_screens(net, dc_generator_outages(net), ac_generator_outages(net))
+            for p in findall(!=(:none), ac.same_as)
+                @test cmp.class[p] === gc.class[findfirst(==(ac.same_as[p]), gc.machines)]
+            end
+            # Where AC solved every live piece and DC settled, the miss is read by id; the
+            # pair's own branches read zero in both.
+            for p in eachindex(cmp.pairs)
+                isempty(cmp.reactive[p]) && continue
+                @test all(>=(-1e-12), cmp.reactive[p])
+                @test all(cmp.reactive[p][e] === 0.0 for e in ac.pairs[p] if ac.kind[e] === :branch)
+            end
+        end
+        net = _m10_grid(_M10_MESH, :constant_power)
+        @test_throws ArgumentError compare_pair_screens(net, dc_pair_outages(net),
+            ac_pair_outages(_m10_grid(_M10_CASE9, :constant_power)))
+    end
+
+    @testset "inverters: pieces as step 2's, and the identity on every piece that solved" begin
+        # The report grids carry no inverter, so this is the only place the per-piece code's
+        # inverter half runs: which inverters a piece holds, their position in it, and a
+        # grid-forming one as a piece's ONLY responder, off the reference bus.
+        checked = 0
+        for mode in (:grid_forming, :grid_following)
+            net = _m10_inverter_corner(mode)
+            dc, ac = dc_pair_outages(net), ac_pair_outages(net)
+            for p in eachindex(dc.pairs)
+                @test [(pc.buses, pc.kind) for pc in ac.pieces[p]] ==
+                      [(pc.buses, pc.kind) for pc in dc.pieces[p]]
+                for pc in _m10_ac_live(ac, p)
+                    (isfinite(pc.Δω) && pc.solution !== nothing) || continue
+                    _m10_identity(net, ac, p, pc)
+                    checked += 1
+                end
+            end
+            p = _m10_pair(ac, :BC, :CA)
+            corner = only(pc for pc in ac.pieces[p] if pc.buses == [:C])
+            @test corner.kind === (mode === :grid_following ? :load_lost : :sources_lost)
+            @test corner.sources_lost ≈ 0.2 rtol = 1e-14
+            mode === :grid_forming || continue
+            # AB+CA leaves {B, C}: the load and the grid-forming inverter alone, the model's
+            # slack cut off with G1. The inverter carries the whole load.
+            bc = only(_m10_ac_live(ac, _m10_pair(ac, :AB, :CA)))
+            @test bc.buses == [:B, :C] && bc.solution !== nothing && bc.solution.slack === :B
+            i3 = findfirst(==(:I3), ac.responders)
+            @test ac.pickup[_m10_pair(ac, :AB, :CA)][i3] > 0.5
+        end
+        @test checked > 0
+    end
+
+    @testset "the base is refused as ac_generator_outages refuses it" begin
+        m0 = _M10_MESH()
+        two = NetworkModel(m0.S_base, m0.f0, m0.buses, m0.branches,
+            [m0.machines; Machine(:G4, :A, 50.0, 3.0, 1.0, 0.25, 1.0, 0.0; V_set = 1.05)], m0.loads;
+            slack = m0.slack)
+        msg = try; ac_pair_outages(two); ""; catch e; e.msg; end
+        @test startswith(msg, "ac_pair_outages: the slack bus :A carries 2 sources")
+    end
+end

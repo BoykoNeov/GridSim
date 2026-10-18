@@ -163,12 +163,12 @@ end
 # screens are matched BY BRANCH ID, never by position.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# `net` without branch `k`, every other collection carried. A bridge leaves a
-# disconnected model, which `NetworkModel` refuses; callers decide bridges from the
-# graph first and never reach that refusal.
-_without_branch(net::NetworkModel, k::Int) =
+# `net` without branch `k` (or every branch in a vector `k`, M10's pairs), every other
+# collection carried. A bridge leaves a disconnected model, which `NetworkModel`
+# refuses; callers decide bridges from the graph first and never reach that refusal.
+_without_branch(net::NetworkModel, k::Union{Int,Vector{Int}}) =
     NetworkModel(net.S_base, net.f0, net.buses,
-                 Branch[b for (e, b) in pairs(net.branches) if e != k],
+                 Branch[b for (e, b) in pairs(net.branches) if !(e in k)],
                  net.machines, net.loads; slack = net.slack, inverters = net.inverters)
 
 # What `_ac_powerflow_outcome` reports, as concrete types: a struct field typed `Any`
@@ -733,41 +733,70 @@ The base output at the base slack bus is its SOLVED generation, since that bus h
 source (refused otherwise, D8.8) and that source carried the base losses. If the lost
 machine is that source, what is left there is the grid-following inverters' fixed
 injection only.
+
+It is [`_ac_piece_setup`](@ref) with the piece the whole grid and no branch out — the
+same arrays and the same operations, which M9's captures hold byte for byte.
 """
-function _ac_shared_setup(net::NetworkModel, base::ACPowerFlow, lost::Int;
-                          reference::Symbol = net.slack)
+_ac_shared_setup(net::NetworkModel, base::ACPowerFlow, lost::Int;
+                 reference::Symbol = net.slack) =
+    _ac_piece_setup(net, base, [lost], collect(1:length(net.buses)), Int[],
+                    net.bus_index[reference])
+
+"""
+    _ac_piece_setup(net, base, lost, vs, out, v_ref)
+
+The shared solve's setup for one piece of the grid (M10 step 3, `m10-context.md` D9):
+the machines `lost` (indices) taken out, the branches `out` (indices) removed, and the
+problem cut down to the vertices `vs` (ascending), which must be one connected piece of
+what is left. Every per-bus array is the piece's, indexed `1:length(vs)`; `v_ref` is the
+reference's position in `vs`. The responders keep the model's order — `alive` marks the
+ones inside the piece and not lost, and `r.bus` is their position in `vs` (`0` outside).
+
+The base output at the base slack bus is its solved generation when that bus is in the
+piece and its source is not lost (`_ac_shared_setup`'s rule).
+"""
+function _ac_piece_setup(net::NetworkModel, base::ACPowerFlow, lost::Vector{Int},
+                         vs::Vector{Int}, out::Vector{Int}, v_ref::Int)
     n = length(net.buses)
-    sch = _ac_schedule(net; skip_machine = lost)
+    loc = zeros(Int, n)                    # vertex → position in `vs`; 0 outside it
+    loc[vs] = 1:length(vs)
+    full = _ac_schedule(net; skip_machine = lost)
+    sch = map(a -> a[vs], full)
     v_slack = net.bus_index[net.slack]
-    v_ref = net.bus_index[reference]
     r = _responders(net)
-    alive = trues(length(r.ids))
-    alive[lost] = false
+    alive = [loc[r.bus[i]] > 0 && !(i in lost) for i in eachindex(r.ids)]
     # The base output of every bus. Every other bus held its schedule in the base solve.
     Pbase = copy(sch.Pgen)
-    lost_at_slack = r.bus[lost] == v_slack
-    lost_at_slack || (Pbase[v_slack] = base.Pgen[v_slack])
-    # What the lost machine produced: its schedule, or the slack's solved output.
-    P_lost = lost_at_slack ? base.Pgen[v_slack] - sch.Pfix[v_slack] : r.P[lost]
-    # Each grid-forming inverter's base output: its schedule, or the slack's solved
-    # output if it is the slack's one source.
+    lost_at_slack = any(k -> r.bus[k] == v_slack, lost)
+    lost_at_slack || loc[v_slack] == 0 || (Pbase[loc[v_slack]] = base.Pgen[v_slack])
+    # What the lost machines produced: each one's schedule, or the slack's solved output.
+    P_lost = sum((r.bus[k] == v_slack ? base.Pgen[v_slack] - full.Pfix[v_slack] : r.P[k]
+                  for k in lost); init = 0.0)
+    # Each grid-forming inverter in the piece, and its base output: its schedule, or the
+    # slack's solved output if it is the slack's one source.
     ia = _inverter_arrays(net)
-    inv_P0 = copy(ia.P)
-    for j in eachindex(ia.bus)
-        ia.bus[j] == v_slack && (inv_P0[j] = base.Pgen[v_slack] - sch.Pfix[v_slack])
+    js = [j for j in eachindex(ia.bus) if loc[ia.bus[j]] > 0]
+    inv_P0 = ia.P[js]
+    for (q, j) in pairs(js)
+        ia.bus[j] == v_slack && (inv_P0[q] = base.Pgen[v_slack] - full.Pfix[v_slack])
     end
     # The machines' own reactive limits per bus (the inverters' follow `x`).
     Qm_min = zeros(Float64, n)
     Qm_max = zeros(Float64, n)
     for (k, m) in pairs(net.machines)
-        k == lost && continue
+        k in lost && continue
         v = net.bus_index[m.bus]
         Qm_min[v] += m.Q_min
         Qm_max[v] += m.Q_max
     end
-    return (; sch, Y = _ac_admittance(net), v_ref, v_slack, Pbase, P_lost, r, alive,
-            inv_bus = ia.bus, inv_S = ia.S, inv_P0, inv_g = inv.(ia.K_p),
-            inv_ids = ia.id, Qm_min, Qm_max)
+    # The piece's branches: in service, both ends inside it, in model order.
+    topo = branch_topology(net)
+    eb = [e for e in eachindex(topo.src) if !(e in out) && loc[topo.src[e]] > 0]
+    return (; sch, Y = _ac_admittance(net, out)[vs, vs], v_ref,
+            v_slack = loc[v_slack], Pbase, P_lost, r = merge(r, (; bus = loc[r.bus])),
+            alive, inv_bus = loc[ia.bus[js]], inv_S = ia.S[js], inv_P0,
+            inv_g = inv.(ia.K_p[js]), inv_ids = ia.id[js], Qm_min = Qm_min[vs],
+            Qm_max = Qm_max[vs], vs, eb, lost)
 end
 
 # One round's problem, given which governors are capped and which buses are held at a
@@ -836,14 +865,37 @@ grid-forming inverter over its rating, `kind = :inverter`), `:voltage`,
 two refusals `:no_response` and `:reserve_exhausted`. The checks after the solve run in
 `_ac_solve`'s order: back-off, band, ratings, residual, inverter rating. A check that
 fails after the network solved still reports the solved `Δω` and shares.
+
+It is [`_ac_piece_solve`](@ref) on the whole grid.
 """
 function _ac_generator_outcome(net::NetworkModel, base::ACPowerFlow, lost::Int;
                                reference::Symbol = net.slack,
                                abstol::Real = 1.0e-12, maxiters::Integer = 200,
                                max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
-    st = _ac_shared_setup(net, base, lost; reference)
-    sch, r, n = st.sch, st.r, length(net.buses)
+    return _ac_piece_solve(net, _ac_shared_setup(net, base, lost; reference);
+                           abstol, maxiters, max_switch_rounds)
+end
+
+"""
+    _ac_piece_solve(net, st; abstol, maxiters, max_switch_rounds)
+
+The shared solve and its checks on the piece `st` describes ([`_ac_piece_setup`](@ref)),
+classified as [`_ac_generator_outcome`](@ref) describes. The solution holds the piece's
+buses and its in-service branches only; a branch outside it, an outaged one among them,
+is never handed a flow or judged against a rating.
+"""
+function _ac_piece_solve(net::NetworkModel, st;
+                         abstol::Real = 1.0e-12, maxiters::Integer = 200,
+                         max_switch_rounds::Integer = _AC_MAX_SWITCH_ROUNDS)
+    sch, r, n = st.sch, st.r, length(st.vs)
     nr = length(r.ids)
+    # A per-piece vector placed back on the model's vertices, for the checks and the
+    # messages that read the model; `NaN` outside the piece.
+    function whole(a)
+        g = fill(NaN, length(net.buses))
+        g[st.vs] = a
+        return g
+    end
     capped = falses(nr)
     refused(outcome, reason = :none, detail = nothing) =
         (; outcome, detail, solution = nothing, Δω = NaN,
@@ -909,7 +961,8 @@ function _ac_generator_outcome(net::NetworkModel, base::ACPowerFlow, lost::Int;
 
     qb = _ac_backoff_violations(limited, at_max, Vm, sch.V_set)
     isempty(qb) || return solved(:no_solution, (reason = :backoff, message =
-        _ac_backoff_error(net, limited, at_max, s.Qm_held, Vm, sch.V_set, first(qb)).msg),
+        _ac_backoff_error(net, st.vs[limited], at_max, whole(s.Qm_held), whole(Vm),
+                          whole(sch.V_set), first(qb)).msg),
         nothing, :backoff)
     gb = _governor_backoff_violations(capped, x, r.g, r.h)
     isempty(gb) || return solved(:no_solution, (reason = :backoff, message =
@@ -921,22 +974,28 @@ function _ac_generator_outcome(net::NetworkModel, base::ACPowerFlow, lost::Int;
     Pload = [sch.Pl[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
     Qload = [sch.Ql[v] * _zip_scale(Vm[v], sch.a_i[v], sch.a_p[v]) for v in 1:n]
     Pgen = Pnet .+ Pload
-    flow, flow_rev, qflow, qflow_rev, loss, mva = _ac_branch_flows(net, Vm, θ)
+    # Flows on the piece's own branches (`st.eb`) only. Every other branch reads zero
+    # MVA in the rating check, so an outaged line is never judged.
+    fa, fra, qa, qra, la, ma = _ac_branch_flows(net, whole(Vm), whole(θ))
+    eb = st.eb
+    mva = zeros(Float64, length(net.branches))
+    mva[eb] = ma[eb]
 
-    low = _voltage_band_violations(net, Vm)
+    Vw = whole(Vm)
+    low = [v for v in _voltage_band_violations(net, Vw) if v in st.vs]
     isempty(low) || return solved(:voltage,
-        [(bus = net.buses[v].id, Vm = Vm[v]) for v in low], nothing)
+        [(bus = net.buses[v].id, Vm = Vw[v]) for v in low], nothing)
 
     held = Set(limited)
     roles = [(sch.has_source[v] && !(v in held)) ? :generator : :load for v in 1:n]
-    sol = ACPowerFlow(net.buses[st.v_ref].id,
-                      Symbol[b.id for b in net.buses], Vm, θ,
+    sol = ACPowerFlow(net.buses[st.vs[st.v_ref]].id,
+                      Symbol[net.buses[v].id for v in st.vs], Vm, θ,
                       Pgen, Qgen, Pload, Qload,
-                      roles, Symbol[net.buses[v].id for v in limited],
-                      Symbol[b.id for b in net.branches],
-                      Symbol[b.from for b in net.branches],
-                      Symbol[b.to for b in net.branches],
-                      flow, flow_rev, qflow, qflow_rev, loss, res)
+                      roles, Symbol[net.buses[st.vs[v]].id for v in limited],
+                      Symbol[net.branches[e].id for e in eb],
+                      Symbol[net.branches[e].from for e in eb],
+                      Symbol[net.branches[e].to for e in eb],
+                      fa[eb], fra[eb], qa[eb], qra[eb], la[eb], res)
 
     over = _rating_violations(net, mva)
     isempty(over) || return solved(:overload,
@@ -950,13 +1009,14 @@ function _ac_generator_outcome(net::NetworkModel, base::ACPowerFlow, lost::Int;
     # their summed rating (`_ac_inverter_slack_excess`' rule, at every bus, D8.6).
     inv_over = _OverEntry[]
     for v in unique(st.inv_bus)
-        any(k -> k != lost, net.machines_at_bus[v]) && continue
+        any(k -> !(k in st.lost), net.machines_at_bus[st.vs[v]]) && continue
         js = [j for j in eachindex(st.inv_bus) if st.inv_bus[j] == v]
         S = sum(st.inv_S[js])
         Sout = hypot(Pgen[v] - sch.Pfix[v], Qgen[v] - sch.Qfix[v])
         Sout <= S * (1 + 1e-12) && continue
         push!(inv_over, (kind = :inverter, id = length(js) == 1 ? st.inv_ids[js[1]] :
-                         net.buses[v].id, mva = Sout * net.S_base, rating = S * net.S_base))
+                         net.buses[st.vs[v]].id, mva = Sout * net.S_base,
+                         rating = S * net.S_base))
     end
     isempty(inv_over) || return solved(:overload, inv_over, sol)
     return solved(:secure, nothing, sol)
@@ -1026,35 +1086,7 @@ A grid-forming inverter's reactive limit follows the real power it now produces,
 outages are not.
 """
 function ac_generator_outages(net::NetworkModel)
-    base = ac_powerflow(net)
-    v_slack = net.bus_index[net.slack]
-    nsrc = length(net.machines_at_bus[v_slack]) +
-           count(==(v_slack), _inverter_arrays(net).bus)
-    nsrc <= 1 || throw(ArgumentError(
-        "ac_generator_outages: the slack bus :$(net.slack) carries $nsrc sources. The " *
-        "AC flow decides only their summed output, which includes the base losses, so " *
-        "what any one of them was producing — the power its outage loses — is not " *
-        "defined (m8-context.md D8). Put one source on the slack bus."))
-    # `ac_powerflow` does not enforce the slack's reactive limits; this screen does
-    # (D8.5). A base already past them would put the reference on its limit in every
-    # outage, whatever the outage did, so each answer would carry two causes. Refused
-    # by name, as a refused base refuses the screen (the user's choice, 2026-10-07).
-    ia, fa = _inverter_arrays(net), _gfl_arrays(net)
-    Pfix_s = sum((fa.P[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
-    Qfix_s = sum((fa.Q[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
-    Qcap = sum((_inverter_q_cap(ia.S[j], base.Pgen[v_slack] - Pfix_s)
-                for j in eachindex(ia.bus) if ia.bus[j] == v_slack); init = 0.0)
-    Qmax = sum((net.machines[k].Q_max for k in net.machines_at_bus[v_slack]); init = 0.0) + Qcap
-    Qmin = sum((net.machines[k].Q_min for k in net.machines_at_bus[v_slack]); init = 0.0) - Qcap
-    Qs = base.Qgen[v_slack] - Qfix_s
-    Qmin - _AC_QLIM_TOL <= Qs <= Qmax + _AC_QLIM_TOL || throw(ArgumentError(
-        "ac_generator_outages: the slack bus :$(net.slack) already produces " *
-        "$(Qs * net.S_base) MVAr in the base case, outside its reactive limits " *
-        "[$(Qmin * net.S_base), $(Qmax * net.S_base)] MVAr. ac_powerflow does not " *
-        "enforce the slack's limits; this screen does, so every outage would put the " *
-        "reference on its limit whatever the outage did, and each answer would mix the " *
-        "outage with a violation that was already there (m8-context.md D8). Fix the " *
-        "base, or the limits, first."))
+    base = _ac_screen_base(net, "ac_generator_outages")
     nm = length(net.machines)
     r = _responders(net)
     outcome = Vector{Symbol}(undef, nm)
@@ -1075,6 +1107,42 @@ function ac_generator_outages(net::NetworkModel)
     end
     return ACGeneratorOutages(base, Symbol[m.id for m in net.machines], r.ids, outcome,
                               Δω, pickup, capped, solution, over, low, reason)
+end
+
+# The base every shared-solve screen is measured from, `ac_powerflow(net)`, with the two
+# refusals of a base that screen cannot use, by name (`who` names the screen). Taken out
+# of `ac_generator_outages` at M10 step 3 so the pair screen refuses with the same code.
+function _ac_screen_base(net::NetworkModel, who::AbstractString)
+    base = ac_powerflow(net)
+    v_slack = net.bus_index[net.slack]
+    nsrc = length(net.machines_at_bus[v_slack]) +
+           count(==(v_slack), _inverter_arrays(net).bus)
+    nsrc <= 1 || throw(ArgumentError(
+        "$who: the slack bus :$(net.slack) carries $nsrc sources. The " *
+        "AC flow decides only their summed output, which includes the base losses, so " *
+        "what any one of them was producing — the power its outage loses — is not " *
+        "defined (m8-context.md D8). Put one source on the slack bus."))
+    # `ac_powerflow` does not enforce the slack's reactive limits; this screen does
+    # (D8.5). A base already past them would put the reference on its limit in every
+    # outage, whatever the outage did, so each answer would carry two causes. Refused
+    # by name, as a refused base refuses the screen (the user's choice, 2026-10-07).
+    ia, fa = _inverter_arrays(net), _gfl_arrays(net)
+    Pfix_s = sum((fa.P[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
+    Qfix_s = sum((fa.Q[j] for j in eachindex(fa.bus) if fa.bus[j] == v_slack); init = 0.0)
+    Qcap = sum((_inverter_q_cap(ia.S[j], base.Pgen[v_slack] - Pfix_s)
+                for j in eachindex(ia.bus) if ia.bus[j] == v_slack); init = 0.0)
+    Qmax = sum((net.machines[k].Q_max for k in net.machines_at_bus[v_slack]); init = 0.0) + Qcap
+    Qmin = sum((net.machines[k].Q_min for k in net.machines_at_bus[v_slack]); init = 0.0) - Qcap
+    Qs = base.Qgen[v_slack] - Qfix_s
+    Qmin - _AC_QLIM_TOL <= Qs <= Qmax + _AC_QLIM_TOL || throw(ArgumentError(
+        "$who: the slack bus :$(net.slack) already produces " *
+        "$(Qs * net.S_base) MVAr in the base case, outside its reactive limits " *
+        "[$(Qmin * net.S_base), $(Qmax * net.S_base)] MVAr. ac_powerflow does not " *
+        "enforce the slack's limits; this screen does, so every outage would put the " *
+        "reference on its limit whatever the outage did, and each answer would mix the " *
+        "outage with a violation that was already there (m8-context.md D8). Fix the " *
+        "base, or the limits, first."))
+    return base
 end
 
 # ─────────────────────────────────────────────────────────────────────────────

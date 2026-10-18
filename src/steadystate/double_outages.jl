@@ -290,6 +290,61 @@ function _pair_pieces(n::Int, topo, out::Vector{Int})
     return piece, length(comps)
 end
 
+# The elements both pair screens read — M8's rows, every branch in model order then
+# every machine — every unordered pair of them, and D4's collapse: the machine whose
+# single outage the pair IS, or `:none`. Branches come first, so a mixed pair is always
+# (branch, machine).
+function _pair_elements(net::NetworkModel)
+    m, nm = length(net.branches), length(net.machines)
+    N = m + nm
+    kind = [fill(:branch, m); fill(:machine, nm)]
+    id = [Symbol[b.id for b in net.branches]; Symbol[mc.id for mc in net.machines]]
+    elems = [(i, j) for i in 1:N for j in (i + 1):N]
+    src = lone_source_bridges(net)
+    same_as = Symbol[(i <= m && j > m && src.machine[i] === id[j]) ? id[j] : :none
+                     for (i, j) in elems]
+    return kind, id, elems, same_as
+end
+
+# What piece `c` is (D4), and what is in it: `kind` (`:live`, `:sources_lost`,
+# `:load_lost`, `:empty`), the output of its sources by `P` (per responder — the schedule
+# in DC, the AC base's output in AC), its load (a `P0 < 0` machine's `|P0|` included)
+# and its grid-following inverters' schedule. A machine is a source or a load by the
+# sign of its SCHEDULE, whatever `P` says.
+function _pair_piece_kind(piece::Vector{Int}, c::Int, r, lost::AbstractVector{Bool},
+                          la, fa, P::Vector{Float64})
+    nm = r.n_machines
+    has_src = has_load = false
+    sources = load = 0.0
+    for k in 1:nm
+        (piece[r.bus[k]] == c && !lost[k]) || continue
+        if r.P[k] >= 0.0
+            has_src = true
+            sources += P[k]
+        else
+            has_load = true
+            load -= r.P[k]
+        end
+    end
+    for q in (nm + 1):length(r.ids)
+        piece[r.bus[q]] == c || continue
+        has_src = true
+        sources += P[q]
+    end
+    for q in eachindex(la.bus)
+        piece[la.bus[q]] == c || continue
+        has_load = true
+        load += la.P[q]
+    end
+    gfl = 0.0
+    for q in eachindex(fa.bus)
+        piece[fa.bus[q]] == c && (gfl += fa.P[q])
+    end
+    kind = has_src ? (has_load ? :live : :sources_lost) :
+           (has_load || gfl != 0.0) ? :load_lost : :empty
+    return (; kind, sources, load, gfl)
+end
+
 """
     dc_pair_outages(net::NetworkModel) -> DCPairOutages
 
@@ -323,15 +378,7 @@ function dc_pair_outages(net::NetworkModel)
     r = _responders(net)
     nm = r.n_machines
     la, fa = load_arrays(net), _gfl_arrays(net)
-    is_gfm = [i > nm for i in eachindex(r.ids)]
-    N = m + nm
-    kind = [fill(:branch, m); fill(:machine, nm)]
-    id = [base.branches; Symbol[mc.id for mc in net.machines]]
-    elems = [(i, j) for i in 1:N for j in (i + 1):N]
-    src = lone_source_bridges(net)
-    # Branches come first, so a mixed pair is always (branch, machine).
-    same_as = Symbol[(i <= m && j > m && src.machine[i] === id[j]) ? id[j] : :none
-                     for (i, j) in elems]
+    kind, id, elems, same_as = _pair_elements(net)
     Br, keep = _dc_reduced_susceptance(net, b)
     F = n > 1 ? LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Br)) : nothing
     v_ref = net.bus_index[net.slack]
@@ -368,34 +415,9 @@ function dc_pair_outages(net::NetworkModel)
         settled = falses(npieces)
         alive = falses(length(r.ids))
         for c in 1:npieces
-            has_src = has_load = false
-            sources = load = 0.0
-            for k in 1:nm
-                (piece[r.bus[k]] == c && !lost[k]) || continue
-                if r.P[k] >= 0.0
-                    has_src = true
-                    sources += r.P[k]
-                else
-                    has_load = true
-                    load -= r.P[k]
-                end
-            end
-            for q in (nm + 1):length(r.ids)
-                piece[r.bus[q]] == c || continue
-                has_src = true
-                sources += r.P[q]
-            end
-            for q in eachindex(la.bus)
-                piece[la.bus[q]] == c || continue
-                has_load = true
-                load += la.P[q]
-            end
-            gfl = 0.0
-            for q in eachindex(fa.bus)
-                piece[fa.bus[q]] == c && (gfl += fa.P[q])
-            end
+            pkind = _pair_piece_kind(piece, c, r, lost, la, fa, r.P)
             bs = busid[piece .== c]
-            if has_src && has_load
+            if pkind.kind === :live
                 for q in eachindex(r.ids)
                     alive[q] = piece[r.bus[q]] == c && !(q <= nm && lost[q])
                 end
@@ -410,11 +432,12 @@ function dc_pair_outages(net::NetworkModel)
                 end
                 ps_out[c] = DCPiece(bs, :live, status, imb[c], status === :shared ? dω : NaN,
                                     0.0, 0.0)
-            elseif has_src
+            elseif pkind.kind === :sources_lost
                 ps_out[c] = DCPiece(bs, :sources_lost, :sources_lost, 0.0, NaN,
-                                    sources + gfl, 0.0)
-            elseif has_load || gfl != 0.0
-                ps_out[c] = DCPiece(bs, :load_lost, :load_lost, 0.0, NaN, gfl, load)
+                                    pkind.sources + pkind.gfl, 0.0)
+            elseif pkind.kind === :load_lost
+                ps_out[c] = DCPiece(bs, :load_lost, :load_lost, 0.0, NaN, pkind.gfl,
+                                    pkind.load)
             else
                 ps_out[c] = DCPiece(bs, :empty, :empty, 0.0, NaN, 0.0, 0.0)
             end
@@ -481,4 +504,283 @@ function dc_pair_outages(net::NetworkModel)
     end
     return DCPairOutages(base, kind, id, elems, same_as, splits, r.ids, pieces, pickup,
                          capped, flow)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3: every pair in AC, a split grid answered piece by piece (Hurdle 19.5).
+#
+# ONE SOLVE PER LIVE PIECE. The pieces share no branch, so the equations come apart
+# into one block per piece; each block is posed and solved alone, with its own settled
+# frequency, its own angle reference and its own reactive limits — M8 step 5's shared
+# solve run inside the piece (`_ac_piece_setup`/`_ac_piece_solve`, the same code M8's
+# single-machine screen runs, with the piece the whole grid; `m10-context.md` D9). One
+# piece failing leaves the other's answer standing, which is what makes an outcome per
+# piece mean anything. A dead piece is never solved.
+#
+# THE REFERENCE is the model's slack where it lies in the piece, else the piece's first
+# bus (step 2's rule). It is a gauge: moving it moves no flow (M8 D8).
+#
+# A PAIR OF LINES THAT LEAVES THE GRID WHOLE IS M8's LINE SCREEN ON TWO LINES: the
+# rebuilt model through `_ac_powerflow_outcome`, the slack taking the change in losses,
+# no `Δω` (`NaN`, as `OutageScreen`'s line rows). So "a connected line pair is
+# `ac_powerflow` on the rebuilt model" holds by construction. Every other live piece
+# goes through the shared solve: every piece of a split, and the whole grid when a
+# machine is lost.
+#
+# WHAT A DEAD PIECE TAKES WITH IT is read from the AC BASE: a machine's schedule, or,
+# for the slack's own source, its solved output, base losses included (M8 D8.1).
+# ─────────────────────────────────────────────────────────────────────────────
+
+"""
+    ACPiece
+
+One piece of the grid a pair outage leaves behind ([`ACPairOutages`](@ref)).
+
+  - `buses` — its bus ids, in vertex order
+  - `kind` — as [`DCPiece`](@ref): `:live`, `:sources_lost`, `:load_lost`, `:empty`
+  - `outcome` — for a live piece, the AC verdict: `:secure`, `:overload`, `:voltage`,
+    `:no_solution`, or M8's two refusals `:no_response` and `:reserve_exhausted`; for
+    any other piece, its `kind`
+  - `Δω` — the settled speed deviation of a live piece the shared solve solved, pu;
+    `NaN` otherwise, and always for a whole grid that lost two lines (the slack takes
+    the change in losses there, as in M8's line screen)
+  - `sources_lost`, `load_lost` — what a dead piece takes with it, pu, both `≥ 0`: what
+    its sources produced in the AC base (the slack's source: its solved output), and
+    its loads' scheduled draw. `0.0` for a live piece.
+  - `solution` — the live piece's `ACPowerFlow` for `:secure` and `:overload` (unless an
+    overload's residual failed), else `nothing`. It holds the piece's buses and its
+    in-service branches only, so read it by id; its `slack` is the piece's reference.
+  - `over` — for `:overload`, every element over its rating, `(kind, id, mva, rating)`
+  - `low` — for `:voltage`, every bus of the piece outside the band, `(bus, Vm)`
+  - `reason` — for `:no_solution`, why; `:none` otherwise
+"""
+struct ACPiece
+    buses::Vector{Symbol}
+    kind::Symbol
+    outcome::Symbol
+    Δω::Float64
+    sources_lost::Float64
+    load_lost::Float64
+    solution::Union{ACPowerFlow,Nothing}
+    over::Vector{_OverEntry}
+    low::Vector{_LowEntry}
+    reason::Symbol
+end
+
+"""
+    ACPairOutages
+
+Every simultaneous outage of two elements of a model, screened with the nonlinear power
+flow, a split grid answered per piece. The fields `kind`, `id`, `pairs`, `same_as`,
+`splits` and `responders` are [`DCPairOutages`](@ref)'s, in the same order.
+
+  - `base` — the intact model's `ACPowerFlow`, the operating point every pair is
+    measured from
+  - `pieces` — per pair, every piece left, ordered by first bus ([`ACPiece`](@ref))
+  - `pickup`, `capped` — per pair, each responder's change in output from the base, pu,
+    and whether its governor sits at its headroom; zero and `false` outside a live piece
+    the shared solve solved
+"""
+struct ACPairOutages
+    base::ACPowerFlow
+    kind::Vector{Symbol}
+    id::Vector{Symbol}
+    pairs::Vector{Tuple{Int,Int}}
+    same_as::Vector{Symbol}
+    splits::Vector{Bool}
+    responders::Vector{Symbol}
+    pieces::Vector{Vector{ACPiece}}
+    pickup::Vector{Vector{Float64}}
+    capped::Vector{Vector{Bool}}
+end
+
+# A live piece's `ACPiece` from an outcome of either solve.
+function _ac_live_piece(bs::Vector{Symbol}, o, Δω::Float64, reason::Symbol)
+    over = o.outcome === :overload ? _OverEntry[d for d in o.detail] : _OverEntry[]
+    low = o.outcome === :voltage ? _LowEntry[d for d in o.detail] : _LowEntry[]
+    return ACPiece(bs, :live, o.outcome, Δω, 0.0, 0.0, o.solution, over, low, reason)
+end
+
+"""
+    ac_pair_outages(net::NetworkModel) -> ACPairOutages
+
+Screen every simultaneous outage of two elements of `net` — every pair of branches, of
+machines, and of one of each — with the nonlinear (AC) power flow
+([`ACPairOutages`](@ref)), the pairs and pieces exactly as [`dc_pair_outages`](@ref)
+finds them.
+
+Each live piece is solved on its own, by the shared solve of
+[`ac_generator_outages`](@ref) run inside it: its lost power, its change in losses and
+its change in load draw shared by its own units' droop and damping, with its own
+settled frequency, angle reference and reactive limits. A pair of lines that leaves
+the grid whole is [`ac_line_outages`](@ref)'s question asked of two lines: the rebuilt
+model through `ac_powerflow`'s solve, its slack taking the change in losses.
+
+Measured from `ac_powerflow(net)`, and refused as `ac_generator_outages` refuses: a base
+`ac_powerflow` does not accept, a slack bus with more than one source, a base slack
+outside its reactive limits. Every outcome of every piece is reported, never thrown.
+"""
+function ac_pair_outages(net::NetworkModel)
+    base = _ac_screen_base(net, "ac_pair_outages")
+    topo = branch_topology(net)
+    n, m = length(net.buses), length(topo.src)
+    r = _responders(net)
+    nm = r.n_machines
+    la, fa = load_arrays(net), _gfl_arrays(net)
+    kind, id, elems, same_as = _pair_elements(net)
+    # What each responder produced in the base: its schedule, or, for the slack's one
+    # source, its solved output less the grid-following share there (M8 D8.1).
+    v_slack = net.bus_index[net.slack]
+    Pfix_s = sum((fa.P[q] for q in eachindex(fa.bus) if fa.bus[q] == v_slack); init = 0.0)
+    P_base = [r.bus[q] == v_slack ? base.Pgen[v_slack] - Pfix_s : r.P[q] for q in eachindex(r.ids)]
+    busid = Symbol[bs.id for bs in net.buses]
+    np = length(elems)
+    splits = Vector{Bool}(undef, np)
+    pieces = Vector{Vector{ACPiece}}(undef, np)
+    pickup = Vector{Vector{Float64}}(undef, np)
+    capped = Vector{Vector{Bool}}(undef, np)
+    for (p, (i, j)) in pairs(elems)
+        out = Int[e for e in (i, j) if e <= m]
+        lost_ids = Int[e - m for e in (i, j) if e > m]
+        lost = falses(nm)
+        lost[lost_ids] .= true
+        piece, npieces = _pair_pieces(n, topo, out)
+        splits[p] = npieces > 1
+        pk = zeros(Float64, length(r.ids))
+        cp = falses(length(r.ids))
+        ps_out = Vector{ACPiece}(undef, npieces)
+        for c in 1:npieces
+            vs = findall(==(c), piece)
+            bs = busid[vs]
+            k = _pair_piece_kind(piece, c, r, lost, la, fa, P_base)
+            if k.kind !== :live
+                ps_out[c] = ACPiece(bs, k.kind, k.kind, NaN,
+                                    k.kind === :load_lost ? k.gfl : k.sources + k.gfl,
+                                    k.kind === :load_lost ? k.load : 0.0,
+                                    nothing, _OverEntry[], _LowEntry[], :none)
+                continue
+            end
+            if !splits[p] && isempty(lost_ids)
+                # Two lines, the grid whole: M8's line screen on the rebuilt model.
+                o = _ac_powerflow_outcome(_without_branch(net, out))
+                ps_out[c] = _ac_live_piece(bs, o, NaN,
+                                           o.outcome === :no_solution ? o.detail.reason : :none)
+                continue
+            end
+            ref = piece[v_slack] == c ? v_slack : vs[1]
+            st = _ac_piece_setup(net, base, lost_ids, vs, out, findfirst(==(ref), vs))
+            o = _ac_piece_solve(net, st)
+            for q in eachindex(r.ids)
+                st.alive[q] || continue
+                pk[q] = o.pickup[q]
+                cp[q] = o.capped[q]
+            end
+            ps_out[c] = _ac_live_piece(bs, o, o.Δω, o.reason)
+        end
+        pieces[p], pickup[p], capped[p] = ps_out, pk, collect(cp)
+    end
+    return ACPairOutages(base, kind, id, elems, same_as, splits, r.ids, pieces, pickup,
+                         capped)
+end
+
+"""
+    PairScreenComparison
+
+The DC and AC pair screens of one model side by side — [`LineScreenComparison`](@ref)
+and [`GeneratorScreenComparison`](@ref) for pairs. Every vector is in the screens' pair
+order.
+
+  - `pairs`, `splits` — as in both screens
+  - `dc_outcome` — `:secure` or `:overload` (the DC flows judged against the ratings
+    the AC solve is held to), or the first refusal (`:no_response`,
+    `:reserve_exhausted`) of a live DC piece
+  - `dc_over`, `ac_over` — the branches each screen puts over its rating, every piece
+    together. A grid-forming source over its rating is not a branch and is not listed.
+  - `class` — per pair: `:refused` (both screens refuse, piece for piece, the same way),
+    `:refusals_differ`, then the line comparison's `:dc_blind` (an AC piece `:voltage`
+    or `:no_solution`, or a source over its rating), `:agree`, `:dc_missed`,
+    `:dc_false_alarm`, `:mixed`
+  - `Δω_dc`, `Δω_ac` — per pair, the settled speed deviation of each live piece, pu, in
+    piece order; `NaN` where that fidelity has none (an AC whole grid that lost two
+    lines has none by design)
+  - `reactive`, `real` — the miss on each branch, split as in `LineScreenComparison`,
+    every piece's solution read by branch id; empty unless every live piece has an AC
+    solution and DC settled
+"""
+struct PairScreenComparison
+    pairs::Vector{Tuple{Int,Int}}
+    splits::Vector{Bool}
+    dc_outcome::Vector{Symbol}
+    dc_over::Vector{Vector{Symbol}}
+    ac_over::Vector{Vector{Symbol}}
+    class::Vector{Symbol}
+    Δω_dc::Vector{Vector{Float64}}
+    Δω_ac::Vector{Vector{Float64}}
+    reactive::Vector{Vector{Float64}}
+    real::Vector{Vector{Float64}}
+end
+
+"""
+    compare_pair_screens(net, dc::DCPairOutages, ac::ACPairOutages) -> PairScreenComparison
+
+Put the DC and AC pair screens of `net` side by side: per pair, both outcomes, every
+disagreement classified, each live piece's `Δω` at both fidelities, and the miss on each
+branch ([`PairScreenComparison`](@ref)). Takes the model for the ratings, as
+[`compare_line_screens`](@ref) does, and refuses screens of another model.
+"""
+function compare_pair_screens(net::NetworkModel, dc::DCPairOutages, ac::ACPairOutages)
+    bids = Symbol[b.id for b in net.branches]
+    (dc.id == ac.id && dc.pairs == ac.pairs && dc.base.branches == bids &&
+     ac.base.branches == bids &&
+     dc.id == [bids; Symbol[mc.id for mc in net.machines]]) || throw(ArgumentError(
+        "compare_pair_screens: the screens are not of this model — elements $(dc.id) " *
+        "(DC) and $(ac.id) (AC) against branches $bids and the model's machines."))
+    np, m = length(dc.pairs), length(bids)
+    dc_outcome = Vector{Symbol}(undef, np)
+    dc_over = [Symbol[] for _ in 1:np]
+    ac_over = [Symbol[] for _ in 1:np]
+    class = Vector{Symbol}(undef, np)
+    Δω_dc = Vector{Vector{Float64}}(undef, np)
+    Δω_ac = Vector{Vector{Float64}}(undef, np)
+    reactive = [Float64[] for _ in 1:np]
+    real = [Float64[] for _ in 1:np]
+    refusal(pc) = pc.outcome in _SHARE_REFUSALS ? pc.outcome : :answered
+    for p in 1:np
+        dl = [pc for pc in dc.pieces[p] if pc.kind === :live]
+        al = [pc for pc in ac.pieces[p] if pc.kind === :live]
+        [pc.buses for pc in dl] == [pc.buses for pc in al] || throw(ArgumentError(
+            "compare_pair_screens: the two screens left different live pieces for pair " *
+            "$(dc.id[dc.pairs[p][1]])+$(dc.id[dc.pairs[p][2]]), so they are not of the " *
+            "same model."))
+        Δω_dc[p] = Float64[pc.Δω for pc in dl]
+        Δω_ac[p] = Float64[pc.Δω for pc in al]
+        rd, ra = Symbol[refusal(pc) for pc in dl], Symbol[refusal(pc) for pc in al]
+        if all(==(:answered), rd)
+            dc_over[p] = bids[_rating_violations(net, abs.(dc.flow[p]))]
+            dc_outcome[p] = isempty(dc_over[p]) ? :secure : :overload
+        else
+            dc_outcome[p] = first(o for o in rd if o !== :answered)
+        end
+        for pc in al
+            append!(ac_over[p], (d.id for d in pc.over if d.kind === :branch))
+        end
+        if all(==(:answered), rd) && all(pc -> pc.solution !== nothing, al)
+            reactive[p], real[p] = zeros(Float64, m), zeros(Float64, m)
+            for pc in al
+                a, b = _screen_miss(net, dc.flow[p], pc.solution)
+                reactive[p] .+= a
+                real[p] .+= b
+            end
+        end
+        if any(!=(:answered), rd) || any(!=(:answered), ra)
+            class[p] = rd == ra ? :refused : :refusals_differ
+        elseif any(pc -> pc.outcome === :voltage || pc.outcome === :no_solution ||
+                         any(d -> d.kind !== :branch, pc.over), al)
+            class[p] = :dc_blind
+        else
+            class[p] = _disagreement(dc_over[p], ac_over[p])
+        end
+    end
+    return PairScreenComparison(copy(dc.pairs), copy(dc.splits), dc_outcome, dc_over,
+                                ac_over, class, Δω_dc, Δω_ac, reactive, real)
 end

@@ -174,7 +174,8 @@ end
                        # side keeps a bridge a split; the report joins the four above
                        :lone_source_bridges, :outage_screen,
                        :dc_line_pair_outages,    # M10 step 1 (test/m10_double_outages.jl)
-                       :dc_pair_outages])    # M10 step 2: a split grid answered per piece
+                       :dc_pair_outages,    # M10 step 2: a split grid answered per piece
+                       :ac_pair_outages])   # M10 step 3: and in AC, per piece
         net = _m7_pair()
         walked = 0
         for n in names(GridSim)
