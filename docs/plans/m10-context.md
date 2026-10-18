@@ -47,13 +47,21 @@ stop that from being the whole answer, and each is a hurdle.
      for connectivity on the graph with both removed. A near-cut fixture (a third
      path of large reactance) states its accuracy band, `~eps/|det M|` relative,
      **before** the run, and its scaling across two reactances is the signature.
-  4. **A static answer depends only on what was lost, not on the order.** Without
-     anything re-adjusting in between, losing `k` then `l` settles where losing both
-     at once settles: the DC flow is linear in the final topology, and M8's pickup
-     rule is a function of the total loss. Checked, not assumed, on every pair kind
-     (two lines, two generators, one of each), because a cap that binds after the
-     first loss is exactly where a path dependence would hide. This is what makes
-     Hurdle 21 need a rule at all.
+  4. **Without a re-adjustment, the order of the two losses does not change where
+     the grid settles — checked dynamically, because statically it cannot fail.**
+     In the static screen it holds **by construction**: the DC flow is a function
+     of the final topology and M8's pickup rule of the total loss, so "A then B"
+     computed statically *is* "both at once". It is stated, not tested there. The
+     question with content is whether the dynamic tier, which really does pass
+     through the state after A, settles to the same place: **the swing tier, trip
+     A, settle, trip B, settle, against both tripped at once**, on every pair kind
+     and on a fixture where the first loss caps a governor (the place a path
+     dependence would hide; the cap must be seen to bind, the positive control).
+     **Forbidden:** computing a no-restore sequential pair by rebuilding the model
+     with `P0 + pickup_A` and screening again. That silently returns frequency to
+     target between the losses — a restore, with shares weighted by droop *and*
+     damping, which is neither timing the user chose (reviewer, 2026-10-18). This
+     is what makes Hurdle 21 need a rule at all.
 
 - **Hurdle 19 — A grid cut in two keeps running as two grids.** M8 answered a
   split with no numbers. On case9 that would leave every line pair blank. Each
@@ -71,14 +79,28 @@ stop that from being the whole answer, and each is a hurdle.
      negative-`P0` machines (the swing tier refuses `Load`, M8 step 4), lines
      tripped at the same instant (the swing tier's `TripLine` zeroes a coupling and
      re-solves nothing, so two at one instant are one event there). Each machine's
-     settled `ω` equals its own piece's static `Δω`, and the centre-of-inertia
-     average is never compared: across pieces it is a weighted mean of two
-     unrelated numbers (`engines/swing.jl` header).
+     settled `ω` equals its own piece's static `Δω`. **Every whole-grid quantity is
+     replaced by its per-piece version or not used**: the centre-of-inertia average
+     (across pieces a weighted mean of two unrelated numbers, `engines/swing.jl`
+     header), a settling test on `coi_rocof` (M9's run helper stops on it — one
+     piece still moving hides behind another at rest), and any `Σw`. Settling is
+     judged per piece, on that piece's machines.
   3. **A piece with load and no source is load lost**, a named outcome carrying its
      MW, and the rest of the grid sees it as a load drop — frequency **rises**. Not
-     an error and not a split.
+     an error and not a split. **Classifier rule:** a machine with `P0 < 0` counts as
+     a load, not a source — that is how the swing-tier fixtures write loads, and
+     without the rule a stranded "load" there would land in claim 4 instead. **What
+     the swing tier can and cannot check here:** the rest of the grid's response to
+     the stranded load, yes; the stranded piece itself, no — there it is a machine
+     with its own damping, spinning to its own speed, excluded by name. This
+     claim's only dynamic check of the dead piece is the detailed tier with real
+     loads (Hurdle 20.3, step 4).
   4. **A piece with a source and no load is that source lost**, M8 D9 generalised:
-     its generators leave, and the rest shares their schedule.
+     its generators leave, and the rest shares their schedule. **In the dynamic
+     tiers this is carried out, not assumed:** opening the lines alone leaves the
+     cut-off machine running on to its own large speed deviation, which is not
+     "lost". So the simultaneous event trips that machine in the same instant, in
+     both tiers. That is 24 of case9's 36 line pairs.
   5. **In AC each live piece needs its own shared reference**, its own losses, and
      its own reactive limits. M8 step 5's shared-reference solve assumes one
      connected grid; it is run per piece, and its degeneration — a piece that is
@@ -99,7 +121,9 @@ stop that from being the whole answer, and each is a hurdle.
      open, the event unlogged, and the voltages stale; the run then integrates on.
      The spike did exactly that and got a plausible-looking frequency. A refused
      event either changes nothing or leaves an engine that refuses to run on; which
-     one is decided at the step, by measurement.
+     one is decided at the step, by measurement. **The out-of-step relay reaches the
+     same `inject!(::TripLine)` from inside a solver callback** (`detailed.jl`, the
+     relay affect), so the fix is tested on that path too, not only the direct call.
   3. **A dead piece is switched off, not solved.** With a load stranded, the re-solve
      tries to find its voltage: **measured, 1.8e9 pu on constant-power loads (and
      the integration aborts), 0.0 pu on constant-impedance ones (and it runs)**.
@@ -121,10 +145,14 @@ stop that from being the whole answer, and each is a hurdle.
      so damping carries nothing, and a loss larger than the piece's remaining
      headroom has no restored state. A named outcome, never silently replaced by
      the settled one.
-  3. **The second loss is a single-outage screen of the restored grid.** Exactly:
-     the same numbers as M8's screens run on a model rebuilt with the first element
-     gone and the restored schedule. That is the identity checked, at both
-     fidelities.
+  3. **The second loss is a single-outage screen of the restored grid** — the same
+     numbers as M8's screens on a model rebuilt with the first element gone and the
+     restored schedule. **Stated, not checked: it holds by construction** (it is the
+     same code on the same model). The independent check on this hurdle is the
+     **dynamic run**: the detailed tier initialised on the restored model, the
+     second element tripped, its per-piece settled frequency against the screen's
+     through M9's losses identity taken per piece. So that run is **not** on the
+     cut-first list.
   4. **Order matters, and the two timings differ — measured, not predicted in
      sign.** A then B, B then A, and both at once are three answers. A restored
      state has less headroom, so the second loss can push frequency further than
@@ -231,8 +259,17 @@ be a new number with no source.
   `Δω`. A grid-forming inverter has no cap (M8: `h = Inf`).
 - **Per piece.** Each live piece restores its own frequency from its own units.
 - **Refusal:** a piece whose remaining headroom is smaller than its imbalance has
-  no restored state (Hurdle 21.2). A surplus piece restores downward with no floor,
-  as the settle has none.
+  no restored state (Hurdle 21.2).
+- **The floor — `Machine.Pmin` is honoured when given.** Restoring is a dispatch,
+  and M6's dispatch treats `Pmin` as its constraint (`network_model.jl`: "the
+  minimum is the dispatch's constraint"). So a surplus piece restores downward
+  until a unit reaches its `Pmin`, the rest re-shared exactly as on the way up, and
+  a piece that runs out of room downward is refused the same way. Where `Pmin` is
+  `NaN` (not given — both report grids), there is no floor. **Said plainly: the
+  settle has no floor at all** (neither dynamic tier has one, M8 step 4), so a
+  piece with a large surplus can settle — and, without `Pmin`, restore — with a
+  unit **below zero output**: a generator absorbing power. The report flags every
+  such unit rather than leaving it to be noticed.
 - **What the restored state is:** a new schedule. The second loss is screened on a
   model built with the first element gone and every unit's `P0` set to its restored
   output (Hurdle 21.3). Losses in AC are part of what the piece's units cover, by
@@ -255,6 +292,11 @@ before step 5 reads it.
   reported as the single outage it is, by name, and never as a double. case9 has
   three such pairs (L14+G1, L82+G2, L36+G3), read from its topology; the mesh none
   (it has no bridge).
+- **What makes a piece live:** a machine with `P0 ≥ 0` or a grid-forming inverter.
+  A piece holding only grid-following inverters and loads has nothing to set its
+  frequency — the detailed tier already refuses that state (M7 D5) — so its
+  inverters are lost with it and its load is lost. The report grids have no
+  inverters; this is stated so the classifier is written with it.
 - **A piece's outcome is per piece.** A pair that splits the grid reports one
   outcome per live piece (M8's outcome kinds), plus the load lost and the sources
   cut off, each with MW.
@@ -277,3 +319,29 @@ before step 5 reads it.
   second element only.
 - **Still unbuilt from M8 D5:** the map, batched/GPU runs, line charging, load
   shedding inside the screen.
+
+---
+
+## D6 — What a review of the committed plan changed (2026-10-18, same day)
+
+The plan was committed (`c053b8b`) and then reviewed. Three checks as written would
+have measured nothing or the wrong thing; each is fixed above, in place:
+
+1. **Order-independence (18.4) and the restore identity (21.3) hold by construction
+   in the static screen**, so a static test of either cannot fail. 18.4 moved to
+   the swing tier (trip, settle, trip, settle); 21.3 is stated, and Hurdle 21's
+   independent check is the dynamic run, which came off the cut-first list. The
+   obvious way to compute a no-restore sequential pair — rebuild with the first
+   pickups and screen again — is a hidden restore, and is forbidden.
+2. **Whole-grid read-outs mean nothing across pieces.** M9's run helper settles on
+   `coi_rocof`, and its losses identity divides by the whole grid's `Σw`; both are
+   taken per piece. And a lone generator cut off by its lines spins on rather than
+   being lost, so the dynamic event trips it in the same instant (19.4).
+3. **The swing tier cannot see "load lost"**: its loads are machines. A `P0 < 0`
+   machine now classifies as a load, the swing tier checks only the rest of the
+   grid's response, and 19.3's own check is the detailed tier (step 4).
+
+And three additions: the out-of-step relay's path into the half-applied trip is
+tested with the fix (20.2); `Pmin` is honoured by the restore and the unbounded
+downward settle is stated, with units below zero flagged (D3); a piece with only
+grid-following inverters is not live (D4).

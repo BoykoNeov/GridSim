@@ -286,8 +286,10 @@ running two simultaneous line trips in the detailed tier (D1):
     grid decided from the graph.** The rank-two DC update, exact against
     rebuild-and-re-solve on every connected pair (the mesh's 19; case9 has none);
     the common shortcut of adding two single-outage factors measured wrong; a cut
-    pair found from the graph, never from a determinant at round-off; and the
-    static answer independent of the order of the two losses.
+    pair found from the graph, never from a determinant at round-off; and, with
+    nothing re-adjusting in between, the dynamic tier settling to the same place
+    whatever the order (true by construction in the static screen, so checked in
+    the swing tier).
 19. **A grid cut in two keeps running as two grids.** Each live piece settles at its
     own frequency by M8's sharing rule run inside it — one usually rising, one
     falling — with the swing tier as the exact oracle per piece; a piece with no

@@ -34,6 +34,9 @@ runs.
 - [x] **The user's choices** (D2): both timings; lines and generators; solve each
       piece; restore 50 Hz between failures. The restore proportion (governor gain)
       named in D3.
+- [x] **Plan reviewed after its first commit (`c053b8b`)** and corrected the same
+      day (D6): two checks that hold by construction moved to dynamic runs, per-piece
+      read-outs, the swing tier's blindness to a lost load, the relay path, `Pmin`.
 - [x] Plan written against the hurdles (`m10-plan.md`); `docs/plans/README.md` row
       and hurdle list updated; `SPEC.md` §9 item 8 annotated.
 
@@ -53,8 +56,11 @@ runs.
 
 - [ ] Every pair kind; per-piece sharing; load lost; sources cut off; D4's collapse.
 - [ ] Brute force per piece.
-- [ ] Swing tier per piece, band stated first; one piece up, one down; a stranded load.
-- [ ] Order-independence on every pair, with a capping fixture as the control.
+- [ ] Swing tier per piece (settling per piece, never `coi_rocof`), band stated
+      first; one piece up, one down; a lone cut-off generator tripped in the same
+      instant; a stranded `P0 < 0` machine (the rest of the grid only).
+- [ ] Order in the swing tier (trip, settle, trip, settle vs both at once), every
+      pair kind, a binding cap as the control. Never by rebuilding (D6.1).
 - [ ] Sabotages run, predictions first.
 
 ## Step 3 — pairs and pieces in AC (Hurdle 19.5)
@@ -70,17 +76,22 @@ runs.
 - [ ] Simultaneous event in the detailed tier (and the swing tier).
 - [ ] Dead buses de-energised by the graph, both load models.
 - [ ] Refused event changes nothing (or the engine refuses to run on) — decided by
-      measurement; `TripLine`'s half-applied refusal fixed.
+      measurement; `TripLine`'s half-applied refusal fixed; tested on the direct
+      call AND the out-of-step relay's path.
+- [ ] A generator cut off alone tripped in the same event.
 - [ ] Positive control: case9 default L45+L67 runs.
-- [ ] Per-piece settled frequency against step 3, through M9's losses identity.
+- [ ] Per-piece settled frequency against step 3, through M9's losses identity
+      taken per piece (`Σw`, losses, settling).
 - [ ] Gate: M9's captures bit-identical.
 
 ## Step 5 — fail, restore, fail again (Hurdle 21)
 
-- [ ] Restored schedule per piece, exact; its refusal.
-- [ ] Second loss = M8's screens on the restored model.
+- [ ] Restored schedule per piece, exact; its refusal; `Pmin` honoured when given;
+      units below zero output flagged.
+- [ ] Second loss = M8's screens on the restored model — stated, by construction.
 - [ ] A-then-B, B-then-A, both-at-once tabulated; claim written after.
-- [ ] Detailed-tier check from the restored model.
+- [ ] Detailed-tier check from the restored model — Hurdle 21's only independent
+      check, not cuttable.
 - [ ] Sabotages run, predictions first.
 
 ## Step 6 — the report

@@ -82,15 +82,22 @@ event.
 - **Brute-force oracle:** each live piece built as its own `NetworkModel` with its
   units at schedule + pickup, `dc_powerflow` on it; flows and pickups match.
 - **The exact dynamic oracle (19.2):** the swing tier, lossless, loads as negative
-  machines, both elements out at one instant, run to settling; every machine's `ω`
-  equals its piece's static `Δω` within M8 step 4's band (1e-7, stated before),
-  and the network-side exports match the pickups. Fixtures: case9-shaped with its
-  loads as machines (L45+L67: one piece up, one down), and one stranding a load.
-- **Order-independence (18.4):** for every pair, losing A then B (no restore)
-  equals losing both, at the DC screen — including a pair where the first loss
-  caps a governor. The positive control is that this fixture *does* cap.
+  machines, both elements out at one instant, a generator cut off alone tripped in
+  that same instant (19.4), run until **each piece** settles (judged on its own
+  machines — never `coi_rocof`); every machine's `ω` equals its piece's static
+  `Δω` within M8 step 4's band (1e-7, stated before), and the network-side exports
+  match the pickups. Fixtures: case9-shaped with its loads as machines (L45+L67:
+  one piece up, one down), and one stranding a `P0 < 0` machine — which checks the
+  **rest** of the grid's answer to a lost load; the stranded machine's own speed is
+  excluded by name (19.3's own check is step 4).
+- **Order (18.4), in the swing tier — static is true by construction:** trip A,
+  settle, trip B, settle, against both at once, every pair kind, including a pair
+  where the first loss caps a governor (the cap must be seen to bind). A
+  no-restore sequential pair is **never** computed by rebuilding with the first
+  pickups (`m10-context.md` D6.1).
 - **Sabotages:** the whole grid's units share a piece's imbalance; the sign of a
-  surplus flipped; a sourceless piece's load left in the balance.
+  surplus flipped; a sourceless piece's load left in the balance; a `P0 < 0`
+  machine classified as a source.
 
 ### Step 3 — Pairs and pieces in AC (Hurdle 19.5)
 
@@ -123,10 +130,16 @@ leaves an engine that refuses to run on; which is measured and decided here, and
   runs, with B5 reported dead and D5's 90 MW lost.
 - **Nothing half-done (20.2):** after a refused event the engine's state, parameter
   vectors, `lines_online` and log are identical to before it, or every later call
-  refuses — asserted, with a mutation that skips the rollback.
+  refuses — asserted, with a mutation that skips the rollback, **on both the direct
+  `inject!` and the out-of-step relay's path** (it calls the same `inject!` from a
+  solver callback).
+- **A generator cut off alone is tripped in the same event** (19.4), so the D9
+  equivalence is carried out in the run.
 - **The oracle it exists for:** on constant-power loads, the settled per-piece
   frequency of a simultaneous split against step 3's AC piece answer, through M9's
-  losses identity (`m9-context.md` D0 17.4), one piece rising and one falling.
+  losses identity (`m9-context.md` D0 17.4) **taken per piece** — that piece's
+  `Σw`, losses and settling, never the whole grid's — one piece rising and one
+  falling.
 - **Gate:** M9's seven captures bit-identical — a single-element event is not
   re-routed through the new one unless that is proved to move nothing.
 
@@ -140,14 +153,17 @@ fidelities; every ordered pair.
   gain, capped, re-shared; a fixture where a cap binds.
 - **Refusal (21.2):** a piece whose remaining headroom is short of its imbalance;
   the settle answers it (damping) and the restore refuses it — both reported.
-- **Identity (21.3):** the second loss equals M8's screens on the restored model,
-  bit for bit (the same code on the same model).
+- **`Pmin`:** honoured when given, on the way down; a unit settling or restoring
+  below zero output is flagged (`m10-context.md` D3).
+- **Identity (21.3), stated not checked:** the second loss is M8's screens on the
+  restored model — true by construction, so no test pretends to check it.
 - **Order (21.4):** A-then-B, B-then-A and both-at-once tabulated on both report
   grids; the claim written after reading the table.
-- **Dynamic check:** the detailed tier initialised on the restored model, the
-  second element tripped; its settled frequency against the screen's, M9's way.
-- **Sabotages:** shares by damping as well as gain; the cap ignored; the restore
-  run on the whole grid across a split.
+- **Dynamic check — Hurdle 21's only independent one, not cuttable:** the detailed
+  tier initialised on the restored model, the second element tripped; its
+  per-piece settled frequency against the screen's, M9's losses identity per piece.
+- **Sabotages:** shares by damping as well as gain; the cap ignored; `Pmin`
+  ignored; the restore run on the whole grid across a split.
 
 ### Step 6 — The report
 
@@ -168,8 +184,11 @@ README row and hurdle list (18–21 closed or carried, with what closed each);
 ## Cut-first, in order
 
 1. A step-6 window, if one is chosen.
-2. Step 5's dynamic check (the static identity stays).
-3. Step 4's swing-tier half of the new event (the detailed tier's half stays: it is
-   the only one that re-solves a network).
+2. Step 4's swing-tier half of the new event (the detailed tier's half stays: it is
+   the only one that re-solves a network). Step 2's swing-tier checks trip lines
+   with back-to-back `TripLine`s, which is already one event in that tier.
+
+Step 5's dynamic check is **not** cuttable: it is Hurdle 21's only independent
+check (`m10-context.md` D6.1).
 
 Nothing else is cut without recording the decision in `m10-context.md` first.
