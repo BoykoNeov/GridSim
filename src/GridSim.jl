@@ -132,6 +132,8 @@ include("steadystate/economic_dispatch.jl")
 # line-outage factors are dc_powerflow's base case plus one solve per outage; step
 # 3's AC screen is ac_powerflow's classified solve, once per outage.
 include("steadystate/screening.jl")
+# M10 - double-outage screening. After M8's screens, whose builders it reuses.
+include("steadystate/double_outages.jl")
 # M9 step 5 - the dip: one detailed-tier run per generator outage, at two tolerances.
 # After the screens (it starts from the AC screen's base) and before the verdict, whose
 # `dips =` keyword takes its result.
@@ -224,6 +226,9 @@ export GeneratorDips, generator_dips, speed_extremes
 # M9 step 6 - the rate. All three checked clear against `names(GLMakie)` in the `ui/`
 # environment before being committed (2026-10-17).
 export FrequencyTrace, GeneratorRates, generator_rates
+# M10 step 1 - the two-line DC factors. Both checked clear against `names(GLMakie)` in
+# the `ui/` environment before being committed (2026-10-18).
+export DCLinePairOutages, dc_line_pair_outages
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

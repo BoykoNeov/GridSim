@@ -345,3 +345,57 @@ And three additions: the out-of-step relay's path into the half-applied trip is
 tested with the fix (20.2); `Pmin` is honoured by the restore and the unbounded
 downward settle is stated, with units below zero flagged (D3); a piece with only
 grid-following inverters is not live (D4).
+
+---
+
+## D7 — What the pair code holds, and why M8's function is not touched (step 1)
+
+Hurdle 18.1 asks for one solve per branch, reused across every pair the branch is in,
+and M8 D4 refuses to form the PTDF (branches × buses, dense). Holding every per-branch
+solve's **bus angles** would be that matrix under another name. So the pair code keeps
+only what a pair reads: column `k` is every branch's flow per unit transfer across `k`
+— a **branches × branches** table, built one column at a time against the single
+sparse factorisation, each solve's angles dropped as in M8. It is the size of M8's own
+outage table (`DCLineOutages.flow`, which D4 accepted as "the size of the question")
+and far smaller than the pair table it feeds (pairs × branches).
+
+**`dc_line_outages` is left exactly as it was.** The pair code has its own copy of the
+per-branch loop (`_dc_transfer_factors`), so M8's gate holds **by construction** — not
+as a test of a refactor. A refactor that solved many columns at once could move the
+last bits; a copy cannot move M8 at all. The cost is two copies of ten lines, and a
+test holds them together: `1 − P[k, k] === margin[k]` and M8's single-outage flows
+rebuilt from the copy's columns `===` M8's own, on both report grids.
+
+### What step 1 measured (2026-10-18)
+
+`docs/evidence/gridsim-m10/step1_predictions.md` (written first) and
+`step1_pairs.jl`; tests in `test/m10_double_outages.jl`.
+
+- **Exact (18.1).** On the mesh's 19 connected pairs the pair factors equal
+  rebuild-and-re-solve within 0.005–0.119 of M8's band (100·eps·max|f|).
+- **The shortcut is wrong on every pair (18.2)** — all 19, by 9.8e11 to 2.5e13 times
+  the band. The control, two triangles sharing one bus, gives the shortcut's exact
+  case on all 9 cross pairs (the cross factors are round-off), and its 6 same-triangle
+  pairs are cuts.
+- **Cuts from the graph (18.3).** case9's 36 and the mesh's 2 (AB+AC, DE+BE) are
+  exactly the rebuild refusals, 15 of case9's with neither line a bridge. `det M` at
+  every cut is round-off, |det M| ≤ 2.6e-16, negative, −0.0, 0.0 and positive all
+  present. With two bridges it is an exact zero; with a ring pair never.
+- **Near-cut.** A weak A–D path of reactance Xw makes AB+AC connected; each line's own
+  margin stays moderate (0.243, 0.486) while det M = 0.0486/Xw. The
+  factors' error grows with it (2.8e-12, 3.6e-10, 3.3e-8 at Xw = 1e3, 1e5, 1e7), always
+  0.005 of the stated `100·eps·scale/|det M|`.
+- **Found, not planned: the rebuild is NOT the oracle at a near-cut whose reference
+  sits on the nearly cut-off bus.** There every other angle is ~1.5·Xw rad and each
+  flow is a difference of two such numbers, so the rebuild drifts 1.2e-11 / 1.0e-9 /
+  1.2e-7 — four times the factors' own error. With the reference on the main grid it
+  is exact (≤ 2.3e-16). M8 step 2's near-bridge happened to have its reference on the
+  main grid, which is why it found the rebuild exact. The near-cut check therefore
+  compares against the closed form (A–D carries G1's whole injection; the rest is the
+  four-bus grid with that injection moved to D), and asserts both halves of the
+  attribution.
+- **Sabotages, all four run** (three planned + a bridge-only cut test): each is red in
+  the testsets predicted. One more than predicted: replacing `M` by its diagonal also
+  turns the cut check red, because `det M` at a cut is then `(1−P_kk)(1−P_ll)`, no
+  longer round-off. A transposed `M` is invisible on the equal-reactance pairs and on
+  the control, as registered, and caught by the unequal ones.

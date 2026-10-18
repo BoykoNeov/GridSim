@@ -84,5 +84,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m9_dips.jl"))
     include(joinpath(@__DIR__, "m9_rates.jl"))
     include(joinpath(@__DIR__, "m9_report.jl"))
+    include(joinpath(@__DIR__, "m10_double_outages.jl"))
 
 end

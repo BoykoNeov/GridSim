@@ -5,9 +5,9 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **step 0 done (2026-10-18); step 1 next.** Enters at M9's close counts,
-**6718 core / 1439 reference / 745 UI** on re-resolved manifests — to be re-measured
-at HEAD before step 1's first edit.
+Status: **steps 0–1 done (2026-10-18); step 2 next.** Entered at M9's close counts,
+**6718 core / 1439 reference / 745 UI**, re-measured at HEAD (`a9ec5bd`) before step 1's
+first edit — unchanged. Step 1 leaves **6905 core / 1439 reference / 745 UI**.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -40,17 +40,34 @@ runs.
 - [x] Plan written against the hurdles (`m10-plan.md`); `docs/plans/README.md` row
       and hurdle list updated; `SPEC.md` §9 item 8 annotated.
 
-## Step 1 — two-line DC factors, cut pairs from the graph (Hurdles 18.1–18.3)
+## Step 1 — two-line DC factors, cut pairs from the graph (Hurdles 18.1–18.3) — done 2026-10-18
 
-- [ ] Entry counts re-measured at HEAD before the first edit.
-- [ ] M8 captures at HEAD (screen outputs on both report grids, both load models).
-- [ ] Rank-two update on M8's factorisation; cut pairs from the graph.
-- [ ] Gate: M8 captures bit-identical.
-- [ ] Exact against rebuild-and-re-solve on the mesh's 19 connected pairs.
-- [ ] The additive shortcut's error measured; zero on a non-crossing control.
-- [ ] Cut set = the rebuild's refusals (case9 36, mesh 2); `det M` shown as round-off.
-- [ ] Near-cut band stated in `step1_predictions.md` before the run; scaling seen.
-- [ ] Sabotages run (transposed `M`, diagonal `M`, wrong column), predictions first.
+- [x] Entry counts re-measured at HEAD before the first edit: 6718 / 1439 / 745, as M9
+      closed. (One capture, `criterion`, first died on a full paging file at HEAD and was
+      re-run before any edit.)
+- [x] M8 captures at HEAD: M9's harness, all six (`swing criterion ac screen dips
+      verdict`), which include every M8 screen output on both report grids and both
+      load models.
+- [x] Rank-two update on M8's factorisation; cut pairs from the graph
+      (`dc_line_pair_outages`, `src/steadystate/double_outages.jl`). What is held is a
+      branches × branches table, never the bus-indexed PTDF (`m10-context.md` D7).
+- [x] Gate: all six captures byte-identical after. `dc_line_outages` is not edited, so
+      this holds by construction (D7); a test ties the pair code's copy of the
+      per-branch solve to M8's numbers with `===`.
+- [x] Exact against rebuild-and-re-solve on the mesh's 19 connected pairs: 0.005–0.119
+      of the band.
+- [x] The additive shortcut's error measured: outside the band on all 19 mesh pairs
+      (9.8e11–2.5e13 × it); within it on the control's 9 cross pairs (two triangles
+      sharing a bus).
+- [x] Cut set = the rebuild's refusals (case9 36, mesh 2); `det M` at every cut ≤ 2.6e-16,
+      of both signs and zero.
+- [x] Near-cut band stated in `step1_predictions.md` before the run; error ∝ 1/|det M|,
+      0.005 of the band at Xw = 1e3, 1e5, 1e7. **Found:** the rebuild is not the oracle
+      there when the reference sits on the nearly cut-off bus (it drifts 4× more than
+      the factors); the closed form is, and the test asserts the attribution.
+- [x] Sabotages run (transposed `M`, diagonal `M`, wrong column, plus a bridge-only cut
+      test), predictions first: all red where registered; the diagonal one also reddens
+      the cut check (unpredicted, in our favour).
 
 ## Step 2 — pieces, and generators, in DC (Hurdles 18.4, 19.1–19.4)
 
