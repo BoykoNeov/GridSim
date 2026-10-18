@@ -505,4 +505,15 @@ end
    criterion (`docs/plans/README.md`). **Taken as M9** (2026-10-08, the user's
    choice): a frequency verdict beside each generator outage (settled, dip, rate of
    fall), with line resistance taught to both dynamic tiers so the dip can be
-   measured on lossy grids (`docs/plans/m9-context.md` D0).
+   measured on lossy grids (`docs/plans/m9-context.md` D0). **Delivered in M9
+   (closed 2026-10-18)**: both dynamic tiers read line resistance (every lossless
+   number bit-identical, PowerDynamics' `PiLine` the outside check);
+   `frequency_verdicts` judges the settled value from each screen, the lowest dip
+   from a detailed-tier run per generator outage (counted only where two solver
+   tolerances agree) and the rate of fall on every surviving machine over the
+   limit's own window, against caller-supplied limits or the cited
+   `continental_europe_limits()` (SO GL Annex III: 800 mHz dip, 200 mHz settled, no
+   sourced rate limit); `scripts/outage_screen.jl` prints it beside M8's outcome and
+   `frequency_screen()` draws it. Under that preset, on the report grids, the dip
+   changes no verdict and the rate is never judged, so the answers there are a
+   settled-only check's — kept as built, the user's choice (`m9-context.md` D12).

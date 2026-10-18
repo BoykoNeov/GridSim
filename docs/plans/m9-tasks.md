@@ -5,7 +5,7 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–7 done (2026-10-08/09/10/17); step 8 (close) next.** Entered at `7a32ae1` with M8's
+Status: **COMPLETE — steps 0–8 done (2026-10-08/09/10/17/18); closed 2026-10-18 at 6718 core / 1439 reference / 745 UI on re-resolved manifests.** Entered at `7a32ae1` with M8's
 close counts, **5316 core / 1262 reference / 568 UI** on re-resolved manifests,
 re-measured at `40b9acf` before step 1's first edit (same three numbers); after step 1
 **5453 core / 1262 reference / 568 UI**; after step 2 **5605 core / 1262 reference / 568 UI** (+151 step-2 checks, +1 from the reworked M6 refusal test, −2 + 3 there; reference unchanged and not re-run for the review follow-up, which touched no reference code). Reference re-measured at `037c935` before step 3's first edit: 1262. After step 3 **5605 core / 1439 reference** (+177 step-3 checks; core count unchanged — the M6 refusal test now reaches the guard through `coi_model`, one `@test` for one); UI not re-run (no `ui/` change, core changed in docstrings only). After step 4 **5737 core / 1439 reference / 568 UI** (+132 step-4 checks; all three suites run at `330ddb5` + step 4's edits), **5739 core by count** after a test-only review follow-up (+2: the 60 Hz test's AC half). After step 5 **5843 core / 1439 reference / 568 UI** (+104 step-5 checks; all three suites run on step 5's tree). After step 6 **6532 core / 1439 reference / 568 UI** (+689 step-6 checks; all three suites run on step 6's tree). After step 7 **6712 core / 1439 reference / 741 UI** (+180 step-7 report checks, +173 for the frequency-screen window; core and UI run on step 7's tree, reference not re-run — no reference code changed). After the caveat follow-up at review **6718 core by count** (+6 printed-caveat checks; the focused step-5 + step-7 run green, the full core suite not re-run because only the script's printing and its tests changed) **/ 745 UI** (+4, full suite run).
@@ -250,12 +250,40 @@ runs.
       stream and the test reads them; the window's caveat is checked placed in the layout.
       Sabotages P6, P7, W5 red (`step7/predictions.md`).
 
-## Step 8 — close
+## Step 8 — close (2026-10-18)
 
-- [ ] Re-resolve, counts, captures before/after, ledger, README, SPEC, memory. The
-      count in `ui/README.md`'s Tests section is hand-written: re-measure it.
-- [ ] Ask the user, before closing: under the preset the dip decides no verdict (largest
-      dip/settled 1.66 against the limits' 4) and the rate is never judged (no sourced
-      limit), so the screen's answers equal a settled-only check. Keep it, or add a
-      limit of their own (a rate limit with its window, or a tighter dip)? Their call,
-      not a default (D3: an unsourced number would read as a result).
+- [x] **Asked the user first** (D12): under the preset the dip decides no verdict
+      (largest dip/settled 1.66 against the limits' 4) and the rate is never judged, so
+      the screen's answers equal a settled-only check. **Chosen: keep it as built and
+      say so** — no limit of their own. Written everywhere in claim g's exact scope:
+      three of twelve outages have no dip (refused at the trip), and the screens'
+      settled verdicts split on two.
+- [x] **A capture of M9's own numbers, first.** The five step-1/2 captures never reach
+      the lossy dips, rates or verdicts, so a solver bump could have moved them unseen.
+      New `harness/verdict_snapshot.jl` (in `captures.sh`): every field of
+      `generator_dips`, `generator_rates` at 500 ms and 1 s, and `frequency_verdicts`
+      under the preset, traces in full, both report grids and load models (11.4 MB,
+      MD5 `9e669016cf236ef39b3a564ab7e9f56a`).
+- [x] **Baseline on the old manifests at `3e9d80b`**, all six captures plus
+      `oracle_snapshot.jl`: `swing`, `criterion`, `ac`, `dips` byte-identical to step 2's
+      committed set, the old `screen` capture an exact prefix of the new (MD5
+      `b20a7629…`), the oracle identical to step 3's `oracle-HEAD.txt` — so steps 3–7 and
+      the caveat follow-up moved none of them.
+- [x] **Manifests re-resolved**: all four deleted (root, reference, UI copies kept in
+      `docs/evidence/m9-close/`; the harness `testenv` one too, untracked) and re-resolved
+      in sequence, root first, at below-normal priority. **6718 core / 1439 reference
+      (82 + 235 + 135 + 116 + 418 + 154 + 3 + 66 + 42 + 11 + 177) / 745 UI**, 0 failed,
+      0 errored — the predicted counts, and the core's first full run at 6718 (step 7's
+      follow-up had counted it). `[[deps.` entries 191 → 191 / 301 → 301 / 366 → 366.
+      **One package moved: `Roots` 3.0.10 → 3.0.11, UI only.** No solver or network
+      package moved; no `Project.toml` changed.
+- [x] **All seven captures re-run after**: byte-identical to the baseline, no
+      precompilation in any (the suites ran first).
+- [x] `ui/README.md`'s hand-written count re-measured: 745, unchanged.
+- [x] **Ledger**: PowerDynamics rows for step 3, a new section for steps 4–7 with claim
+      g's scope; the old "not checked" note now says step 3 delivered. **SPEC** §9 item
+      8 marked delivered. **README**s: status, the "what you can do" line ("secure says
+      nothing yet about frequency" was false), the layout; the plans index row.
+- [x] **Hurdle list**: 16 and 17 closed with what closed each; **the list ends empty**,
+      the carried items (sending-end rating check, no sourced rate limit) under "still
+      owed".

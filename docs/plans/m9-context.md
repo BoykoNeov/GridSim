@@ -990,3 +990,31 @@ deleted), P7 (section 4's reworded) and W5 (the Label never placed) were all red
 where predicted (`step7/predictions.md`). Gate re-taken: `swing`, `criterion`, `ac` and
 `dips` byte-identical to step 7's; the old M8 `screen` capture is still an exact prefix
 of the new one (158,812 bytes), which differs from step 7's only by those four lines.
+
+## D12 — The close (2026-10-18)
+
+**The user's choice, asked before anything was closed (step 8's checklist): keep the
+screen as built and say so.** Under `continental_europe_limits()`, on the two report
+grids and both load models, the dip changes no verdict and the rate is never judged,
+so the screen's answers there are a settled-only check's. Offered: keep it and say so
+(recommended), add a rate limit of their own with its window, or add a tighter dip
+limit. Chosen: keep it. No unsourced number enters the repo (D3).
+
+**Stated exactly as claim g asserts it** (`test/m9_report.jl`), never paraphrased
+wider: the dip fails only on the mesh's G1, which the settled value fails at both
+fidelities already; no measured dip is more than 1.66 times its AC settled value
+(case9's G3, constant power, 0.7515 against 0.4515 Hz) against the limits' ratio of 4.
+Its scope, said wherever the sentence is used: **three of the twelve outages have no
+dip at all** (case9's G1 on both load models and its G2 on constant power, refused at
+the trip), the two screens' settled verdicts **split on two** (mesh cp G3, case9 default
+G1), and it is a property of this preset on these invented dynamics, not of the method —
+a caller's tighter dip or a rate limit with its window would decide.
+
+**The close, measured.** A new capture first (`harness/verdict_snapshot.jl`): every
+field of the dips, the rates at 500 ms and 1 s and the verdicts, traces in full — the
+step-1/2 captures never reached M9's own lossy numbers, so a solver bump could have
+moved a dip unseen (the advisor's catch at orientation). Baseline at `3e9d80b` on the
+old manifests, then all four manifests deleted and re-resolved in sequence: **6718
+core / 1439 reference / 745 UI**, the predicted counts; one package moved (`Roots`
+3.0.10 → 3.0.11, UI only), nothing in the solver or network stack, no `Project.toml`.
+All six captures and the oracle capture byte-identical before and after.

@@ -581,15 +581,48 @@ step 2 (D6). test: `test/m9_line_resistance.jl`.
 | Swing against DC: the losses and nothing else | `ω_swing − Δω_DC = (L_pre − L_post − [reference lost]·L_pre)/Σw`, uncapped, three outages, rtol 1e-6 | **derived** (internal — green under S2) |
 | A dead branch carries nothing | Both ends `== 0.0` after a line trip and a generator trip (S4 red) | **structural** |
 | The aggregate cannot silently drop the losses | `coi_model` refuses a lossy model by name (added at step 2's review — it had accepted one in silence) | **structural (guard)** |
+| **Outside check (step 3, D7):** PowerDynamics' own line model reads `R` | `build_oracle` hands `Branch.R`, read from the branch itself, to `Library.PiLine` at `:swing` and `:sauer_pai`; `:classical` and `:sauer_pai_avr` refuse it by name. On a three-resistance ring: swing flat to 4e-16, a line trip and a generator trip at 0.25–0.30 of `convergence_band` (the lossless run lands 6e6–1e8 bands away); detailed flat to 9.5e-15, its transient judged by the stator-ω signature, never a band. Control C2: handed the scheduled `Pm` rather than ours, their run leaves our state by 0.10 Hz — a builder bug found at orientation and fixed | **external** |
+| …and it sees the misreading no in-house check can | Six sabotages of the arithmetic that reads `R` (D7 T1–T5): every misreading in `src/` alone is red in-house somewhere (cross-tier, the test's own end formula, the losses' positivity, or by refusal); T5 — one misreading written the same way into every reader **including the test's formula** — is green in every in-house identity and red in PowerDynamics on both tiers (72 failures) | **external** |
 
 **Not checked, and said:** (1) a resistance misread *the same way* by the tier and
 by the AC solve is invisible to every check in this section — each compares one
 against the other; step 3's outside check (PowerDynamics' `PiLine`) is the one that
-can see it. The classical tier's cross-tier oracle has the same blindness one level
-up: a resistance misread the same way by both tiers' builders is green in step 2, and
-is step 3's too. (2) The detailed tier's line-rating check reads the sending end only,
+can see it — **and does (step 3, T5 above)**. The classical tier's cross-tier oracle
+has the same blindness one level up: a resistance misread the same way by both tiers'
+builders is green in step 2, and red in PowerDynamics at step 3. (2) The detailed tier's line-rating check reads the sending end only,
 where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive power)
 and is carried, not changed, because widening it would move lossless refusals.
+
+## The frequency verdict — M9 steps 4–7, `src/steadystate/frequency_verdict.jl`, `generator_dips.jl`
+
+A separate `FrequencyVerdicts` beside each generator outage's M8 outcome, against
+caller-supplied `FrequencyLimits` or `continental_europe_limits()`
+(`plans/m9-context.md` D8–D11). No M8 struct gains a field, so M8 is unchanged by
+construction (the screen capture confirms it). test: `test/m9_frequency_verdict.jl`,
+`test/m9_dips.jl`, `test/m9_rates.jl`, `test/m9_report.jl`; the window in `ui/test/`.
+
+| Claim | Checked against | Label |
+|---|---|---|
+| The preset is what SO GL says (D3) | Annex III Table 1, OJ L 220/116, read from the page image: Continental Europe 800 mHz dip, 200 mHz settled, **design values for the 3 GW reference incident**, not a small-grid pass/fail rule. No area-wide rate limit is sourced, so the preset carries none and a rate without its window is refused | **sourced** (read, not computed) |
+| The settled verdict judges each screen on its own number (step 4) | Closed form `−P₃/Σ(1/R + D)` exact to 1e-14 relative, a limit ±2 mHz either side, and a limit set exactly on the value (passes; one ulp below fails — the only check that tells `<` from `≤`); a 60 Hz copy at both fidelities (the only fixture that sees a hard-coded `f0`). 14 sabotages red, one (AC's `f0` hard-coded) only after the AC half was added at review | **closed form** |
+| No value is never a verdict | A refusal, and AC's `:no_solution` even where a `Δω` exists, is `:no_value`; dip and rate are `:not_run` until runs are handed in, never the settled value read in their place (S5, S8, S9 red) | **structural** |
+| The dip is the lowest any surviving machine reaches (step 5) | One detailed-tier run per generator outage from the AC screen's own base solution, FBDF at 1e-6 and 1e-8; per-machine running extremes over every output sample; the run stops on its own settling (`τ·|ḟ_coi| ≤ 1e-5` Hz held one more `τ`). Step 0's lossless table reproduced to 1e-5 Hz on every outage it judged. 14 sabotages, 13 red; the online guard green **as predicted** (a tripped rotor does not move at this tier) | **cross-fidelity** |
+| A dip counts only where both tolerances agree (the user's choice) | `:tolerance_dependent` otherwise. The band first stated failed the 10.94 Hz case by ratio 1.098 (a coarse run's global error over a 100 s slide), so the rule was asked of the user with the gap seen, and says so | **derived** |
+| A solver failure is an outcome, never a verdict (Hurdle 16.5) | Classified by type and retcode, never by message: `:refused_at_trip` (`:voltage`/`:rating`) apart from `:solver_failure` (a stalled re-initialisation from model data — case9 constant power, `R` ×1.1, G1 — and a `MaxIters` integration). The planned control (mesh-default G2 failing at 1e-8) vanished under chunked stepping and was replaced | **structural** |
+| The rate of fall is read over the limit's own window, on every surviving machine (step 6, the user's choice) | From the dip runs' stored samples, no new integration; one differencer (`windowed_rocof`), checked `===` against a by-index read at six windows on every measured row. Approaches `−(P_lost + ΔL)·f0/(2ΣHS)` (ΣHS from raw `Machine` fields) from below, first order: 9–20 % under at 500 ms, ≤ 0.13 % at 10 ms. 11 sabotages red; the half-sample guard by 2 of 460 bit-for-bit reads | **closed form** |
+| The report says what its table says (step 7) | `frequency_rows`, one builder read by the printer, the test and the window; claims f–j asserted at printed precision, prose written after the table (and the first draft's 1.67 caught as DC's ratio, not AC's 1.66); the preset's caveat printed and read by the test in section 4, section 5 and the window. P1–P7, W1–W5 red | **derived** |
+
+**What the verdict decides under the preset (claim g, asserted in
+`test/m9_report.jl`; kept as built at the close, the user's choice, D12).** On the
+two report grids, both load models: the settled limit decides every verdict and the
+dip none — the dip fails only on the mesh's G1, which the settled value fails at both
+fidelities already, and no measured dip is more than 1.66 times its AC settled value
+(case9's G3, constant power) against the limits' ratio of 4. Three of the twelve
+outages have no dip at all (refused at the trip), and the two screens' settled
+verdicts split on two. The rate is printed and never judged — no limit is sourced.
+So on these grids the screen answers what a settled-only check answers; that is a
+property of this preset and these invented dynamics, not of the method: a tighter
+dip or a rate limit with its window, supplied by the caller, would decide.
 
 ## Owed rows
 

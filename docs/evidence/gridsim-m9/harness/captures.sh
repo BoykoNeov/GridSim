@@ -1,5 +1,5 @@
 #!/bin/bash
-# The gate captures (M9 steps 1-2): five full-precision snapshots, compared byte for
+# The gate captures (M9 steps 1-2, plus the close): six full-precision snapshots, compared byte for
 # byte before and after a change. Output goes to scratch, never into the repo.
 #   bash W:/Claude_projects/GridSim/docs/evidence/gridsim-m9/harness/captures.sh TAG [OUTDIR]
 T=$1; OUT=${2:-'W:\temp\claude\gridsim-m9\captures'}; mkdir -p "$(cygpath -u "$OUT")"
@@ -14,3 +14,4 @@ run criterion criterion_snapshot.jl
 run ac ac_snapshot.jl
 run screen screen_snapshot.jl
 run dips dips_snapshot.jl
+run verdict verdict_snapshot.jl

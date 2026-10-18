@@ -11,7 +11,7 @@ NREL-Sienna stack where it fits) and build only the bespoke part — the orchest
 layer that steps models in wall-clock time, injects live perturbations, and routes
 between fidelity tiers.
 
-> **Status: Milestones 1–8 complete (M8 closed 2026-10-08).** Three fidelity
+> **Status: Milestones 1–9 complete (M9 closed 2026-10-18).** Three fidelity
 > tiers behind one interface — an aggregate centre-of-inertia frequency model (M1),
 > a multi-machine network swing model (M2) with governor droop, load shedding,
 > out-of-step protection and generation ramps (M3), and a detailed tier with
@@ -20,7 +20,9 @@ between fidelity tiers.
 > implementation (M4). DC and AC power flows and a cheapest dispatch (M6).
 > Grid-forming and grid-following inverters, phase-locked-loop frequency meters and
 > a low-inertia study (M7). Every single line and generator outage screened at
-> both power-flow fidelities (M8). Each tier has a GLMakie window, plus a scenario editor. The
+> both power-flow fidelities (M8), and each generator outage given a frequency verdict —
+> settled value, lowest dip, rate of fall — on grids with line resistance (M9). Each
+> tier has a GLMakie window, plus a scenario editor. The
 > 28 April 2025 Iberian blackout is the standing real test case. The milestone map
 > and what each one found is [`docs/plans/README.md`](docs/plans/README.md); the
 > durable brief is [`docs/SPEC.md`](docs/SPEC.md).
@@ -67,7 +69,9 @@ between fidelity tiers.
   what a phase-locked-loop meter on each bus *thinks* frequency is.
 - Lose each line and each generator in turn (`scripts/outage_screen.jl`) and see
   which outages the fast DC shortcut gets right, which it cannot see (voltage),
-  and that "secure" says nothing yet about frequency.
+  and — beside each generator outage — how far the frequency settles, how low it
+  dips and how fast it falls, judged against limits you supply or a cited
+  Continental Europe preset (`frequency_screen()` in `ui/` draws it).
 
 ## Getting started
 
@@ -142,7 +146,7 @@ GridSim/
 │   ├── protection/       # armed, state-triggered schemes: load shedding, out-of-step
 │   ├── scenarios/        # scheduled inputs: generation ramps
 │   ├── analysis/         # post-processing: windowed RoCoF, cross-run divergence
-│   ├── steadystate/      # DC and AC power flow, cheapest dispatch, outage screening
+│   ├── steadystate/      # DC and AC power flow, cheapest dispatch, outage screening, frequency verdicts
 │   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
 ├── test/                 # one suite: closed-form, cross-fidelity and control checks
 ├── scripts/              # headless experiments; the Iberian replays, the low-inertia study, the outage screen
