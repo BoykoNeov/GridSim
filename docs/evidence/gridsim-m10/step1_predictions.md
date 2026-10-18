@@ -97,14 +97,14 @@ P6 held in every predicted part; det M = 4.86e-5 / 4.86e-7 / 4.86e-9 (predicted 
    3.3e-8, 0.004–0.005 of the near-cut band, 9.8e5 × the ordinary band at 1e7.
    **NOT predicted, and the reverse of M8 step 2: the rebuild DRIFTS** — 1.2e-11 / 1.0e-9 /
    1.2e-7 from the exact answer, four times the factors' own error. Probe
-   (`W:\temp\claude\m10s1\gauge.jl`, not kept): with the reference moved from A to C the
+   (`step1_gauge.jl`): with the reference moved from A to C the
    rebuild is exact (≤ 2.3e-16) while ours barely moves (2.1e-12 / 1.2e-10 / 1.6e-8). The
    cause is the gauge: with the reference on the nearly cut-off bus every other angle is
    ~1.5·Xw rad, and each flow is a difference of two such numbers. M8's near-bridge had
    its reference on the main grid. So the near-cut oracle is the closed form, and the
    test asserts both halves of the attribution.
 
-Sabotages (`W:\temp\claude\m10s1\mutate.py`), testsets red:
+Sabotages (`step1_mutate.py`, focused runner `step1_run.jl`), testsets red:
 S1 transposed  — [mesh] [near] (+ [inverter], the mesh again); [bowtie] [shortcut] [tie]
                  [cuts] green. As predicted.
 S2 diagonal    — [mesh] [shortcut] [near] [inverter] AND [cuts], which was predicted
