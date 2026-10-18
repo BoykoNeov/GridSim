@@ -1,0 +1,6 @@
+grid_following: returned, 1 pair(s)
+  L12+G1  [:B1]  empty  empty
+  L12+G1  [:B2]  load_lost  load_lost
+grid_forming: returned, 1 pair(s)
+  L12+G1  [:B1]  empty  empty
+  L12+G1  [:B2]  live  secure

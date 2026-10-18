@@ -1,0 +1,26 @@
+== G1+G2 lost, constant_power loads
+    315 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    300 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    290 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    280 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    270 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    260 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    250 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    240 MW  no_solution  Δω          NaN   min |V| NaN   G3 capped false
+    220 MW  voltage      Δω -2.87993e-02   min |V| 0.6751   G3 capped false
+    200 MW  voltage      Δω -2.55707e-02   min |V| 0.7500   G3 capped false
+    150 MW  voltage      Δω -1.85959e-02   min |V| 0.8571   G3 capped false
+    100 MW  secure       Δω -1.21589e-02   min |V| 0.9276   G3 capped false
+== G1+G2 lost, default loads
+    315 MW  voltage      Δω -1.92033e-02   min |V| 0.7626   G3 capped false
+    300 MW  voltage      Δω -1.90961e-02   min |V| 0.7740   G3 capped false
+    290 MW  voltage      Δω -1.89900e-02   min |V| 0.7817   G3 capped false
+    280 MW  voltage      Δω -1.88553e-02   min |V| 0.7894   G3 capped false
+    270 MW  voltage      Δω -1.86909e-02   min |V| 0.7973   G3 capped false
+    260 MW  voltage      Δω -1.84961e-02   min |V| 0.8052   G3 capped false
+    250 MW  voltage      Δω -1.82698e-02   min |V| 0.8131   G3 capped false
+    240 MW  voltage      Δω -1.80112e-02   min |V| 0.8212   G3 capped false
+    220 MW  voltage      Δω -1.73933e-02   min |V| 0.8375   G3 capped false
+    200 MW  voltage      Δω -1.66348e-02   min |V| 0.8540   G3 capped false
+    150 MW  voltage      Δω -1.40771e-02   min |V| 0.8963   G3 capped false
+    100 MW  secure       Δω -1.04936e-02   min |V| 0.9394   G3 capped false

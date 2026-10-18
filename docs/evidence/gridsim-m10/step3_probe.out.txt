@@ -1,0 +1,31 @@
+== 1. case9: four paths to G1 and G2 gone
+constant_power  L14+L82 no_solution Δω NaN  reason newton    capped Bool[0, 0, 0]  low   over 
+    pickups [0.0, 0.0, 0.0]
+constant_power  L14+G2 no_solution Δω NaN  reason newton    capped Bool[0, 0, 0]  low   over 
+    pickups [0.0, 0.0, 0.0]
+constant_power  L82+G1 no_solution Δω NaN  reason newton    capped Bool[0, 0, 0]  low   over 
+    pickups [0.0, 0.0, 0.0]
+constant_power  G1+G2  no_solution Δω NaN  reason newton    capped Bool[0, 0, 0]  low   over 
+    pickups [0.0, 0.0, 0.0]
+default         L14+L82 voltage    Δω -1.920328328513996e-02  reason none      capped Bool[0, 0, 0]  low B4 0.779643969987,B5 0.802179608748,B7 0.847748231014,B8 0.821913167656,B9 0.762577480831  over 
+    pickups [0.0, 0.0, 1.0888261622674358]
+default         L14+G2 voltage    Δω -1.920328328513998e-02  reason none      capped Bool[0, 0, 0]  low B2 0.821913167656,B4 0.779643969987,B5 0.802179608748,B7 0.847748231014,B8 0.821913167656,B9 0.762577480831  over 
+    pickups [0.0, 0.0, 1.0888261622674367]
+default         L82+G1 voltage    Δω -1.920328328514004e-02  reason none      capped Bool[0, 0, 0]  low B1 0.779643969987,B4 0.779643969987,B5 0.802179608748,B7 0.847748231014,B8 0.821913167656,B9 0.762577480831  over 
+    pickups [0.0, 0.0, 1.0888261622674402]
+default         G1+G2  voltage    Δω -1.920328328514003e-02  reason none      capped Bool[0, 0, 0]  low B1 0.779643969987,B2 0.821913167656,B4 0.779643969987,B5 0.802179608748,B7 0.847748231014,B8 0.821913167656,B9 0.762577480831  over 
+    pickups [0.0, 0.0, 1.0888261622674396]
+
+== 2. mesh: AB+AC against G1 alone
+constant_power  pair secure   Δω -0.225848784079   G1 alone secure   Δω -0.224379875621   pair − G1 -1.469e-03
+    capped pair Bool[0, 1, 1]  G1 alone Bool[0, 1, 1]
+    losses: pair 0.034074  G1 alone 0.027023  (base 0.030182)
+    load draw: pair 2.500000  G1 alone 2.500000
+    G1 alone: AB carries 0.395859 pu, loss 0.001616 pu
+    G1 alone: AC carries -0.395859 pu, loss 0.003232 pu
+default         pair secure   Δω -0.215440702035   G1 alone secure   Δω -0.221178712395   pair − G1 5.738e-03
+    capped pair Bool[0, 1, 1]  G1 alone Bool[0, 1, 1]
+    losses: pair 0.032746  G1 alone 0.026675  (base 0.030865)
+    load draw: pair 2.451369  G1 alone 2.484983
+    G1 alone: AB carries 0.394026 pu, loss 0.001601 pu
+    G1 alone: AC carries -0.394026 pu, loss 0.003202 pu

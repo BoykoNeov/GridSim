@@ -1,0 +1,57 @@
+== S1_slack_schedule
+Test Summary:                                                                            | Pass  Fail  Total   Time
+M10 step 3 — every pair in AC, a split grid piece by piece                               | 1749    82   1831  28.5s
+  the pairs and pieces are step 2's; dead pieces are read from the AC base               |  233          233  21.4s
+  every live piece's solution holds its own buses and in-service branches only           |  816          816   0.4s
+  a pair that is one outage (D4) is M8's single AC outage, within B                      |  138          138   1.6s
+  four paths to G1 and G2 gone give one answer, within B                                 |   39           39   0.3s
+  the mesh's AB+AC is NOT G1's outage in AC, even in frequency                           |    9            9   0.0s
+  pickups = lost output + load shift + loss change − export across the cut, per piece    |   80    82    162   2.0s
+  lossless, constant power: every piece's Δω and pickups ARE step 2's, within B          |  236          236   0.3s
+  every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not |  104          104   0.7s
+  DC against AC per pair, by id                                                          |   93           93   1.7s
+  the base is refused as ac_generator_outages refuses it                                 |    1            1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x4ae097bf345fcd46, 0xa3cb4c5633f1ce81, 0x4603575513b125d7, 0x672231f3beafe793, 0x66428f15697a4b01)
+== S2_first_lost_only
+Test Summary:                                                                            | Pass  Fail  Total   Time
+M10 step 3 — every pair in AC, a split grid piece by piece                               | 1808    39   1847  17.7s
+  the pairs and pieces are step 2's; dead pieces are read from the AC base               |  233          233  10.8s
+  every live piece's solution holds its own buses and in-service branches only           |  824          824   0.4s
+  a pair that is one outage (D4) is M8's single AC outage, within B                      |  138          138   1.6s
+  four paths to G1 and G2 gone give one answer, within B                                 |   14    25     39   1.9s
+  the mesh's AB+AC is NOT G1's outage in AC, even in frequency                           |    9            9   0.0s
+  pickups = lost output + load shift + loss change − export across the cut, per piece    |  160     6    166   0.6s
+  lossless, constant power: every piece's Δω and pickups ARE step 2's, within B          |  228     8    236   0.2s
+  every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not |  104          104   0.5s
+  DC against AC per pair, by id                                                          |   97           97   1.6s
+  the base is refused as ac_generator_outages refuses it                                 |    1            1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x85bf173c10594533, 0xe5bfdec0928cdfa9, 0xf9667c8bb53b012a, 0x1eb8ab6ff6901093, 0xed0bd24810175e05)
+== S3_cut_branch_in_Y
+Test Summary:                                                                            | Pass  Fail  Error  Total   Time
+M10 step 3 — every pair in AC, a split grid piece by piece                               | 1193   210      3   1406  17.7s
+  the pairs and pieces are step 2's; dead pieces are read from the AC base               |  233                 233   9.7s
+  every live piece's solution holds its own buses and in-service branches only           |  664                 664   0.5s
+  a pair that is one outage (D4) is M8's single AC outage, within B                      |    3    35            38   2.8s
+  four paths to G1 and G2 gone give one answer, within B                                 |   16    29            45   0.5s
+  the mesh's AB+AC is NOT G1's outage in AC, even in frequency                           |    3     3      3      9   1.2s
+  pickups = lost output + load shift + loss change − export across the cut, per piece    |   43    66           109   0.6s
+  lossless, constant power: every piece's Δω and pickups ARE step 2's, within B          |  142     1           143   0.3s
+  every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not |   33    72           105   0.5s
+  DC against AC per pair, by id                                                          |   55     4            59   1.6s
+  the base is refused as ac_generator_outages refuses it                                 |    1                   1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x038ad38bc662153e, 0x069ceffc5d353108, 0x1acfb9ed824b4f2b, 0xa45b29922f8a8de0, 0x1bee6823b644154d)
+== S4_pickups_overwritten
+Test Summary:                                                                            | Pass  Fail  Total   Time
+M10 step 3 — every pair in AC, a split grid piece by piece                               | 1821    26   1847  17.2s
+  the pairs and pieces are step 2's; dead pieces are read from the AC base               |  233          233  10.6s
+  every live piece's solution holds its own buses and in-service branches only           |  824          824   0.9s
+  a pair that is one outage (D4) is M8's single AC outage, within B                      |  138          138   1.3s
+  four paths to G1 and G2 gone give one answer, within B                                 |   39           39   0.4s
+  the mesh's AB+AC is NOT G1's outage in AC, even in frequency                           |    9            9   0.0s
+  pickups = lost output + load shift + loss change − export across the cut, per piece    |  149    17    166   1.7s
+  lossless, constant power: every piece's Δω and pickups ARE step 2's, within B          |  227     9    236   0.2s
+  every bus at 1 pu, lossless: a tree piece's flows ARE step 2's, a meshed one's are not |  104          104   0.5s
+  DC against AC per pair, by id                                                          |   97           97   1.5s
+  the base is refused as ac_generator_outages refuses it                                 |    1            1   0.0s
+RNG of the outermost testset: Random.Xoshiro(0x905c561cd412990b, 0xc8830b4f5b791927, 0x9061abf2a117c4f5, 0xabe86c3d855d9dec, 0x6f28c976b1840ebd)
+restored: True

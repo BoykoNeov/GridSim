@@ -492,3 +492,113 @@ after the first green run and before any sabotage), `step2_gaps.jl`,
     check but those two, by construction.
 - The M7 exported-surface walk calls `dc_pair_outages` on its inverter model and it
   returns (both inverter kinds); the new names are clear of `names(GLMakie)`.
+
+## D9 — How step 3 solves a piece in AC, and why M8's solve was generalised, not copied (2026-10-18)
+
+`ac_pair_outages` (`src/steadystate/double_outages.jl`) screens the same pairs and finds the
+same pieces as `dc_pair_outages` (the element list and the piece classifier are one shared
+helper each, `_pair_elements` and `_pair_piece_kind`). Then:
+
+- **One Newton solve per live piece**, each with its own settled frequency, its own angle
+  reference (the model's slack where it lies in the piece, else the piece's first bus — a
+  gauge, M8 D8) and its own reactive limits. The pieces share no branch, so one joint solve
+  would be the same equations; solved apart, one piece failing leaves the other's answer
+  standing, which is what makes an outcome per piece mean anything. A dead piece is never
+  solved.
+- **A pair of lines that leaves the grid whole is M8's line screen on two lines**: the
+  rebuilt model through `_ac_powerflow_outcome`, the slack taking the change in losses,
+  `Δω = NaN` (as `OutageScreen`'s line rows). "A connected line pair is `ac_powerflow` on
+  the rebuilt model" therefore holds by construction and is not tested as evidence. Every
+  other live piece goes through the shared solve.
+- **What a dead piece takes with it is read from the AC base**: a machine's schedule, or,
+  for the slack's one source, its solved output, base losses included (M8 D8.1). On case9
+  that is 100.18 MW for G1 against DC's 96.04.
+- **Only a piece's own in-service branches get a flow or a rating check.** The outaged
+  branches' two ends lie in pieces with independent angle references, so a "flow" computed
+  across them would be meaningless and could be reported as an overload.
+- The base is refused exactly as `ac_generator_outages` refuses it, by the same code
+  (`_ac_screen_base`, taken out of it).
+
+**M8's shared solve is generalised in place.** `_ac_shared_setup` / `_ac_generator_outcome`
+became thin wrappers over `_ac_piece_setup` / `_ac_piece_solve`, which take a set of lost
+machines, the piece's vertices and the pair's branches; `_ac_schedule` skips a set of
+machines and `_ac_admittance` leaves out a set of branches. M8's call is the whole grid,
+nothing out, one machine lost — the same arrays and the same operations. Step 1 copied
+instead (D7), but there the copy was ten lines; here it would be ~250, and two copies of the
+solve that decides every AC generator outcome is the larger risk. **The gate is M9's six
+captures, byte for byte, before and after.** One consequence, caught before the sabotages
+ran: a check comparing the pair screen against M8's single-machine screen cannot see a bug
+in the shared setup, because both sides run it. Only checks that read the base solution and
+the model directly can (the losses identity, below).
+
+### What step 3 measured (2026-10-18)
+
+`docs/evidence/gridsim-m10/step3_predictions.md` (written first, with a dated note added
+after the first green run and before any sabotage), `step3_pairs.jl`, `step3_probe.jl`,
+`step3_mutate.py`, each with its `.out.txt`; tests in `test/m10_double_outages.jl`.
+
+- **The pairs that are one outage (D4) are M8's single AC outage within B = 1e-10**, on both
+  load models: outcome, Δω, every pickup, |V| by bus id, both ends' P and Q by branch id, and
+  M8's open bridge carrying at most B.
+- **Four paths to "G1 and G2 gone" give one answer — but none of them solves.** On
+  constant-power loads every path fails to converge from the screen's flat start. Probed
+  (`step3_collapse_probe.jl`) by scaling the whole case down: G1+G2 converges up to 220 MW,
+  its lowest voltage falling faster the closer the load gets (0.93, 0.86, 0.75, 0.675 pu at
+  100, 150, 200, 220 MW), and not from 240 MW up — the shape of a voltage collapse, so most
+  likely no solution exists at 315 MW, but that is not proven: every solve starts flat. The
+  24 constant-power `:no_solution` pieces in the table carry the same caveat. On the
+  default loads every path is `:voltage`, at one Δω (−0.0192033 pu, the four agreeing to
+  ~1e-16) and the same out-of-band voltages. The cut-off empty buses sit exactly at their
+  neighbour's voltage (B1 = B4, B2 = B8), M8 D9's premise seen in a failing case. Predicted to
+  compare solutions; the check now compares the answer each carries, solved or not.
+- **The mesh's AB+AC is not G1's outage in AC, even in frequency — predicted; the reason and
+  the sign were wrong.** The prediction blamed the loop flow's own losses. In fact A is a
+  parallel path, and keeping it LOWERS the total losses (0.0270 against 0.0341 pu on constant
+  power). Which way Δω moves then depends on the load model: on constant power the pair
+  settles 1.47e-3 pu lower; on the default loads it settles 5.74e-3 pu HIGHER, because its
+  lower voltages cut the load draw (by 0.034 pu) more than its losses rise.
+- **The losses identity holds on every live piece that solved**, both grids, both load
+  models: Σ pickups = lost base output + Δ load draw + Δ internal losses − base export across
+  the cut, the export read at that piece's own end of each cut line. Load draw moves on the
+  default loads, losses on both.
+- **Lossless, constant power: every piece's Δω and pickups are step 2's DC answer within B**,
+  every pair of both grids. **Every bus held at 1 pu as well (M8's A0 rung): a tree piece's
+  flows are DC's within B, a meshed piece's are not** (sin against linear). The mesh has no
+  tree piece at all — any two of its seven lines leave a loop — which the first run's test
+  had wrongly assumed; case9's ring-breaking pairs are all trees. The A0 helpers turn case9's
+  three stranded loads into live pieces with nothing that responds: `:no_response` at both
+  fidelities.
+- **The table** (`step3_pairs.out.txt`). Live-piece outcomes: case9 constant power 26 secure,
+  2 overload, 23 voltage, 24 no solution; case9 default loads 31, 2, 42, 0; the mesh 42/3 and
+  43/2 secure/voltage. Pair classes: case9 47 `dc_blind` + 19 `agree` (constant power), 42 +
+  24 (default); mesh 3 + 42, 2 + 43. **No pair is `:dc_missed` or `:dc_false_alarm`
+  anywhere** — wherever AC solved in band, DC named the same overloads (L67, on L56+L82 and L56+G2, both load models).
+- **Found, not predicted, on the default loads:** where voltage falls far, what the loads draw
+  falls with it, enough to reverse the sign. L89+G1 loses a generator and AC settles slightly
+  ABOVE 50 Hz (+4.5e-4 pu, voltages 0.67–0.76 pu); L56+L94's two pieces move in opposite
+  directions at the two fidelities. Both are `:voltage`, so neither is offered as an answer.
+- **For step 4** (its oracle needs a split with two live pieces, both `:secure`, one rising and
+  one falling): on constant power only **L56+L78** and **L67+L89** qualify; L45+L67, the
+  plan's positive control, is `:voltage` in G3's piece there (B5 0.884). On the default loads
+  L45+L67, L45+L89, L56+L78, L56+L89 and L67+L89 qualify.
+- **Sabotages, all four run**, each red where the dated note says:
+  - S1 (the slack's base output taken as its schedule): red on the losses identity alone (82
+    assertions). Green on the comparison with M8's screen, as the dated note says — both sides
+    run the shared setup.
+  - S2 (only the first lost machine skipped): red on the four paths, the identity and the
+    lossless rung's machine pairs.
+  - S3 (the pair's branches left in the admittance before it is cut to the piece): red almost
+    everywhere — the comparison with M8, the four paths, the mesh, the identity, the A0 flows,
+    the comparison of screens.
+  - S4 (a later piece's pickups overwriting an earlier one's): red on the identity and the
+    lossless rung's pickups only — the two-live-piece splits.
+- **Not expressible in this design, recorded:** one reference for the whole grid across a split
+  (each piece is its own problem; a piece with no reference has none to pose), and reactive
+  limits read from the whole grid (a lost machine's limits could leak only onto a bus that
+  keeps another source, and neither report grid has one).
+- **Inverters.** The report grids carry none, so step 2's two inverter triangles are the only
+  place the per-piece code's inverter half runs: kinds agree with DC, and the identity holds
+  on every piece that solved, including a grid-forming inverter as a piece's only responder
+  off the reference bus (AB+CA). M7's exported-surface walk calls `ac_pair_outages` on its
+  inverter model — run directly before the suite (`step3_m7walk.jl`), it returns on both
+  kinds. The five new names are clear of `names(GLMakie)`.
