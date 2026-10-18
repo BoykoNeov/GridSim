@@ -1,0 +1,60 @@
+== S1_whole_grid_shares
+Test Summary:                                                                          | Pass  Fail  Error  Total     Time
+M10 step 2 — every pair in DC, a split grid piece by piece                             | 1022   175      5   1202  1m57.8s
+  the pairs, counted and classified before anything is shared                          |   14                  14    10.8s
+  a pair that leaves the grid whole is M8's rule on two losses                         |  206                 206     0.3s
+  case9 L45+L67: one piece rises, the other falls (D1's arithmetic)                    |    4     2             6     3.1s
+  brute force: every live piece rebuilt as its own model                               |   28    22      5     55     8.5s
+  a dead piece carries nothing, and the pair's own branches nothing                    |  449                 449     0.2s
+  a pair that is one outage is that outage (D4), within a band                         |    9                   9     0.5s
+  different paths to one event give one answer                                         |    6    10            16     0.2s
+  a piece with only a grid-following inverter is not live (D4)                         |    9     1            10     0.1s
+  load lost: the stranded load's import comes back as a surplus                        |    5                   5     0.1s
+  the swing tier settles each piece where the screen puts it (band 1e-7, stated first) |  152   140           292  1m30.5s
+  order: trip, settle, trip, settle lands where both at once does (18.4)               |  138                 138     3.5s
+  an inverter model is read through the base case                                      |    2                   2     0.1s
+== S2_surplus_sign
+Test Summary:                                                                          | Pass  Fail  Error  Total     Time
+M10 step 2 — every pair in DC, a split grid piece by piece                             | 2264   103      3   2370  1m47.5s
+  the pairs, counted and classified before anything is shared                          |   14                  14    33.2s
+  a pair that leaves the grid whole is M8's rule on two losses                         |  188    18           206     5.0s
+  case9 L45+L67: one piece rises, the other falls (D1's arithmetic)                    |    3     3             6     0.1s
+  brute force: every live piece rebuilt as its own model                               | 1197    23      3   1223     4.8s
+  a dead piece carries nothing, and the pair's own branches nothing                    |  449                 449     0.2s
+  a pair that is one outage is that outage (D4), within a band                         |    9                   9     0.7s
+  different paths to one event give one answer                                         |   16                  16     0.3s
+  a piece with only a grid-following inverter is not live (D4)                         |   10                  10     0.6s
+  load lost: the stranded load's import comes back as a surplus                        |    3     2             5     0.3s
+  the swing tier settles each piece where the screen puts it (band 1e-7, stated first) |  236    56           292    55.1s
+  order: trip, settle, trip, settle lands where both at once does (18.4)               |  137     1           138     7.1s
+  an inverter model is read through the base case                                      |    2                   2     0.1s
+== S3_stranded_load_kept
+Test Summary:                                                                          | Pass  Fail  Error  Total   Time
+M10 step 2 — every pair in DC, a split grid piece by piece                             | 3287    52      3   3342  30.8s
+  the pairs, counted and classified before anything is shared                          |   14                  14   3.0s
+  a pair that leaves the grid whole is M8's rule on two losses                         |  206                 206   0.2s
+  case9 L45+L67: one piece rises, the other falls (D1's arithmetic)                    |    6                   6   0.0s
+  brute force: every live piece rebuilt as its own model                               | 2174    18      3   2195   3.1s
+  a dead piece carries nothing, and the pair's own branches nothing                    |  449                 449   0.1s
+  a pair that is one outage is that outage (D4), within a band                         |    9                   9   0.4s
+  different paths to one event give one answer                                         |   16                  16   0.1s
+  a piece with only a grid-following inverter is not live (D4)                         |   10                  10   0.0s
+  load lost: the stranded load's import comes back as a surplus                        |    3     2             5   0.1s
+  the swing tier settles each piece where the screen puts it (band 1e-7, stated first) |  260    32           292  21.6s
+  order: trip, settle, trip, settle lands where both at once does (18.4)               |  138                 138   2.0s
+  an inverter model is read through the base case                                      |    2                   2   0.0s
+== S4_negative_is_source
+Test Summary:                                                                          | Pass  Fail  Error  Total   Time
+M10 step 2 — every pair in DC, a split grid piece by piece                             | 7580     3      1   7584  31.3s
+  the pairs, counted and classified before anything is shared                          |   14                  14   2.9s
+  a pair that leaves the grid whole is M8's rule on two losses                         |  206                 206   0.2s
+  case9 L45+L67: one piece rises, the other falls (D1's arithmetic)                    |    6                   6   0.0s
+  brute force: every live piece rebuilt as its own model                               | 6437     1          6438   2.3s
+  a dead piece carries nothing, and the pair's own branches nothing                    |  446                 446   0.1s
+  a pair that is one outage is that outage (D4), within a band                         |    9                   9   0.4s
+  different paths to one event give one answer                                         |   16                  16   0.1s
+  a piece with only a grid-following inverter is not live (D4)                         |   10                  10   0.0s
+  load lost: the stranded load's import comes back as a surplus                        |          2      1      3   0.7s
+  the swing tier settles each piece where the screen puts it (band 1e-7, stated first) |  296                 296  22.0s
+  order: trip, settle, trip, settle lands where both at once does (18.4)               |  138                 138   2.4s
+  an inverter model is read through the base case                                      |    2                   2   0.0s

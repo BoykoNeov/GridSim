@@ -5,9 +5,11 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–1 done (2026-10-18); step 2 next.** Entered at M9's close counts,
+Status: **steps 0–2 done (2026-10-18); step 3 next.** Entered at M9's close counts,
 **6718 core / 1439 reference / 745 UI**, re-measured at HEAD (`a9ec5bd`) before step 1's
-first edit — unchanged. Step 1 leaves **6905 core / 1439 reference / 745 UI**.
+first edit — unchanged. Step 1 leaves **6905 core / 1439 reference / 745 UI**; step 2
+(entered at those, re-measured at `8889b86`) leaves **14479 core / 1439 / 745** — the
+14479 predicted from the focused run before the suite ran.
 
 **Read before ticking anything.** A box is ticked when its check passes *with its
 positive control and with its anti-vacuity mutation executed*, not when the code
@@ -69,16 +71,27 @@ runs.
       test), predictions first: all red where registered; the diagonal one also reddens
       the cut check (unpredicted, in our favour).
 
-## Step 2 — pieces, and generators, in DC (Hurdles 18.4, 19.1–19.4)
+## Step 2 — pieces, and generators, in DC (Hurdles 18.4, 19.1–19.4) — done 2026-10-18
 
-- [ ] Every pair kind; per-piece sharing; load lost; sources cut off; D4's collapse.
-- [ ] Brute force per piece.
-- [ ] Swing tier per piece (settling per piece, never `coi_rocof`), band stated
-      first; one piece up, one down; a lone cut-off generator tripped in the same
-      instant; a stranded `P0 < 0` machine (the rest of the grid only).
-- [ ] Order in the swing tier (trip, settle, trip, settle vs both at once), every
-      pair kind, a binding cap as the control. Never by rebuilding (D6.1).
-- [ ] Sabotages run, predictions first.
+- [x] Entry counts re-measured at HEAD (`8889b86`) before the first edit: 6905 / 1439 /
+      745, as step 1 left them.
+- [x] Every pair kind; per-piece sharing; load lost; sources cut off; D4's collapse
+      (`dc_pair_outages`, `m10-context.md` D8). Kinds on case9 as predicted. **Found:**
+      a whole grid can be dead (genmesh LB+LD), and the mesh's AB+AC is G1's outage in
+      frequency but not in flows (a loop flow through A) — both asserted.
+- [x] Brute force per piece: every live piece on six fixtures (75, 45, 162, 65, 5, 1,
+      measured after and held exactly). Collapsed pairs and the four "G1 and G2 gone"
+      paths equal to round-off.
+- [x] Swing tier per piece, band 1e-7 stated first: ≤ 5.5e-10 on speed, ≤ 2.0e-8 on
+      export change (governor gain × the speed gap); the gap shrinks with the solver
+      tolerance, so it is the solver's. One piece up, one down (L45+L67); a lone cut-off
+      generator tripped in the same instant; a stranded `P0 < 0` machine left running and
+      excluded by name.
+- [x] Order in the swing tier: ≤ 4.2e-8 against 1e-7, every pair kind (two lines, two
+      machines, a line and a machine, a load-machine); the cap binds to 9.1e-11.
+- [x] Sabotages run, predictions first (with a dated correction written before they
+      ran): all four red where registered; S4 by design only on the classification and
+      the count.
 
 ## Step 3 — pairs and pieces in AC (Hurdle 19.5)
 

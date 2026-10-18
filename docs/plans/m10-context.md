@@ -399,3 +399,91 @@ rebuilt from the copy's columns `===` M8's own, on both report grids.
   turns the cut check red, because `det M` at a cut is then `(1−P_kk)(1−P_ll)`, no
   longer round-off. A transposed `M` is invisible on the equal-reactance pairs and on
   the control, as registered, and caught by the unequal ones.
+
+## D8 — How step 2 reads a piece (2026-10-18)
+
+`dc_pair_outages` (`src/steadystate/double_outages.jl`) screens every pair of M8's rows —
+branches in model order, then machines — so case9 has 66 pairs and the mesh 45. The
+pieces come from the graph with the pair's branches removed, and each is one of four
+kinds (D4): **live** (a source and a load: shares its own imbalance by M8's rule, with
+the piece as the `alive` mask), **sources lost** (a source, no load), **load lost** (no
+source; its grid-following inverters go with it), **empty**. A `P0 < 0` machine is a load,
+never a source (D6.3).
+
+**A live piece's imbalance is read from the base case**: the schedule of the machines the
+pair took out of it, plus what it imported across the pair's branches (base DC flows).
+So a whole-grid pair's imbalance is EXACTLY the lost schedule (`0.0` for two lines; a
+test holds it with `===`), and a split charges each side with what crossed the cut. The
+alternative — summing each piece's injections — gives the same number to round-off,
+and would also share out whatever the reference absorbed from a schedule that balances
+only to the model's guard (|ΣP| ≤ 1e-6·S_base). **The tests read it the other way**,
+from the equipment list, so the check is not the screen's own arithmetic.
+
+**Flows.** Whole grid: two lines reuse step 1's rank-two flows bit for bit (step 1's
+loop was moved into `_dc_line_pairs(net, base, P)`, same operations, so step 1's tests
+are its gate); otherwise the new injections are solved on the base factorisation, and
+a line + machine pair then applies the line's single-outage factor to those flows.
+Split: one fresh sparse factorisation of the network without the two branches, one
+reference per piece (the model's slack where it lies in the piece, else the piece's
+first bus). A dead piece carries exactly `0.0`; a live piece that did not settle `NaN`.
+
+### What step 2 measured (2026-10-18)
+
+`docs/evidence/gridsim-m10/step2_predictions.md` (written first, with a dated note added
+after the first green run and before any sabotage), `step2_gaps.jl`,
+`step2_settle_probe.jl`, `step2_mutate.py`, each with its `.out.txt`; tests in
+`test/m10_double_outages.jl`.
+
+- **Kinds, as predicted.** case9's 36 line pairs all split: 9 two live pieces, 3 load
+  lost, 21 with one piece's sources lost, 3 with two. 9 of its 27 line + machine pairs
+  split, 3 of them D4's collapse (L14+G1, L82+G2, L36+G3); the 3 machine pairs stay
+  whole. The mesh splits on AB+AC and DE+BE only, each cutting off a lone generator.
+- **One piece up, one down.** case9 L45+L67: G3's piece {B3, B5, B6} has a 13.72 MW
+  surplus and rises by +0.0024197 pu; the rest falls by −0.0011878 pu. **The
+  prediction file says 13.66 MW / +0.002409 / −0.001183 — an arithmetic slip copying
+  D1, whose 13.7 MW was right**; the test computes the number from the schedule.
+- **Brute force (each live piece rebuilt as its own model; imbalance from the equipment
+  list, shares from `pickup_shares`, flows from `dc_powerflow`)**: every live piece on
+  six fixtures — case9 75, mesh 45, swing case9 162, genmesh 65, the grid-forming
+  triangle 5, the grid-following triangle 1. The counts were measured after the first
+  run and are held exactly (`==`), so a screen that stopped producing live pieces
+  cannot pass by checking none.
+- **The collapsed pairs equal M8's single outage** to round-off: Δω 0 to 1.9e-16
+  relative, pickups ≤ 1.1e-16, flows ≤ 9.3e-16 against a 3.7e-14 band. The four case9
+  paths to "G1 and G2 gone" (L14+L82, L14+G2, L82+G1, G1+G2) agree to Δω 0 and flows
+  ≤ 2.3e-15.
+- **Swing tier, band 1e-7 stated first.** On 11 pairs over two fixtures, every
+  surviving machine's speed is at most 5.5e-10 from its piece's Δω and every live bus's
+  export change at most 2.0e-8 from its pickup (genmesh ≤ 7e-10; on swing case9 the
+  export gap is the speed gap times the governor gain, ~54 on the system base). **The
+  gap is the solver's, not unfinished settling**: tightening reltol 1e-10 → 1e-12 takes
+  it from ~1e-10 to ~3e-13 at 300 s and later, while at 150 s it is 3e-9 at both
+  tolerances (not yet settled), so reading at 300 s and 450 s is late enough.
+- **Order (18.4), band 1e-7.** Trip, settle 300 s, trip, settle against both at once:
+  ≤ 1.8e-10 on genmesh's four pairs, 1.3e-8 and 4.2e-8 on swing case9's two (the same
+  governor-gain amplification). The cap is seen to bind: after G2 alone G3's governor
+  sits 9.1e-11 from its 0.05 pu headroom.
+- **Found, not predicted — two:**
+  - **The mesh's AB+AC is G1's outage in frequency and pickups, NOT in flows.** With only
+    G1 lost, bus A stays in the mesh and carries a loop flow, in on one line and out on
+    the other (0.395 pu off at the worst branch); losing both lines closes that path. D4's
+    collapse is a BRIDGE to a lone machine, and this is two branches, neither a bridge.
+    The test now asserts the loop flow (AB and AC equal and opposite in G1's outage).
+  - **A whole grid can be dead.** genmesh's LB+LD takes both loads; nothing is left to
+    serve, so the grid is `:sources_lost` with zero imbalance. "Every whole-grid pair is
+    live" had been assumed and is false (asserted now, the only such pair).
+- **Sabotages, all four run** (each red where the dated note says):
+  - S1 (every surviving unit shares every piece): red on brute force, L45+L67, the
+    paths, the inverter corner and the swing check; green on the whole-grid pairs, the
+    collapsed pairs and the order runs (all whole grids), as predicted.
+  - S2 (a surplus treated as a shortfall): red on the whole-grid identity, L45+L67, brute
+    force, load lost, the swing check and the order testset's static assertion. The
+    note had also said the order RUNS would go red; they cannot, since they compare the
+    swing tier with itself.
+  - S3 (a stranded load's import left out): red on brute force, load lost and swing.
+  - S4 (a `P0 < 0` machine counted as a source): red on the load-lost classification
+    and the brute-force count only; the swing check stays green, because a stranded
+    load-machine's own damping settles it where the screen puts it. Invisible to every
+    check but those two, by construction.
+- The M7 exported-surface walk calls `dc_pair_outages` on its inverter model and it
+  returns (both inverter kinds); the new names are clear of `names(GLMakie)`.
