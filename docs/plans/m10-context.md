@@ -460,9 +460,12 @@ after the first green run and before any sabotage), `step2_gaps.jl`,
   it from ~1e-10 to ~3e-13 at 300 s and later, while at 150 s it is 3e-9 at both
   tolerances (not yet settled), so reading at 300 s and 450 s is late enough.
 - **Order (18.4), band 1e-7.** Trip, settle 300 s, trip, settle against both at once:
-  ≤ 1.8e-10 on genmesh's four pairs, 1.3e-8 and 4.2e-8 on swing case9's two (the same
-  governor-gain amplification). The cap is seen to bind: after G2 alone G3's governor
-  sits 9.1e-11 from its 0.05 pu headroom.
+  ≤ 1.8e-10 on genmesh's four pairs, 1.3e-8 and 4.2e-8 on swing case9's two. The 4.2e-8
+  (L67 then G1, the tightest margin of the step) was first written up as the solver's
+  without being measured; **probed after the first push**: reltol 1e-10 → 1e-12 takes it
+  to 1.1e-10 (speed 3.5e-10 → 7.1e-13), so it is the solver's, and the order of the two
+  losses moves nothing. The cap is seen to bind: after G2 alone G3's governor sits
+  9.1e-11 from its 0.05 pu headroom.
 - **Found, not predicted — two:**
   - **The mesh's AB+AC is G1's outage in frequency and pickups, NOT in flows.** With only
     G1 lost, bus A stays in the mesh and carries a loop flow, in on one line and out on
@@ -474,8 +477,10 @@ after the first green run and before any sabotage), `step2_gaps.jl`,
     live" had been assumed and is false (asserted now, the only such pair).
 - **Sabotages, all four run** (each red where the dated note says):
   - S1 (every surviving unit shares every piece): red on brute force, L45+L67, the
-    paths, the inverter corner and the swing check; green on the whole-grid pairs, the
-    collapsed pairs and the order runs (all whole grids), as predicted.
+    paths and the swing check; green on the whole-grid pairs, the collapsed pairs and
+    the order runs (all whole grids), as predicted. **One more than predicted**: the
+    inverter corner goes red too (the grid-forming inverter in the dead corner shares
+    the rest's loss) — inside the row's description, but not on its list.
   - S2 (a surplus treated as a shortfall): red on the whole-grid identity, L45+L67, brute
     force, load lost, the swing check and the order testset's static assertion. The
     note had also said the order RUNS would go red; they cannot, since they compare the

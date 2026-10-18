@@ -14,3 +14,5 @@ L45+L94 reltol 1.0e-12 t 150.0 max ω gap 4.416834475419462e-9
 L45+L94 reltol 1.0e-12 t 300.0 max ω gap 3.321821984147988e-13
 L45+L94 reltol 1.0e-12 t 450.0 max ω gap 1.951041758707639e-12
 L45+L94 reltol 1.0e-12 t 900.0 max ω gap 2.1824209106569015e-12
+order L67 then G1 reltol 1.0e-10 max ω gap 3.5295343470825857e-10 max export gap 4.23471580024426e-8
+order L67 then G1 reltol 1.0e-12 max ω gap 7.098653262427312e-13 max export gap 1.0575429421066929e-10
