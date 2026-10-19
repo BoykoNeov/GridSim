@@ -1763,3 +1763,49 @@ end
         @test_throws ArgumentError ac_restore(_M10_MESH(), :nope)
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M10 step 6 — the report's one fix to the screens (m10-context.md D12.1)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@testset "M10 step 6 — a refused piece keeps no pickups and no flags" begin
+
+    @testset "the mesh's G1: the AC restore is refused, and says nothing is capped" begin
+        for loads in (:constant_power, :default)
+            net = _M10_MESH(; loads)
+            ar, dr = ac_restore(net, :G1), dc_restore(net, :G1)
+            @test only(ar.pieces).outcome === only(dr.pieces).outcome === :restore_refused
+            # Before the fix AC said G2 and G3 were capped while their pickups were zero.
+            @test !any(ar.capped) && !any(ar.floored) && all(==(0.0), ar.pickup)
+            @test ar.capped == dr.capped
+            s = ac_sequential_outages(net)
+            g1 = findfirst(==(:G1), s.id)
+            for (p, (a, _)) in pairs(s.pairs)
+                a == g1 || continue
+                @test s.outcome[p] === :not_restored && !any(s.capped[p])
+            end
+        end
+    end
+
+    @testset "every AC pair keeps pickups and flags exactly where the sequential mask does" begin
+        # One rule, two places: `_ac_outage_set` keeps a live piece's entries where it has
+        # a solution or a settled Δω; `ac_sequential_outages` masks with `_answered_mask`
+        # on the same predicate. Asserted equal on every pair of both report grids.
+        ok = pc -> pc.solution !== nothing || !isnan(pc.Δω)
+        nkept = 0
+        for f in (_M10_CASE9, _M10_MESH), loads in (:constant_power, :default)
+            net = f(; loads)
+            a = ac_pair_outages(net)
+            r = GridSim._responders(net)
+            m = length(net.branches)
+            for (p, (i, j)) in pairs(a.pairs)
+                lost_ids = Int[e - m for e in (i, j) if e > m]
+                keep = GridSim._answered_mask(net, r, a.pieces[p], lost_ids, ok)
+                @test !any(a.capped[p] .& .!keep)
+                @test all(a.pickup[p][.!keep] .== 0.0)
+                nkept += count(keep)
+            end
+        end
+        @test nkept > 0                       # the mask is not empty everywhere
+    end
+end

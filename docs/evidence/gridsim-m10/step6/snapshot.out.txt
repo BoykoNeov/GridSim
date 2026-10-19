@@ -1,0 +1,101 @@
+# step6/snapshot.jl: pair AND sequential screens serialized on step 5's 8 fixtures, before (HEAD c207011) and after the refused-piece fix in _ac_outage_set (m10-context.md D12.1); compared with cmp, every moved entry named by snapshot_diff.jl.
+identical case9_cp_ac.bin
+identical case9_cp_acseq.bin
+identical case9_cp_dc.bin
+identical case9_cp_dcseq.bin
+identical case9_def_ac.bin
+identical case9_def_acseq.bin
+identical case9_def_dc.bin
+identical case9_def_dcseq.bin
+identical corner_gfl_ac.bin
+identical corner_gfl_acseq.bin
+identical corner_gfl_dc.bin
+identical corner_gfl_dcseq.bin
+identical corner_gfm_ac.bin
+identical corner_gfm_acseq.bin
+identical corner_gfm_dc.bin
+identical corner_gfm_dcseq.bin
+identical genmesh_ac.bin
+DIFFERS   genmesh_acseq.bin
+identical genmesh_dc.bin
+identical genmesh_dcseq.bin
+identical mesh_cp_ac.bin
+DIFFERS   mesh_cp_acseq.bin
+identical mesh_cp_dc.bin
+identical mesh_cp_dcseq.bin
+identical mesh_def_ac.bin
+DIFFERS   mesh_def_acseq.bin
+identical mesh_def_dc.bin
+identical mesh_def_dcseq.bin
+identical swing_case9_ac.bin
+identical swing_case9_acseq.bin
+identical swing_case9_dc.bin
+identical swing_case9_dcseq.bin
+
+== genmesh_acseq.bin: 24 entries differ
+  .restore[8].capped[3]: true → false   (restore of G1)
+  .restore[8].capped[5]: true → false   (restore of G1)
+  .capped[78][3]: true → false   (pair G1→AB)
+  .capped[78][5]: true → false   (pair G1→AB)
+  .capped[79][3]: true → false   (pair G1→AC)
+  .capped[79][5]: true → false   (pair G1→AC)
+  .capped[80][3]: true → false   (pair G1→BC)
+  .capped[80][5]: true → false   (pair G1→BC)
+  .capped[81][3]: true → false   (pair G1→BD)
+  .capped[81][5]: true → false   (pair G1→BD)
+  .capped[82][3]: true → false   (pair G1→CD)
+  .capped[82][5]: true → false   (pair G1→CD)
+  .capped[83][3]: true → false   (pair G1→DE)
+  .capped[83][5]: true → false   (pair G1→DE)
+  .capped[84][3]: true → false   (pair G1→BE)
+  .capped[84][5]: true → false   (pair G1→BE)
+  .capped[85][3]: true → false   (pair G1→LB)
+  .capped[85][5]: true → false   (pair G1→LB)
+  .capped[86][3]: true → false   (pair G1→G2)
+  .capped[86][5]: true → false   (pair G1→G2)
+  .capped[87][3]: true → false   (pair G1→LD)
+  .capped[87][5]: true → false   (pair G1→LD)
+  .capped[88][3]: true → false   (pair G1→G3)
+  .capped[88][5]: true → false   (pair G1→G3)
+== mesh_cp_acseq.bin: 20 entries differ
+  .restore[8].capped[2]: true → false   (restore of G1)
+  .restore[8].capped[3]: true → false   (restore of G1)
+  .capped[64][2]: true → false   (pair G1→AB)
+  .capped[64][3]: true → false   (pair G1→AB)
+  .capped[65][2]: true → false   (pair G1→AC)
+  .capped[65][3]: true → false   (pair G1→AC)
+  .capped[66][2]: true → false   (pair G1→BC)
+  .capped[66][3]: true → false   (pair G1→BC)
+  .capped[67][2]: true → false   (pair G1→BD)
+  .capped[67][3]: true → false   (pair G1→BD)
+  .capped[68][2]: true → false   (pair G1→CD)
+  .capped[68][3]: true → false   (pair G1→CD)
+  .capped[69][2]: true → false   (pair G1→DE)
+  .capped[69][3]: true → false   (pair G1→DE)
+  .capped[70][2]: true → false   (pair G1→BE)
+  .capped[70][3]: true → false   (pair G1→BE)
+  .capped[71][2]: true → false   (pair G1→G2)
+  .capped[71][3]: true → false   (pair G1→G2)
+  .capped[72][2]: true → false   (pair G1→G3)
+  .capped[72][3]: true → false   (pair G1→G3)
+== mesh_def_acseq.bin: 20 entries differ
+  .restore[8].capped[2]: true → false   (restore of G1)
+  .restore[8].capped[3]: true → false   (restore of G1)
+  .capped[64][2]: true → false   (pair G1→AB)
+  .capped[64][3]: true → false   (pair G1→AB)
+  .capped[65][2]: true → false   (pair G1→AC)
+  .capped[65][3]: true → false   (pair G1→AC)
+  .capped[66][2]: true → false   (pair G1→BC)
+  .capped[66][3]: true → false   (pair G1→BC)
+  .capped[67][2]: true → false   (pair G1→BD)
+  .capped[67][3]: true → false   (pair G1→BD)
+  .capped[68][2]: true → false   (pair G1→CD)
+  .capped[68][3]: true → false   (pair G1→CD)
+  .capped[69][2]: true → false   (pair G1→DE)
+  .capped[69][3]: true → false   (pair G1→DE)
+  .capped[70][2]: true → false   (pair G1→BE)
+  .capped[70][3]: true → false   (pair G1→BE)
+  .capped[71][2]: true → false   (pair G1→G2)
+  .capped[71][3]: true → false   (pair G1→G2)
+  .capped[72][2]: true → false   (pair G1→G3)
+  .capped[72][3]: true → false   (pair G1→G3)

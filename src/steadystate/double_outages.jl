@@ -732,10 +732,15 @@ function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int}; restore = 
                 st.alive[q] && (fl[q] = o.floored[q])
             end
         end
-        for q in eachindex(r.ids)
-            st.alive[q] || continue
-            pk[q] = o.pickup[q]
-            cp[q] = o.capped[q]
+        # A refused piece keeps no pickups and no flags: the solve hands back its switching
+        # state when it gives up (D12.1). The same rule as the sequential screen's
+        # `_answered_mask`.
+        if o.solution !== nothing || !isnan(Δω)
+            for q in eachindex(r.ids)
+                st.alive[q] || continue
+                pk[q] = o.pickup[q]
+                cp[q] = o.capped[q]
+            end
         end
         ps_out[c] = _ac_live_piece(bs, o, Δω, o.reason)
     end
