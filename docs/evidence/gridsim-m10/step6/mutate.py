@@ -58,6 +58,10 @@ MUT = {
  "W3_seq_reads_both": ("window", [(WIN,
    "    rows = timing === :both ? rep.both : rep.seq\n    timing === :both && return only(",
    "    rows = rep.both\n    return only(")]),
+ # R6 (D13): ac_lines loses the voltage mark.
+ "R6_no_voltage_mark": ("report", [(SCRIPT, "    v && return :voltage\n", "")]),
+ # W6 (D13): the window drops the marker from its cells.
+ "W6_no_cell_mark": ("window", [(WIN, "    isempty(m) || (t *= \" \" * m)\n", "")]),
  # W5 (added after review): the mouse handler no longer reaches the table.
  "W5_mouse_unwired": ("window", [(WIN,
    "        matrix_press!(p[1], p[2])\n        return Consume(true)\n",

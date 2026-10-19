@@ -153,6 +153,63 @@ end
     @test piece(row(:CD, :G1).dc, :D).Δf === 0.0
 end
 
+@testset "lines and voltages beside the verdict, never in it (D13)" begin
+    for (key, G) in _DO_G
+        net = G.net.cp
+        both = _DO_BOTH[key]
+        for (p, r) in pairs(both)
+            # DC, both at once: the pair comparison's own DC outcome, refusals :none.
+            d = G.cmp.cp.dc_outcome[p]
+            @test r.dc.lines === (d in (:secure, :overload) ? d : :none)
+            for k in (:cp, :def)
+                side, c = getfield(r, k), getfield(G.cmp, k)
+                o = side.lines in (:overload, :overload_voltage)
+                v = side.lines in (:voltage, :overload_voltage)
+                @test o == !isempty(c.ac_over[p])
+                @test v == any(pc -> pc.kind === :live && pc.outcome === :voltage,
+                               getfield(G.ac, k).pieces[p])
+            end
+        end
+        # DC, one after the other: the flows against the ratings, read here from the
+        # equipment list (not through M8's helper), where every running piece answered.
+        for (p, r) in pairs(_DO_SEQ[key])
+            if r.dc.outcome !== :screened
+                @test r.dc.lines === :none && r.cp.lines === :none && r.def.lines === :none
+                continue
+            end
+            answered = all(x -> x.kind !== :live || x.outcome in (:shared, :restored),
+                           G.dcseq.pieces[p])
+            over = any(abs(G.dcseq.flow[p][e]) * net.S_base > b.rating
+                       for (e, b) in pairs(net.branches))
+            @test r.dc.lines === (answered ? (over ? :overload : :secure) : :none)
+        end
+    end
+    # The rule's names, every one, on hand-built pieces (VO occurs on neither grid).
+    P(o) = (; kind = :live, outcome = o)
+    @test _DO.ac_lines([P(:voltage), P(:overload)]) === :overload_voltage
+    @test _DO.ac_lines([P(:secure), P(:no_solution)]) === :none
+    @test _DO.ac_lines([P(:voltage), P(:no_solution)]) === :voltage
+    @test _DO.ac_lines([P(:secure), (; kind = :load_lost, outcome = :load_lost)]) === :secure
+    @test _DO._mk((; lines = :overload_voltage)) == " [VO]" && _DO._mk((; lines = :none)) == ""
+    # The note's example, printed: green in frequency, marked V.
+    t = sprint(_DO.print_simultaneous, "case9", _DO_BOTH[:case9])
+    @test occursin("L14+L45   | verdict: DC FAIL, AC cp FAIL [V], AC def pass [V]", t)
+    @test occursin("L56+L82   | verdict: DC FAIL [O], AC cp FAIL [O], AC def FAIL [O]", t)
+    @test occursin("[V] / [O] / [VO]", sprint(_DO.print_header))
+end
+
+@testset "claim r: green is frequency only, and the markers show what it leaves out" begin
+    c9 = _DO_BOTH[:case9]
+    marked(k) = count(r -> getfield(r, k).verdict === :pass && getfield(r, k).lines === :voltage, c9)
+    passed(k) = count(r -> getfield(r, k).verdict === :pass, c9)
+    @test (marked(:def), passed(:def)) == (18, 20)
+    @test (marked(:cp), passed(:cp)) == (3, 5)
+    @test !any(getfield(r, k).verdict === :pass && getfield(r, k).lines !== :secure
+               for r in _DO_BOTH[:mesh] for k in _DO.SIDES)
+    @test count(r -> r.dc.lines === :overload, c9) == 20
+    @test count(r -> r.cp.lines === :overload, c9) == 2 && count(r -> r.def.lines === :overload, c9) == 2
+end
+
 @testset "the preset's caveat is printed with the verdicts, and repeated with the claims" begin
     h = sprint(_DO.print_header)
     c = sprint(_DO.print_claims)

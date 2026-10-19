@@ -138,11 +138,54 @@ function worst_Δf(pieces)
     return isempty(xs) ? NaN : xs[argmax(abs.(xs))]
 end
 
-_side(pieces, outcome::Symbol = :screened) =
+_side(pieces, outcome::Symbol = :screened; lines::Symbol = :none) =
     (; outcome, pieces, verdict = pair_verdict(pieces, outcome),
      worst = outcome === :screened ? worst_Δf(pieces) : NaN,
      load_mw = sum((p.load_mw for p in pieces); init = 0.0),
-     sources_mw = sum((p.sources_mw for p in pieces); init = 0.0))
+     sources_mw = sum((p.sources_mw for p in pieces); init = 0.0),
+     lines = outcome === :screened ? lines : :none)
+
+# ---------------------------------------------------------------------------
+# Lines and voltages, beside the verdict (the user's choice, D13)
+# ---------------------------------------------------------------------------
+#
+# M8's own check, per side: `:secure`, `:overload` (a branch over its rating), `:voltage`
+# (a bus outside the band; AC only), `:overload_voltage` (both, in different pieces), or
+# `:none` where it has no answer. Shown BESIDE the frequency verdict and never combined
+# with it (m9-context.md D2.5): a green cell can still be marked V.
+
+"""
+    ac_lines(pieces) -> Symbol
+
+The AC line-and-voltage outcome of one side, read off each running piece's own outcome
+(D13.2). `:none` where no piece shows a violation and one has no answer.
+"""
+function ac_lines(pieces)
+    live = [p for p in pieces if p.kind === :live]
+    v = any(p -> p.outcome === :voltage, live)
+    o = any(p -> p.outcome === :overload, live)
+    v && o && return :overload_voltage
+    v && return :voltage
+    o && return :overload
+    return !isempty(live) && all(p -> p.outcome === :secure, live) ? :secure : :none
+end
+
+"""
+    dc_lines(net, flow, pieces) -> Symbol
+
+The DC line outcome of one side: the flows against the branch ratings (M8's
+`_rating_violations`), only where every running piece answered (D13.3–4) — a flow inside
+an unanswered piece is `NaN`. DC has no voltage.
+"""
+function dc_lines(net::NetworkModel, flow::AbstractVector{Float64}, pieces)
+    all(p -> p.kind !== :live || p.outcome in (:shared, :restored), pieces) || return :none
+    return isempty(GridSim._rating_violations(net, abs.(flow))) ? :secure : :overload
+end
+
+const LINES_MARK = Dict(:secure => "", :none => "", :overload => "O", :voltage => "V",
+                        :overload_voltage => "VO")
+# The marker a printed verdict carries: " [V]" and so on; nothing where secure or unknown.
+_mk(side) = (m = LINES_MARK[side.lines]; isempty(m) ? "" : " [" * m * "]")
 
 # ---------------------------------------------------------------------------
 # The rows
@@ -154,8 +197,8 @@ _side(pieces, outcome::Symbol = :screened) =
 One row per unordered pair, in the screens' order: the two element ids (`first`,
 `second`), `same_as` (the machine whose single outage the pair IS, or `:none`), `splits`,
 the DC/AC comparison's class per load model (`class.cp`, `class.def`), and per side
-(`dc`, `cp`, `def`) the pieces (`piece_side`) and the pair's verdict, worst `Δf` and MW
-lost.
+(`dc`, `cp`, `def`) the pieces (`piece_side`) and the pair's verdict, worst `Δf`, MW
+lost, and `lines` — M8's line-and-voltage outcome beside the verdict (D13).
 """
 function simultaneous_rows(G)
     dc, net = G.dc, G.net
@@ -164,13 +207,14 @@ function simultaneous_rows(G)
     for (p, (i, j)) in pairs(dc.pairs)
         # A pair of lines that splits nothing lost no generation (D12.2).
         applicable = dc.splits[p] || i > m || j > m
-        side(fid, pcs, n) = _side([piece_side(pc, fid, applicable, false, n) for pc in pcs])
+        side(fid, pcs, n, lines) =
+            _side([piece_side(pc, fid, applicable, false, n) for pc in pcs]; lines)
         push!(rows, (; first = dc.id[i], second = dc.id[j], same_as = dc.same_as[p],
                      splits = dc.splits[p],
                      class = (; cp = G.cmp.cp.class[p], def = G.cmp.def.class[p]),
-                     dc = side(:dc, dc.pieces[p], net.cp),
-                     cp = side(:ac, G.ac.cp.pieces[p], net.cp),
-                     def = side(:ac, G.ac.def.pieces[p], net.def)))
+                     dc = side(:dc, dc.pieces[p], net.cp, dc_lines(net.cp, dc.flow[p], dc.pieces[p])),
+                     cp = side(:ac, G.ac.cp.pieces[p], net.cp, ac_lines(G.ac.cp.pieces[p])),
+                     def = side(:ac, G.ac.def.pieces[p], net.def, ac_lines(G.ac.def.pieces[p]))))
     end
     return rows
 end
@@ -190,8 +234,9 @@ function _sequential_side(s, p::Int, fid::Symbol, net::NetworkModel)
     hit = Set(rs.pieces[c].buses)
     touched = [issubset(pc.buses, hit) for pc in s.pieces[p]]
     applicable = !(s.kind[b] === :branch && count(touched) == 1)
+    lines = fid === :dc ? dc_lines(net, s.flow[p], s.pieces[p]) : ac_lines(s.pieces[p])
     return _side([piece_side(pc, fid, applicable, !touched[k], net)
-                  for (k, pc) in pairs(s.pieces[p])])
+                  for (k, pc) in pairs(s.pieces[p])]; lines)
 end
 
 """
@@ -200,7 +245,7 @@ end
 One row per ordered pair (`first` lost, 50 Hz restored, then `second`), in the screens'
 order: per side (`dc`, `cp`, `def`) the outcome (`:screened`, `:already_lost`,
 `:not_restored`, `:base_refused`), the pieces after both, the pair's verdict, worst `Δf`
-and MW lost; and `order` per side — `:milder`, `:same` or `:worse` than both at once, by the
+MW lost and `lines` (D13; `:none` with no state after both); and `order` per side — `:milder`, `:same` or `:worse` than both at once, by the
 worst judged piece (`:none` where either has no judged piece).
 """
 function sequential_rows(G; both = simultaneous_rows(G))
@@ -289,8 +334,9 @@ function print_simultaneous(io::IO, name, rows)
                     only(r.cp.pieces).outcome, only(r.def.pieces).outcome)
             continue
         end
-        @printf(io, "%-9s | verdict: DC %s, AC cp %s, AC def %s%s\n", _pair(r, "+"),
-                _t(r.dc.verdict), _t(r.cp.verdict), _t(r.def.verdict), tag)
+        @printf(io, "%-9s | verdict: DC %s%s, AC cp %s%s, AC def %s%s%s\n", _pair(r, "+"),
+                _t(r.dc.verdict), _mk(r.dc), _t(r.cp.verdict), _mk(r.cp), _t(r.def.verdict),
+                _mk(r.def), tag)
         for (i, p) in pairs(r.dc.pieces)
             p.kind === :live || continue
             @printf(io, "%-9s | %-26s | %-27s | %-27s | %-27s\n", "", _buses(p.buses),
@@ -318,7 +364,7 @@ function print_sequential(io::IO, name, rows)
             "AC cp", "AC def")
     function cell(x, o)
         x.outcome === :screened || return _t(x.outcome)
-        return @sprintf("%s %s%s", _hz(x.worst), _t(x.verdict),
+        return @sprintf("%s %s%s%s", _hz(x.worst), _t(x.verdict), _mk(x),
                         o === :none ? "" : ", $(o)")
     end
     for r in rows
@@ -356,7 +402,10 @@ other, DC and AC, a split grid answered piece by piece
  restored (the second loss did not reach it), no value (the screen refused or found no
  operating point). A pair's verdict: FAIL if any live piece fails; pass if every live
  piece passes or has nothing to judge — "pass, LOAD LOST" where customers are cut off;
- unjudged where a live piece has no value. Lost MW: DC (AC constant power / default).""")
+ unjudged where a live piece has no value. Lost MW: DC (AC constant power / default).
+ [V] / [O] / [VO] after a verdict: a running piece has a bus outside the voltage band /
+ a branch over its rating — M8's check, shown beside the frequency verdict and never
+ combined with it (m10-context.md D13).""")
 end
 
 # How many pairs got each verdict, per side.
@@ -449,6 +498,13 @@ function print_claims(io::IO = stdout)
     and L67→L45 fails (+0.2100); the mesh with constant-power loads, DE→BE passes
     (-0.1970) and BE→DE fails (-0.2026). The largest move is case9 default loads L82→G3:
     -3.9910 Hz, against -1.5036 Hz both at once.
+ r. Green is frequency only, and the markers show what it leaves out (D13, the user's
+    choice). On case9, 18 of the 20 pairs the default loads pass, and 3 of the 5 constant-
+    power passes, have a running piece outside the voltage band [V]; no passing mesh pair
+    is marked. Both at once, DC puts 20 of case9's 66 pairs over a line rating and AC 2
+    on each load model — but AC checks the voltage band first and does not judge the
+    ratings where it fails, so an AC [V] can hide an overload and the counts do not
+    compare.
 """)
 end
 

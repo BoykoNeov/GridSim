@@ -1024,3 +1024,44 @@ tested in `ui/test/double_outage_tests.jl`.
   combined cell would be a new rule, the user's to choose — and the window's legend now says so
   in red, asserted by a test on that very pair. Whether the cells should also MARK a piece's
   line-or-voltage outcome is put to the user.
+
+---
+
+## D13 — Lines and voltages marked beside the colour (2026-10-19, the user's choice, before the code)
+
+Asked after step 6's second forwarded note ("green is frequency only"): should a cell also
+mark a running piece with a bus outside the voltage band or a line over its rating? The user
+said yes. What that means, made exact:
+
+1. **Shown beside, never combined** (M9 D2.5 stands). The colour stays the frequency verdict;
+   the cell gains a marker — `V` (a bus outside the band), `O` (a branch over its rating), `VO`
+   (both, in different pieces). Every row side gains `lines`: `:secure`, `:overload`, `:voltage`,
+   `:overload_voltage`, or `:none` where the check has no answer.
+2. **AC reads the screen's own outcome per running piece** (`ACPiece.outcome`). A piece with no
+   solution makes the side `:none` only if no other piece already shows a violation. The AC
+   solve checks the voltage band FIRST and judges no rating where it fails (`ac_powerflow.jl`,
+   `screening.jl`'s piece solve), so `V` can hide an `O`; the legend and claim r say so.
+3. **DC, both at once, is `compare_pair_screens`'s `dc_outcome`** — the flows against the
+   ratings the AC solve is held to; a refusal is `:none`. DC has no voltage.
+4. **DC, one after the other, is the same check on the sequential screen's flows**
+   (`_rating_violations` on `DCSequentialOutages.flow`), only where every running piece answered
+   (a flow inside an unanswered piece is `NaN`, which the check would read as a violation).
+5. **No state after both → `:none`**, as the frequency verdict is: the pieces there describe the
+   first loss only.
+6. The report prints the markers too: the both-at-once verdict line and the sequential cells.
+
+### What D13 measured (2026-10-19)
+
+- **The markers matter on case9**: 18 of the 20 pairs the default loads pass, and 3 of the 5
+  constant-power passes, carry a `V`; no passing mesh pair is marked (claim r). Both at once,
+  DC marks 20 of case9's pairs `O`, AC 2 on each load model — not comparable, because AC stops
+  at the voltage band (D13.2). `VO` occurs on neither grid (tested on hand-built pieces).
+- **Independent checks**: DC both-at-once marks equal `compare_pair_screens`' `dc_outcome`; AC
+  `O` equals a non-empty `ac_over` and `V` a `:voltage` piece, on every pair of both grids; DC
+  sequential marks recomputed from the equipment list's ratings, not through M8's helper.
+- **A third forwarded note** (a `V` can hide an overload) restated D13.2; the legend now says
+  outright that in AC a `V` means the lines were not checked and that only the DC view checks
+  every pair's ratings.
+- **Sabotages R6 and W6**, predictions first: red exactly where registered.
+- Cells holding a collapse twin AND a marker (`=G1 -0.195 V`) overflowed: found in the render,
+  given a smaller font.

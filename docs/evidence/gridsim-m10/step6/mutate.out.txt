@@ -113,3 +113,31 @@ double-outage window                                                            
   double-outage window: the controls, the table press, the caveat                  |   17           17     1.8s
   double-outage window: a real mouse press on a cell reaches the table             |          3      3    10.7s
   double_outages_render writes a PNG of the same window                            |    2            2     1.6s
+
+== R6, W6 (2026-10-19, D13 — the user's choice to mark lines and voltages) — as predicted: R6 red on the D13 testset and claim r alone; W6 red on the cell and controls testsets alone
+-- R6_no_voltage_mark
+Test Summary:                                                                    | Pass  Fail  Total   Time
+M10 step 6 — the report: every pair, both timings, per piece                     | 5457    74   5531  10.5s
+  each column reads what its header says                                         | 2672         2672   1.7s
+  DC is printed once because it reads no load model (D12.4)                      |    8            8   1.3s
+  the verdict per piece is M9's rule, and a name where there is none (D12.2)     | 1889         1889   0.6s
+  a piece the second loss never reaches is `restored`, not judged (D12.2)        |   15           15   0.6s
+  lines and voltages beside the verdict, never in it (D13)                       |  713    72    785   2.7s
+  claim r: green is frequency only, and the markers show what it leaves out      |    3     2      5   0.2s
+  the preset's caveat is printed with the verdicts, and repeated with the claims |    8            8   0.0s
+  claim k: where the grid splits, and who is left in the dark                    |   59           59   0.8s
+  claim l: nearly every pair fails; on the mesh what passes sits close           |   13           13   0.5s
+  claim m: where AC finds no operating point                                     |    6            6   0.8s
+  claim n: DC against AC, both at once                                           |    8            8   0.2s
+  claim o: what the second loss starts from                                      |   16           16   0.3s
+  claim p: in DC the order never moves the worst piece                           |   34           34   0.3s
+  claim q: in AC the order matters, and which way follows the load model         |   13           13   0.4s
+-- W6_no_cell_mark
+Test Summary:                                                                      | Pass  Fail  Total     Time
+double-outage window                                                               | 3168   299   3467  1m32.9s
+  double-outage window: the row is the script's, every cell says what its row says | 3117   298   3415  1m07.5s
+  double-outage window: the grid sketch colours each bus by its piece, by id       |   18           18     2.9s
+  double-outage window: a pair with no state after both draws no verdict           |    8            8     1.2s
+  double-outage window: the controls, the table press, the caveat                  |   20     1     21     6.4s
+  double-outage window: a real mouse press on a cell reaches the table             |    3            3    12.7s
+  double_outages_render writes a PNG of the same window                            |    2            2     2.1s

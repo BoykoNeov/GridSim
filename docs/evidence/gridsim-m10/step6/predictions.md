@@ -65,3 +65,13 @@ verdict, no worst) and guarded by its own assertions; R2 puts the bug back.
 - **W5 — the mouse handler no longer calls `matrix_press!`.** Red: "a real mouse press on a
   cell reaches the table" alone (the pair stays L45+L67). Green: every other testset — they
   call `matrix_press!` directly, which is why this testset was added.
+
+## D13 — lines and voltages marked beside the colour (the user's choice; written before R6/W6 ran)
+
+- **R6 — `ac_lines` loses the voltage mark** (a side with only `:voltage` pieces reads
+  `:secure`). Red: "lines and voltages beside the verdict…" (the `v ==` assertions and the
+  L14+L45 printed line) and claim r (18/20 and 3/5 become 0). Green: claims k–q, the tie,
+  the verdict testset.
+- **W6 — the window drops the marker from its cells.** Red: "the row is the script's, every
+  cell says what its row says" (the marker assertion) and "the controls…" (L14+L45 ends in
+  " V"). Green: the sketch, no-state, mouse and render testsets.

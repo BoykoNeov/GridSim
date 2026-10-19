@@ -195,7 +195,10 @@ runs.
       `docs/images/fig-m10-double-outages.png`.
 - [x] Sabotages, predictions first: F1, R1–R5, W1–W4 all red exactly where registered.
 - [x] Suites 24360 core / 1439 ref / 3413 UI (19151 + 469 + 4740 core; 745 + 2668 UI); after
-      the review's additions 24361 core / 3418 UI by count (focused runners green). M9's
+      the review's additions 24361 core / 3418 UI by count (focused runners green); after D13, suites 25151 core / 4212 UI.
+- [x] D13 (the user's choice after the step): lines and voltages marked beside the colour —
+      V / O / VO in the cells, the report's tables and the read-out; claim r; R6/W6 red where
+      registered. M9's
       captures not re-run: step 6 touches no code they call (`screening.jl` untouched; the
       one change is in M10's `_ac_outage_set`, gated by `step6/snapshot.out.txt`).
 

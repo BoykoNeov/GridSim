@@ -75,6 +75,9 @@ function _do_cell_text(side, same_as::Symbol)
         (abs(side.worst) < 1 ? @sprintf("%+.3f", side.worst) : @sprintf("%+.2f", side.worst)) :
         get(DO_SHORT, v, String(v))
     v === :pass_load_lost && (t *= "!")
+    # Lines and voltages beside the colour, never in it (D13): V, O or VO.
+    m = _DOR.LINES_MARK[side.lines]
+    isempty(m) || (t *= " " * m)
     same_as === :none || (t = "=" * String(same_as) * " " * t)
     return t
 end
@@ -163,12 +166,14 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
                         "\"=G1\": the pair IS one outage, that generator (D4)";
                         halign = :left, tellwidth = false, fontsize = 11))
     # The colour is the frequency verdict ALONE. M8's line-and-voltage outcome sits beside
-    # it, per piece, and the two are never combined (m9-context.md D2.5) — so a green cell
-    # can hide a bus outside the voltage band (case9 default loads, L14+L45).
+    # it as a marker, and the two are never combined (m9-context.md D2.5, D13) — so a green
+    # cell can carry a V (case9 default loads, L14+L45).
     push!(legend, Label(gleg[length(legend_rows) + 2, 1:2],
                         "The colour judges FREQUENCY ONLY. Lines and voltages (M8's check)\n" *
-                        "are each piece's (secure / overload / voltage) in the list and the\n" *
-                        "read-out: a green cell can still have a bus outside the voltage band.";
+                        "are marked beside it: V a bus outside the voltage band, O a line\n" *
+                        "over its rating, VO both. A green cell can carry a V. In AC a V\n" *
+                        "means its lines were NOT checked (the solve stops at the voltage\n" *
+                        "band): no O is not \"lines fine\". The DC view checks every pair.";
                         halign = :left, justification = :left, tellwidth = false,
                         fontsize = 11, font = :bold, color = C_WARN))
     rowgap!(gleg, 3)
@@ -206,8 +211,11 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
         for i in 1:N, j in 1:N
             poly!(ax_m, Rect2f(j - 1 + 0.03, y(i) + 0.03, 0.94, 0.94); color = C[i, j],
                   strokewidth = 0)
+            # A collapse twin with a marker ("=G1 -0.195 V") is the longest text; it gets a
+            # smaller font rather than spilling into the next cell.
             i == j || text!(ax_m, j - 0.5, y(i) + 0.5; text = T[i, j], align = (:center, :center),
-                            fontsize = N > 10 ? 8.5 : 10, font = MONO_FONT)
+                            fontsize = length(T[i, j]) > 9 ? 6.8 : N > 10 ? 8.5 : 10,
+                            font = MONO_FONT)
         end
         for (k, id) in enumerate(ids)
             text!(ax_m, -0.15, y(k) + 0.5; text = String(id), align = (:right, :center),
@@ -400,11 +408,13 @@ function _do_readout(rep, r, timing::Symbol, view::Symbol)
                    "view      $(DO_VIEW_NAMES[view])",
                    "verdict   $(_DOR._t(side.verdict))" *
                    (isnan(side.worst) ? "" : @sprintf(", worst Δf %+.4f Hz", side.worst))]
+    push!(lines, "lines/V   $(side.lines === :none ? "no answer" : String(side.lines))" *
+                 " (M8's check, beside the verdict)")
     same === :none || push!(lines, "one outage: the pair IS losing $same (D4)")
     if timing === :both
         # M8's comparison: line loadings and voltages, NOT frequency — so "agree" can sit
         # beside a frequency verdict DC and AC split on.
-        view === :dc || push!(lines, "lines/V   DC vs AC: $(getfield(r.class, view))")
+        view === :dc || push!(lines, "M8 class  DC vs AC: $(getfield(r.class, view))")
     else
         o = getfield(r.order, view)
         o === :none || push!(lines, "vs both at once: $o")

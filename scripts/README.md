@@ -143,7 +143,7 @@ load model — beside the full (AC) one on both load models. Four sections:
    refused (not enough headroom), or a restored state outside the voltage band.
 3. **One after the other** — per ordered pair, the worst part's frequency and verdict, and
    whether the order made it milder, worse or no different than both at once.
-4. **What the tables say** — seven claims (k–q), written after the tables and each
+4. **What the tables say** — eight claims (k–r), written after the tables and each
    asserted in `test/m10_report.jl`.
 
 It includes `outage_screen.jl` into a submodule for its grids, so the two reports read the

@@ -533,9 +533,12 @@ on constant-power loads) the restored state is outside the voltage band, so the 
 loss is never screened. That is the result, not a gap.
 
 **The colour judges frequency only.** Whether lines stay within their ratings and voltages
-within their band (M8's check) is each piece's "(secure / overload / voltage)" in the list
-and the read-out, never folded into the colour: on case9 with default loads, losing L14 and
-L45 is green while a bus sits outside the voltage band. The legend says so.
+within their band (M8's check) is marked BESIDE it in each cell (your choice): **V** a bus
+outside the voltage band, **O** a line over its rating, **VO** both — never folded into the
+colour. On case9 with default loads, 18 of the 20 green pairs carry a V (losing L14 and L45
+is one). In the full AC view a V also means that part's lines were not checked: the solve
+stops at the voltage band, so a missing O is not "lines fine". The DC view checks every
+pair's ratings. The legend says all of this.
 
 **The limit is a design value for a whole synchronous area, not a pass/fail rule for one
 outage on a small grid,** and a split piece of case9 is smaller still. The window says so.
@@ -552,7 +555,7 @@ script's own row and each cell says what its row says — tests assert both.
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-3418 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+4212 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do

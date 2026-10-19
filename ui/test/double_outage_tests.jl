@@ -41,6 +41,9 @@ _dow(; kw...) = DBUILD(; cache = _DO_CACHE, kw...)
             end
             side = getfield(r, view)
             @test C[a, b] == GridSimUI._do_colour(side.verdict)
+            # The line-and-voltage marker sits beside the colour (D13): its row's, or none.
+            mk = _DOR_T.LINES_MARK[side.lines]
+            @test isempty(mk) ? !occursin(r" (V|O|VO)$", T[a, b]) : endswith(T[a, b], " " * mk)
             if side.verdict in (:pass, :fail, :pass_load_lost)
                 @test occursin(abs(side.worst) < 1 ? GridSimUI.@sprintf("%+.3f", side.worst) :
                                GridSimUI.@sprintf("%+.2f", side.worst), T[a, b])
@@ -140,6 +143,13 @@ end
     @test any(l -> occursin("FREQUENCY ONLY", l.text[]), win.legend)
     r = only(r for r in win.cache[:case9].both if (r.first, r.second) === (:L14, :L45))
     @test r.def.verdict === :pass && any(p -> p.outcome === :voltage, r.def.pieces)
+    # ...and the cell itself carries the V, green as it is (D13, the user's choice).
+    click!(w.grid_buttons[:case9]); click!(w.timing_buttons[:both]); click!(w.view_buttons[:def])
+    ids9 = win.cache[:case9].ids
+    i, j = findfirst(==(:L14), ids9), findfirst(==(:L45), ids9)
+    @test endswith(win.plots.cell_text[][i, j], " V") && win.plots.cell_colour[][i, j] == GridSimUI.C_PASS
+    win.choice.pair[] = (:L14, :L45)
+    @test occursin("lines/V   voltage", win.readout.text[])
     @test_throws ArgumentError _dow(; grid = :case9, pair = (:L45, :L45))
     @test_throws ArgumentError _dow(; grid = :mesh, pair = (:L45, :L67))
 end
