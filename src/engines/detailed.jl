@@ -453,6 +453,23 @@ path still computes no `hypot` and is bitwise the arithmetic M5 measured.
     return 1 + a_i * (invV - 1) + a_p * (invV * invV - 1)
 end
 
+# The terminal magnitude the exciter reads, `hypot(Vre, Vim)` — except at EXACTLY zero,
+# which only a de-energised bus reaches (M10 step 4, `_deenergise!`): there `hypot`'s
+# value is 0 but its derivative is 0/0, and the solver's automatic-differentiation
+# Jacobian turns that NaN into an aborted run even with the regulator off (`K_A = 0`
+# times NaN is NaN). Measured: case9 with G3 cut off alone, NaN in G3's `Efd` row. At
+# zero the value is the same 0 and the derivative is taken as 0; anywhere else this IS
+# `hypot`, so every run that never de-energises a bus computes what it always did.
+#
+# The test is on the SQUARED magnitude, and that is not style. The solver's dual numbers
+# let their derivative part decide a comparison their value leaves tied: `Vre == 0` is
+# false and `abs(Vre) + abs(Vim) > 0` true at a zero value with a unit derivative
+# (both measured — each was a first version of this guard and left the NaN where it
+# was). `Vre² + Vim²` at zero has value 0 AND derivative 0, so it is not `> 0` whichever
+# way the comparison reads.
+@inline _exciter_vmag(Vre, Vim) =
+    Vre * Vre + Vim * Vim > 0 ? hypot(Vre, Vim) : zero(Vre)
+
 """
     _detailed_machine_bus!(dv, v, esum, p, t)
 
@@ -543,7 +560,7 @@ function _detailed_machine_bus!(dv, v, esum, p, t)
     #
     # `±Inf` limits are the unlimited case and cost no branch of their own:
     # `Efd >= Inf` and `Efd <= -Inf` are both false.
-    dEfd = (-Efd + K_A * (Vref - hypot(Vre, Vim))) / T_E
+    dEfd = (-Efd + K_A * (Vref - _exciter_vmag(Vre, Vim))) / T_E
     if (Efd >= Efd_max && dEfd > 0) || (Efd <= Efd_min && dEfd < 0)
         dEfd = zero(dEfd)
     end
@@ -1218,6 +1235,13 @@ come to disagree about what "outside" means.
 _voltage_band_violations(net::NetworkModel, Vm::AbstractVector{Float64}) =
     [v for v in eachindex(net.buses) if !(_PF_VMIN <= Vm[v] <= _PF_VMAX)]
 
+# M10 step 4: the same comparison with every DE-ENERGISED bus left out (`skip[v]`). Such a
+# bus is held at exactly zero on purpose (`_deenergise!`), so the band has nothing to say
+# about it; every other bus is judged as before.
+_voltage_band_violations(net::NetworkModel, Vm::AbstractVector{Float64},
+                         skip::AbstractVector{Bool}) =
+    [v for v in _voltage_band_violations(net, Vm) if !skip[v]]
+
 function _voltage_band_error(net::NetworkModel, Vm::AbstractVector{Float64}, v::Int,
                              what::AbstractString)
     b = net.buses[v]
@@ -1317,9 +1341,10 @@ end
 # on the order or the message.
 function _power_flow_violation(net::NetworkModel, V::Vector{ComplexF64},
                                flows::Vector{Float64}, residual::Float64,
-                               what::AbstractString)
+                               what::AbstractString;
+                               skip::AbstractVector{Bool} = falses(length(net.buses)))
     Vm = abs.(V)
-    bad = _voltage_band_violations(net, Vm)
+    bad = _voltage_band_violations(net, Vm, skip)
     isempty(bad) || return (:voltage, _voltage_band_error(net, Vm, first(bad), what))
     bad = _rating_violations(net, flows)
     isempty(bad) || return (:rating, _branch_rating_error(net, flows, first(bad), what))
@@ -1428,6 +1453,24 @@ struct _MeterIndex
 end
 
 """
+    _LoadSlotIndex
+
+Every bus's load slot — `G`, `B`, `a_i`, `a_p` — in the dynamic network and then in the
+static one (M10 step 4), vertex-indexed. Every vertex kind carries the slot, which is what
+lets `_deenergise!` switch a bus off the same way whatever sits on it.
+"""
+struct _LoadSlotIndex
+    G::Vector{Int}
+    B::Vector{Int}
+    a_i::Vector{Int}
+    a_p::Vector{Int}
+    sG::Vector{Int}
+    sB::Vector{Int}
+    sa_i::Vector{Int}
+    sa_p::Vector{Int}
+end
+
+"""
     DetailedEngine{NW,SW,I,R} <: SimulationEngine
 
 The detailed (DAE) tier's engine: bus voltages as algebraic states, machines on
@@ -1522,6 +1565,13 @@ mutable struct DetailedEngine{NW,SW,I,R} <: SimulationEngine
     hr_pidx::Vector{Int}
     rate_pidx::Vector{Int}
     online::Set{Symbol}
+    # M10 step 4 (`m10-context.md` D10) — each bus's load slot in both networks, which a
+    # de-energised bus has rewritten; which buses are de-energised; and, when a trip
+    # fired from inside a solver callback was refused, why the engine stopped (empty
+    # while it runs).
+    loadslot::_LoadSlotIndex
+    deenergised::Vector{Bool}
+    halted::String
 end
 
 # Run the static network to convergence from the seeds in `u`, and read the answer
@@ -2199,7 +2249,13 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                          EngineEvent[], 0, net.f0, fill(Inf, nm), fill(-Inf, nm),
                          ladders, relays, ramps, gfm, gfl,
                          mtr, mstat_pidx, smstat_pidx, invR_pidx, hr_pidx, rate_pidx,
-                         Set{Symbol}(vcat(ids, ia.id, fa.id)))
+                         Set{Symbol}(vcat(ids, ia.id, fa.id)),
+                         _LoadSlotIndex(
+                             (Int[SII.parameter_index(nw, NetworkDynamics.VPIndex(v, s))
+                                  for v in 1:nb] for s in (:G, :B, :a_i, :a_p))...,
+                             (Int[SII.parameter_index(nws, NetworkDynamics.VPIndex(v, s))
+                                  for v in 1:nb] for s in (:G, :B, :a_i, :a_p))...),
+                         fill(false, nb), "")
     _record!(eng)                                 # seed the pre-disturbance point
     # The last line, and it has to be: an out-of-step relay's affect calls this
     # engine's own `inject!(::TripLine)`, and until now there was no engine to call
@@ -2415,7 +2471,7 @@ same as `SwingEngine`'s — which is the point of that file existing.
 """
 solve!(eng::DetailedEngine, tspan; perturbations = (),
        saveat = eng.dt, maxiters::Integer = _PLAYBACK_MAXITERS) =
-    _playback!(eng, tspan, perturbations, saveat; maxiters = maxiters)
+    (_assert_running(eng); _playback!(eng, tspan, perturbations, saveat; maxiters = maxiters))
 
 function _detailed_branch_index(eng::DetailedEngine, from::Symbol, to::Symbol)
     e = get(eng.branch_of_buses, _bus_pair(from, to), 0)
@@ -2635,7 +2691,8 @@ function _reinitialise_outcome!(eng::DetailedEngine)
                                      eng.sVre_idx, eng.sVim_idx, eng.sδ_idx,
                                      eng.sstatus_pidx, ma)
     reason, err = _power_flow_violation(eng.model, V, flows, res,
-                      "DetailedEngine re-initialisation at t = $(eng.integrator.t)")
+                      "DetailedEngine re-initialisation at t = $(eng.integrator.t)";
+                      skip = eng.deenergised)
     err === nothing || return (reason, err)
     for v in eachindex(eng.Vre_idx)
         u[eng.Vre_idx[v]] = real(V[v])
@@ -2681,15 +2738,122 @@ The line goes out through a `status` PARAMETER that multiplies its current, so a
 out-of-service branch is an open circuit exactly — there is no `X = Inf` anywhere
 near a denominator, and the network's structure never changes. Tripping a line
 already out is a no-op, logged as such rather than silently re-applied.
+
+**A refused trip changes nothing** (M10 step 4, Hurdle 20.2): when the re-solve refuses
+the network the trip leaves, the line is back in service, every parameter and state is
+what it was, nothing is logged, and the refusal is thrown. Until M10 the line stayed
+open, unlogged, on stale voltages, for any caller that caught the error.
+
+It re-solves the network it leaves and nothing more: a trip that cuts the grid is not
+read from the graph here. [`TripElements`](@ref) does that, for one line or several.
 """
 function inject!(eng::DetailedEngine, ev::TripLine)
+    _assert_running(eng)
+    _, err = _trip_line!(eng, ev)
+    err === nothing || throw(err)
+    return nothing
+end
+
+# `inject!(::TripLine)` with the re-solve's refusal RETURNED as `(reason, error)`, the
+# engine already put back (`_refusable!`). The out-of-step relay's trip comes here too.
+function _trip_line!(eng::DetailedEngine, ev::TripLine)
     e = _detailed_branch_index(eng, ev.from, ev.to)
-    e in eng.lines_online || return nothing
-    delete!(eng.lines_online, e)
-    eng.params[eng.status_pidx[e]] = 0.0
-    eng.p_static[eng.sstatus_pidx[e]] = 0.0
-    _reinitialise_algebraic!(eng)
-    _log_event!(eng, :trip_line, ev.from, ev.to)
+    e in eng.lines_online || return (:ok, nothing)
+    return _refusable!(eng) do
+        delete!(eng.lines_online, e)
+        eng.params[eng.status_pidx[e]] = 0.0
+        eng.p_static[eng.sstatus_pidx[e]] = 0.0
+        reason, err = _reinitialise_outcome!(eng)
+        err === nothing && _log_event!(eng, :trip_line, ev.from, ev.to)
+        (reason, err)
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# A refused event changes nothing (M10 step 4, `m10-context.md` D10, Hurdle 20.2)
+#
+# Every event writes its change (a status, a load slot, a governor, a weight, a latch)
+# and THEN re-solves the network, and the re-solve can refuse — the voltage band, a
+# rating, a stalled solve. Until M10 the writes stayed: a caller that caught the refusal
+# held an engine with a line open that nothing had logged, on voltages solved for the
+# network before it. Now everything such an event can write is copied first and put back
+# on a refusal. The integrator itself is not touched before the re-solve succeeds —
+# `derivative_discontinuity!`, `auto_dt_reset!` and the new voltages all come after it —
+# so its own cached step still describes the state that is put back, and a run that goes
+# on after a refused event is, to the bit, the run that was never asked (measured,
+# `test/m10_double_outages.jl`).
+# ─────────────────────────────────────────────────────────────────────────────
+
+struct _EngineSnapshot
+    params::Vector{Float64}
+    p_static::Vector{Float64}
+    u_static::Vector{Float64}
+    u::Vector{Float64}
+    lines_online::Set{Int}
+    online::Set{Symbol}
+    w::Vector{Float64}
+    gfm_H::Vector{Float64}
+    Σw::Float64
+    ladders::Vector{Vector{Bool}}
+    relays::Vector{Bool}
+    deenergised::Vector{Bool}
+    n_log::Int
+    n_dropped::Int
+end
+
+_snapshot(eng::DetailedEngine) = _EngineSnapshot(
+    copy(eng.params), copy(eng.p_static), copy(eng.u_static), copy(eng.integrator.u),
+    copy(eng.lines_online), copy(eng.online), copy(eng.w), copy(eng.gfm.H), eng.Σw,
+    [copy(l.armed) for l in eng.ladders], Bool[r.armed for r in eng.relays],
+    copy(eng.deenergised), length(eng.log), eng.n_dropped)
+
+# The two sets are REPLACED by the snapshot's copies rather than refilled, so even their
+# hash layout is the one they had.
+function _restore!(eng::DetailedEngine, s::_EngineSnapshot)
+    copyto!(eng.params, s.params)            # `=== integrator.p`: written in place
+    copyto!(eng.p_static, s.p_static)
+    copyto!(eng.u_static, s.u_static)
+    copyto!(eng.integrator.u, s.u)
+    eng.lines_online = s.lines_online
+    eng.online = s.online
+    copyto!(eng.w, s.w)
+    copyto!(eng.gfm.H, s.gfm_H)
+    eng.Σw = s.Σw
+    for (l, a) in zip(eng.ladders, s.ladders)
+        copyto!(l.armed, a)
+    end
+    for (r, a) in zip(eng.relays, s.relays)
+        r.armed = a
+    end
+    copyto!(eng.deenergised, s.deenergised)
+    resize!(eng.log, s.n_log)
+    eng.n_dropped = s.n_dropped
+    return nothing
+end
+
+# Run an event's writes and its re-solve, `f() -> (reason, error)`, and put the engine
+# back if it refused — or if it threw (a bug in this file, rethrown as it was).
+function _refusable!(f, eng::DetailedEngine)
+    s = _snapshot(eng)
+    reason, err = try
+        f()
+    catch
+        _restore!(eng, s)
+        rethrow()
+    end
+    err === nothing || _restore!(eng, s)
+    return reason, err
+end
+
+# A trip refused from INSIDE a solver callback — the out-of-step relay's — leaves the
+# integrator stopped mid-step at the root it found, with its own bookkeeping for that
+# step unfinished. The engine is put back as above, but the run cannot honestly go on
+# from there (measured, `m10-context.md` D10), so every later call refuses with the
+# reason it stopped.
+function _assert_running(eng::DetailedEngine)
+    isempty(eng.halted) || throw(ErrorException(
+        "DetailedEngine: this run stopped at a refused trip fired from inside the " *
+        "solver (an out-of-step relay's), and cannot go on from there: $(eng.halted)"))
     return nothing
 end
 
@@ -2742,31 +2906,22 @@ same `_PF_HOLD` path a line trip takes). Tripping a unit already out is a no-op;
 unknown id is a `KeyError`, and the lookup happens first so that error is reachable.
 """
 function inject!(eng::DetailedEngine, ev::TripGenerator)
+    _assert_running(eng)
     _, err = _trip_generator!(eng, ev)
     err === nothing || throw(err)
     return nothing
 end
 
-# `inject!(::TripGenerator)` with the re-initialisation's refusal RETURNED as
-# `(reason, error)` (`_reinitialise_outcome!`), for the dip screen (M9 step 5), which
-# must tell a refusal at the trip from a stalled solve without reading an error's
-# text. One body: `inject!` is this plus `throw`. An unknown id and the last-source
-# refusal still THROW — both are the caller's mistake, not an outcome of the network.
-# Nothing is logged unless the re-initialisation succeeded, as before.
-function _trip_generator!(eng::DetailedEngine, ev::TripGenerator)
-    id = ev.id
-    k = findfirst(==(id), eng.ids)
-    j = findfirst(==(id), eng.gfm.ids)
-    f = findfirst(==(id), eng.gfl.ids)
-    k === nothing && j === nothing && f === nothing && throw(KeyError(id))
-    id in eng.online || return (:ok, nothing)
-    # Refused BEFORE anything moves: is any voltage source left once this one goes?
-    any(x -> x != id && x in eng.online, eng.ids) ||
-        any(x -> x != id && x in eng.online, eng.gfm.ids) || throw(ArgumentError(
-        "DetailedEngine: tripping $id would leave no machine and no grid-forming " *
-        "inverter online — no inertia to weight a centre-of-inertia frequency, and " *
-        "nothing for the grid-following inverters to follow (m7-context.md D5, " *
-        "Hurdle 10 claim 3). Refused; nothing was changed."))
+# Which source `id` is: its index among the machines, the grid-forming inverters and the
+# grid-following ones — at most one of the three is not `nothing`.
+_source_lookup(eng::DetailedEngine, id::Symbol) =
+    (findfirst(==(id), eng.ids), findfirst(==(id), eng.gfm.ids),
+     findfirst(==(id), eng.gfl.ids))
+
+# Everything taking source `id` out writes, but the re-solve and the COI weight sum (M7
+# step 7, D15) — shared by `_trip_generator!` and `_trip_elements!`, so the two cannot
+# come to switch a unit off differently.
+function _source_off!(eng::DetailedEngine, id::Symbol, k, j, f)
     delete!(eng.online, id)
     p, ps, u = eng.params, eng.p_static, eng.integrator.u
     bus = Symbol("")
@@ -2801,11 +2956,182 @@ function _trip_generator!(eng::DetailedEngine, ev::TripGenerator)
     for r in eng.relays
         (r.from === bus || r.to === bus) && disarm!(r)
     end
-    eng.Σw = isempty(eng.gfm.ids) ? sum(eng.w) : sum(eng.w) + sum(eng.gfm.H)
-    reason, err = _reinitialise_outcome!(eng)
-    err === nothing || return (reason, err)
-    _log_event!(eng, :trip_generator, id, Symbol(""))
-    return (:ok, nothing)
+    return nothing
+end
+
+_sum_weights(eng::DetailedEngine) =
+    isempty(eng.gfm.ids) ? sum(eng.w) : sum(eng.w) + sum(eng.gfm.H)
+
+# `inject!(::TripGenerator)` with the re-initialisation's refusal RETURNED as
+# `(reason, error)` (`_reinitialise_outcome!`), for the dip screen (M9 step 5), which
+# must tell a refusal at the trip from a stalled solve without reading an error's
+# text. One body: `inject!` is this plus `throw`. An unknown id and the last-source
+# refusal still THROW — both are the caller's mistake, not an outcome of the network.
+# Nothing is logged unless the re-initialisation succeeded, as before; and since M10
+# step 4 a refusal puts the engine back as it found it (`_refusable!`).
+function _trip_generator!(eng::DetailedEngine, ev::TripGenerator)
+    id = ev.id
+    k, j, f = _source_lookup(eng, id)
+    k === nothing && j === nothing && f === nothing && throw(KeyError(id))
+    id in eng.online || return (:ok, nothing)
+    # Refused BEFORE anything moves: is any voltage source left once this one goes?
+    any(x -> x != id && x in eng.online, eng.ids) ||
+        any(x -> x != id && x in eng.online, eng.gfm.ids) || throw(ArgumentError(
+        "DetailedEngine: tripping $id would leave no machine and no grid-forming " *
+        "inverter online — no inertia to weight a centre-of-inertia frequency, and " *
+        "nothing for the grid-following inverters to follow (m7-context.md D5, " *
+        "Hurdle 10 claim 3). Refused; nothing was changed."))
+    return _refusable!(eng) do
+        _source_off!(eng, id, k, j, f)
+        eng.Σw = _sum_weights(eng)
+        reason, err = _reinitialise_outcome!(eng)
+        err === nothing && _log_event!(eng, :trip_generator, id, Symbol(""))
+        (reason, err)
+    end
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Several elements at one instant, one re-solve (M10 step 4, Hurdle 20)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The conductance a de-energised bus is grounded through, pu (`_deenergise!`). Any
+# positive number gives the same answer, `V = 0` exactly; one is the plain choice.
+const _DEAD_G = 1.0
+
+# Switch bus `v` off (`m10-context.md` D10). A bus with no path to a live source has no
+# voltage anybody asked for, and solving for one gives nonsense either way (measured,
+# D1: 1.8e9 pu on constant-power loads, 0.0 on constant-impedance ones) — or a singular
+# solve, where its Kirchhoff row reads `0 = 0` (a bus with no load and no line left, or
+# a tripped machine's). So its LOAD SLOT is rewritten, in both networks, to a plain
+# conductance to ground with no load behind it: the row becomes `−G·V + Σ I = 0`, whose
+# only solution in a sourceless piece is `V = 0` exactly — the load is off because it
+# sees no voltage, and the answer is unique. No right-hand side changes; every vertex
+# kind carries the slot.
+function _deenergise!(eng::DetailedEngine, v::Int)
+    L, p, ps = eng.loadslot, eng.params, eng.p_static
+    p[L.G[v]], p[L.B[v]], p[L.a_i[v]], p[L.a_p[v]] = _DEAD_G, 0.0, 0.0, 0.0
+    ps[L.sG[v]], ps[L.sB[v]], ps[L.sa_i[v]], ps[L.sa_p[v]] = _DEAD_G, 0.0, 0.0, 0.0
+    eng.deenergised[v] = true
+    return nothing
+end
+
+"""
+    deenergised_buses(eng::DetailedEngine) -> Vector{Symbol}
+
+The buses a [`TripElements`](@ref) left with no path to a live source, in model order —
+held at zero voltage, their loads off. Empty until such an event.
+"""
+deenergised_buses(eng::DetailedEngine) =
+    Symbol[b.id for (v, b) in pairs(eng.model.buses) if eng.deenergised[v]]
+
+"""
+    inject!(eng::DetailedEngine, ev::TripElements)
+
+Take every line and source in `ev` out at the current instant and re-solve the network
+**once**, on the final network (`m10-context.md` Hurdle 20, D10). Then, read from the
+graph that network leaves:
+
+  - a piece with a source and no load: its sources are lost — tripped in this same
+    event, as `TripGenerator` trips one (`m10-context.md` D4, Hurdle 19.4);
+  - a piece with no live source: de-energised — every unit still in it (a grid-following
+    inverter, a `P0 < 0` machine) tripped, and its buses held at zero voltage with their
+    loads off ([`deenergised_buses`](@ref)).
+
+What is a source and what is a load is the pair screens' own rule (`_pair_piece_kind`),
+on what is still online: so the event and the screens cannot disagree about which piece
+is dead. Each line is logged as `:trip_line` under the branch's own bus names, each
+source as `:trip_generator`, each switched-off bus as `:deenergise`.
+
+An element already out is passed over, as the single trips pass over one. A name the
+model does not have is a `KeyError`; an event that would leave no live piece at all is
+refused, by name, before anything moves. A refused re-solve changes nothing (D10) and is
+thrown.
+"""
+function inject!(eng::DetailedEngine, ev::TripElements)
+    _assert_running(eng)
+    _, err = _trip_elements!(eng, ev)
+    err === nothing || throw(err)
+    return nothing
+end
+
+# `inject!(::TripElements)` with the re-solve's refusal returned, the engine put back.
+function _trip_elements!(eng::DetailedEngine, ev::TripElements)
+    net = eng.model
+    # Every name resolved before anything moves.
+    es = Int[_detailed_branch_index(eng, a, b) for (a, b) in ev.lines]
+    for id in ev.sources
+        k, j, f = _source_lookup(eng, id)
+        k === nothing && j === nothing && f === nothing && throw(KeyError(id))
+    end
+    lines = Int[e for e in es if e in eng.lines_online]
+    asked = Symbol[id for id in ev.sources if id in eng.online]
+    isempty(lines) && isempty(asked) && return (:ok, nothing)
+    # The pieces of the FINAL network, and what each is.
+    out = Int[e for e in eachindex(net.branches) if !(e in eng.lines_online) || e in lines]
+    piece, npieces = _pair_pieces(length(net.buses), branch_topology(net), out)
+    r = _responders(net)
+    lost = Bool[!(id in eng.online) || id in asked for id in r.ids]
+    fa = _gfl_arrays(net)
+    fon = Int[q for q in eachindex(fa.id) if fa.id[q] in eng.online && !(fa.id[q] in asked)]
+    live = Bool[_pair_piece_kind(piece, c, r, lost, load_arrays(net),
+                                 (; bus = fa.bus[fon], P = fa.P[fon]), r.P).kind === :live
+                for c in 1:npieces]
+    any(live) || throw(ArgumentError(
+        "DetailedEngine: TripElements would leave no piece of the grid with both a live " *
+        "source and a load — nothing left to simulate (m10-context.md D4). Refused; " *
+        "nothing was changed."))
+    # Whatever is still online in a piece that is not live goes with it.
+    auto = Symbol[r.ids[q] for q in eachindex(r.ids) if !lost[q] && !live[piece[r.bus[q]]]]
+    append!(auto, Symbol[fa.id[q] for q in fon if !live[piece[fa.bus[q]]]])
+    dead = Int[v for v in eachindex(net.buses) if !live[piece[v]] && !eng.deenergised[v]]
+    gone = vcat(asked, auto)
+    return _refusable!(eng) do
+        for e in lines
+            delete!(eng.lines_online, e)
+            eng.params[eng.status_pidx[e]] = 0.0
+            eng.p_static[eng.sstatus_pidx[e]] = 0.0
+            br = net.branches[e]
+            for rl in eng.relays          # a relay on an open branch is latched
+                rl.from === br.from && rl.to === br.to && disarm!(rl)
+            end
+        end
+        for id in gone
+            _source_off!(eng, id, _source_lookup(eng, id)...)
+        end
+        isempty(gone) || (eng.Σw = _sum_weights(eng))
+        for v in dead
+            _deenergise!(eng, v)
+        end
+        reason, err = _reinitialise_outcome!(eng)
+        if err === nothing
+            for e in lines
+                _log_event!(eng, :trip_line, net.branches[e].from, net.branches[e].to)
+            end
+            for id in gone
+                _log_event!(eng, :trip_generator, id, Symbol(""))
+            end
+            for v in dead
+                _log_event!(eng, :deenergise, net.buses[v].id, Symbol(""))
+            end
+        end
+        (reason, err)
+    end
+end
+
+# The out-of-step relay's trip at this tier: `_swing_trip_branch!`'s closure (defined
+# with the swing tier, which it serves unchanged), except that a REFUSED trip stops the
+# run — the engine is put back, but the integrator is mid-step at the root it found and
+# cannot honestly go on (`_assert_running`, `m10-context.md` D10).
+function _swing_trip_branch!(::Type{DetailedEngine}, box::Base.RefValue{Any},
+                             from::Symbol, to::Symbol)
+    ev = TripLine(from, to)
+    return function (integrator)
+        eng = box[]::DetailedEngine
+        _, err = _trip_line!(eng, ev)
+        err === nothing && return nothing
+        eng.halted = sprint(showerror, err)
+        throw(err)
+    end
 end
 
 # M7 step 6. A machine's `ω` row and a grid-forming inverter's `P_filt` row both have

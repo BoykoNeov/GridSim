@@ -1,0 +1,11 @@
+t = 0      |S| MVA: [16.92, 46.67, 63.43]
+relay fired at t = 2.1706111931228884; after the run |S| MVA: [0.0, 118.09, 320.29]
+just after the trip |S| MVA: [0.0, 45.53, 105.81]
+
+== L31 rated at 84.61968521863524 MVA (between its start and post-trip flows)
+solve! threw: DetailedEngine re-initialisation at t = 2.1706111931228884: branch L31 carries 105.76740386858336 MVA against a rating of 84.61968521863524 MVA. The solve conve
+integrator t = 2.1706111931228884; L12 online: true; L12 status param: 1.0 / static 1.0; n_events = 0
+relay log: tripped = false, t = NaN, armed = true
+halted: DetailedEngine re-initialisation at t = 2.1706111931228884: branch L31 carries 1
+continuing solve! (halt cleared by hand): ran to 30.0
+after: L12 online: true; n_events = 0; relay tripped = false, t = NaN

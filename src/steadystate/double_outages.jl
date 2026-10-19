@@ -311,6 +311,11 @@ end
 # in DC, the AC base's output in AC), its load (a `P0 < 0` machine's `|P0|` included)
 # and its grid-following inverters' schedule. A machine is a source or a load by the
 # sign of its SCHEDULE, whatever `P` says.
+#
+# `lost` covers the machines (the screens pass one entry each) and MAY go on over the
+# grid-forming inverters, in `r.ids` order: the detailed tier's `TripElements` passes
+# what is offline that way (M10 step 4), and `fa` with only its online grid-following
+# inverters. A screen's shorter mask reads no inverter as lost, exactly as before.
 function _pair_piece_kind(piece::Vector{Int}, c::Int, r, lost::AbstractVector{Bool},
                           la, fa, P::Vector{Float64})
     nm = r.n_machines
@@ -328,6 +333,7 @@ function _pair_piece_kind(piece::Vector{Int}, c::Int, r, lost::AbstractVector{Bo
     end
     for q in (nm + 1):length(r.ids)
         piece[r.bus[q]] == c || continue
+        q <= length(lost) && lost[q] && continue
         has_src = true
         sources += P[q]
     end

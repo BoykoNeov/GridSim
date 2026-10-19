@@ -169,6 +169,7 @@ same way.
 describe_event(ev::EngineEvent) =
     ev.kind === :trip_generator ? string("trip ", ev.a) :
     ev.kind === :trip_line      ? string("trip line ", ev.a, "–", ev.b) :
+    ev.kind === :deenergise     ? string("de-energise ", ev.a) :
                                   string(ev.kind, " ", ev.a, " ", ev.b)
 
 """
@@ -2072,6 +2073,50 @@ function inject!(eng::SwingEngine, ev::TripLine)
     _log_event!(eng, :trip_line, br.from, br.to)
     SciMLBase.derivative_discontinuity!(eng.integrator, true)
     SciMLBase.auto_dt_reset!(eng.integrator)
+    return eng
+end
+
+"""
+    inject!(eng::SwingEngine, ev::TripElements) -> eng
+
+Several elements out at one instant (M10 step 4, `m10-context.md` D10). This tier
+re-solves nothing at an event, so back-to-back `TripLine`/`TripGenerator`s at one instant
+already are one event here, and that is exactly what this runs: each line, then each
+source, through the single trips above.
+
+What it adds is the graph's answer, the same as the detailed tier's: every unit still
+online in a piece with no load, or with no source, is tripped in the same instant
+(`m10-context.md` D4, Hurdle 19.4) — so a generator cut off alone is lost rather than
+left spinning on to its own speed. A source or a load is the pair screens' rule
+(`_pair_piece_kind`): here a `P0 < 0` machine is a load (D6.3).
+
+An element already out is passed over; an unknown name is a `KeyError`; an event that
+would leave no live piece is refused before anything moves.
+"""
+function inject!(eng::SwingEngine, ev::TripElements)
+    net = eng.model
+    bs = Int[_branch_index(eng, a, b) for (a, b) in ev.lines]
+    foreach(id -> _machine_vertex(eng, id), ev.sources)        # KeyError on an unknown id
+    lines = Int[b for b in bs if b in eng.lines_online]
+    asked = Symbol[id for id in ev.sources if id in eng.online]
+    out = Int[e for e in eachindex(net.branches) if !(e in eng.lines_online) || e in lines]
+    piece, npieces = _pair_pieces(length(net.buses), branch_topology(net), out)
+    r = _responders(net)
+    lost = Bool[!(id in eng.online) || id in asked for id in r.ids]
+    live = Bool[_pair_piece_kind(piece, c, r, lost, load_arrays(net),
+                                 (; bus = Int[], P = Float64[]), r.P).kind === :live
+                for c in 1:npieces]
+    any(live) || throw(ArgumentError(
+        "SwingEngine: TripElements would leave no piece of the grid with both a live " *
+        "source and a load (m10-context.md D4). Refused; nothing was changed."))
+    auto = Symbol[r.ids[q] for q in eachindex(r.ids) if !lost[q] && !live[piece[r.bus[q]]]]
+    for b in lines
+        br = net.branches[b]
+        inject!(eng, TripLine(br.from, br.to))
+    end
+    for id in vcat(asked, auto)
+        inject!(eng, TripGenerator(id))
+    end
     return eng
 end
 

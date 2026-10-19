@@ -1,0 +1,79 @@
+== S1_no_restore
+Test Summary:                                                                      | Pass  Fail  Error  Total     Time
+M10 step 4 — one event, one re-solve                                               |  161    11      1    173  4m56.0s
+  TripElements refuses what is not one event                                       |    6                   6     8.6s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    4     2             6  1m06.3s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |    3     7      1     11     2.4s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |    8     2            10    21.9s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |   12                  12     0.2s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    6                   6     1.9s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |  110                 110  2m12.7s
+  names, refusals, and elements already out                                        |    5                   5     0.0s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7                   7  1m01.9s
+RNG of the outermost testset: Random.Xoshiro(0x297b55c38ed932d6, 0xdf0af7c5c76446e4, 0xdec1fd16eb192a8e, 0xd520af4d24051235, 0xf44af9a378a75bbb)
+== S2_intermediate
+Test Summary:                                                                      | Pass  Error  Total     Time
+M10 step 4 — one event, one re-solve                                               |   69      4     73  7m08.7s
+  TripElements refuses what is not one event                                       |    6             6     0.5s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    2      1      3  2m23.0s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |   12            12     5.6s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |   10            10  3m14.2s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |           1      1     0.2s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    6             6     4.6s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |   22      1     23    40.9s
+  names, refusals, and elements already out                                        |    4      1      5     0.2s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7             7    39.5s
+RNG of the outermost testset: Random.Xoshiro(0xc93501e5a6acf420, 0xc12adb52eb77e944, 0xcbdd6e4fa4a15496, 0x15e64ad35394751b, 0xa154c733e94a8a97)
+== S3_no_deenergise
+Test Summary:                                                                      | Pass  Fail  Error  Total     Time
+M10 step 4 — one event, one re-solve                                               |   71     2      3     76  2m48.8s
+  TripElements refuses what is not one event                                       |    6                   6     0.7s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    6                   6    49.8s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |   12                  12     1.0s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |   10                  10    30.3s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |                 1      1     1.2s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    4     2             6    20.6s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |   22            1     23    29.2s
+  names, refusals, and elements already out                                        |    4            1      5     0.4s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7                   7    35.6s
+RNG of the outermost testset: Random.Xoshiro(0x0984e156f94c3a77, 0x446320d9d28c4d35, 0xc94d559511c0bef8, 0x956a686789332b7f, 0xdb19caa28a1b0d67)
+== S4_cutoff_left_online
+Test Summary:                                                                      | Pass  Fail  Total     Time
+M10 step 4 — one event, one re-solve                                               |  171     3    174  4m18.7s
+  TripElements refuses what is not one event                                       |    6            6     0.7s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    6            6    59.8s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |   12           12     0.7s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |   10           10    43.1s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |   12           12     0.3s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    3     3      6     4.9s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |  110          110  1m59.3s
+  names, refusals, and elements already out                                        |    5            5     0.0s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7            7    29.8s
+RNG of the outermost testset: Random.Xoshiro(0x196fdce3f499eaaf, 0xf0b5b723b30f1c78, 0x17971b0a50b7ff76, 0x744498ec89c9f95f, 0x8f64b7fa65e50efe)
+== S5_relay_record
+Test Summary:                                                                      | Pass  Fail  Total      Time
+M10 step 4 — one event, one re-solve                                               |  173     1    174  10m26.8s
+  TripElements refuses what is not one event                                       |    6            6      0.8s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    6            6     51.9s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |   12           12      0.9s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |    9     1     10     51.1s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |   12           12      0.5s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    6            6      2.6s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |  110          110   6m10.8s
+  names, refusals, and elements already out                                        |    5            5      0.1s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7            7   2m28.1s
+RNG of the outermost testset: Random.Xoshiro(0xeebfa716998097ca, 0x1c893d5dbb991e2e, 0x247ded2fa1ee17c7, 0x8ad79cca0f22af2d, 0xc6b64aa45fe53372)
+== S6_no_halt
+Test Summary:                                                                      | Pass  Fail  Total      Time
+M10 step 4 — one event, one re-solve                                               |  170     4    174  14m09.6s
+  TripElements refuses what is not one event                                       |    6            6      3.4s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)     |    6            6   3m30.6s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit |   12           12      7.5s
+  the out-of-step relay's refused trip: nothing done, and the run stops            |    6     4     10   1m24.1s
+  a dead piece is switched off, not solved (L45+L56, both load models)             |   12           12      2.7s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage  |    6            6     19.1s
+  per piece, the settled run IS step 3's AC piece, through the losses identity     |  110          110   8m18.4s
+  names, refusals, and elements already out                                        |    5            5      0.0s
+  the swing tier: the single trips at one instant, and the graph's lost machines   |    7            7     23.7s
+RNG of the outermost testset: Random.Xoshiro(0x24292269c6ddd6e9, 0xcfdd0a8e8e931dbf, 0x9569c8cdf6908d05, 0xed13318b0b773b57, 0xfa5788e893ac90a0)
+restored: True

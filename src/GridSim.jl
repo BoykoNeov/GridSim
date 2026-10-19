@@ -241,6 +241,9 @@ export coi_model
 
 # --- events ---
 export PerturbationEvent, TripGenerator, StepLoad, TripLine
+# M10 step 4: several elements out at one instant, one re-solve; and the buses such an
+# event leaves with no live source. Both checked clear against `names(GLMakie)`.
+export TripElements, deenergised_buses
 
 # --- protection ---
 export LoadShedStage, ShedLadder, shed_log, shed_total, shed_ladder

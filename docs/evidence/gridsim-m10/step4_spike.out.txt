@@ -1,0 +1,28 @@
+== default
+ L45+L67
+   reason=ok        live |V| in [0.9114, 1.0521]
+ L56+L78
+   reason=ok        live |V| in [0.9427, 1.0344]
+ L67+L89
+   reason=ok        live |V| in [0.926, 1.0337]
+ L45+L56, B5 left alone
+   reason=voltage   live |V| in [0.9824, 1.0571]  dead |V| = [0.0]
+   DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.0 pu, outside [0.9, 1.1]. A collapsed-voltage solu
+ L45+L56, B5 grounded
+   reason=voltage   live |V| in [0.9824, 1.0571]  dead |V| = [0.0]
+   DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.0 pu, outside [0.9, 1.1]. A collapsed-voltage solu
+== constant_power
+ L45+L67
+   reason=voltage   live |V| in [0.8659, 1.0523]
+   DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.8658996624672188 pu, outside [0.9, 1.1]. A collaps
+ L56+L78
+   reason=ok        live |V| in [0.9243, 1.0334]
+ L67+L89
+   reason=voltage   live |V| in [0.8954, 1.0309]
+   DetailedEngine re-initialisation at t = 1.0: bus B9 solved to |V| = 0.8954317883150059 pu, outside [0.9, 1.1]. A collaps
+ L45+L56, B5 left alone
+   reason=voltage   live |V| in [0.9838, 1.0605]  dead |V| = [1.8281514024313378e9]
+   DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 1.8281514024313378e9 pu, outside [0.9, 1.1]. A colla
+ L45+L56, B5 grounded
+   reason=voltage   live |V| in [0.9838, 1.0605]  dead |V| = [0.0]
+   DetailedEngine re-initialisation at t = 1.0: bus B5 solved to |V| = 0.0 pu, outside [0.9, 1.1]. A collapsed-voltage solu

@@ -1053,3 +1053,270 @@ end
         @test startswith(msg, "ac_pair_outages: the slack bus :A carries 2 sources")
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M10 step 4: one event, one re-solve (Hurdle 20) — `TripElements` in the detailed tier,
+# and in the swing tier. Predictions and bands were written BEFORE these ran
+# (`docs/evidence/gridsim-m10/step4_predictions.md`); what the spike measured first is
+# `m10-context.md` D10.
+#
+# The oracle is M9's losses identity TAKEN PER PIECE, with the load-draw term carried so
+# that the default loads can serve too (on constant power one two-piece pair survives the
+# trip instant in this tier, L56+L78 — D10):
+#     ω_dyn − Δω_AC = −[(L_dyn + D_dyn) − (L_AC + D_AC)] / Σw_piece,
+# each side's internal losses `L` and load draw `D` read from its own solution — the
+# engine's both-ends branch power and the model's ZIP data at its voltages; the AC piece's
+# own `ACPowerFlow`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+const _M10_FBDF = OrdinaryDiffEq.FBDF
+
+# The detailed tier on `net`, from its AC base, at reltol `tol` (abstol 100× tighter).
+_m10_de(net::NetworkModel; base = ac_powerflow(net), tol = 1e-8, solver = _M10_FBDF()) =
+    init!(DetailedEngine, net; powerflow = base, reltol = tol, abstol = tol / 100, solver)
+
+# A `TripElements` of case9's lines, by id.
+_m10_trip(net::NetworkModel, ids::Symbol...) =
+    TripElements(lines = [(b.from, b.to) for id in ids for b in net.branches if b.id === id])
+
+# Everything a refused event must leave as it was.
+_m10_engine_state(eng::DetailedEngine) =
+    (copy(eng.params), copy(eng.p_static), copy(eng.u_static), copy(eng.integrator.u),
+     sort!(collect(eng.lines_online)), sort!(collect(eng.online)), copy(eng.w), eng.Σw,
+     event_log(eng), copy(eng.deenergised), eng.integrator.t)
+
+# The out-of-step relay fixture of `m5_detailed.jl` (governed ring, relay on B1–B2), with
+# G1 ramped UP so that L12's trip pushes more power over L31 (`step4_relay_probe.jl`: L31
+# carries 63.4 MVA at the start and 105.8 just after the trip) and L31 rated `r31` MVA.
+_m10_relay_ring(r31) = let g = governed_ring()
+    NetworkModel(g.S_base, g.f0, g.buses,
+                 [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0),
+                  Branch(:L31, :B3, :B1, 0.25, r31)], g.machines)
+end
+_m10_relay_de(net) = init!(DetailedEngine, net; dt = 0.01,
+    ramp = [:G1 => GenerationRamp(2.0 / 3.0, 1.0, 3.0)], reltol = 1e-8, abstol = 1e-10,
+    maxiters = 10_000_000, out_of_step = [(:B1, :B2) => OutOfStepTrip(0.20; label = :oos)])
+
+# One live piece of a settled run, against its AC answer: `(lhs, rhs, rhs_Σw, rhs_L, ω)`.
+# `rhs_Σw` divides by the WHOLE grid's Σw, `rhs_L` charges the whole grid's losses — the
+# two ways of not taking the identity per piece, kept for the anti-vacuity checks.
+function _m10_piece_identity(eng::DetailedEngine, net::NetworkModel, pc::ACPiece)
+    inp(bus) = bus in pc.buses
+    ma, st = machine_arrays(net), current_state(eng)
+    ks = [k for (k, m) in pairs(net.machines) if inp(m.bus) && is_online(eng, m.id)]
+    ωs = st.ω[ks]
+    @test maximum(ωs) - minimum(ωs) <= 1e-10          # one piece, one frequency
+    for k in ks                                         # no governor at its cap
+        @test st.ΔPm[k] < ma.headroom[k] - 1e-6
+    end
+    ω = sum(ωs) / length(ωs)
+    Σw = sum(ma.invR[k] + ma.D[k] for k in ks)
+    Σw_all = sum(ma.invR[k] + ma.D[k] for (k, m) in pairs(net.machines) if is_online(eng, m.id))
+    both(b) = branch_power(eng, b.from, b.to) + branch_power(eng, b.to, b.from)
+    L = sum(both(b) for b in net.branches if inp(b.from) && inp(b.to) &&
+                                             is_online(eng, b.from, b.to); init = 0.0)
+    L_all = sum(both(b) for b in net.branches if is_online(eng, b.from, b.to))
+    # The draw, from the MODEL's ZIP data at the engine's voltages — not the engine's own
+    # load slot: P·(a_z|V|² + a_i|V| + a_p).
+    D = sum(l.P0 / net.S_base * (l.a_z * st.V[net.bus_index[l.bus]]^2 +
+                                 l.a_i * st.V[net.bus_index[l.bus]] + l.a_p)
+            for l in net.loads if inp(l.bus); init = 0.0)
+    ac = sum(pc.solution.loss) + sum(pc.solution.Pload)
+    lhs = ω - pc.Δω
+    return (; lhs, rhs = -(L + D - ac) / Σw, rhs_Σw = -(L + D - ac) / Σw_all,
+              rhs_L = -(L_all + D - ac) / Σw, ω)
+end
+
+@testset "M10 step 4 — one event, one re-solve" begin
+
+    @testset "TripElements refuses what is not one event" begin
+        @test_throws ArgumentError TripElements()
+        @test_throws ArgumentError TripElements(lines = [(:B4, :B4)])
+        @test_throws ArgumentError TripElements(lines = [(:B4, :B5), (:B5, :B4)])
+        @test_throws ArgumentError TripElements(sources = [:G1, :G1])
+        ev = TripElements(lines = [(:B4, :B5)], sources = ["G3"])
+        @test ev.lines == [(:B4, :B5)] && ev.sources == [:G3]
+        @test describe_event(EngineEvent(1.0, :deenergise, :B5, Symbol(""))) == "de-energise B5"
+    end
+
+    @testset "positive control: refused as two trips, runs as one (default loads, L45+L67)" begin
+        net = _M10_CASE9(loads = :default)
+        eng = _m10_de(net)
+        solve!(eng, (0.0, 1.0); saveat = 0.05)
+        # Step 0's refusal, through the single trip: L45 alone sags B5 below the band…
+        msg = try inject!(eng, TripLine(:B4, :B5)); "" catch e; e.msg end
+        @test occursin("bus B5 solved to |V| = 0.89", msg)
+        # …and since M10 a refused trip leaves the line in service, nothing logged.
+        @test is_online(eng, :B4, :B5) && n_events(eng) == 0
+        inject!(eng, _m10_trip(net, :L45, :L67))
+        @test [(e.kind, e.a, e.b) for e in event_log(eng)] ==
+              [(:trip_line, :B4, :B5), (:trip_line, :B6, :B7)]
+        @test !is_online(eng, :B4, :B5) && !is_online(eng, :B6, :B7)
+        @test isempty(deenergised_buses(eng))
+        solve!(eng, (1.0, 30.0); saveat = 0.05)
+        ω = current_state(eng).ω
+        @test ω[3] > 0 > ω[1] && ω[2] < 0          # G3's piece up, the rest down (D1)
+    end
+
+    @testset "a refused event changes nothing: the run on is its never-asked twin, bit for bit" begin
+        cases = [(_M10_CASE9(loads = :default), TripLine(:B4, :B5)),
+                 (_M10_CASE9(loads = :constant_power), _m10_trip(_M10_CASE9(), :L45, :L67)),
+                 (_M10_CASE9(loads = :constant_power), TripGenerator(:G1))]
+        for (net, ev) in cases
+            a, b = _m10_de(net), _m10_de(net)
+            solve!(a, (0.0, 1.0); saveat = 0.05)
+            solve!(b, (0.0, 1.0); saveat = 0.05)
+            before = _m10_engine_state(b)
+            err = try inject!(b, ev); nothing catch e; e end
+            @test err isa ErrorException && occursin("outside [0.9, 1.1]", err.msg)
+            @test isequal(_m10_engine_state(b), before)
+            solve!(a, (1.0, 6.0); saveat = 0.05)
+            solve!(b, (1.0, 6.0); saveat = 0.05)
+            @test isequal(state_series(a), state_series(b))
+            @test isequal(_m10_engine_state(a), _m10_engine_state(b))
+        end
+    end
+
+    @testset "the out-of-step relay's refused trip: nothing done, and the run stops" begin
+        # Positive control: rated 500 MVA, the relay opens L12 and the run goes on.
+        ok = _m10_relay_de(_m10_relay_ring(500.0))
+        solve!(ok, (0.0, 6.0))
+        @test out_of_step_log(out_of_step_relay(ok, :B1, :B2)).tripped
+        @test !is_online(ok, :B1, :B2) && n_events(ok) == 1
+        # L31 rated 85 MVA: the re-solve after L12's trip refuses it (105.8 MVA).
+        eng = _m10_relay_de(_m10_relay_ring(85.0))
+        p0, ps0 = copy(eng.params), copy(eng.p_static)
+        err = try solve!(eng, (0.0, 6.0)); nothing catch e; e end
+        @test err isa ErrorException && occursin("branch L31 carries", err.msg)
+        @test is_online(eng, :B1, :B2) && n_events(eng) == 0
+        @test eng.params == p0 && eng.p_static == ps0      # status back at 1.0, both networks
+        lg = out_of_step_log(out_of_step_relay(eng, :B1, :B2))
+        @test !lg.tripped && lg.armed && isnan(lg.t)       # the relay did not operate
+        # The integrator stopped mid-step at the root it found; the run cannot go on.
+        @test occursin("cannot go on", try solve!(eng, (eng.integrator.t, 6.0)); "" catch e; e.msg end)
+        @test occursin("cannot go on", try inject!(eng, TripLine(:B2, :B3)); "" catch e; e.msg end)
+        @test occursin("cannot go on", try inject!(eng, TripGenerator(:G2)); "" catch e; e.msg end)
+        @test occursin("cannot go on",
+                       try inject!(eng, TripElements(sources = [:G2])); "" catch e; e.msg end)
+    end
+
+    @testset "a dead piece is switched off, not solved (L45+L56, both load models)" begin
+        for loads in (:constant_power, :default)
+            net = _M10_CASE9(; loads)
+            eng = _m10_de(net)
+            solve!(eng, (0.0, 1.0); saveat = 0.05)
+            inject!(eng, _m10_trip(net, :L45, :L56))
+            @test deenergised_buses(eng) == [:B5]
+            @test [(e.kind, e.a) for e in event_log(eng)] ==
+                  [(:trip_line, :B4), (:trip_line, :B5), (:deenergise, :B5)]
+            ser = solve!(eng, (1.0, 30.0); saveat = 0.05)
+            @test all(==(0.0), ser.V_B5[ser.t .> 1.0])          # exactly zero, throughout
+            @test all(v -> 0.9 < v < 1.1, current_state(eng).V[[1:4; 6:9]])
+            # What went: B5's load, 90 MW in the model. Its loss as the rest of the grid
+            # sees it is the identity testset's (L45+L56): every machine RISES.
+            @test only(l.P0 for l in net.loads if l.bus === :B5) == 90.0
+            @test all(>(0), current_state(eng).ω)
+        end
+    end
+
+    @testset "a generator cut off alone is tripped in the same event (19.4): it IS its outage" begin
+        net = _M10_CASE9(loads = :constant_power)
+        base = ac_powerflow(net)
+        a, b = _m10_de(net; base, tol = 1e-10), _m10_de(net; base, tol = 1e-10)
+        solve!(a, (0.0, 1.0); saveat = 0.5)
+        solve!(b, (0.0, 1.0); saveat = 0.5)
+        inject!(a, _m10_trip(net, :L36))
+        inject!(b, TripGenerator(:G3))
+        @test [(e.kind, e.a) for e in event_log(a)] ==
+              [(:trip_line, :B3), (:trip_generator, :G3), (:deenergise, :B3)]
+        @test !is_online(a, :G3) && deenergised_buses(a) == [:B3]
+        solve!(a, (1.0, 400.0); saveat = 0.5)
+        solve!(b, (1.0, 400.0); saveat = 0.5)
+        sa, sb = current_state(a), current_state(b)
+        @test maximum(abs, sa.ω[1:2] .- sb.ω[1:2]) <= 1e-9
+        @test maximum(abs, sa.V[[1:2; 4:9]] .- sb.V[[1:2; 4:9]]) <= 1e-9
+        @test sa.V[3] == 0.0 && sb.V[3] > 0.9               # B3 grounded, or floating at B6
+        @test sa.ω[1] < -1e-3                               # the loss is real
+    end
+
+    @testset "per piece, the settled run IS step 3's AC piece, through the losses identity" begin
+        cases = [(:constant_power, :L56, :L78), (:constant_power, :L45, :L56),
+                 (:default, :L45, :L67), (:default, :L56, :L78), (:default, :L67, :L89),
+                 (:default, :L45, :L56)]
+        nchecked, updown = 0, 0
+        for (loads, x, y) in cases
+            net = _M10_CASE9(; loads)
+            s = ac_pair_outages(net)
+            p = _m10_pair(s, x, y)
+            live = _m10_ac_live(s, p)
+            # The precondition: every live piece secure, no governor capped (M9's).
+            @test all(pc -> pc.outcome === :secure, live) && !any(s.capped[p])
+            # Rodas5P, not FBDF: FBDF's step size collapses, isolated, on the two cases with
+            # a de-energised bus — constant power at 1e-10 (t = 367.66 s, or 228.73 s with the
+            # run split differently), default loads at 1e-9 but not at 1e-10 — where Rodas5P
+            # completes all six (`step4_settle_probe.jl`, m10-context.md D10).
+            eng = _m10_de(net; base = s.base, tol = 1e-10, solver = OrdinaryDiffEq.Rodas5P())
+            solve!(eng, (0.0, 1.0); saveat = 0.5)
+            inject!(eng, _m10_trip(net, x, y))
+            solve!(eng, (1.0, 300.0); saveat = 0.5)
+            ω300 = [_m10_piece_identity(eng, net, pc).ω for pc in live]
+            solve!(eng, (300.0, 400.0); saveat = 0.5)
+            ωs = Float64[]
+            for (i, pc) in pairs(live)
+                r = _m10_piece_identity(eng, net, pc)
+                @test abs(r.ω - ω300[i]) <= 1e-10                  # settled
+                @test r.lhs ≈ r.rhs rtol = 1e-6
+                @test abs(r.lhs) > 1e3 * abs(r.lhs - r.rhs)        # not 0 ≈ 0
+                if length(live) == 2                               # per piece, or not at all
+                    @test abs(r.lhs - r.rhs_Σw) > 1e3 * abs(r.lhs - r.rhs)
+                    @test abs(r.lhs - r.rhs_L) > 1e3 * abs(r.lhs - r.rhs)
+                end
+                push!(ωs, r.ω)
+                nchecked += 1
+            end
+            length(ωs) == 2 && (updown += prod(sign, ωs) < 0)
+        end
+        @test nchecked == 10            # four two-piece splits, and two dead pieces' rest
+        @test updown == 4               # every two-piece split: one piece up, one down
+    end
+
+    @testset "names, refusals, and elements already out" begin
+        net = _M10_CASE9(loads = :default)
+        eng = _m10_de(net)
+        st = _m10_engine_state(eng)
+        @test_throws KeyError inject!(eng, TripElements(sources = [:G9]))
+        @test_throws ArgumentError inject!(eng, TripElements(lines = [(:B1, :B9)]))
+        msg = try inject!(eng, TripElements(sources = [:G1, :G2, :G3])); "" catch e; e.msg end
+        @test occursin("no piece of the grid", msg)
+        @test isequal(_m10_engine_state(eng), st)
+        inject!(eng, _m10_trip(net, :L45, :L56))
+        n = n_events(eng)
+        inject!(eng, TripElements(lines = [(:B5, :B4)]))      # already out: passed over
+        @test n_events(eng) == n
+    end
+
+    @testset "the swing tier: the single trips at one instant, and the graph's lost machines" begin
+        # This tier re-solves nothing at an event, so TripElements runs the single trips
+        # — step 2's hand-written list (`_m10_events`) is what it must be, to the bit.
+        net = _m10_swing_case9()
+        s = dc_pair_outages(net)
+        for (x, y) in ((:L45, :L67), (:L14, :L82), (:L36, :L67))
+            p = _m10_pair(s, x, y)
+            e1 = SwingEngine(net; reltol = 1e-10, abstol = 1e-12, dt = 0.05)
+            e2 = SwingEngine(net; reltol = 1e-10, abstol = 1e-12, dt = 0.05)
+            foreach(ev -> inject!(e1, ev), _m10_events(net, s, p))
+            inject!(e2, _m10_trip(net, x, y))
+            for e in (e1, e2)
+                while e.integrator.t < 20.0 - 1e-9
+                    step!(e, 0.05)
+                end
+            end
+            @test isequal(state_series(e1), state_series(e2))
+            @test event_log(e1) == event_log(e2)
+        end
+        # …a stranded load-machine (19.3) goes too: it is load lost, not a source.
+        e = SwingEngine(net; reltol = 1e-10, abstol = 1e-12, dt = 0.05)
+        inject!(e, _m10_trip(net, :L45, :L56))
+        @test !is_online(e, only(m.id for m in net.machines if m.bus === :B5 && m.P0 < 0))
+    end
+end

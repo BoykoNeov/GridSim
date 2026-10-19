@@ -123,21 +123,33 @@ runs.
       2026-10-19, prediction first): red there alone — through its explicit assertions, not
       the identity, which skips a piece that stopped solving.
 
-## Step 4 — one event, one re-solve (Hurdle 20)
+## Step 4 — one event, one re-solve (Hurdle 20) — done 2026-10-19
 
-- [ ] Simultaneous event in the detailed tier (and the swing tier).
-- [ ] Dead buses de-energised by the graph, both load models.
-- [ ] Refused event changes nothing (or the engine refuses to run on) — decided by
-      measurement; `TripLine`'s half-applied refusal fixed; tested on the direct
-      call AND the out-of-step relay's path.
-- [ ] A generator cut off alone tripped in the same event.
-- [ ] Positive control: case9 default L45+L67 runs.
-- [ ] Per-piece settled frequency against step 3, through M9's losses identity
-      taken per piece (`Σw`, losses, settling). (Step 3 measured which pairs can serve:
-      on constant-power loads only **L56+L78** and **L67+L89** leave two live pieces, both
-      `:secure`, one rising and one falling — L45+L67 is `:voltage` in G3's piece there; on
-      default loads L45+L67, L45+L89, L56+L78, L56+L89, L67+L89. `m10-context.md` D9.)
-- [ ] Gate: M9's captures bit-identical.
+- [x] Simultaneous event in the detailed tier (and the swing tier): `TripElements`, one
+      re-solve of the final network; the swing tier's is the single trips back to back plus the
+      graph's answer, bit for bit step 2's hand lists (`m10-context.md` D10).
+- [x] Dead buses de-energised by the graph, both load models — grounded through their own
+      load slot (`V = 0` exactly; a deviation from "out of the solve", recorded in D10). Found on
+      the way: the exciter's `hypot` at zero aborted the run (`_exciter_vmag`).
+- [x] Refused event changes nothing — decided by measurement: on the direct `inject!` the run
+      on is its never-asked twin bit for bit (`_refusable!`; `TripLine` and `TripGenerator`
+      through it too); on the out-of-step relay's path the engine and the relay's record are
+      put back but the run STOPS (`halted`), because continued it silently loses the protection
+      (`step4_relay_probe.jl`).
+- [x] A generator cut off alone tripped in the same event — case9 L36 alone IS G3's outage,
+      every survivor within 1e-9.
+- [x] Positive control: case9 default L45+L67 runs (and its single first trip is refused,
+      leaving nothing behind).
+- [x] Per-piece settled frequency against step 3, through M9's losses identity per piece,
+      carrying the loads' draw: constant power L56+L78 and L45+L56's rest; default L45+L67,
+      L56+L78, L67+L89, L45+L56's rest — rtol 1e-6, whole-grid Σw and losses fail it. Constant
+      power L45+L67 and L67+L89 are refused at the trip instant in this tier (D10). Run on
+      Rodas5P: FBDF collapses, isolated, where a bus is grounded (`step4_settle_probe.jl`).
+- [x] Sabotages run, predictions first (`step4_predictions.md`, two dated notes before any
+      ran): all six red where registered; S2 and S3 also red on every L45+L56 testset, the
+      intermediate/stranded network step 0 measured (D10).
+- [x] Gate: M9's seven captures byte-identical (digests in D10). Suites 16525 core / 1439 ref
+      / 745 UI, done 2026-10-19.
 
 ## Step 5 — fail, restore, fail again (Hurdle 21)
 

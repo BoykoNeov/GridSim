@@ -178,13 +178,23 @@ function _out_of_step_callback(r::OutOfStepRelay, δdiff, trip!)
     end
     affect_neg! = function (integrator)
         r.armed || return nothing              # belt and braces
+        t_was, δ_was = r.t_tripped, r.δ_tripped
         r.t_tripped = integrator.t             # the root-found instant, not `dt`-quantised
         r.δ_tripped = δdiff(integrator.u)
         # Opening the branch is what DISARMS this relay: `trip!` runs the engine's
         # own `inject!(::TripLine)`, which latches every relay on the branch it
         # actually opened. One rule ("a relay on an open branch is latched") covers
         # the user trip, another relay's trip and this one, instead of three.
-        trip!(integrator)
+        #
+        # A trip the engine REFUSES opens nothing (M10 step 4: the detailed tier's
+        # re-solve can refuse the network a trip leaves), so the relay did not operate
+        # either — its record goes back to what it was before the error goes on.
+        try
+            trip!(integrator)
+        catch
+            r.t_tripped, r.δ_tripped = t_was, δ_was
+            rethrow()
+        end
         return nothing
     end
     # `save_positions=(false,false)` for `load_shedding.jl`'s reason: the engine runs

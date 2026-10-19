@@ -609,3 +609,128 @@ after the first green run and before any sabotage), `step3_pairs.jl`, `step3_pro
   off the reference bus (AB+CA). M7's exported-surface walk calls `ac_pair_outages` on its
   inverter model — run directly before the suite (`step3_m7walk.jl`), it returns on both
   kinds. The five new names are clear of `names(GLMakie)`.
+
+## D10 — How step 4 makes several elements one event (2026-10-19)
+
+**The event.** `TripElements(; lines, sources)` (`src/events/events.jl`): branches by bus pair,
+sources by id. In the detailed tier (`_trip_elements!`) every line opens and every source trips
+in both networks, then the network is re-solved **once**. Before anything moves, the pieces of
+the FINAL network are read from the graph and classified by the pair screens' own rule
+(`_pair_piece_kind`, on what is still online — its `lost` mask now reaches the grid-forming
+inverters, a no-op for the screens): every unit still online in a piece that is not live is
+tripped in the same event (a cut-off generator is lost, Hurdle 19.4), and every bus of such a
+piece is de-energised. An event that would leave no live piece is refused before anything
+moves. Lines are logged as `:trip_line` under the branch's own names, sources as
+`:trip_generator`, switched-off buses as `:deenergise`. The single `TripLine` and
+`TripGenerator` keep their success behaviour exactly — no graph answer — which is what M9's
+captures gate.
+
+**Measured before it was built** (`docs/evidence/gridsim-m10/step4_spike.jl`, `.out.txt`): one
+re-solve of the final network passes on the default loads for L45+L67 (live voltages
+0.911–1.052 pu), L56+L78 and L67+L89, and on constant power for L56+L78. **On constant power
+L45+L67 (B5 0.866) and L67+L89 (B9 0.8954) are refused at the trip instant** — step 3's AC
+screen held `V_set` and called L67+L89 secure in both pieces; this tier holds field flux, the
+gap M9 already met at case9's G1 and G2. So on constant power one two-piece pair is left for the
+oracle (L56+L78), and the oracle carries the loads' draw so the default-load pairs serve too.
+
+**A dead bus is grounded through its own load slot — a deviation from the plan's wording
+("voltage out of the solve"), recorded here.** Taking the bus's voltage out of the solve would
+mean a new parameter, and a switched equation, on every vertex kind in both networks. Leaving it
+in with its load zeroed is not enough: a bus with no load and no line left (a tripped machine's,
+a bare junction) has a Kirchhoff row reading `0 = 0`, and the solve is singular. Instead the
+slot every vertex kind already carries is rewritten, in both networks, to `G = 1`,
+`B = a_i = a_p = 0` (`_deenergise!`): a conductance to ground with no load behind it. In a
+piece with no source the only solution is `V = 0` exactly — measured, on both load models,
+where left alone B5 solved to 1.83e9 pu (constant power) and 0.0 (default). The load is off
+because it sees no voltage. No right-hand side changed for it, and the voltage band skips a
+de-energised bus (`_voltage_band_violations` with a mask, all-false everywhere else).
+
+**Found on the way, fixed: a machine on a de-energised bus aborted the run** (case9, L36 alone:
+G3 cut off, B3 grounded). The exciter reads `hypot(V_re, V_im)`; at exactly zero its value is
+0 and its derivative 0/0, and the solver's automatic-differentiation Jacobian turned that into
+NaN in G3's `Efd` row — with the regulator OFF, since `K_A = 0` times NaN is NaN.
+`_exciter_vmag` returns 0 with a zero derivative there and is `hypot` everywhere else. Its test
+is on the squared magnitude because of a second finding: the solver's dual numbers let the
+derivative part settle a comparison the value leaves tied — `V_re == 0` came out false and
+`|V_re| + |V_im| > 0` true at a zero value with a unit derivative (both were tried first;
+each left the NaN where it was). `V_re² + V_im²` has value and derivative 0 there.
+
+**A refused event changes nothing — chosen by measurement on the direct path.** Every event
+writes, then re-solves, and the re-solve can refuse. `_refusable!` copies everything an event
+can write first — both parameter vectors, the static solve's state, the integrator's state, the
+two in-service sets (replaced, so even their hash layout is the old one), the COI weights, the
+ladders' and relays' latches, the de-energised mask, the log's length — and puts it back on a
+refusal or a throw. The integrator is not touched before the re-solve succeeds, so its cached
+step still describes the restored state. The measurement: a run refused an event at t = 1 and
+continued to 6 s is `isequal` to its twin that was never asked, every channel and every
+parameter, on three refusals (default `TripLine` L45, constant-power `TripElements` L45+L67,
+constant-power `TripGenerator` G1). `TripLine` and `TripGenerator` go through the same
+`_refusable!` — both were half-applied before (D1 named the line's; the generator's wrote its
+governor, weight and latches, which M9's dip screen never saw because it abandons the engine).
+
+**The out-of-step relay's path cannot change nothing, and the run stops there — also by
+measurement** (`step4_relay_probe.jl`, `.out.txt`; the governed ring of `m5_detailed.jl` with G1
+ramped UP and L31 rated 85 MVA, so L12's trip leaves L31 at 105.8 MVA). Before the fix: the
+refused trip left L12 open in both networks, unlogged, the relay's record "tripped" while still
+armed, and a `solve!` continued from there collapsed its step size at 9.23 s. After it: the
+engine is put back, and the relay's record too (`out_of_step.jl`'s affect restores its
+`t_tripped`/`δ_tripped` if the trip throws). But the error leaves from inside the solver's
+callback handling, with the integrator stopped mid-step at the root it found — and **with the
+stop cleared by hand, the run goes on to 30 s with L12 in service and the relay never firing
+again**: its one crossing is spent, so a continued run is silently a run without the protection
+that tried to act. So a refusal on this path sets `halted`, and every later `solve!`/`inject!`
+refuses with the reason (`_assert_running`).
+
+**Found, not fixed: the detailed tier's `TripLine` never latched the relay on the line it opens**
+(the swing tier's does, and `out_of_step.jl` states the rule). A relay that fired stays armed;
+if its angle came back under the threshold and crossed again it would overwrite its own record
+and call a no-op trip. Fixing it in `TripLine` changes a callback's condition, which can move a
+step sequence the M5 criterion capture holds — not this step's to decide. `TripElements` latches
+the relay on every line it opens.
+
+**The swing tier's half is built**, though it is cut-first item 2: it was the single trips run
+back to back (that tier re-solves nothing), plus the graph's answer, about thirty lines. Checked
+bit for bit against step 2's hand-written event lists. A stranded load-machine (19.3) is tripped
+there too, as load lost.
+
+### What step 4 measured (2026-10-19)
+
+`docs/evidence/gridsim-m10/step4_predictions.md` (written first, with two dated notes added after
+the first test runs and before any sabotage), `step4_spike.jl`, `step4_relay_probe.jl`,
+`step4_settle_probe.jl`, `step4_mutate.py`, each with its `.out.txt`; tests in
+`test/m10_double_outages.jl`, run alone by `step4_run.jl`.
+
+- **Gate: M9's seven captures byte-identical**, taken from a detached worktree at `6c11bba` and
+  from a copy of the step-4 source (SHA-256, first 16 hex): swing `531810f77f33bf93`, criterion
+  `e6be220ec6c23f7a`, ac `f47ff416ea9623bc`, screen `fc70979fd7be75e2`, dips `e4a4d7e3db92a053`,
+  verdict `e74e7f9f1861be21`, oracle `a09bc2361763194c`. So the restore wrapped around
+  `TripLine`/`TripGenerator`, the band mask, the exciter guard and the relay's `try` moved no
+  bit of any recorded run.
+- **The identity holds per piece on all ten pieces** (rtol 1e-6; the whole grid's Σw or losses
+  fail it by more than 1e3 times its residual), every machine of a piece within 1e-10 of the
+  others, 300 s and 400 s within 1e-10; one piece up and one down in all four two-piece
+  splits. The dead piece's load (B5, 90 MW in the model) is seen as what the rest of the grid
+  settles to: every machine rises, on both load models, and the identity closes on the rest.
+- **FBDF collapses its step, isolated, where a bus is grounded** (`step4_settle_probe.jl`):
+  constant-power L45+L56 at reltol 1e-10 (t = 367.66 s, or 228.73 s with the run split
+  differently), default-load L45+L56 at 1e-9 and not at 1e-10; every state's weighted error
+  ~1e-43 at the failure. Rodas5P at 1e-10 completes all six identity runs, so the testset
+  uses it. Same signature as M5's isolated `Efd_max = 1.2` failure (conditioning, not a model
+  boundary); the 19.4 run on FBDF completes.
+- **A count in the test was wrong, not a number**: the identity testset first asserted 11
+  pieces and 5 up/down splits; the list holds four two-piece splits and two dead-piece rests,
+  10 and 4, which the run counted. Corrected before any sabotage (dated note).
+- **Sabotages, all six run** (`step4_mutate.out.txt`), each red where predicted:
+  - S1 (no restore): red on the twin bit-identity, the positive control's "the refused first
+    trip left L45 in service", and the relay testset — nowhere else.
+  - S2 (a re-solve after each line): red on the positive control, as predicted. **Also red,
+    unpredicted but measured at step 0 (D1): every L45+L56 testset** — the dead piece, the
+    refusals testset (which reuses that pair) and the identity, whose run then stopped at that
+    case, so its predicted red on default-load L45+L67 was never reached there; the positive
+    control is that same event and is red. L45 alone is refused on both load models (D1).
+  - S3 (no de-energising): red on the dead piece and on 19.4, as predicted; also on the
+    identity's L45+L56 case and the refusals testset, both that dead piece again.
+  - S4 (a cut-off source left online): red on 19.4 alone; the dead piece green (B5 holds no
+    source), as predicted.
+  - S5 (the relay's record not put back): red on the relay testset alone.
+  - S6 (no halt): red on the relay testset alone (its four "cannot go on" assertions).

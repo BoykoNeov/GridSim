@@ -65,3 +65,45 @@ struct TripLine <: PerturbationEvent
         return new(from, to)
     end
 end
+
+"""
+    TripElements(; lines = [], sources = [])
+
+Take several elements out of service **at one instant, as one event** (M10 step 4,
+`docs/plans/m10-context.md` Hurdle 20): branches named by bus pair, as `TripLine`
+names one, and sources (machines, inverters) by id, as `TripGenerator` does.
+
+Two `TripLine`s injected back to back are NOT this in the detailed tier: that engine
+re-solves the network after each one, so it passes through a network with only the
+first element out — which it can refuse when the final network is fine (measured,
+M10 step 0: case9, default loads, L45 then L67). This event re-solves once, on the
+final network.
+
+It also answers the question a split leaves, from the graph, where a single trip does
+not (`m10-context.md` D4, D10): every piece left with no live source is
+**de-energised** — its buses' loads off and their voltage held at zero — and every
+source in a piece left with no load is **lost with it**, tripped in the same instant.
+Each is logged as what it is (`:trip_generator`, `:deenergise`).
+"""
+struct TripElements <: PerturbationEvent
+    lines::Vector{Tuple{Symbol,Symbol}}
+    sources::Vector{Symbol}
+
+    function TripElements(; lines = Tuple{Symbol,Symbol}[], sources = Symbol[])
+        ls = Tuple{Symbol,Symbol}[(Symbol(a), Symbol(b)) for (a, b) in lines]
+        ss = Symbol[Symbol(s) for s in sources]
+        isempty(ls) && isempty(ss) && throw(ArgumentError(
+            "TripElements: no lines and no sources — an event that takes nothing out."))
+        for (a, b) in ls
+            a === b && throw(ArgumentError(
+                "TripElements: the line $(a)–$(b) joins a bus to itself; no branch does."))
+        end
+        keys = [a < b ? (a, b) : (b, a) for (a, b) in ls]
+        allunique(keys) || throw(ArgumentError(
+            "TripElements: a line is named twice (in either order) — one event takes an " *
+            "element out once."))
+        allunique(ss) || throw(ArgumentError(
+            "TripElements: a source is named twice — one event takes an element out once."))
+        return new(ls, ss)
+    end
+end
