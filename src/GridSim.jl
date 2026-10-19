@@ -235,6 +235,9 @@ export DCPiece, DCPairOutages, dc_pair_outages
 # M10 step 3 - every pair in AC, piece by piece, and the two side by side. Checked clear
 # against `names(GLMakie)` the same way before being committed.
 export ACPiece, ACPairOutages, ac_pair_outages, PairScreenComparison, compare_pair_screens
+# M10 step 5 - fail, restore 50 Hz, fail again.
+export DCRestore, dc_restore, DCSequentialOutages, dc_sequential_outages
+export ACRestore, ac_restore, ACSequentialOutages, ac_sequential_outages
 # The aggregate view, compiled down from the network model (SPEC §3.2, D4) — never
 # a hand-maintained parallel copy. This is what lets M1's engine run on an M2 model.
 export coi_model

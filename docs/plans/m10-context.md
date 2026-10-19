@@ -746,3 +746,160 @@ the first test runs and before any sabotage), `step4_spike.jl`, `step4_relay_pro
   moved to Rodas5P with the identity's, since they too ground a bus. Step-4 testset 180/180,
   run alone; the full core suite was not re-run for this test-only change (16525 at the commit
   before, +6).
+
+## D11 — How step 5 restores, and what it screens the second loss on (2026-10-19, before the code)
+
+Written after reading the code and before writing any of step 5's, with a review's points
+folded in. Each item is a decision the code then follows.
+
+1. **One restored model per live piece.** `NetworkModel` refuses a disconnected network, so a
+   first loss that splits the grid cannot leave one restored model. Each live piece the first
+   loss leaves is restored on its own (D3, per piece) and rebuilt as its own model: its buses,
+   the branches inside it, its units and loads. On the report grids no single element leaves
+   two live pieces (case9's three bridges each cut off a lone generator, D4; the mesh has no
+   bridge), so the per-piece path is exercised on a fixture.
+2. **The restore is M8's bend walk with the damping zeroed.** `min(x·gᵢ, hᵢ)` with `x` the
+   restore level — not a frequency: the frequency is on target. Upward it is `_pickup_solve`
+   with `d = 0`; its `:reserve_exhausted` is the restore's refusal (Hurdle 21.2, reported as
+   `:restore_refused`), its `:no_response` a piece with no governor. **Downward** (a surplus) is
+   the same walk mirrored: each unit goes down by `min(x·gᵢ, roomᵢ)`, `roomᵢ = (P0ᵢ − Pminᵢ)/S_base`,
+   `Inf` where `Pmin` is not given, and **0 where `P0` already sits below `Pmin`** (the unit
+   stays where it is rather than being pushed up by a floor it never met).
+3. **A grid-forming inverter is capped at its rating in the restore — a refinement of D3.** D3
+   gave it no cap, which is the settle's rule (M8: the swing tier gives it no power limit). But
+   restoring is a dispatch (D3's own argument for honouring `Pmin`), and the rating is the one
+   dispatch limit an inverter carries: `Inverter`'s constructor refuses `|P0 + jQ0| > S_rated`.
+   Uncapped, a restored inverter could not even be rebuilt. So in the restore it moves at most
+   to `±√(S_rated² − Q0²)`, and the rest is re-shared like any cap. The settle still has no cap.
+4. **Exact endpoints in the rebuilt model.** A capped machine's restored `P0` is `Pmax` exactly, a
+   floored one's `Pmin` exactly, a capped inverter's its rating limit exactly; every other unit
+   is `P0 + pickup·S_base` clamped into its limits. A pu round trip can land an ulp past `Pmax`,
+   and `Machine` refuses `P0 > Pmax`.
+5. **The restored model's slack** is the model's slack when its bus is in the piece and still
+   holds a source; otherwise the piece's first bus (vertex order) holding a source.
+   **Corrected by the first AC trial, before any test ran:** the draft gave every unit, the
+   slack's too, its schedule plus its pickup. `NetworkModel` refused it — the mesh's restored
+   schedule was 6.26 MW out of balance — because it holds a schedule to a LOSSLESS balance, and
+   the AC pickups also cover the change in losses and load draw. So in AC every unit but the
+   slack's one source sits at its restored output, and the slack's source carries the schedule
+   that balances the piece, exactly as the original schedule leaves the losses to the slack.
+   `ac_powerflow` reads every other unit's schedule, so it solves the restore's own equations and
+   gives its state back; that is **checked** on every restore (the restore's shared solve and
+   `ac_powerflow` also treat the slack's reactive limits differently). A slack with several
+   sources, or a balancing schedule past its `Pmax`, is refused by the constructors and reported
+   (`:base_refused`), never thrown. In DC the restored schedule balances on its own (the pickups
+   sum to the imbalance read from the base flows), so no unit is adjusted.
+6. **The second loss is the pair screens' one-element case on the restored model**
+   (`_dc_outage_set` / `_ac_outage_set`, moved out of the pair loops by a refactor gated byte for
+   byte, `docs/evidence/gridsim-m10/step5_snapshot.*`). M8's own screens answer a split with no
+   numbers; the user chose per-piece answers (D2.3), so "M8's screens" in Hurdle 21.3 reads as
+   this. It holds by construction and is stated, not tested.
+7. **What an ordered pair reports.** `:screened`; `:already_lost` when the second element sits in
+   a piece the first loss left dead (or is the first's own collapse twin, D4); `:not_restored`
+   when the second element's piece has no restored state — refused, no governor, or in AC a
+   restored state that did not solve or is out of the voltage band (a `:voltage` outcome carries
+   no solution to start from); `:base_refused` when the restored piece's `ac_powerflow` base is
+   refused by the screen's own rules. Never thrown (M8 D3).
+8. **The AC restore** is the shared solve on the piece with `d = 0` and the restore caps; the
+   floor is applied by an outer loop in step 5's code — a floored unit stops responding and its
+   bus's output drops by its room — so M8's shared solve is not touched and the captures cannot
+   move. Its losses identity is checked on every restore (step 3's, at `Δω = 0`).
+9. **Flags, not refusals:** every unit whose output ends below zero, after the restore AND after
+   the second loss's settle (D3). In the restored model such a machine has `P0 < 0`, which D6.3's
+   classifier reads as a load — the flag says so.
+
+**What the report grids can and cannot show, registered before any run.** case9's invented data
+give every machine the same `D/(1/R)` (both scale with rating), so a restore that shared by
+damping as well as gain would give the SAME shares there — that sabotage is invisible on case9
+by construction. No cap binds on case9 (headroom 154–185 MW against single losses of at most
+115 MW), so its two orders reach the same final dispatch in DC for machine pairs and differ only
+in the final frequency. The mesh is where order shows in flows: its `D/(1/R)` differ per machine,
+losing G2 caps G3 in the restore (G1 : G3 = 3 : 1 of 60 MW, G3's 5 MW headroom), and losing G1
+(150 MW) leaves 45 MW of headroom — the restore refuses while the settle answers. And in AC a
+restore after a LINE loss shares the change in losses by gain, while a second-loss line that
+leaves the piece whole goes through M8's line path, where the slack takes the losses and `Δω` is
+`NaN`: some AC differences between orders will be that convention, not physics.
+
+### What step 5 measured (2026-10-19)
+
+`docs/evidence/gridsim-m10/step5_predictions.md` (written first, with two dated notes added
+after the first runs and before any sabotage), `step5_snapshot.jl`, `step5_pairs.jl`,
+`step5_offset_probe.jl`, `step5_dynamic_spike.jl`, `step5_m7walk.jl`, `step5_mutate.py`, each
+with its `.out.txt`; tests in `test/m10_double_outages.jl`, run alone by `step5_run.jl`.
+
+- **The refactor moved nothing**: both pair screens serialized on eight fixtures, byte-identical
+  before (a detached worktree at `8b8e8e9`) and after (`step5_snapshot.out.txt`).
+- **The restore is exact (21.1)** on every element of seven fixtures: each restored piece's
+  model balances from the equipment list, the shares of every unit not at a limit follow its
+  governor gain to 1e-12, a unit at a limit sits on it to the bit. As predicted: the mesh's G2
+  caps G3 at exactly 45 MW and G1 takes 205; the tie fixture's split restores its left piece DOWN
+  to G3's `Pmin` (20 MW exactly, G1 to 50) and its right piece UP to G4's `Pmax` (45 exactly, G2
+  to 85), each piece rebuilt as its own model with its own slack; the 30 MVA inverter restores to
+  exactly 30 MW. case9: every single loss restores, nothing capped.
+- **Refused where the settle answers (21.2)**: the mesh's G1 (150 MW against 45 MW of headroom
+  left), at both fidelities, while `dc_generator_outages` answers it; its nine ordered pairs are
+  `:not_restored`. A grid with no governor is `:no_response`.
+- **`Pmin` and below zero (D3)**: genmesh with G3 at 10 MW, losing the load-machine LB, restores G3
+  to −12.1 MW, flagged, a `P0 < 0` machine in its restored model; with `Pmin = 0` it is floored at
+  exactly 0 and nothing is flagged. The settle's flag fires too (G2 then LB).
+- **The free control holds**: a first line that leaves the grid whole restores nothing (its
+  imbalance is exactly `0.0`), and A-then-B equals both-at-once on all 63 mesh and 66 case9 such
+  pairs within `100·eps·scale`.
+- **AC: found, not predicted — the restored schedule cannot be every unit's output.** The first
+  trial's restored mesh model was refused, 6.26 MW out of balance; corrected before any test ran
+  (D11.5: the slack's source carries the balancing schedule). After it the restore's losses
+  identity holds on every restored piece of both report grids and both load models, and
+  `ac_powerflow` gives every restored state back within 8.4e-14 in |V| and 6.7e-13 in Pgen
+  (band 1e-10). No restored base was refused on the report grids. **But the restored state itself
+  is out of the voltage band** after case9's G1 (and L14) and L94 on both load models, and after
+  L45 on constant power (why was not probed) — so 43
+  (constant power) and 32 (default) ordered pairs are `:not_restored`.
+- **The order (21.4), written after the table** (`step5_pairs.out.txt`) **and the probe that
+  explained it** (`step5_offset_probe.out.txt`): restoring cancels what the first loss alone would
+  have settled to, so per live piece with no governor capped,
+  `Δω(both at once) − Δω(A then B) = −Σ(restore pickups after A)/Σ(1/R + D)` of the piece's
+  survivors. **Exact in DC** (case9 39 pieces, mesh 7, to 9e-16 relative). **In AC exact to the
+  solver on case9** (26 and 41 pieces, ≤ 5.8e-12) — its machines all have the same D·R, so
+  restoring and settling move them in the same proportions and the network cannot tell the two
+  apart — and **only to 5e-4 on the mesh** (8 and 9 pieces), whose D·R differ (registered before
+  the table as what case9 would hide). So which order is worse is decided by the sign of the
+  first loss's own deviation against the second's: after a first GENERATOR loss a second loss
+  that pulls frequency down lands milder (the first deficit was already made up) and one that
+  pushes it up would land worse; a first LINE loss in DC is nothing; a first line loss
+  in AC moves frequency by its change in losses and load draw — on the default loads the draw
+  falls (case9 L45: 9.0 MW, 5.23e-4 pu), so a second generator loss then lands WORSE than both at
+  once, and a second loss that strands load lands milder. In DC on both report grids the worse
+  order is always exactly both at once (case9 63 pairs, mesh 36); the two orders reach the same
+  final DC dispatch on case9 (63 of 63) but not on the mesh (22 of 36) — case9's equal D·R again.
+- **The dynamic check (Hurdle 21's independent one)**: the detailed tier initialised on the AC
+  restored model, the second element tripped, run to 300 s and 400 s on Rodas5P at 1e-10 — per
+  piece the settled frequency is the screen's through step 4's per-piece losses identity, ≤ 1.4e-9
+  relative (rtol 1e-6), on nine pieces: default L78→G2, L56→G3, L56→L78, L45→L67; constant power
+  L56→G3, L56→L78 — three splits, each one piece up and one down, the whole grid's Σw and losses
+  failing it by more than 1e3 times its residual. Constant-power L78→G2 and L89→G2 are refused at
+  the trip instant in this tier (B2 at 0.879 / 0.894 pu: held field flux against held `V_set`, the
+  gap M9 and step 4 met). **What it checks and what it cannot:** both answers start from the
+  restored model, so it checks the second loss's answer from the restored state, not the restore —
+  the static testsets check that.
+- **Sabotages, all five run** (`step5_mutate.out.txt`; S5 added with the dynamic testset, its
+  prediction written first):
+  - S1 (damping shares): red on exact, refused (the bowtie's damped governor-free machines answer
+    → `:restore_refused`), Pmin and order (the mesh's two orders reach the same DC dispatch and its
+    AC gap becomes the law), green on split, line-first and dynamic, as predicted. **Also red,
+    unpredicted: the AC give-back** — with damping a capped unit is restored past its `Pmax`, the
+    rebuilt model holds it at `Pmax`, and `ac_powerflow` no longer gives the restored state back
+    (mesh G2: 0.016 pu in Pgen).
+  - S2 (caps ignored): red on exact, split, refused, Pmin, AC and order, green on dynamic, as
+    predicted. **Also red, unpredicted: line-first** — the testset builds the whole sequential
+    screen, which now throws building the mesh's G2 restore (the clamped `P0` unbalances it).
+  - S3 (`Pmin` ignored): red on exact, split and Pmin only, as predicted.
+  - S4 (whole-grid restore across a split): red on exact, split and order, as predicted; also
+    line-first, for S2's reason (case9's L14 restore throws).
+  - S5 (the second loss restored instead of settled): red on **dynamic** (30 assertions), split,
+    line-first and order, as predicted; **green on Pmin, predicted red** — the wrong restore of
+    the second loss also pushes G3 below zero, so the flag still fires.
+- **Inverters, and M7's exported-surface walk**: both sequential screens return on M7's two-bus
+  pair (`step5_m7walk.jl`): grid-following, every piece load lost; grid-forming, I2 restored to
+  exactly its 100 MVA rating at both fidelities (in AC it lands on the rating within the switch's
+  tolerance, uncapped, and the rebuilt model clamps it there). Added to the walk's learned list.
+  The eight new names are clear of `names(GLMakie)`.

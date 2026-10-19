@@ -1,0 +1,24 @@
+grid_following DC: returned, 2 ordered pair(s)
+  restore after L12: [:B1] sources_lost sources_lost; [:B2] load_lost load_lost  pickup(MW) [0.0]  capped Bool[0]
+  restore after G1: [:B1, :B2] load_lost load_lost  pickup(MW) [0.0]  capped Bool[0]
+  L12→G1  already_lost  [:B1] sources_lost; [:B2] load_lost
+  G1→L12  already_lost  [:B1, :B2] load_lost
+grid_following AC: returned, 2 ordered pair(s)
+  restore after L12: [:B1] sources_lost sources_lost; [:B2] load_lost load_lost  pickup(MW) [0.0]  capped Bool[0]
+  restore after G1: [:B1, :B2] load_lost load_lost  pickup(MW) [0.0]  capped Bool[0]
+  L12→G1  already_lost  [:B1] sources_lost; [:B2] load_lost
+  G1→L12  already_lost  [:B1, :B2] load_lost
+grid_forming DC: returned, 2 ordered pair(s)
+  restore after L12: [:B1] sources_lost sources_lost; [:B2] live restored  pickup(MW) [0.0, 50.0]  capped Bool[0, 1]
+    restored model: Pair{Symbol, Float64}[] [:I2 => (:grid_forming, 100.0)]
+  restore after G1: [:B1, :B2] live restored  pickup(MW) [0.0, 50.0]  capped Bool[0, 1]
+    restored model: Pair{Symbol, Float64}[] [:I2 => (:grid_forming, 100.0)]
+  L12→G1  already_lost  [:B1] sources_lost; [:B2] restored
+  G1→L12  screened  [:B1] empty; [:B2] shared
+grid_forming AC: returned, 2 ordered pair(s)
+  restore after L12: [:B1] sources_lost sources_lost; [:B2] live secure  pickup(MW) [0.0, 50.0]  capped Bool[0, 0]
+    restored model: Pair{Symbol, Float64}[] [:I2 => (:grid_forming, 100.0)]
+  restore after G1: [:B1, :B2] live secure  pickup(MW) [0.0, 50.0]  capped Bool[0, 0]
+    restored model: Pair{Symbol, Float64}[] [:I2 => (:grid_forming, 100.0)]
+  L12→G1  already_lost  [:B1] sources_lost; [:B2] secure
+  G1→L12  screened  [:B1] empty; [:B2] secure

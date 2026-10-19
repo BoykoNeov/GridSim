@@ -1,0 +1,66 @@
+== S1_damping_shares
+Test Summary:                                                                       | Pass  Fail  Total     Time
+M10 step 5 — fail, restore 50 Hz, fail again                                        | 2574    36   2610  2m41.8s
+  the restore is exact: on target, shares by gain, every limit to the bit (21.1)    |  910    18    928    23.4s
+  per piece across a split: one piece down to a floor, the other up to a cap        |   13           13     1.9s
+  a restore can be refused where the settle answers (21.2)                          |    5     2      7     8.3s
+  Pmin honoured on the way down; a unit below zero is flagged (D3)                  |    5     1      6     0.1s
+  line first, nothing to restore: A then B IS both at once (DC)                     |  812          812     0.4s
+  AC: the restore's losses identity, and ac_powerflow gives the restored state back |  615    12    627     0.4s
+  order (21.4): the orders differ by what the first loss alone would settle to      |  112     3    115     3.1s
+  the detailed tier run from the restored model settles where the screen says       |  100          100  2m04.3s
+  names and refusals                                                                |    2            2     0.1s
+RNG of the outermost testset: Random.Xoshiro(0x1b1a9d55df727953, 0x46650176744a4162, 0x06c90d3a98888d2f, 0x21a1bbce0152293c, 0xfba30680403b2008)
+== S2_cap_ignored
+Test Summary:                                                                       | Pass  Fail  Error  Total     Time
+M10 step 5 — fail, restore 50 Hz, fail again                                        |  808    12      6    826  3m44.7s
+  the restore is exact: on target, shares by gain, every limit to the bit (21.1)    |   84            1     85     8.5s
+  per piece across a split: one piece down to a floor, the other up to a cap        |                 1      1     0.0s
+  a restore can be refused where the settle answers (21.2)                          |                 1      1     0.0s
+  Pmin honoured on the way down; a unit below zero is flagged (D3)                  |    5            1      6     0.7s
+  line first, nothing to restore: A then B IS both at once (DC)                     |                 1      1     0.0s
+  AC: the restore's losses identity, and ac_powerflow gives the restored state back |  615    12           627     9.8s
+  order (21.4): the orders differ by what the first loss alone would settle to      |    2            1      3     1.8s
+  the detailed tier run from the restored model settles where the screen says       |  100                 100  3m23.8s
+  names and refusals                                                                |    2                   2     0.1s
+RNG of the outermost testset: Random.Xoshiro(0x8d37fc9fe5c68a1d, 0xb06ce634481ec207, 0xba20b1fd60ce162b, 0x525d9608f07148b1, 0x81b1436e35423be0)
+== S3_pmin_ignored
+Test Summary:                                                                       | Pass  Error  Total     Time
+M10 step 5 — fail, restore 50 Hz, fail again                                        | 1970      3   1973  5m43.1s
+  the restore is exact: on target, shares by gain, every limit to the bit (21.1)    |  312      1    313    10.1s
+  per piece across a split: one piece down to a floor, the other up to a cap        |           1      1     0.0s
+  a restore can be refused where the settle answers (21.2)                          |    7             7    10.9s
+  Pmin honoured on the way down; a unit below zero is flagged (D3)                  |    3      1      4     0.1s
+  line first, nothing to restore: A then B IS both at once (DC)                     |  812           812     0.5s
+  AC: the restore's losses identity, and ac_powerflow gives the restored state back |  619           619     0.7s
+  order (21.4): the orders differ by what the first loss alone would settle to      |  115           115     2.8s
+  the detailed tier run from the restored model settles where the screen says       |  100           100  5m17.9s
+  names and refusals                                                                |    2             2     0.1s
+RNG of the outermost testset: Random.Xoshiro(0x96c3796ce335a441, 0xcc02505b23a90b0f, 0xcdad6b0a7a97edfb, 0x01bd10d3d6b6026a, 0x0b58f77d92227c3b)
+== S4_whole_grid_restore
+Test Summary:                                                                       | Pass  Error  Total     Time
+M10 step 5 — fail, restore 50 Hz, fail again                                        | 1221      4   1225  6m34.8s
+  the restore is exact: on target, shares by gain, every limit to the bit (21.1)    |  108      1    109    20.8s
+  per piece across a split: one piece down to a floor, the other up to a cap        |           1      1     0.0s
+  a restore can be refused where the settle answers (21.2)                          |    7             7    18.1s
+  Pmin honoured on the way down; a unit below zero is flagged (D3)                  |    6             6     0.4s
+  line first, nothing to restore: A then B IS both at once (DC)                     |  379      1    380     1.8s
+  AC: the restore's losses identity, and ac_powerflow gives the restored state back |  619           619     1.7s
+  order (21.4): the orders differ by what the first loss alone would settle to      |           1      1     0.1s
+  the detailed tier run from the restored model settles where the screen says       |  100           100  5m51.5s
+  names and refusals                                                                |    2             2     0.3s
+RNG of the outermost testset: Random.Xoshiro(0xd94b692dcef2ae6e, 0x5d1a6c1b102d13e9, 0xd15276a050690c7c, 0xcb6aeffd69fa7b6b, 0x97238e8e77608882)
+== S5_second_loss_restored
+Test Summary:                                                                       | Pass  Fail  Total     Time
+M10 step 5 — fail, restore 50 Hz, fail again                                        | 2174   428   2602  5m30.7s
+  the restore is exact: on target, shares by gain, every limit to the bit (21.1)    |  928          928    15.8s
+  per piece across a split: one piece down to a floor, the other up to a cap        |   12     1     13     5.2s
+  a restore can be refused where the settle answers (21.2)                          |    7            7    19.1s
+  Pmin honoured on the way down; a unit below zero is flagged (D3)                  |    6            6     0.1s
+  line first, nothing to restore: A then B IS both at once (DC)                     |  506   306    812     2.5s
+  AC: the restore's losses identity, and ac_powerflow gives the restored state back |  619          619     1.5s
+  order (21.4): the orders differ by what the first loss alone would settle to      |   24    91    115     5.7s
+  the detailed tier run from the restored model settles where the screen says       |   70    30    100  4m40.6s
+  names and refusals                                                                |    2            2     0.1s
+RNG of the outermost testset: Random.Xoshiro(0x9b02779e3023de19, 0x548264869b1c9de9, 0xeb790e51911d0b03, 0xbc40b44805201bc0, 0x57abdac1faebb123)
+restored: True

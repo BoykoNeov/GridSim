@@ -1356,3 +1356,410 @@ end
         @test !is_online(e, only(m.id for m in net.machines if m.bus === :B5 && m.P0 < 0))
     end
 end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# M10 step 5: fail, restore 50 Hz, fail again (`dc_restore`, `ac_restore`, and the two
+# sequential screens). Predictions and bands were written first:
+# `docs/evidence/gridsim-m10/step5_predictions.md`.
+#
+# The checks read the RESTORED MODEL and the equipment list, never the restore's own
+# arithmetic: a restored piece balances, its shares follow the governor gains, a unit at
+# a limit sits on it to the bit. The second loss on the restored model is the pair
+# screens' one-element case BY CONSTRUCTION (m10-context.md D11.6) — nothing here
+# pretends to check that; the detailed tier run from the restored model is the
+# independent check.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Two triangles A–B–C and D–E–F joined only by C–D, 40 MW crossing left to right. Losing
+# C–D leaves two live pieces: the left one restores DOWN (G3 meets its Pmin), the right
+# one UP (G4 meets its Pmax). Gains on the system base: G1 40, G3 20 | G2 30, G4 20; every
+# machine's D/(1/R) is the same, so damping cannot be told from gain here.
+_m10_tie() = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C, :D, :E, :F)],
+    [Branch(:AB, :A, :B, 0.10, 500.0), Branch(:BC, :B, :C, 0.12, 500.0),
+     Branch(:CA, :C, :A, 0.15, 500.0), Branch(:CD, :C, :D, 0.20, 500.0),
+     Branch(:DE, :D, :E, 0.10, 500.0), Branch(:EF, :E, :F, 0.12, 500.0),
+     Branch(:FD, :F, :D, 0.15, 500.0)],
+    [Machine(:G1, :A, 200.0, 5.0, 1.0, 0.25, 1.0, 80.0, 0.05, 150.0),
+     Machine(:G3, :C, 100.0, 4.0, 1.0, 0.25, 1.0, 30.0, 0.05, 60.0; Pmin = 20.0),
+     Machine(:G2, :D, 150.0, 4.0, 1.0, 0.25, 1.0, 50.0, 0.05, 120.0),
+     Machine(:G4, :F, 100.0, 4.0, 1.0, 0.25, 1.0, 40.0, 0.05, 45.0)],
+    [Load(:LB, :B, 70.0, 20.0, 0.0, 0.0, 1.0), Load(:LE, :E, 130.0, 30.0, 0.0, 0.0, 1.0)];
+    slack = :A)
+
+# The corner triangle with a second machine and a 30 MVA grid-forming inverter (gain 15
+# on the system base): losing G1 would give I3 17.1 MW of its 10 MW to the rating.
+_m10_inverter_cap() = NetworkModel(100.0, 50.0, [Bus(s, 230.0) for s in (:A, :B, :C)],
+    [Branch(:AB, :A, :B, 0.10, 500.0), Branch(:BC, :B, :C, 0.15, 500.0),
+     Branch(:CA, :C, :A, 0.20, 500.0)],
+    [Machine(:G1, :A, 200.0, 5.0, 1.0, 0.25, 1.0, 40.0, 0.05, 200.0),
+     Machine(:G2, :B, 100.0, 5.0, 1.0, 0.25, 1.0, 20.0, 0.05, 100.0)],
+    [Load(:LB, :B, 80.0, 20.0, 0.0, 0.0, 1.0)]; slack = :A,
+    inverters = [Inverter(:I3, :C, :grid_forming, 30.0, 20.0; K_p = 0.02)])
+
+# genmesh with G1 at 180 MW and G3 at 10 MW: losing the load-machine LB restores DOWN
+# and pushes G3 below zero — unless `Pmin` is given.
+function _m10_low_g3(; Pmin = NaN)
+    g = _m10_genmesh()
+    ms = [m.id === :G1 ? GridSim._machine_with(m; P0 = 180.0) :
+          m.id === :G3 ? GridSim._machine_with(m; P0 = 10.0, Pmin) : m for m in g.machines]
+    NetworkModel(g.S_base, g.f0, g.buses, g.branches, ms; slack = g.slack)
+end
+
+# What a restored piece must be, read off its rebuilt model and the equipment list:
+# balanced, shares by gain, every limit met to the bit, flows those of `dc_powerflow` on
+# it. Returns the number of units that moved.
+function _m10_restored_check(net::NetworkModel, rs::DCRestore, c::Int)
+    R, pc = rs.models[c], rs.pieces[c]
+    S = net.S_base
+    r = GridSim._responders(net)
+    imb(n) = sum(m.P0 for m in n.machines; init = 0.0) +
+             sum(i.P0 for i in n.inverters; init = 0.0) - sum(l.P0 for l in n.loads; init = 0.0)
+    @test abs(imb(R)) <= abs(imb(net)) + 1e-9                   # frequency on target
+    @test all(b -> b in pc.buses, (bu.id for bu in R.buses)) && length(R.buses) == length(pc.buses)
+    moved, ratio = 0, Float64[]
+    for (q, u) in pairs(r.ids)
+        u === rs.element && continue
+        net.buses[r.bus[q]].id in pc.buses || continue
+        unit = q <= r.n_machines ? only(m for m in R.machines if m.id === u) :
+                                   only(i for i in R.inverters if i.id === u)
+        orig = q <= r.n_machines ? net.machines[q] : only(i for i in net.inverters if i.id === u)
+        rs.pickup[q] == 0.0 || (moved += 1)
+        if rs.capped[q]
+            @test unit.P0 === (q <= r.n_machines ? orig.Pmax :
+                               sqrt(orig.S_rated^2 - orig.Q0^2))
+        elseif rs.floored[q]
+            @test unit.P0 === min(orig.P0, orig.Pmin)
+        elseif r.g[q] > 0.0
+            push!(ratio, rs.pickup[q] / r.g[q])
+            @test unit.P0 ≈ orig.P0 + rs.pickup[q] * S rtol = 1e-14 atol = 1e-12
+        else
+            @test rs.pickup[q] == 0.0 && unit.P0 === orig.P0     # no governor: no share
+        end
+    end
+    isempty(ratio) || @test maximum(ratio) - minimum(ratio) <= 1e-12 * maximum(abs, ratio)
+    sol = dc_powerflow(R)
+    band = 100eps() * max(maximum(abs, filter(!isnan, rs.flow); init = 0.0),
+                          maximum(abs, sol.flow; init = 0.0))
+    for (e, bid) in pairs(sol.branches)
+        @test abs(rs.flow[findfirst(br -> br.id === bid, net.branches)] - sol.flow[e]) <= band
+    end
+    return moved
+end
+
+# The AC restore's losses identity for one restored piece (step 3's `_m10_identity`,
+# with the restore's single element and its pickups): every term off the base solution,
+# the restored solution and the model.
+function _m10_restore_identity(net::NetworkModel, base::ACPowerFlow, rs::ACRestore, pc::ACPiece)
+    sol = pc.solution
+    inp(bus) = bus in pc.buses
+    vb(bus) = findfirst(==(bus), base.buses)
+    lostP = sum((m.bus === net.slack ? base.Pgen[vb(m.bus)] : m.P0 / net.S_base
+                 for m in net.machines if m.id === rs.element && inp(m.bus)); init = 0.0)
+    dload = sum(sol.Pload) - sum(base.Pload[vb(bus)] for bus in pc.buses)
+    loss_b, exp_b = 0.0, 0.0
+    for (e, br) in pairs(net.branches)
+        f, t = inp(br.from), inp(br.to)
+        f && t && (loss_b += base.loss[e])
+        f && !t && (exp_b += base.flow[e])
+        t && !f && (exp_b += base.flow_rev[e])
+    end
+    dloss = sum(sol.loss; init = 0.0) - loss_b
+    rb = GridSim._responders(net)
+    Σpk = sum((rs.pickup[q] for q in eachindex(rb.ids)
+               if inp(net.buses[rb.bus[q]].id) && rb.ids[q] !== rs.element); init = 0.0)
+    bound = length(pc.buses) * (max(base.residual, eps()) + max(sol.residual, eps()))
+    @test abs(Σpk - lostP - dload - dloss + exp_b) <= bound
+    return Σpk
+end
+
+@testset "M10 step 5 — fail, restore 50 Hz, fail again" begin
+
+    @testset "the restore is exact: on target, shares by gain, every limit to the bit (21.1)" begin
+        nets = [_M10_MESH(), _M10_CASE9(), _m10_tie(), _m10_inverter_cap(), _m10_low_g3(),
+                _m10_low_g3(Pmin = 0.0), _m10_genmesh()]
+        nrestored, nmoved = 0, 0
+        for net in nets, e in [[b.id for b in net.branches]; [m.id for m in net.machines]]
+            rs = dc_restore(net, e)
+            for c in eachindex(rs.pieces)
+                rs.models[c] === nothing && continue
+                nmoved += _m10_restored_check(net, rs, c)
+                nrestored += 1
+            end
+        end
+        @test nrestored > 0 && nmoved > 0
+        # The cap binds (mesh, G2 lost): G3 at its 45 MW to the bit, G1 takes the rest.
+        rs = dc_restore(_M10_MESH(), :G2)
+        R = only(rs.models)
+        @test only(m.P0 for m in R.machines if m.id === :G3) === 45.0
+        @test only(m.P0 for m in R.machines if m.id === :G1) ≈ 205.0 rtol = 1e-14
+        @test rs.capped == [false, false, true]
+        # Nothing binds (mesh, G3 lost): 40 MW by gain, 60 : 37.5.
+        rs = dc_restore(_M10_MESH(), :G3)
+        @test rs.pickup[1:2] .* 100 ≈ [40 * 60 / 97.5, 40 * 37.5 / 97.5] rtol = 1e-13
+        # An inverter at its rating (D11.3): I3 at 30 MW to the bit, G2 takes the rest.
+        rs = dc_restore(_m10_inverter_cap(), :G1)
+        R = only(rs.models)
+        @test only(R.inverters).P0 === 30.0 && rs.capped == [false, false, true]
+        @test only(m.P0 for m in R.machines if m.id === :G2) ≈ 50.0 rtol = 1e-14
+    end
+
+    @testset "per piece across a split: one piece down to a floor, the other up to a cap" begin
+        net = _m10_tie()
+        rs = dc_restore(net, :CD)
+        @test [pc.outcome for pc in rs.pieces] == [:restored, :restored]
+        @test [pc.buses for pc in rs.pieces] == [[:A, :B, :C], [:D, :E, :F]]
+        @test rs.pieces[1].imbalance ≈ -0.4 rtol = 1e-12        # the left exported 40 MW
+        @test rs.pieces[2].imbalance ≈ 0.4 rtol = 1e-12
+        L, Rt = rs.models
+        P(n, id) = only(m.P0 for m in n.machines if m.id === id)
+        @test P(L, :G3) === 20.0 && P(Rt, :G4) === 45.0          # the floor, the cap
+        @test P(L, :G1) ≈ 50.0 rtol = 1e-14
+        @test P(Rt, :G2) ≈ 85.0 rtol = 1e-14
+        @test findall(rs.floored) == [2] && findall(rs.capped) == [4]
+        @test [r.id for r in L.machines] == [:G1, :G3] && L.slack === :A
+        @test [r.id for r in Rt.machines] == [:G2, :G4] && Rt.slack === :D
+        # A second loss in one piece leaves the other on target, untouched.
+        s = dc_sequential_outages(net)
+        p = findfirst(==((findfirst(==(:CD), s.id), findfirst(==(:G1), s.id))), s.pairs)
+        @test s.outcome[p] === :screened
+        right = only(pc for pc in s.pieces[p] if :E in pc.buses)
+        @test right.outcome === :restored && right.Δω === 0.0
+        left = only(pc for pc in s.pieces[p] if :B in pc.buses)
+        @test left.outcome === :shared && left.Δω < 0
+    end
+
+    @testset "a restore can be refused where the settle answers (21.2)" begin
+        net = _M10_MESH()
+        rs = dc_restore(net, :G1)
+        @test only(rs.pieces).outcome === :restore_refused && only(rs.models) === nothing
+        @test isnan(only(rs.pieces).Δω) && all(==(0.0), rs.pickup)
+        @test dc_generator_outages(net).outcome[1] === :shared   # the settle answers it
+        s = dc_sequential_outages(net)
+        g1 = findfirst(==(:G1), s.id)
+        @test all(s.outcome[p] === :not_restored for (p, (a, _)) in pairs(s.pairs) if a == g1)
+        @test count(==(:not_restored), s.outcome) == 9
+        ar = ac_restore(net, :G1)
+        @test only(ar.pieces).outcome === :restore_refused && only(ar.models) === nothing
+        # Nothing with a governor: no response, by name.
+        @test only(dc_restore(_m10_bowtie(), :G1).pieces).outcome === :no_response
+    end
+
+    @testset "Pmin honoured on the way down; a unit below zero is flagged (D3)" begin
+        rs = dc_restore(_m10_low_g3(), :LB)
+        @test rs.below_zero == [:G3]
+        R = only(rs.models)
+        g3 = only(m for m in R.machines if m.id === :G3)
+        @test g3.P0 ≈ 10.0 - 130.0 * 20 / 117.5 rtol = 1e-13
+        @test g3.P0 < 0
+        rs = dc_restore(_m10_low_g3(Pmin = 0.0), :LB)
+        @test isempty(rs.below_zero) && rs.floored[findfirst(==(:G3), [m.id for m in _m10_genmesh().machines])]
+        @test only(m.P0 for m in only(rs.models).machines if m.id === :G3) === 0.0
+        # After the second loss's settle too: G2 then LB on the low-G3 grid.
+        s = dc_sequential_outages(_m10_low_g3())
+        p = findfirst(==((findfirst(==(:G2), s.id), findfirst(==(:LB), s.id))), s.pairs)
+        @test s.outcome[p] === :screened && :G3 in s.below_zero[p]
+    end
+
+    @testset "line first, nothing to restore: A then B IS both at once (DC)" begin
+        for (net, expect) in ((_M10_MESH(), 63), (_M10_CASE9(), 66))
+            s, pr = dc_sequential_outages(net), dc_pair_outages(net)
+            n = 0
+            for (p, (a, b)) in pairs(s.pairs)
+                (s.kind[a] === :branch && length(s.restore[a].pieces) == 1) || continue
+                @test s.restore[a].pieces[1].imbalance === 0.0 && all(==(0.0), s.restore[a].pickup)
+                q = findfirst(==((min(a, b), max(a, b))), pr.pairs)
+                ls = Dict(Set(pc.buses) => pc for pc in s.pieces[p] if pc.kind === :live)
+                lp = Dict(Set(pc.buses) => pc for pc in pr.pieces[q] if pc.kind === :live)
+                @test keys(ls) == keys(lp)
+                scale = max(maximum(abs, filter(!isnan, pr.flow[q]); init = 0.0),
+                            maximum((abs(pc.Δω) for pc in values(lp) if !isnan(pc.Δω)); init = 0.0))
+                band = 100eps() * max(scale, 1.0)
+                for k in keys(lp)
+                    @test ls[k].outcome === lp[k].outcome
+                    @test (isnan(ls[k].Δω) && isnan(lp[k].Δω)) || abs(ls[k].Δω - lp[k].Δω) <= band
+                end
+                @test maximum(abs, s.pickup[p] .- pr.pickup[q]) <= band
+                @test all(isnan(x) && isnan(y) || abs(x - y) <= band
+                          for (x, y) in zip(s.flow[p], pr.flow[q]))
+                n += 1
+            end
+            @test n == expect
+        end
+    end
+
+    @testset "AC: the restore's losses identity, and ac_powerflow gives the restored state back" begin
+        nrestored = 0
+        for f in (_M10_MESH, _M10_CASE9), loads in (:constant_power, :default)
+            net = f(; loads)
+            base = ac_powerflow(net)
+            for e in [[b.id for b in net.branches]; [m.id for m in net.machines]]
+                rs = ac_restore(net, e)
+                for (c, pc) in pairs(rs.pieces)
+                    pc.solution === nothing && continue
+                    @test pc.Δω === 0.0
+                    Σpk = _m10_restore_identity(net, base, rs, pc)
+                    @test Σpk != 0.0                             # every loss moves something
+                    b = rs.bases[c]
+                    @test b !== nothing
+                    b === nothing && continue
+                    for (v, bus) in pairs(pc.solution.buses)
+                        j = findfirst(==(bus), b.buses)
+                        @test abs(pc.solution.Vm[v] - b.Vm[j]) <= _M10_B
+                        @test abs(pc.solution.Pgen[v] - b.Pgen[j]) <= _M10_B
+                    end
+                    nrestored += 1
+                end
+            end
+        end
+        @test nrestored > 0
+    end
+
+    @testset "order (21.4): the orders differ by what the first loss alone would settle to" begin
+        # Written AFTER the table (step5_pairs.out.txt) and the probe that explained it
+        # (step5_offset_probe.out.txt). Restoring cancels the first loss's own settled
+        # deviation before the second, so per live piece, with no governor capped,
+        #     Δω(both at once) − Δω(A then B) = −Σ(restore pickups after A) / Σ(1/R + D),
+        # both sums over the piece's surviving units. Exact in DC; in AC exact to the
+        # solver on case9, whose machines all have the same D·R — restoring and settling
+        # then move them in the same proportions — and NOT on the mesh, whose do not.
+        cases = [(_M10_CASE9(), :dc, 39, 1e-12), (_M10_MESH(), :dc, 7, 1e-12),
+                 (_M10_CASE9(loads = :constant_power), :ac, 26, 1e-10),
+                 (_M10_CASE9(loads = :default), :ac, 41, 1e-10),
+                 (_M10_MESH(loads = :constant_power), :ac, 8, 1e-3),
+                 (_M10_MESH(loads = :default), :ac, 9, 1e-3)]
+        for (net, fid, expect, tol) in cases
+            seq = fid === :dc ? dc_sequential_outages(net) : ac_sequential_outages(net)
+            sim = fid === :dc ? dc_pair_outages(net) : ac_pair_outages(net)
+            r = GridSim._responders(net)
+            ok(pc) = !isnan(pc.Δω) && pc.outcome === (fid === :dc ? :shared : :secure)
+            n, worst = 0, 0.0
+            for (p, (a, b)) in pairs(seq.pairs)
+                seq.outcome[p] === :screened || continue
+                q = findfirst(==((min(a, b), max(a, b))), sim.pairs)
+                ls = Dict(Set(pc.buses) => pc for pc in seq.pieces[p] if pc.kind === :live)
+                lb = Dict(Set(pc.buses) => pc for pc in sim.pieces[q] if pc.kind === :live)
+                (keys(ls) == keys(lb) && all(ok, values(ls)) && all(ok, values(lb))) || continue
+                (any(seq.capped[p]) || any(sim.capped[q])) && continue
+                for (k, pc) in ls
+                    u = [i for i in eachindex(r.ids) if net.buses[r.bus[i]].id in k &&
+                         !(r.ids[i] in (seq.id[a], seq.id[b]))]
+                    pred = -sum(seq.restore[a].pickup[u]) / sum(r.g[u] .+ r.d[u])
+                    pred == 0.0 && continue
+                    worst = max(worst, abs(lb[k].Δω - pc.Δω - pred) / abs(pred))
+                    n += 1
+                end
+            end
+            @test n == expect
+            @test worst <= tol
+            # The mesh's AC gap is the law only approximately: its D·R differ (registered).
+            fid === :ac && net.buses[1].id === :A && @test worst > 1e-5
+        end
+        # DC, both report grids: wherever both orders were screened the WORSE order is
+        # both at once (a line first restores nothing; every machine pair caps), and the
+        # final dispatch of the two orders is the same on case9 — whose equal D·R hide
+        # the difference between restoring and settling — but not on the mesh.
+        for (net, nboth, nsame) in ((_M10_CASE9(), 63, 63), (_M10_MESH(), 36, 22))
+            seq, sim = dc_sequential_outages(net), dc_pair_outages(net)
+            idx = Dict(ab => p for (p, ab) in pairs(seq.pairs))
+            worstΔω(ps) = maximum((abs(pc.Δω) for pc in ps if pc.kind === :live); init = 0.0)
+            n, same = 0, 0
+            for (q, (a, b)) in pairs(sim.pairs)
+                pab, pba = idx[(a, b)], idx[(b, a)]
+                (seq.outcome[pab] === :screened && seq.outcome[pba] === :screened) || continue
+                w = max(worstΔω(seq.pieces[pab]), worstΔω(seq.pieces[pba]))
+                @test abs(w - worstΔω(sim.pieces[q])) <= 1e-12 * max(w, 1e-300)
+                same += maximum(abs, seq.pickup[pab] .- seq.pickup[pba]) <= 1e-11
+                n += 1
+            end
+            @test n == nboth && same == nsame
+        end
+    end
+
+    @testset "the detailed tier run from the restored model settles where the screen says" begin
+        # Hurdle 21's only independent check (not cuttable): the detailed tier initialised on
+        # the AC restored model, the second element tripped, each piece's settled frequency
+        # against the sequential screen's through step 4's per-piece losses identity. The
+        # cases are the spike's (`step5_dynamic_spike.jl`), chosen from the screen's table —
+        # final pieces :secure, nothing capped; on constant power L78→G2 and L89→G2 are
+        # refused at the trip instant in this tier (B2 sags to 0.879 / 0.894 pu, field flux
+        # against V_set — the gap M9 and step 4 met), so they are not here.
+        cases = [(:default, :L78, :G2), (:default, :L56, :G3), (:default, :L56, :L78),
+                 (:default, :L45, :L67), (:constant_power, :L56, :G3),
+                 (:constant_power, :L56, :L78)]
+        nchecked, updown = 0, 0
+        for (loads, a, b) in cases
+            net = _M10_CASE9(; loads)
+            s = ac_sequential_outages(net)
+            ia, ib = findfirst(==(a), s.id), findfirst(==(b), s.id)
+            p = findfirst(==((ia, ib)), s.pairs)
+            @test s.outcome[p] === :screened
+            rs = s.restore[ia]
+            c = only(i for (i, pc) in pairs(rs.pieces) if pc.kind === :live)
+            R = rs.models[c]
+            live = [pc for pc in s.pieces[p] if pc.kind === :live]
+            @test all(pc -> pc.outcome === :secure, live) && !any(s.capped[p])
+            eng = _m10_de(R; base = rs.bases[c], tol = 1e-10, solver = OrdinaryDiffEq.Rodas5P())
+            solve!(eng, (0.0, 1.0); saveat = 0.5)
+            inject!(eng, s.kind[ib] === :machine ? TripGenerator(b) :
+                         TripElements(lines = [(br.from, br.to) for br in R.branches if br.id === b]))
+            solve!(eng, (1.0, 300.0); saveat = 0.5)
+            ω300 = [_m10_piece_identity(eng, R, pc).ω for pc in live]
+            solve!(eng, (300.0, 400.0); saveat = 0.5)
+            ωs = Float64[]
+            for (i, pc) in pairs(live)
+                r = _m10_piece_identity(eng, R, pc)
+                @test abs(r.ω - ω300[i]) <= 1e-10                  # settled
+                @test r.lhs ≈ r.rhs rtol = 1e-6
+                @test abs(r.lhs) > 1e3 * abs(r.lhs - r.rhs)        # not 0 ≈ 0
+                if length(live) == 2                               # per piece, or not at all
+                    @test abs(r.lhs - r.rhs_Σw) > 1e3 * abs(r.lhs - r.rhs)
+                    @test abs(r.lhs - r.rhs_L) > 1e3 * abs(r.lhs - r.rhs)
+                end
+                push!(ωs, r.ω)
+                nchecked += 1
+            end
+            length(ωs) == 2 && (updown += prod(sign, ωs) < 0)
+        end
+        @test nchecked == 9 && updown == 3      # three splits, each one piece up, one down
+    end
+
+    @testset "inverters: a grid-forming one restores to its rating, a grid-following one holds" begin
+        # AC on the inverter-cap fixture: I3 at its rating to the bit in the restored model,
+        # the identity and ac_powerflow's give-back as on the report grids.
+        net = _m10_inverter_cap()
+        base = ac_powerflow(net)
+        rs = ac_restore(net, :G1)
+        pc = only(rs.pieces)
+        @test pc.outcome === :secure && rs.capped == [false, false, true]
+        R = only(rs.models)
+        @test only(R.inverters).P0 === 30.0
+        _m10_restore_identity(net, base, rs, pc)
+        b = only(rs.bases)
+        for (v, bus) in pairs(pc.solution.buses)
+            @test abs(pc.solution.Vm[v] - b.Vm[findfirst(==(bus), b.buses)]) <= _M10_B
+        end
+        # M7's two-bus pair (the exported-surface walk's model): both screens return on both
+        # kinds (`step5_m7walk.jl`). A grid-following inverter has nothing to follow once G1
+        # or the line goes — its piece is load lost; a grid-forming one restores alone, to
+        # exactly its 100 MVA rating.
+        pair(mode) = NetworkModel(100.0, 50.0, [Bus(:B1, 230.0), Bus(:B2, 230.0)],
+            [Branch(:L12, :B1, :B2, 0.2, 500.0)],
+            [Machine(:G1, :B1, 200.0, 5.0, 2.0, 0.3, 1.0, 50.0)], [Load(:D2, :B2, 100.0, 0.0)];
+            inverters = [Inverter(:I2, :B2, mode, 100.0, 50.0)])
+        for f in (dc_sequential_outages, ac_sequential_outages)
+            s = f(pair(:grid_following))
+            @test all(==(:already_lost), s.outcome)
+            @test all(rs -> any(pc -> pc.kind === :load_lost, rs.pieces), s.restore)
+            s = f(pair(:grid_forming))
+            for rs in s.restore
+                @test only(only(m for m in rs.models if m !== nothing).inverters).P0 === 100.0
+            end
+            @test s.outcome == [:already_lost, :screened]
+        end
+    end
+
+    @testset "names and refusals" begin
+        @test_throws ArgumentError dc_restore(_M10_MESH(), :nope)
+        @test_throws ArgumentError ac_restore(_M10_MESH(), :nope)
+    end
+end

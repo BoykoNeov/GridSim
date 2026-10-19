@@ -414,8 +414,11 @@ end
 
 # The branches `out` (indices, at most two) and the machines `lost` (a mask) out at
 # once, answered piece by piece: `(split, pieces, pickup, capped, flow)`, one pair's
-# entries of `DCPairOutages`. Step 5 asks it of ONE element on a restored model.
-function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
+# entries of `DCPairOutages`. Step 5 asks it of ONE element on a restored model, and,
+# with `restore` (the limits of `_restore_limits`), restores each live piece instead of
+# settling it: frequency back on target (`Δω = 0.0`), the shares by `_restore_solve`,
+# and a sixth entry, the units held at their floor.
+function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector; restore = nothing)
     (; base, topo, b, P, lines, line_pair, r, la, fa, keep, F, v_ref, busid) = ctx
     n, m = length(ctx.net.buses), length(topo.src)
     nm = r.n_machines
@@ -436,6 +439,7 @@ function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
     end
     pk = zeros(Float64, length(r.ids))
     cp = falses(length(r.ids))
+    fl = falses(length(r.ids))
     ps_out = Vector{DCPiece}(undef, npieces)
     settled = falses(npieces)
     alive = falses(length(r.ids))
@@ -446,17 +450,25 @@ function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
             for q in eachindex(r.ids)
                 alive[q] = piece[r.bus[q]] == c && !(q <= nm && lost[q])
             end
-            status, dω, pq, cq = _pickup_solve(r.g, r.d, r.h, alive, imb[c])
-            if status === :shared
+            if restore === nothing
+                status, dω, pq, cq = _pickup_solve(r.g, r.d, r.h, alive, imb[c])
+                fq = cq
+                done = status === :shared
+            else
+                status, _, pq, cq, fq = _restore_solve(r.g, restore, alive, imb[c])
+                dω = 0.0
+                done = status === :restored
+            end
+            if done
                 settled[c] = true
                 for q in eachindex(r.ids)
                     alive[q] || continue
                     pk[q] = pq[q]
                     cp[q] = cq[q]
+                    restore === nothing || (fl[q] = fq[q])
                 end
             end
-            ps_out[c] = DCPiece(bs, :live, status, imb[c], status === :shared ? dω : NaN,
-                                0.0, 0.0)
+            ps_out[c] = DCPiece(bs, :live, status, imb[c], done ? dω : NaN, 0.0, 0.0)
         elseif pkind.kind === :sources_lost
             ps_out[c] = DCPiece(bs, :sources_lost, :sources_lost, 0.0, NaN,
                                 pkind.sources + pkind.gfl, 0.0)
@@ -469,7 +481,8 @@ function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
     end
     live = Bool[ps_out[c].kind === :live for c in 1:npieces]
     if !split && settled[1] && length(out) == 2
-        return split, ps_out, pk, collect(cp), copy(lines.flow[line_pair[(out[1], out[2])]])
+        return split, ps_out, pk, collect(cp), copy(lines.flow[line_pair[(out[1], out[2])]]),
+               collect(fl)
     end
     # The post-outage injections: the base, less every lost machine, plus every
     # pickup; nothing in a dead piece or in one that did not settle.
@@ -504,7 +517,7 @@ function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
             fill!(post, NaN)
         end
         # (A whole grid with no load or no source is dead: it carries nothing.)
-        return split, ps_out, pk, collect(cp), post
+        return split, ps_out, pk, collect(cp), post, collect(fl)
     end
     # A split: one reference per piece — the model's own where it lies in the
     # piece, else the piece's first bus.
@@ -522,7 +535,7 @@ function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
         post[e] = settled[c] ? b[e] * (θ[topo.src[e]] - θ[topo.dst[e]]) :
                   live[c] ? NaN : 0.0
     end
-    return split, ps_out, pk, collect(cp), post
+    return split, ps_out, pk, collect(cp), post, collect(fl)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -673,8 +686,12 @@ end
 
 # The branches `out` and the machines `lost_ids` (indices; at most two elements in all)
 # out at once, answered piece by piece: `(split, pieces, pickup, capped)`, one pair's
-# entries of `ACPairOutages`. Step 5 asks it of ONE element on a restored model.
-function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int})
+# entries of `ACPairOutages`. Step 5 asks it of ONE element on a restored model, and,
+# with `restore` (the limits of `_restore_limits`), restores each live piece instead of
+# settling it (`_ac_restore_piece`; `Δω = 0.0` where it solved, and a fifth entry, the
+# units held at their floor). A restore after lines alone goes through the shared solve
+# too: the change in losses is shared by gain, not left to the slack (D11.8).
+function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int}; restore = nothing)
     (; net, base, topo, r, la, fa, v_slack, P_base, busid) = ctx
     n, nm = length(net.buses), r.n_machines
     lost = falses(nm)
@@ -683,6 +700,7 @@ function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int})
     split = npieces > 1
     pk = zeros(Float64, length(r.ids))
     cp = falses(length(r.ids))
+    fl = falses(length(r.ids))
     ps_out = Vector{ACPiece}(undef, npieces)
     for c in 1:npieces
         vs = findall(==(c), piece)
@@ -695,7 +713,7 @@ function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int})
                                 nothing, _OverEntry[], _LowEntry[], :none)
             continue
         end
-        if !split && isempty(lost_ids)
+        if !split && isempty(lost_ids) && restore === nothing
             # Lines only, the grid whole: M8's line screen on the rebuilt model.
             o = _ac_powerflow_outcome(_without_branch(net, out))
             ps_out[c] = _ac_live_piece(bs, o, NaN,
@@ -704,15 +722,24 @@ function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int})
         end
         ref = piece[v_slack] == c ? v_slack : vs[1]
         st = _ac_piece_setup(net, base, lost_ids, vs, out, findfirst(==(ref), vs))
-        o = _ac_piece_solve(net, st)
+        if restore === nothing
+            o = _ac_piece_solve(net, st)
+            Δω = o.Δω
+        else
+            o = _ac_restore_piece(net, st, restore)
+            Δω = isnan(o.Δω) ? NaN : 0.0
+            for q in eachindex(r.ids)
+                st.alive[q] && (fl[q] = o.floored[q])
+            end
+        end
         for q in eachindex(r.ids)
             st.alive[q] || continue
             pk[q] = o.pickup[q]
             cp[q] = o.capped[q]
         end
-        ps_out[c] = _ac_live_piece(bs, o, o.Δω, o.reason)
+        ps_out[c] = _ac_live_piece(bs, o, Δω, o.reason)
     end
-    return split, ps_out, pk, collect(cp)
+    return split, ps_out, pk, collect(cp), collect(fl)
 end
 
 """
@@ -815,4 +842,580 @@ function compare_pair_screens(net::NetworkModel, dc::DCPairOutages, ac::ACPairOu
     end
     return PairScreenComparison(copy(dc.pairs), copy(dc.splits), dc_outcome, dc_over,
                                 ac_over, class, Δω_dc, Δω_ac, reactive, real)
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5: fail, restore 50 Hz, fail again (Hurdle 21; m10-context.md D3, D11).
+#
+# THE RESTORE IS M8's BEND WALK WITH THE DAMPING ZEROED. Frequency ends back on target,
+# so `−Δω·D` carries nothing and each unit moves by `min(x·gᵢ, upᵢ)`, `x` the restore
+# level (pu power per unit gain — NOT a frequency). A surplus is the same walk mirrored,
+# each unit going down by at most its room to `Pmin` (`Inf` where `Pmin` is not given).
+# Exact, no root-finder; a piece whose room in that direction is short of its imbalance
+# has no restored state and is refused by name (Hurdle 21.2) — never replaced by the
+# settled state, which damping always provides.
+#
+# RESTORING IS A DISPATCH (D3), so a unit is held to its dispatch limits: a machine to
+# `Pmax` (its headroom, as in the settle) and to `Pmin`; a grid-forming inverter to its
+# rating, `±√(S_rated² − Q0²)` (D11.3 — the settle gives it no cap).
+#
+# EACH LIVE PIECE IS RESTORED AND REBUILT AS ITS OWN MODEL (D11.1): `NetworkModel` refuses
+# a disconnected network. The second loss is then the pair screens' one-element case on
+# that model (D11.6) — by construction, so no test pretends to check it; the checks are
+# the restore's own exactness, its losses identity in AC, `ac_powerflow` on the rebuilt
+# model giving the restored state back, and the detailed tier run from it.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The restore's limits per responder, pu on `S_base`, in `_responders` order (D11.2–3):
+# `up` — a machine's headroom, a grid-forming inverter's room to its rating; `down` — a
+# machine's room to its `Pmin` (`Inf` where not given, `0.0` where `P0` already sits
+# below it), an inverter's room to minus its rating.
+function _restore_limits(net::NetworkModel, r)
+    up = copy(r.h)
+    down = fill(Inf, length(r.ids))
+    for (k, mc) in pairs(net.machines)
+        isnan(mc.Pmin) || (down[k] = max(0.0, mc.P0 - mc.Pmin) / net.S_base)
+    end
+    ia = _inverter_arrays(net)
+    for (j, kk) in pairs(ia.k)
+        pcap = _restore_inverter_cap(net.inverters[kk])
+        up[r.n_machines + j] = max(0.0, pcap - net.inverters[kk].P0) / net.S_base
+        down[r.n_machines + j] = max(0.0, net.inverters[kk].P0 + pcap) / net.S_base
+    end
+    return (; up, down)
+end
+
+# The real power, MW, at which a grid-forming inverter meets its rating at its `Q0`:
+# the bound `Inverter`'s own constructor holds `P0` to.
+_restore_inverter_cap(iv::Inverter) = sqrt(max(iv.S_rated^2 - iv.Q0^2, 0.0))
+
+# The restored change in output of every responder marked `alive`, for an imbalance
+# `imb` (pu; negative: a surplus): `(status, λ, pickup, capped, floored)`. `status` is
+# `:restored`, `:restore_refused` (the room in that direction is short of the
+# imbalance, Hurdle 21.2) or `:no_response` (no governor in the piece); `λ` is the
+# restore level `x`, `NaN` for a refusal.
+function _restore_solve(g::Vector{Float64}, lim, alive::AbstractVector{Bool}, imb::Float64)
+    n = length(g)
+    d0 = zeros(Float64, n)          # frequency on target: damping carries nothing (D3)
+    if imb >= 0.0
+        status, Δω, pk, cp = _pickup_solve(g, d0, lim.up, alive, imb)
+        fl, λ = falses(n), 0.0 - Δω
+    else
+        # Mirrored: each unit goes DOWN by min(x′·g, room), and the level is −x′.
+        status, Δω, pk, fl = _pickup_solve(g, d0, lim.down, alive, -imb)
+        pk, cp, λ = -pk, falses(n), Δω + 0.0
+    end
+    status === :shared && return (:restored, λ, pk, cp, fl)
+    return (status === :reserve_exhausted ? :restore_refused : status, NaN, pk, cp, fl)
+end
+
+# The AC restore of one piece (D11.8): the shared solve of `st` with the damping zeroed
+# and the restore's caps, its `x` the restore level. A unit that reaches its floor stops
+# responding and its bus's output drops by its room, then the piece is solved again —
+# done here, so M8's shared solve is not touched. Returns `_ac_piece_solve`'s fields
+# with the restore's outcomes (`:restore_refused` for `:reserve_exhausted`, and for
+# `:no_response` once floors are what left nothing responding), the floored units, and
+# the level `λ`.
+function _ac_restore_piece(net::NetworkModel, st, lim)
+    r0 = st.r
+    nr = length(r0.ids)
+    floored = falses(nr)
+    d0 = zeros(Float64, nr)
+    for _ in 0:nr                    # each round floors one more unit at least
+        g = copy(r0.g)
+        Pbase = copy(st.Pbase)
+        for i in 1:nr
+            floored[i] || continue
+            g[i] = 0.0
+            Pbase[r0.bus[i]] -= lim.down[i]
+        end
+        o = _ac_piece_solve(net, merge(st, (; Pbase, r = merge(r0, (; g, d = d0, h = lim.up)))))
+        if isnan(o.Δω)
+            out = o.outcome === :reserve_exhausted ||
+                  (o.outcome === :no_response && any(floored)) ? :restore_refused : o.outcome
+            return merge(o, (; outcome = out, floored = collect(floored), λ = NaN))
+        end
+        x = -o.Δω
+        newly = [i for i in 1:nr if st.alive[i] && !floored[i] && r0.g[i] > 0.0 &&
+                 isfinite(lim.down[i]) && x * r0.g[i] < -lim.down[i] - _GOV_CAP_TOL]
+        if isempty(newly)
+            pickup = copy(o.pickup)
+            for i in 1:nr
+                floored[i] && (pickup[i] = -lim.down[i])
+            end
+            back = [i for i in 1:nr if floored[i] && x * r0.g[i] > -lim.down[i] + _GOV_CAP_TOL]
+            isempty(back) || return merge(o, (; outcome = :no_solution, solution = nothing,
+                detail = (reason = :backoff, message = "ac_sequential_outages: " *
+                    "$(r0.ids[first(back)]) was held at its floor and then restored with " *
+                    "its share back above it — it should have come off its floor. " *
+                    "Refused rather than answered wrongly (m10-context.md D11.8)."),
+                reason = :backoff, pickup, floored = collect(floored), λ = x))
+            return merge(o, (; pickup, floored = collect(floored), λ = x))
+        end
+        floored[newly] .= true
+    end
+    error("_ac_restore_piece: more floor rounds than units — unreachable")
+end
+
+# The element `e` of the model's M8 rows, by id; refused by name if it is not one, or
+# names both a branch and a machine.
+function _element_index(id::Vector{Symbol}, e::Symbol, who::AbstractString)
+    hits = findall(==(e), id)
+    length(hits) == 1 && return hits[1]
+    throw(ArgumentError(isempty(hits) ?
+        "$who: :$e is neither a branch nor a machine of this model." :
+        "$who: :$e names both a branch and a machine; name them apart."))
+end
+
+# The piece (index into `pieces`) holding element `e`: a branch by its `from` bus, a
+# machine by its bus. Only the first element is out, so a branch's two ends share one.
+function _element_piece(net::NetworkModel, kind::Vector{Symbol}, e::Int, pieces)
+    bus = kind[e] === :branch ? net.branches[e].from :
+          net.machines[e - length(net.branches)].bus
+    return findfirst(pc -> bus in pc.buses, pieces)
+end
+
+# The responders marked `keep` whose output, base plus pickup, is below zero while the
+# base was not: a source pushed to absorbing (D3).
+_below_zero(r, Pbase::Vector{Float64}, pk::Vector{Float64}, keep::AbstractVector{Bool}) =
+    Symbol[r.ids[q] for q in eachindex(r.ids) if keep[q] && Pbase[q] >= 0.0 &&
+           Pbase[q] + pk[q] < 0.0]
+
+# Piece `vs` (vertices, ascending) of `net` with the branches `out` and the machines
+# `lost` gone, every unit at its restored output: the model the second loss is screened
+# on (D11.1, D11.4–5). `pk`, `cp`, `fl` are per responder of `net`.
+#
+# With `balance_slack` (the AC restore) the slack's one source is then given the
+# schedule that balances the piece: `NetworkModel` holds a schedule to a lossless balance,
+# and the AC pickups also cover the change in losses and load draw, which a schedule
+# leaves to the slack — as the original model's schedule did. `ac_powerflow` reads every
+# OTHER unit's schedule, so it solves the same equations as the restore and gives its
+# state back. A slack with more than one source, or a balancing schedule past its `Pmax`,
+# is refused by the constructors; the caller reports it.
+function _restored_model(net::NetworkModel, r, vs::Vector{Int}, out::Vector{Int},
+                         lost::AbstractVector{Bool}, pk, cp, fl; balance_slack::Bool = false)
+    S = net.S_base
+    inp = falses(length(net.buses))
+    inp[vs] .= true
+    at(bus) = inp[net.bus_index[bus]]
+    brs = Branch[br for (e, br) in pairs(net.branches) if !(e in out) && at(br.from)]
+    ms = Machine[]
+    for (k, mc) in pairs(net.machines)
+        (lost[k] || !at(mc.bus)) && continue
+        P = cp[k] ? mc.Pmax :
+            fl[k] ? min(mc.P0, mc.Pmin) :
+            min(mc.P0 + pk[k] * S, mc.Pmax)
+        isnan(mc.Pmin) || cp[k] || fl[k] || (P = max(P, min(mc.P0, mc.Pmin)))
+        push!(ms, _machine_with(mc; P0 = P))
+    end
+    ia = _inverter_arrays(net)
+    ivs = Inverter[]
+    for (kk, iv) in pairs(net.inverters)
+        at(iv.bus) || continue
+        j = findfirst(==(kk), ia.k)
+        if j === nothing
+            push!(ivs, iv)                 # grid-following: holds its schedule
+            continue
+        end
+        q, cap = r.n_machines + j, _restore_inverter_cap(iv)
+        P = cp[q] ? cap : fl[q] ? -cap : clamp(iv.P0 + pk[q] * S, -cap, cap)
+        push!(ivs, _inverter_with(iv; P0 = P))
+    end
+    src(b) = any(mc -> mc.bus === b && mc.P0 >= 0.0, ms) ||
+             any(iv -> iv.bus === b && iv.mode === :grid_forming, ivs)
+    bs = net.buses[vs]
+    first_src = something(findfirst(bu -> src(bu.id), bs), 1)
+    slack = at(net.slack) && src(net.slack) ? net.slack : bs[first_src].id
+    ls = Load[l for l in net.loads if at(l.bus)]
+    if balance_slack
+        ΣP = sum(mc.P0 for mc in ms; init = 0.0) + sum(iv.P0 for iv in ivs; init = 0.0) -
+             sum(l.P0 for l in ls; init = 0.0)
+        k = findall(mc -> mc.bus === slack, ms)
+        j = findall(iv -> iv.bus === slack && iv.mode === :grid_forming, ivs)
+        if length(k) + length(j) == 1
+            isempty(k) ? (ivs[j[1]] = _inverter_with(ivs[j[1]]; P0 = ivs[j[1]].P0 - ΣP)) :
+                         (ms[k[1]] = _machine_with(ms[k[1]]; P0 = ms[k[1]].P0 - ΣP))
+        end
+    end
+    return NetworkModel(S, net.f0, bs, brs, ms, ls; slack, inverters = ivs)
+end
+
+"""
+    DCRestore
+
+The grid after one element is lost and frequency is restored to target in every live
+piece ([`dc_restore`](@ref); `m10-context.md` D3, D11).
+
+  - `element` — the element lost
+  - `pieces` — every piece left ([`DCPiece`](@ref)); a live piece's `outcome` is
+    `:restored`, `:restore_refused` (its room in that direction is short of its
+    imbalance — the settle would still answer, by damping) or `:no_response` (no
+    governor in it), and its `Δω` is `0.0` where restored, `NaN` otherwise
+  - `pickup` — each responder's restored change in output, pu, in proportion to its
+    governor gain, capped at its ceiling (`Pmax`; an inverter's rating) and held at its
+    floor (`Pmin` when given); zero outside a restored piece
+  - `capped`, `floored` — at the ceiling, at the floor
+  - `flow` — the restored DC flows, pu, every branch in model order; `0.0` on the lost
+    branch and inside a dead piece, `NaN` inside a live piece not restored
+  - `below_zero` — responders whose restored output is below zero although their
+    schedule was not: a generator absorbing power. In the restored model such a machine
+    has `P0 < 0`, and is read as a load there.
+  - `models` — per piece, the restored piece as its own model (every unit at its
+    restored output; capped units at exactly `Pmax`), `nothing` where nothing was restored
+"""
+struct DCRestore
+    element::Symbol
+    pieces::Vector{DCPiece}
+    pickup::Vector{Float64}
+    capped::Vector{Bool}
+    floored::Vector{Bool}
+    flow::Vector{Float64}
+    below_zero::Vector{Symbol}
+    models::Vector{Union{NetworkModel,Nothing}}
+end
+
+function _dc_restore(ctx, lim, kind::Vector{Symbol}, id::Vector{Symbol}, e::Int)
+    net, r = ctx.net, ctx.r
+    m, nm = length(ctx.topo.src), r.n_machines
+    out = e <= m ? [e] : Int[]
+    lost = falses(nm)
+    e > m && (lost[e - m] = true)
+    _, pieces, pk, cp, flow, fl = _dc_outage_set(ctx, out, lost; restore = lim)
+    models = Union{NetworkModel,Nothing}[
+        pc.outcome === :restored ?
+        _restored_model(net, r, sort!([net.bus_index[b] for b in pc.buses]), out, lost,
+                        pk, cp, fl) : nothing
+        for pc in pieces]
+    keep = [!(q <= nm && lost[q]) for q in eachindex(r.ids)]
+    return DCRestore(id[e], pieces, pk, cp, fl, flow, _below_zero(r, r.P, pk, keep), models)
+end
+
+"""
+    dc_restore(net::NetworkModel, element::Symbol) -> DCRestore
+
+Lose one element of `net` — a branch or a machine, by id — and restore frequency to
+target in every live piece left, with the linear power flow ([`DCRestore`](@ref)).
+
+Each live piece's imbalance (as [`dc_pair_outages`](@ref) reads it: the lost schedule
+inside it plus what it imported across the lost branch) is made up by its own units in
+proportion to their governor gain `1/R` (a grid-forming inverter's `1/K_p`), each up to
+its ceiling and the rest re-shared; a surplus the same way downward, each unit to its
+`Pmin` when given (`m10-context.md` D3, D11). Damping takes no part. Exact — no
+root-finder, no tolerance. A piece without the room is refused by name, never answered
+with its settled state.
+"""
+function dc_restore(net::NetworkModel, element::Symbol)
+    ctx = _dc_outage_context(net)
+    kind, id, _, _ = _pair_elements(net)
+    return _dc_restore(ctx, _restore_limits(net, ctx.r), kind, id,
+                       _element_index(id, element, "dc_restore"))
+end
+
+"""
+    DCSequentialOutages
+
+Every ordered pair of elements of a model lost one after the other, with frequency
+restored to target in between, screened with the linear power flow
+([`dc_sequential_outages`](@ref)). The pieces, pickups, capped flags and flows describe
+the grid **after both losses**, in [`DCPairOutages`](@ref)'s shape, so the two timings
+compare pair for pair.
+
+  - `base`, `kind`, `id` — as in `DCPairOutages`
+  - `restore` — per element, the grid after it alone, restored ([`DCRestore`](@ref))
+  - `pairs` — `(a, b)`, `a ≠ b`: `a` lost first, then `b`; lexicographic
+  - `outcome` — `:screened`; `:already_lost` (`b` sits in a piece `a` left dead, or is
+    `a`'s own collapse twin); `:not_restored` (`b`'s piece had no restored state to start
+    from — the final fields are then the restore's)
+  - `pieces` — every piece left after both, ordered by first bus: the restore's pieces,
+    the one holding `b` replaced by what losing `b` left of it. A piece the second loss
+    did not touch keeps its restored `Δω = 0.0` and outcome `:restored`.
+  - `pickup` — each responder's change in output from the BASE, restore plus settle, pu;
+    zero for a lost machine and outside a live piece that answered
+  - `capped` — at its ceiling after both; `flow` — every branch, model order
+  - `below_zero` — responders whose final output is below zero although their schedule
+    was not
+"""
+struct DCSequentialOutages
+    base::DCPowerFlow
+    kind::Vector{Symbol}
+    id::Vector{Symbol}
+    restore::Vector{DCRestore}
+    pairs::Vector{Tuple{Int,Int}}
+    outcome::Vector{Symbol}
+    pieces::Vector{Vector{DCPiece}}
+    pickup::Vector{Vector{Float64}}
+    capped::Vector{Vector{Bool}}
+    flow::Vector{Vector{Float64}}
+    below_zero::Vector{Vector{Symbol}}
+end
+
+# The pieces of `net` after both losses, ordered by first bus.
+_by_first_bus(net::NetworkModel, pieces) =
+    sort(pieces; by = pc -> minimum(net.bus_index[b] for b in pc.buses))
+
+# `true` for every responder of `net` inside a live piece that passes `ok`, and not
+# among the machines `lost_ids` — the pair screens' rule for which entries of the
+# pickups and capped flags are kept.
+function _answered_mask(net::NetworkModel, r, pieces, lost_ids::Vector{Int}, ok)
+    keep = falses(length(r.ids))
+    for pc in pieces
+        (pc.kind === :live && ok(pc)) || continue
+        for q in eachindex(r.ids)
+            q in lost_ids && continue
+            net.buses[r.bus[q]].id in pc.buses && (keep[q] = true)
+        end
+    end
+    return keep
+end
+
+"""
+    dc_sequential_outages(net::NetworkModel) -> DCSequentialOutages
+
+Screen every ordered pair of elements of `net` — branches and machines, M8's rows —
+lost one after the other: the first lost, frequency restored to target in every live
+piece ([`dc_restore`](@ref)), then the second lost and the grid left to settle by droop
+and damping as [`dc_pair_outages`](@ref) settles it, on the restored piece rebuilt as
+its own model. Every outcome is reported, never thrown (`m8-context.md` D3).
+
+The second loss is the pair screen's one-element case on the restored model, by
+construction (`m10-context.md` D11.6). Compare with `dc_pair_outages` for both at once.
+"""
+function dc_sequential_outages(net::NetworkModel)
+    ctx = _dc_outage_context(net)
+    r = ctx.r
+    lim = _restore_limits(net, r)
+    kind, id, _, _ = _pair_elements(net)
+    N, m = length(id), length(net.branches)
+    restores = [_dc_restore(ctx, lim, kind, id, e) for e in 1:N]
+    ctxs = [Any[mdl === nothing ? nothing : _dc_outage_context(mdl) for mdl in rs.models]
+            for rs in restores]
+    rid = Dict(u => q for (q, u) in pairs(r.ids))
+    bid = Dict(br.id => e for (e, br) in pairs(net.branches))
+    ordered = [(a, b) for a in 1:N for b in 1:N if a != b]
+    np = length(ordered)
+    outcome = Vector{Symbol}(undef, np)
+    pieces = Vector{Vector{DCPiece}}(undef, np)
+    pickup = Vector{Vector{Float64}}(undef, np)
+    capped = Vector{Vector{Bool}}(undef, np)
+    flow = Vector{Vector{Float64}}(undef, np)
+    below = Vector{Vector{Symbol}}(undef, np)
+    for (p, (a, b)) in pairs(ordered)
+        rs = restores[a]
+        c = _element_piece(net, kind, b, rs.pieces)
+        if rs.models[c] === nothing
+            outcome[p] = rs.pieces[c].kind === :live ? :not_restored : :already_lost
+            pieces[p], pickup[p], capped[p], flow[p] = rs.pieces, rs.pickup, rs.capped, rs.flow
+            below[p] = rs.below_zero
+            continue
+        end
+        outcome[p] = :screened
+        R, cx = rs.models[c], ctxs[a][c]
+        out2 = kind[b] === :branch ? [findfirst(br -> br.id === id[b], R.branches)] : Int[]
+        lost2 = falses(length(R.machines))
+        kind[b] === :machine && (lost2[findfirst(mc -> mc.id === id[b], R.machines)] = true)
+        _, ps2, pk2, cp2, fw2 = _dc_outage_set(cx, out2, lost2)
+        pieces[p] = _by_first_bus(net, [rs.pieces[1:c-1]; rs.pieces[c+1:end]; ps2])
+        pk, cp, fw = copy(rs.pickup), copy(rs.capped), copy(rs.flow)
+        for (q2, u) in pairs(cx.r.ids)
+            pk[rid[u]] += pk2[q2]
+            cp[rid[u]] = cp2[q2]
+        end
+        for (e2, br) in pairs(R.branches)
+            fw[bid[br.id]] = fw2[e2]
+        end
+        lost_ids = Int[e - m for e in (a, b) if kind[e] === :machine]
+        keep = _answered_mask(net, r, pieces[p], lost_ids,
+                              pc -> pc.outcome === :shared || pc.outcome === :restored)
+        pk[.!keep] .= 0.0
+        cp[.!keep] .= false
+        pickup[p], capped[p], flow[p] = pk, cp, fw
+        below[p] = _below_zero(r, r.P, pk, keep)
+    end
+    return DCSequentialOutages(ctx.base, kind, id, restores, ordered, outcome, pieces,
+                               pickup, capped, flow, below)
+end
+
+"""
+    ACRestore
+
+The grid after one element is lost and frequency is restored to target in every live
+piece, with the nonlinear power flow ([`ac_restore`](@ref); `m10-context.md` D11).
+
+  - `element` — the element lost
+  - `pieces` — every piece left ([`ACPiece`](@ref)); a live piece's `outcome` is the AC
+    verdict on its RESTORED state (`:secure`, `:overload`, `:voltage`, `:no_solution`),
+    or `:restore_refused` (its room is short of what it must make up — lost power, the
+    change in losses and in load draw) or `:no_response` (no governor in it). `Δω` is
+    `0.0` where the restored state solved, `NaN` otherwise.
+  - `pickup` — each responder's change in output from the AC base, pu, in proportion to
+    its governor gain, at its ceiling or floor where it reaches one; zero outside a
+    restored piece. `capped`, `floored` — as in [`DCRestore`](@ref).
+  - `below_zero` — responders whose restored output is below zero although their base
+    output was not
+  - `models` — per piece, the restored piece as its own model, for every piece whose
+    restored state has a solution (`:secure`, or an `:overload` that solved); `nothing`
+    otherwise
+  - `bases`, `base_error` — per piece, `ac_powerflow` on that model as the screen's
+    rules accept it (`_ac_screen_base`), or `nothing` and why the model or its base was
+    refused. The second loss is screened from this base, which should be the restored
+    state given back. The model's slack carries the schedule that balances the piece
+    (a schedule leaves the losses to the slack); every other unit sits at its restored
+    output.
+"""
+struct ACRestore
+    element::Symbol
+    pieces::Vector{ACPiece}
+    pickup::Vector{Float64}
+    capped::Vector{Bool}
+    floored::Vector{Bool}
+    below_zero::Vector{Symbol}
+    models::Vector{Union{NetworkModel,Nothing}}
+    bases::Vector{Union{ACPowerFlow,Nothing}}
+    base_error::Vector{String}
+end
+
+function _ac_restore(ctx, lim, kind::Vector{Symbol}, id::Vector{Symbol}, e::Int)
+    net, r = ctx.net, ctx.r
+    m, nm = length(ctx.topo.src), r.n_machines
+    out = e <= m ? [e] : Int[]
+    lost_ids = e > m ? [e - m] : Int[]
+    lost = falses(nm)
+    lost[lost_ids] .= true
+    _, pieces, pk, cp, fl = _ac_outage_set(ctx, out, lost_ids; restore = lim)
+    np = length(pieces)
+    models = Vector{Union{NetworkModel,Nothing}}(nothing, np)
+    bases = Vector{Union{ACPowerFlow,Nothing}}(nothing, np)
+    errs = fill("", np)
+    for (c, pc) in pairs(pieces)
+        pc.solution === nothing && continue
+        try
+            R = _restored_model(net, r, sort!([net.bus_index[b] for b in pc.buses]), out,
+                                lost, pk, cp, fl; balance_slack = true)
+            models[c] = R
+            bases[c] = _ac_screen_base(R, "ac_sequential_outages")
+        catch ex
+            ex isa ArgumentError || ex isa ErrorException || rethrow()
+            errs[c] = sprint(showerror, ex)
+        end
+    end
+    keep = [!(q <= nm && lost[q]) for q in eachindex(r.ids)]
+    return ACRestore(id[e], pieces, pk, cp, fl, _below_zero(r, ctx.P_base, pk, keep),
+                     models, bases, errs)
+end
+
+"""
+    ac_restore(net::NetworkModel, element::Symbol) -> ACRestore
+
+[`dc_restore`](@ref) with the nonlinear power flow: lose one element of `net`, then
+restore frequency to target in every live piece left, its lost power, the change in its
+losses and the change in its load draw made up by its own units in proportion to their
+governor gain, each to its ceiling (`Pmax`; an inverter's rating) and its floor (`Pmin`
+when given), damping taking no part (`m10-context.md` D3, D11). Measured from
+`ac_powerflow(net)`, refused as [`ac_generator_outages`](@ref) refuses it. Each restored
+piece is rebuilt as its own model and handed to `ac_powerflow`, the base its second loss
+is screened from ([`ACRestore`](@ref)).
+"""
+function ac_restore(net::NetworkModel, element::Symbol)
+    ctx = _ac_outage_context(net, _ac_screen_base(net, "ac_restore"))
+    kind, id, _, _ = _pair_elements(net)
+    return _ac_restore(ctx, _restore_limits(net, ctx.r), kind, id,
+                       _element_index(id, element, "ac_restore"))
+end
+
+"""
+    ACSequentialOutages
+
+[`DCSequentialOutages`](@ref) with the nonlinear power flow: every ordered pair lost one
+after the other, frequency restored in between ([`ac_sequential_outages`](@ref)).
+
+  - `base`, `kind`, `id`, `pairs` — as in `DCSequentialOutages`
+  - `restore` — per element, the grid after it alone, restored ([`ACRestore`](@ref))
+  - `outcome` — `:screened`, `:already_lost`, `:not_restored` (the restored state of the
+    second element's piece has no solution: refused, `:voltage`, `:no_solution`), or
+    `:base_refused` (`ac_powerflow` on the restored piece's model refused it — see that
+    restore's `base_error`)
+  - `pieces` — every piece left after both, ordered by first bus ([`ACPiece`](@ref)); a
+    piece the second loss did not touch keeps its restored state (`Δω = 0.0`)
+  - `pickup` — each responder's change in output from the ORIGINAL AC base, pu: what the
+    restored model's base gives it, plus its settled pickup after the second loss; zero
+    for a lost machine and outside a live piece that solved
+  - `capped`, `below_zero` — as in `DCSequentialOutages`
+
+A second loss of lines that leaves the restored piece whole is M8's line screen there:
+its slack takes the change in losses and `Δω` is `NaN`, while the restore before it
+shared the change by gain (`m10-context.md` D11).
+"""
+struct ACSequentialOutages
+    base::ACPowerFlow
+    kind::Vector{Symbol}
+    id::Vector{Symbol}
+    restore::Vector{ACRestore}
+    pairs::Vector{Tuple{Int,Int}}
+    outcome::Vector{Symbol}
+    pieces::Vector{Vector{ACPiece}}
+    pickup::Vector{Vector{Float64}}
+    capped::Vector{Vector{Bool}}
+    below_zero::Vector{Vector{Symbol}}
+end
+
+"""
+    ac_sequential_outages(net::NetworkModel) -> ACSequentialOutages
+
+[`dc_sequential_outages`](@ref) with the nonlinear power flow: every ordered pair of
+elements of `net` lost one after the other, frequency restored to target in between
+([`ac_restore`](@ref)), the second loss screened as [`ac_pair_outages`](@ref) screens a
+pair, on the restored piece's own model from `ac_powerflow`'s solution of it. Every
+outcome is reported, never thrown.
+"""
+function ac_sequential_outages(net::NetworkModel)
+    ctx = _ac_outage_context(net, _ac_screen_base(net, "ac_sequential_outages"))
+    r = ctx.r
+    lim = _restore_limits(net, r)
+    kind, id, _, _ = _pair_elements(net)
+    N, m = length(id), length(net.branches)
+    restores = [_ac_restore(ctx, lim, kind, id, e) for e in 1:N]
+    ctxs = [Any[rs.bases[c] === nothing ? nothing :
+                _ac_outage_context(rs.models[c], rs.bases[c]) for c in eachindex(rs.pieces)]
+            for rs in restores]
+    rid = Dict(u => q for (q, u) in pairs(r.ids))
+    ordered = [(a, b) for a in 1:N for b in 1:N if a != b]
+    np = length(ordered)
+    outcome = Vector{Symbol}(undef, np)
+    pieces = Vector{Vector{ACPiece}}(undef, np)
+    pickup = Vector{Vector{Float64}}(undef, np)
+    capped = Vector{Vector{Bool}}(undef, np)
+    below = Vector{Vector{Symbol}}(undef, np)
+    for (p, (a, b)) in pairs(ordered)
+        rs = restores[a]
+        c = _element_piece(net, kind, b, rs.pieces)
+        if ctxs[a][c] === nothing
+            outcome[p] = rs.pieces[c].kind !== :live ? :already_lost :
+                         rs.base_error[c] != "" ? :base_refused : :not_restored
+            pieces[p], pickup[p], capped[p] = rs.pieces, rs.pickup, rs.capped
+            below[p] = rs.below_zero
+            continue
+        end
+        outcome[p] = :screened
+        R, cx = rs.models[c], ctxs[a][c]
+        out2 = kind[b] === :branch ? [findfirst(br -> br.id === id[b], R.branches)] : Int[]
+        lost2 = kind[b] === :machine ? [findfirst(mc -> mc.id === id[b], R.machines)] : Int[]
+        _, ps2, pk2, cp2 = _ac_outage_set(cx, out2, lost2)
+        pieces[p] = _by_first_bus(net, [rs.pieces[1:c-1]; rs.pieces[c+1:end]; ps2])
+        pk, cp = copy(rs.pickup), copy(rs.capped)
+        for (q2, u) in pairs(cx.r.ids)
+            # From the ORIGINAL base: what the restored model's base gives the unit,
+            # plus its pickup from there.
+            pk[rid[u]] = cx.P_base[q2] - ctx.P_base[rid[u]] + pk2[q2]
+            cp[rid[u]] = cp2[q2]
+        end
+        lost_ids = Int[e - m for e in (a, b) if kind[e] === :machine]
+        keep = _answered_mask(net, r, pieces[p], lost_ids,
+                              pc -> pc.solution !== nothing || !isnan(pc.Δω))
+        pk[.!keep] .= 0.0
+        cp[.!keep] .= false
+        pickup[p], capped[p] = pk, cp
+        below[p] = _below_zero(r, ctx.P_base, pk, keep)
+    end
+    return ACSequentialOutages(ctx.base, kind, id, restores, ordered, outcome, pieces,
+                               pickup, capped, below)
 end

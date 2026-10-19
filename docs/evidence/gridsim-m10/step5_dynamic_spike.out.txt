@@ -1,0 +1,47 @@
+
+default L78→G2: screened; final secure Δω=-0.009463305311935184
+  flat 1 s: max|ω| 1.92e-16
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -8.830460153e-03  Δω_AC -9.463305312e-03  lhs +6.328e-04 rhs +6.328e-04  rel 1.06e-10  settle 4.2e-14  spread 5.8e-13  capped false
+
+default L89→G2: screened; final secure Δω=-0.009437814910840881
+  flat 1 s: max|ω| 2.38e-15
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -9.002028421e-03  Δω_AC -9.437814911e-03  lhs +4.358e-04 rhs +4.358e-04  rel 1.80e-10  settle 4.2e-14  spread 1.8e-13  capped false
+
+default L56→G3: screened; final secure Δω=-0.008207477150529175
+  flat 1 s: max|ω| 1.58e-15
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -7.815810221e-03  Δω_AC -8.207477151e-03  lhs +3.917e-04 rhs +3.917e-04  rel 1.89e-10  settle 3.5e-14  spread 1.1e-12  capped false
+
+default L67→G3: screened; final secure Δω=-0.008221299417003943
+  flat 1 s: max|ω| 4.68e-17
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -7.813748101e-03  Δω_AC -8.221299417e-03  lhs +4.076e-04 rhs +4.076e-04  rel 1.19e-10  settle 1.2e-13  spread 6.7e-13  capped false
+
+default L56→L78: screened; final secure Δω=-0.0005397159699680988 | secure Δω=0.0018815450201430325
+  flat 1 s: max|ω| 1.58e-15
+  piece B1,B2,B4,B5,B8,B9            ω -7.519366612e-04  Δω_AC -5.397159700e-04  lhs -2.122e-04 rhs -2.122e-04  rel 5.38e-12  settle 6.2e-15  spread 9.3e-15  capped false
+  piece B3,B6,B7                     ω +2.278457448e-03  Δω_AC +1.881545020e-03  lhs +3.969e-04 rhs +3.969e-04  rel 1.09e-11  settle 4.4e-15  spread 0.0e+00  capped false
+
+default L45→L67: screened; final secure Δω=-0.0016718635387494398 | secure Δω=0.003971533831327391
+  flat 1 s: max|ω| 7.95e-16
+  piece B1,B2,B4,B7,B8,B9            ω -1.436400203e-03  Δω_AC -1.671863539e-03  lhs +2.355e-04 rhs +2.355e-04  rel 1.14e-11  settle 1.1e-14  spread 4.8e-14  capped false
+  piece B3,B5,B6                     ω +3.641683917e-03  Δω_AC +3.971533831e-03  lhs -3.298e-04 rhs -3.298e-04  rel 1.19e-11  settle 3.5e-15  spread 0.0e+00  capped false
+
+constant_power L56→G3: screened; final secure Δω=-0.008823181896951807
+  flat 1 s: max|ω| 1.50e-17
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -8.839417609e-03  Δω_AC -8.823181897e-03  lhs -1.624e-05 rhs -1.624e-05  rel 7.92e-10  settle 1.5e-14  spread 3.0e-14  capped false
+
+constant_power L78→G2: screened; final secure Δω=-0.010478204719401007
+  flat 1 s: max|ω| 4.05e-18
+  REFUSED/FAILED: DetailedEngine re-initialisation at t = 1.0: bus B2 solved to |V| = 0.8791771577286426 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+
+constant_power L89→G2: screened; final secure Δω=-0.010363567918936807
+  flat 1 s: max|ω| 3.20e-17
+  REFUSED/FAILED: DetailedEngine re-initialisation at t = 1.0: bus B2 solved to |V| = 0.8939417266173734 pu, outside [0.9, 1.1]. A collapsed-voltage solution is SELF-CONSISTENT and converges to a TIGHTER residual than the true one (measured: 5.0e-16 against 1.8e-13), so this band is the discriminator and the residual
+
+constant_power L67→G3: screened; final secure Δω=-0.008890280782208137
+  flat 1 s: max|ω| 2.74e-15
+  piece B1,B2,B3,B4,B5,B6,B7,B8,B9   ω -8.905773109e-03  Δω_AC -8.890280782e-03  lhs -1.549e-05 rhs -1.549e-05  rel 1.37e-09  settle 2.9e-14  spread 4.3e-14  capped false
+
+constant_power L56→L78: screened; final secure Δω=-0.0002973902117656168 | secure Δω=0.0006334469202275052
+  flat 1 s: max|ω| 1.50e-17
+  piece B1,B2,B4,B5,B8,B9            ω -2.844957818e-04  Δω_AC -2.973902118e-04  lhs +1.289e-05 rhs +1.289e-05  rel 5.58e-11  settle 4.5e-15  spread 7.3e-15  capped false
+  piece B3,B6,B7                     ω +6.208530373e-04  Δω_AC +6.334469202e-04  lhs -1.259e-05 rhs -1.259e-05  rel 8.39e-11  settle 2.8e-15  spread 0.0e+00  capped false

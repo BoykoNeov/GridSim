@@ -153,15 +153,30 @@ runs.
 - [x] (On review, after the commit) the inverter half: a tripped grid-forming inverter is
       no source, a grid-following one goes with its piece; sabotage S7 red there alone.
 
-## Step 5 — fail, restore, fail again (Hurdle 21)
+## Step 5 — fail, restore, fail again (Hurdle 21) — done 2026-10-19
 
-- [ ] Restored schedule per piece, exact; its refusal; `Pmin` honoured when given;
-      units below zero output flagged.
-- [ ] Second loss = M8's screens on the restored model — stated, by construction.
-- [ ] A-then-B, B-then-A, both-at-once tabulated; claim written after.
-- [ ] Detailed-tier check from the restored model — Hurdle 21's only independent
-      check, not cuttable.
-- [ ] Sabotages run, predictions first.
+- [x] Decisions recorded before the code (`m10-context.md` D11): one restored model per live
+      piece; the restore is the bend walk with damping zeroed, mirrored downward to `Pmin`; a
+      grid-forming inverter capped at its rating (a refinement of D3); exact endpoints; the
+      restored model's slack; what an ordered pair reports.
+- [x] Refactor: the pair loops' bodies take any set of one or two elements
+      (`_dc_outage_set`/`_ac_outage_set`), both screens byte-identical on eight fixtures.
+- [x] Restored schedule per piece, exact (`dc_restore`/`ac_restore`); its refusal
+      (`:restore_refused`, the mesh's G1); `Pmin` honoured; units below zero flagged, after the
+      restore and after the settle. AC: the restored model's slack carries the balancing
+      schedule (found by the first trial, D11.5); losses identity and `ac_powerflow`'s give-back
+      on every restored piece.
+- [x] Second loss = the pair screens' one-element case on the restored model — stated, by
+      construction (`dc_sequential_outages`/`ac_sequential_outages`).
+- [x] A-then-B, B-then-A, both-at-once tabulated (`step5_pairs.out.txt`); claim written after:
+      the orders differ by what the first loss alone would settle to — exact in DC, exact to the
+      solver in AC on case9 (equal D·R), to 5e-4 on the mesh.
+- [x] Detailed-tier check from the restored model — nine pieces, ≤ 1.4e-9 relative through the
+      per-piece identity; constant-power L78→G2 / L89→G2 refused at the trip in this tier.
+- [x] Sabotages run, predictions first: all five red where registered; four unpredicted reds or
+      greens explained (`m10-context.md`, "What step 5 measured").
+- [x] Suites 19151 core / 1439 ref / 745 UI. M9's captures not re-run: step 5 touches no
+      code they call (`screening.jl` untouched; the refactor gated byte for byte).
 
 ## Step 6 — the report
 

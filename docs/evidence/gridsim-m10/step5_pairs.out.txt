@@ -1,0 +1,1365 @@
+
+=== case9  — DC — 66 unordered pairs
+L14 +L45  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L45  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L45 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 3.331e-14 MW; flows max |Δ| 8.882e-14 MW
+L14 +L56  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L56  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L56 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 3.331e-14 MW; flows max |Δ| 2.220e-13 MW
+L14 +L36  both: {B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   L14 →L36  screened      {B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   L36 →L14  screened      {B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW; flows max |Δ| 0.000e+00 MW
+L14 +L67  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L67  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L67 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 1.554e-13 MW
+L14 +L78  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L78  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L78 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 4.663e-13 MW
+L14 +L82  both: {B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   L14 →L82  screened      {B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   L82 →L14  screened      {B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW; flows max |Δ| 0.000e+00 MW
+L14 +L89  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L89  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L89 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.665e-14 MW; flows max |Δ| 3.331e-13 MW
+L14 +L94  both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →L94  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L94 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW; flows max |Δ| 6.661e-14 MW
+L14 +G1   both: {B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L14 →G1   already_lost  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 restored
+   G1  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.051255e-18 shared
+   dispatch A→B vs B→A: max |Δ| 5.551e-14 MW; flows max |Δ| 6.661e-14 MW
+L14 +G2   both: {B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   L14 →G2   screened      {B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   G2  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 0.000e+00 MW
+L14 +G3   both: {B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   L14 →G3   screened      {B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   G3  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   dispatch A→B vs B→A: max |Δ| 6.661e-14 MW; flows max |Δ| 0.000e+00 MW
+L45 +L56  both: {B1,B2,B3,B4,B6,B7,B8,B9} +5.226481e-03 shared
+   L45 →L56  screened      {B1,B2,B3,B4,B6,B7,B8,B9} +5.226481e-03 shared
+   L56 →L45  screened      {B1,B2,B3,B4,B6,B7,B8,B9} +5.226481e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 5.551e-14 MW
+L45 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L45 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L45  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 9.992e-14 MW
+L45 +L67  both: {B1,B2,B4,B7,B8,B9} -1.187837e-03 shared; {B3,B5,B6} +2.419667e-03 shared
+   L45 →L67  screened      {B1,B2,B4,B7,B8,B9} -1.187837e-03 shared; {B3,B5,B6} +2.419667e-03 shared
+   L67 →L45  screened      {B1,B2,B4,B7,B8,B9} -1.187837e-03 shared; {B3,B5,B6} +2.419667e-03 shared
+   dispatch A→B vs B→A: max |Δ| 5.274e-14 MW; flows max |Δ| 2.498e-14 MW
+L45 +L78  both: {B1,B2,B4,B8,B9} +7.470172e-03 shared; {B3,B5,B6,B7} -1.521702e-02 shared
+   L45 →L78  screened      {B1,B2,B4,B8,B9} +7.470172e-03 shared; {B3,B5,B6,B7} -1.521702e-02 shared
+   L78 →L45  screened      {B1,B2,B4,B8,B9} +7.470172e-03 shared; {B3,B5,B6,B7} -1.521702e-02 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 2.220e-14 MW
+L45 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L45 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L45  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 1.110e-13 MW
+L45 +L89  both: {B1,B4,B9} -5.516841e-03 shared; {B2,B3,B5,B6,B7,B8} +2.419667e-03 shared
+   L45 →L89  screened      {B1,B4,B9} -5.516841e-03 shared; {B2,B3,B5,B6,B7,B8} +2.419667e-03 shared
+   L89 →L45  screened      {B1,B4,B9} -5.516841e-03 shared; {B2,B3,B5,B6,B7,B8} +2.419667e-03 shared
+   dispatch A→B vs B→A: max |Δ| 8.327e-14 MW; flows max |Δ| 6.661e-14 MW
+L45 +L94  both: {B2,B3,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L45 →L94  screened      {B2,B3,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L94 →L45  screened      {B2,B3,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW; flows max |Δ| 5.551e-14 MW
+L45 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L45 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 3.553e-13 MW
+L45 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L45 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 7.216e-14 MW
+L45 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L45 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 1.554e-13 MW
+L56 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L56 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L56  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 4.441e-14 MW
+L56 +L67  both: {B1,B2,B4,B5,B7,B8,B9} -8.980044e-03 shared
+   L56 →L67  screened      {B1,B2,B4,B5,B7,B8,B9} -8.980044e-03 shared
+   L67 →L56  screened      {B1,B2,B4,B5,B7,B8,B9} -8.980044e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 3.331e-14 MW
+L56 +L78  both: {B1,B2,B4,B5,B8,B9} -3.220357e-04 shared; {B3,B6,B7} +6.559986e-04 shared
+   L56 →L78  screened      {B1,B2,B4,B5,B8,B9} -3.220357e-04 shared; {B3,B6,B7} +6.559986e-04 shared
+   L78 →L56  screened      {B1,B2,B4,B5,B8,B9} -3.220357e-04 shared; {B3,B6,B7} +6.559986e-04 shared
+   dispatch A→B vs B→A: max |Δ| 8.049e-14 MW; flows max |Δ| 5.829e-14 MW
+L56 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L56 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L56  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 1.665e-13 MW
+L56 +L89  both: {B1,B4,B5,B9} -2.265970e-02 shared; {B2,B3,B6,B7,B8} +9.938464e-03 shared
+   L56 →L89  screened      {B1,B4,B5,B9} -2.265970e-02 shared; {B2,B3,B6,B7,B8} +9.938464e-03 shared
+   L89 →L56  screened      {B1,B4,B5,B9} -2.265970e-02 shared; {B2,B3,B6,B7,B8} +9.938464e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 0.000e+00 MW
+L56 +L94  both: {B1,B4,B5} +1.149826e-03 shared; {B2,B3,B6,B7,B8,B9} -5.043096e-04 shared
+   L56 →L94  screened      {B1,B4,B5} +1.149826e-03 shared; {B2,B3,B6,B7,B8,B9} -5.043096e-04 shared
+   L94 →L56  screened      {B1,B4,B5} +1.149826e-03 shared; {B2,B3,B6,B7,B8,B9} -5.043096e-04 shared
+   dispatch A→B vs B→A: max |Δ| 2.130e-13 MW; flows max |Δ| 1.346e-13 MW
+L56 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L56 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 6.217e-13 MW
+L56 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L56 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 1.776e-13 MW
+L56 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L56 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 4.441e-14 MW
+L36 +L67  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L67  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L67 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 4.441e-14 MW
+L36 +L78  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L78  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L78 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 2.331e-13 MW
+L36 +L82  both: {B1,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   L36 →L82  screened      {B1,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   L82 →L36  screened      {B1,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW; flows max |Δ| 0.000e+00 MW
+L36 +L89  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L89  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L89 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 6.661e-14 MW
+L36 +L94  both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →L94  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L94 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 2.331e-13 MW
+L36 +G1   both: {B1,B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   L36 →G1   screened      {B1,B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   G1  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 2.665e-13 MW
+L36 +G2   both: {B1,B2,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   L36 →G2   screened      {B1,B2,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   G2  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW; flows max |Δ| 0.000e+00 MW
+L36 +G3   both: {B1,B2,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L36 →G3   already_lost  {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 restored
+   G3  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 6.661e-14 MW
+L67 +L78  both: {B1,B2,B3,B4,B5,B6,B8,B9} +5.807201e-03 shared
+   L67 →L78  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.807201e-03 shared
+   L78 →L67  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.807201e-03 shared
+   dispatch A→B vs B→A: max |Δ| 2.776e-14 MW; flows max |Δ| 6.661e-14 MW
+L67 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L67 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L67  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 2.887e-13 MW
+L67 +L89  both: {B1,B3,B4,B5,B6,B9} -1.395962e-03 shared; {B2,B7,B8} +2.419667e-03 shared
+   L67 →L89  screened      {B1,B3,B4,B5,B6,B9} -1.395962e-03 shared; {B2,B7,B8} +2.419667e-03 shared
+   L89 →L67  screened      {B1,B3,B4,B5,B6,B9} -1.395962e-03 shared; {B2,B7,B8} +2.419667e-03 shared
+   dispatch A→B vs B→A: max |Δ| 5.829e-14 MW; flows max |Δ| 3.053e-14 MW
+L67 +L94  both: {B1,B3,B4,B5,B6} +1.005092e-02 shared; {B2,B7,B8,B9} -1.742160e-02 shared
+   L67 →L94  screened      {B1,B3,B4,B5,B6} +1.005092e-02 shared; {B2,B7,B8,B9} -1.742160e-02 shared
+   L94 →L67  screened      {B1,B3,B4,B5,B6} +1.005092e-02 shared; {B2,B7,B8,B9} -1.742160e-02 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-13 MW; flows max |Δ| 7.216e-14 MW
+L67 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L67 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 2.665e-13 MW
+L67 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L67 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 3.331e-13 MW
+L67 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L67 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 1.110e-13 MW
+L78 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L78 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L78  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 7.216e-14 MW
+L78 +L89  both: {B1,B3,B4,B5,B6,B7,B9} -1.055347e-02 shared
+   L78 →L89  screened      {B1,B3,B4,B5,B6,B7,B9} -1.055347e-02 shared
+   L89 →L78  screened      {B1,B3,B4,B5,B6,B7,B9} -1.055347e-02 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 4.441e-14 MW
+L78 +L94  both: {B1,B3,B4,B5,B6,B7} +8.934155e-04 shared; {B2,B8,B9} -1.548587e-03 shared
+   L78 →L94  screened      {B1,B3,B4,B5,B6,B7} +8.934155e-04 shared; {B2,B8,B9} -1.548587e-03 shared
+   L94 →L78  screened      {B1,B3,B4,B5,B6,B7} +8.934155e-04 shared; {B2,B8,B9} -1.548587e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.277e-13 MW; flows max |Δ| 9.992e-14 MW
+L78 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L78 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 3.553e-13 MW
+L78 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L78 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 7.216e-14 MW
+L78 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L78 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 1.776e-13 MW
+L82 +L89  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L89  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L89 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 1.110e-13 MW
+L82 +L94  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →L94  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   L94 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 6.439e-13 MW
+L82 +G1   both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   L82 →G1   screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   G1  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   dispatch A→B vs B→A: max |Δ| 2.665e-13 MW; flows max |Δ| 2.902e-13 MW
+L82 +G2   both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L82 →G2   already_lost  {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 restored
+   G2  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 0.000e+00 MW
+L82 +G3   both: {B1,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   L82 →G3   screened      {B1,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   G3  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW; flows max |Δ| 0.000e+00 MW
+L89 +L94  both: {B1,B2,B3,B4,B5,B6,B7,B8} +7.259001e-03 shared
+   L89 →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8} +7.259001e-03 shared
+   L94 →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8} +7.259001e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.665e-14 MW; flows max |Δ| 2.776e-14 MW
+L89 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L89 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 8.882e-13 MW
+L89 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L89 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 6.661e-14 MW
+L89 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L89 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 6.661e-14 MW
+L94 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   L94 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.023107e-03 shared
+   G1  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 2.665e-13 MW
+L94 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   L94 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.055347e-02 shared
+   G2  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 3.553e-13 MW
+L94 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   L94 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.980044e-03 shared
+   G3  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 2.665e-13 MW
+G1  +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   G1  →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   G2  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.666667e-01 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 2.254e-13 MW
+G1  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   G1  →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   G3  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.000000e-02 shared
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW; flows max |Δ| 2.665e-13 MW
+G2  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   G2  →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   G3  →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -2.600000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW; flows max |Δ| 0.000e+00 MW
+TALLY case9  DC: milder_order_milder_than_both=36, milder_order_same_as_both=27, not_both_screened=3, orders_differ=36, orders_same_worst=27, same_dispatch=63, worse_order_same_as_both=63
+  orders_differ: L14+L45(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L14+L56(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L14+L67(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L14+L78(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L14+L89(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L14+L94(+0.000000e+00/+8.023107e-03/+8.023107e-03)  L45+L36(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L45+L82(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L45+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L45+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L45+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L56+L36(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L56+L82(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L56+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L56+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L56+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L36+L67(+0.000000e+00/+8.980044e-03/+8.980044e-03)  L36+L78(+0.000000e+00/+8.980044e-03/+8.980044e-03)  L36+L89(+0.000000e+00/+8.980044e-03/+8.980044e-03)  L36+L94(+0.000000e+00/+8.980044e-03/+8.980044e-03)  L67+L82(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L67+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L67+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L67+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L78+L82(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L78+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L78+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L78+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L82+L89(+0.000000e+00/+1.055347e-02/+1.055347e-02)  L82+L94(+0.000000e+00/+1.055347e-02/+1.055347e-02)  L89+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L89+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L89+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)  L94+G1(+8.023107e-03/+0.000000e+00/+8.023107e-03)  L94+G2(+1.055347e-02/+0.000000e+00/+1.055347e-02)  L94+G3(+8.980044e-03/+0.000000e+00/+8.980044e-03)
+
+=== case9 constant_power — AC — 66 unordered pairs
+L14 +L45  both: {B2,B3,B4,B5,B6,B7,B8,B9} -9.345106e-03 voltage
+   L14 →L45  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L45 →L14  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.738e+01 MW
+L14 +L56  both: {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →L56  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L56 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L14 +L36  both: {B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →L36  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L36 →L14  screened      {B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L14 +L67  both: {B2,B3,B4,B5,B6,B7,B8,B9} -9.799814e-03 voltage
+   L14 →L67  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L67 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -9.622589e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 3.348e+00 MW
+L14 +L78  both: {B2,B3,B4,B5,B6,B7,B8,B9} -9.810346e-03 voltage
+   L14 →L78  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L78 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -9.597762e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 3.414e+00 MW
+L14 +L82  both: {B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →L82  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L82 →L14  screened      {B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L14 +L89  both: {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →L89  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L89 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L14 +L94  both: {B2,B3,B4,B5,B6,B7,B8,B9} -9.345106e-03 voltage
+   L14 →L94  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L94 →L14  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.479e+01 MW
+L14 +G1   both: {B2,B3,B4,B5,B6,B7,B8,B9} -9.268440e-03 voltage
+   L14 →G1   already_lost  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G1  →L14  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 6.806e-12 MW
+L14 +G2   both: {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →G2   not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L14 +G3   both: {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L14 →G3   not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L45 +L56  both: {B1,B2,B3,B4,B6,B7,B8,B9} +5.321068e-03 secure
+   L45 →L56  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L56 →L45  screened      {B1,B2,B3,B4,B6,B7,B8,B9} +5.565392e-03 secure
+   dispatch A→B vs B→A: max |Δ| 3.453e+01 MW
+L45 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L45 →L36  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L36 →L45  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 1.011e+00 MW
+L45 +L67  both: {B1,B2,B4,B7,B8,B9} -1.053905e-03 secure; {B3,B5,B6} +1.627354e-03 voltage
+   L45 →L67  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L67 →L45  screened      {B1,B2,B4,B7,B8,B9} -8.766793e-04 secure; {B3,B5,B6} +1.804579e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 1.014e+01 MW
+L45 +L78  both: {B1,B2,B4,B8,B9} +7.652438e-03 secure; {B3,B5,B6,B7} -1.639013e-02 voltage
+   L45 →L78  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L78 →L45  screened      {B1,B2,B4,B8,B9} +7.865023e-03 secure; {B3,B5,B6,B7} -1.617754e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 9.202e+01 MW
+L45 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.103657e-02 voltage
+   L45 →L82  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L82 →L45  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 1.011e+00 MW
+L45 +L89  both: {B1,B4,B9} -5.123830e-03 secure; {B2,B3,B5,B6,B7,B8} +1.953469e-03 voltage
+   L45 →L89  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L89 →L45  screened      {B1,B4,B9} -4.796608e-03 secure; {B2,B3,B5,B6,B7,B8} +2.280691e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 2.606e+01 MW
+L45 +L94  both: {B2,B3,B5,B6,B7,B8,B9} -9.345106e-03 voltage
+   L45 →L94  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L94 →L45  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 2.592e+00 MW
+L45 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.345106e-03 voltage
+   L45 →G1   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G1  →L45  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.738e+01 MW
+L45 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.103657e-02 voltage
+   L45 →G2   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 1.011e+00 MW
+L45 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L45 →G3   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 1.011e+00 MW
+L56 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9} -9.067506e-03 secure
+   L56 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.823182e-03 secure
+   L36 →L56  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.337e-01 MW
+L56 +L67  both: {B1,B2,B4,B5,B7,B8,B9} -9.067506e-03 secure
+   L56 →L67  screened      {B1,B2,B4,B5,B7,B8,B9} -8.823182e-03 secure
+   L67 →L56  screened      {B1,B2,B4,B5,B7,B8,B9} -8.890281e-03 secure
+   dispatch A→B vs B→A: max |Δ| 6.151e-12 MW
+L56 +L78  both: {B1,B2,B4,B5,B8,B9} -5.417145e-04 secure; {B3,B6,B7} +3.891226e-04 secure
+   L56 →L78  screened      {B1,B2,B4,B5,B8,B9} -2.973902e-04 secure; {B3,B6,B7} +6.334469e-04 secure
+   L78 →L56  screened      {B1,B2,B4,B5,B8,B9} -3.291297e-04 secure; {B3,B6,B7} +6.017075e-04 secure
+   dispatch A→B vs B→A: max |Δ| 2.484e-13 MW
+L56 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.096695e-02 overload
+   L56 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.072262e-02 overload
+   L82 →L56  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     overload
+   dispatch A→B vs B→A: max |Δ| 1.748e+00 MW
+L56 +L89  both: {B1,B4,B5,B9} -2.264463e-02 voltage; {B2,B3,B6,B7,B8} +9.890611e-03 secure
+   L56 →L89  screened      {B1,B4,B5,B9} -2.240031e-02 voltage; {B2,B3,B6,B7,B8} +1.013494e-02 secure
+   L89 →L56  screened      {B1,B4,B5,B9} -2.231741e-02 voltage; {B2,B3,B6,B7,B8} +1.021783e-02 secure
+   dispatch A→B vs B→A: max |Δ| 3.331e-14 MW
+L56 +L94  both: {B1,B4,B5} +1.628791e-03 secure; {B2,B3,B6,B7,B8,B9} -1.485209e-03 voltage
+   L56 →L94  screened      {B1,B4,B5} +1.873116e-03 secure; {B2,B3,B6,B7,B8,B9} -1.240885e-03 voltage
+   L94 →L56  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 1.155e+01 MW
+L56 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L56 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →L56  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L56 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.096695e-02 overload
+   L56 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.072262e-02 overload
+   G2  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     overload
+   dispatch A→B vs B→A: max |Δ| 1.748e+00 MW
+L56 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.067506e-03 secure
+   L56 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.823182e-03 secure
+   G3  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.337e-01 MW
+L36 +L67  both: {B1,B2,B4,B5,B6,B7,B8,B9} -9.067506e-03 secure
+   L36 →L67  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     secure
+   L67 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.890281e-03 secure
+   dispatch A→B vs B→A: max |Δ| 2.337e-01 MW
+L36 +L78  both: {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L36 →L78  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L78 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L36 +L82  both: {B1,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L36 →L82  screened      {B1,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L82 →L36  screened      {B1,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L36 +L89  both: {B1,B2,B4,B5,B6,B7,B8,B9} -9.381894e-03 voltage
+   L36 →L89  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   L89 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -9.054673e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 5.911e+01 MW
+L36 +L94  both: {B1,B2,B4,B5,B6,B7,B8,B9} -1.025246e-02 voltage
+   L36 →L94  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   L94 →L36  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.603e+00 MW
+L36 +G1   both: {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L36 →G1   screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →L36  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L36 +G2   both: {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L36 →G2   screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G2  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L36 +G3   both: {B1,B2,B4,B5,B6,B7,B8,B9} -9.030404e-03 secure
+   L36 →G3   already_lost  {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 secure
+   G3  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -3.200980e-19 secure
+   dispatch A→B vs B→A: max |Δ| 3.952e-12 MW
+L67 +L78  both: {B1,B2,B3,B4,B5,B6,B8,B9} +5.776366e-03 secure
+   L67 →L78  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.953591e-03 secure
+   L78 →L67  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.988951e-03 secure
+   dispatch A→B vs B→A: max |Δ| 7.211e-12 MW
+L67 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L67 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L82 →L67  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L67 +L89  both: {B1,B3,B4,B5,B6,B9} -1.703026e-03 secure; {B2,B7,B8} +2.254555e-03 secure
+   L67 →L89  screened      {B1,B3,B4,B5,B6,B9} -1.525801e-03 secure; {B2,B7,B8} +2.431781e-03 secure
+   L89 →L67  screened      {B1,B3,B4,B5,B6,B9} -1.375804e-03 secure; {B2,B7,B8} +2.581777e-03 secure
+   dispatch A→B vs B→A: max |Δ| 5.837e-12 MW
+L67 +L94  both: {B1,B3,B4,B5,B6} +1.031483e-02 secure; {B2,B7,B8,B9} -1.959406e-02 voltage
+   L67 →L94  screened      {B1,B3,B4,B5,B6} +1.049205e-02 secure; {B2,B7,B8,B9} -1.941683e-02 voltage
+   L94 →L67  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 1.198e+02 MW
+L67 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.799814e-03 voltage
+   L67 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.622589e-03 voltage
+   G1  →L67  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.348e+00 MW
+L67 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L67 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G2  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L67 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.067506e-03 secure
+   L67 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.890281e-03 secure
+   G3  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.337e-01 MW
+L78 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.069079e-02 secure
+   L78 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.047820e-02 secure
+   L82 →L78  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.818e-01 MW
+L78 +L89  both: {B1,B3,B4,B5,B6,B7,B9} -1.069079e-02 secure
+   L78 →L89  screened      {B1,B3,B4,B5,B6,B7,B9} -1.047820e-02 secure
+   L89 →L78  screened      {B1,B3,B4,B5,B6,B7,B9} -1.036357e-02 secure
+   dispatch A→B vs B→A: max |Δ| 1.554e-13 MW
+L78 +L94  both: {B1,B3,B4,B5,B6,B7} +9.805371e-04 secure; {B2,B8,B9} -3.107101e-03 voltage
+   L78 →L94  screened      {B1,B3,B4,B5,B6,B7} +1.193122e-03 secure; {B2,B8,B9} -2.894516e-03 voltage
+   L94 →L78  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 1.597e+01 MW
+L78 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.810346e-03 voltage
+   L78 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.597762e-03 voltage
+   G1  →L78  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.414e+00 MW
+L78 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.069079e-02 secure
+   L78 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.047820e-02 secure
+   G2  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.818e-01 MW
+L78 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L78 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G3  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L82 +L89  both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.069079e-02 secure
+   L82 →L89  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   L89 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.036357e-02 secure
+   dispatch A→B vs B→A: max |Δ| 1.818e-01 MW
+L82 +L94  both: {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L82 →L94  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L94 →L82  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.603e+00 MW
+L82 +G1   both: {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L82 →G1   screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →L82  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L82 +G2   both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.065872e-02 secure
+   L82 →G2   already_lost  {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 secure
+   G2  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +2.124456e-17 secure
+   dispatch A→B vs B→A: max |Δ| 4.963e-12 MW
+L82 +G3   both: {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L82 →G3   screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G3  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L89 +L94  both: {B1,B2,B3,B4,B5,B6,B7,B8} +7.401411e-03 secure
+   L89 →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8} +7.728632e-03 secure
+   L94 →L89  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.023e+01 MW
+L89 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L89 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →L89  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+L89 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.069079e-02 secure
+   L89 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.036357e-02 secure
+   G2  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.818e-01 MW
+L89 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.381894e-03 voltage
+   L89 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.054673e-03 voltage
+   G3  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 5.911e+01 MW
+L94 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.345106e-03 voltage
+   L94 →G1   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G1  →L94  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 5.479e+01 MW
+L94 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   L94 →G2   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 3.603e+00 MW
+L94 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.025246e-02 voltage
+   L94 →G3   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 3.603e+00 MW
+G1  +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →G2   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+G1  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G1  →G3   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 5.839e+01 MW
+G2  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G2  →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   G3  →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     no_solution
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+TALLY case9 constant_power AC: dispatch_differs=12, milder_order_milder_than_both=3, milder_order_worse_than_both=3, no_number=20, not_both_screened=40, orders_differ=6, same_dispatch=14, worse_order_milder_than_both=3, worse_order_worse_than_both=3
+  worse_order_worse_than_both: L56+L78(+6.334469e-04/+6.017075e-04/+5.417145e-04)  L67+L78(+5.953591e-03/+5.988951e-03/+5.776366e-03)  L67+L89(+2.431781e-03/+2.581777e-03/+2.254555e-03)
+  milder_order_worse_than_both: L56+L78(+6.334469e-04/+6.017075e-04/+5.417145e-04)  L67+L78(+5.953591e-03/+5.988951e-03/+5.776366e-03)  L67+L89(+2.431781e-03/+2.581777e-03/+2.254555e-03)
+  worse_order_milder_than_both: L56+L67(+8.823182e-03/+8.890281e-03/+9.067506e-03)  L56+L89(+2.240031e-02/+2.231741e-02/+2.264463e-02)  L78+L89(+1.047820e-02/+1.036357e-02/+1.069079e-02)
+  orders_differ: L56+L67(+8.823182e-03/+8.890281e-03/+9.067506e-03)  L56+L78(+6.334469e-04/+6.017075e-04/+5.417145e-04)  L56+L89(+2.240031e-02/+2.231741e-02/+2.264463e-02)  L67+L78(+5.953591e-03/+5.988951e-03/+5.776366e-03)  L67+L89(+2.431781e-03/+2.581777e-03/+2.254555e-03)  L78+L89(+1.047820e-02/+1.036357e-02/+1.069079e-02)
+
+=== case9 default — AC — 66 unordered pairs
+L14 +L45  both: {B2,B3,B4,B5,B6,B7,B8,B9} -3.841361e-03 voltage
+   L14 →L45  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L45 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -4.364524e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 3.752e-01 MW
+L14 +L56  both: {B2,B3,B4,B5,B6,B7,B8,B9} -1.657308e-04 voltage
+   L14 →L56  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L56 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -4.462079e-04 voltage
+   dispatch A→B vs B→A: max |Δ| 2.353e+01 MW
+L14 +L36  both: {B2,B4,B5,B6,B7,B8,B9} -1.663799e-02 voltage
+   L14 →L36  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L36 →L14  screened      {B2,B4,B5,B6,B7,B8,B9} -8.704541e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 8.024e+01 MW
+L14 +L67  both: {B2,B3,B4,B5,B6,B7,B8,B9} -3.311614e-03 voltage
+   L14 →L67  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L67 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -3.605913e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 3.713e+00 MW
+L14 +L78  both: {B2,B3,B4,B5,B6,B7,B8,B9} -3.255650e-03 voltage
+   L14 →L78  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L78 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -3.635578e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 4.065e+00 MW
+L14 +L82  both: {B3,B4,B5,B6,B7,B8,B9} -1.920328e-02 voltage
+   L14 →L82  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L82 →L14  screened      {B3,B4,B5,B6,B7,B8,B9} -1.011864e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 8.676e+01 MW
+L14 +L89  both: {B2,B3,B4,B5,B6,B7,B8,B9} +4.525254e-04 voltage
+   L14 →L89  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L89 →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} +9.808817e-05 voltage
+   dispatch A→B vs B→A: max |Δ| 2.743e+01 MW
+L14 +L94  both: {B2,B3,B4,B5,B6,B7,B8,B9} -3.841361e-03 voltage
+   L14 →L94  not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   L94 →L14  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.216e+01 MW
+L14 +G1   both: {B2,B3,B4,B5,B6,B7,B8,B9} -3.900915e-03 voltage
+   L14 →G1   already_lost  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G1  →L14  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.728e-12 MW
+L14 +G2   both: {B2,B3,B4,B5,B6,B7,B8,B9} -1.920328e-02 voltage
+   L14 →G2   not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -1.011864e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 8.676e+01 MW
+L14 +G3   both: {B2,B3,B4,B5,B6,B7,B8,B9} -1.663799e-02 voltage
+   L14 →G3   not_restored  {B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →L14  screened      {B2,B3,B4,B5,B6,B7,B8,B9} -8.704541e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 8.024e+01 MW
+L45 +L56  both: {B1,B2,B3,B4,B6,B7,B8,B9} +4.846518e-03 secure
+   L45 →L56  screened      {B1,B2,B3,B4,B6,B7,B8,B9} +4.323356e-03 secure
+   L56 →L45  screened      {B1,B2,B3,B4,B6,B7,B8,B9} +4.566041e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.754e-12 MW
+L45 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9} -5.084356e-03 voltage
+   L45 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -5.607518e-03 voltage
+   L36 →L45  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 3.203e+01 MW
+L45 +L67  both: {B1,B2,B4,B7,B8,B9} -1.148701e-03 secure; {B3,B5,B6} +4.494696e-03 secure
+   L45 →L67  screened      {B1,B2,B4,B7,B8,B9} -1.671864e-03 secure; {B3,B5,B6} +3.971534e-03 secure
+   L67 →L45  screened      {B1,B2,B4,B7,B8,B9} -1.443000e-03 secure; {B3,B5,B6} +4.200397e-03 secure
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW
+L45 +L78  both: {B1,B2,B4,B8,B9} +6.632317e-03 secure; {B3,B5,B6,B7} -1.013412e-02 voltage
+   L45 →L78  screened      {B1,B2,B4,B8,B9} +6.109155e-03 secure; {B3,B5,B6,B7} -1.065729e-02 voltage
+   L78 →L45  screened      {B1,B2,B4,B8,B9} +6.252390e-03 secure; {B3,B5,B6,B7} -1.051405e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 1.277e-13 MW
+L45 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -8.199639e-03 voltage
+   L45 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -8.722802e-03 voltage
+   L82 →L45  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 4.649e+01 MW
+L45 +L89  both: {B1,B4,B9} -6.076603e-03 secure; {B2,B3,B5,B6,B7,B8} +3.751561e-03 secure
+   L45 →L89  screened      {B1,B4,B9} -6.599765e-03 secure; {B2,B3,B5,B6,B7,B8} +3.228398e-03 secure
+   L89 →L45  screened      {B1,B4,B9} -6.431040e-03 secure; {B2,B3,B5,B6,B7,B8} +3.397123e-03 secure
+   dispatch A→B vs B→A: max |Δ| 2.776e-15 MW
+L45 +L94  both: {B2,B3,B5,B6,B7,B8,B9} -3.841361e-03 voltage
+   L45 →L94  screened      {B2,B3,B5,B6,B7,B8,B9} -4.364524e-03 voltage
+   L94 →L45  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.179e+01 MW
+L45 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.841361e-03 voltage
+   L45 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -4.364524e-03 voltage
+   G1  →L45  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.752e-01 MW
+L45 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.199639e-03 voltage
+   L45 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.722802e-03 voltage
+   G2  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 4.649e+01 MW
+L45 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.084356e-03 voltage
+   L45 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.607518e-03 voltage
+   G3  →L45  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 3.203e+01 MW
+L56 +L36  both: {B1,B2,B4,B5,B6,B7,B8,B9} -7.927000e-03 secure
+   L56 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.207477e-03 secure
+   L36 →L56  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.064e-02 MW
+L56 +L67  both: {B1,B2,B4,B5,B7,B8,B9} -7.927000e-03 secure
+   L56 →L67  screened      {B1,B2,B4,B5,B7,B8,B9} -8.207477e-03 secure
+   L67 →L56  screened      {B1,B2,B4,B5,B7,B8,B9} -8.221299e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.343e-12 MW
+L56 +L78  both: {B1,B2,B4,B5,B8,B9} -2.592388e-04 secure; {B3,B6,B7} +2.162022e-03 secure
+   L56 →L78  screened      {B1,B2,B4,B5,B8,B9} -5.397160e-04 secure; {B3,B6,B7} +1.881545e-03 secure
+   L78 →L56  screened      {B1,B2,B4,B5,B8,B9} -6.391665e-04 secure; {B3,B6,B7} +1.782095e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.264e-12 MW
+L56 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -8.543089e-03 overload
+   L56 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -8.823567e-03 overload
+   L82 →L56  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     overload
+   dispatch A→B vs B→A: max |Δ| 3.071e+00 MW
+L56 +L89  both: {B1,B4,B5,B9} -2.044994e-02 secure; {B2,B3,B6,B7,B8} +1.002097e-02 secure
+   L56 →L89  screened      {B1,B4,B5,B9} -2.073041e-02 secure; {B2,B3,B6,B7,B8} +9.740497e-03 secure
+   L89 →L56  screened      {B1,B4,B5,B9} -2.080437e-02 secure; {B2,B3,B6,B7,B8} +9.666537e-03 secure
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW
+L56 +L94  both: {B1,B4,B5} -9.190420e-04 secure; {B2,B3,B6,B7,B8,B9} +2.258343e-03 voltage
+   L56 →L94  screened      {B1,B4,B5} -1.199519e-03 secure; {B2,B3,B6,B7,B8,B9} +1.977866e-03 voltage
+   L94 →L56  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 1.115e+01 MW
+L56 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.657308e-04 voltage
+   L56 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -4.462079e-04 voltage
+   G1  →L56  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 2.353e+01 MW
+L56 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.543089e-03 overload
+   L56 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.823567e-03 overload
+   G2  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     overload
+   dispatch A→B vs B→A: max |Δ| 3.071e+00 MW
+L56 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -7.927000e-03 secure
+   L56 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.207477e-03 secure
+   G3  →L56  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.064e-02 MW
+L36 +L67  both: {B1,B2,B4,B5,B6,B7,B8,B9} -7.927000e-03 secure
+   L36 →L67  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     secure
+   L67 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.221299e-03 secure
+   dispatch A→B vs B→A: max |Δ| 4.064e-02 MW
+L36 +L78  both: {B1,B2,B4,B5,B6,B7,B8,B9} -4.058366e-03 voltage
+   L36 →L78  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   L78 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -4.438294e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 2.557e+01 MW
+L36 +L82  both: {B1,B4,B5,B6,B7,B8,B9} -3.007211e-02 voltage
+   L36 →L82  screened      {B1,B4,B5,B6,B7,B8,B9} -6.401337e-02 voltage
+   L82 →L36  screened      {B1,B4,B5,B6,B7,B8,B9} -7.981903e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW
+L36 +L89  both: {B1,B2,B4,B5,B6,B7,B8,B9} -7.289679e-03 secure
+   L36 →L89  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     secure
+   L89 →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -7.644116e-03 secure
+   dispatch A→B vs B→A: max |Δ| 4.056e+00 MW
+L36 +L94  both: {B1,B2,B4,B5,B6,B7,B8,B9} -6.031392e-03 voltage
+   L36 →L94  screened      {B1,B2,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   L94 →L36  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 7.585e+00 MW
+L36 +G1   both: {B1,B2,B4,B5,B6,B7,B8,B9} -1.663799e-02 voltage
+   L36 →G1   screened      {B1,B2,B4,B5,B6,B7,B8,B9} -8.704541e-03 voltage
+   G1  →L36  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 8.024e+01 MW
+L36 +G2   both: {B1,B2,B4,B5,B6,B7,B8,B9} -3.007211e-02 voltage
+   L36 →G2   screened      {B1,B2,B4,B5,B6,B7,B8,B9} -6.401337e-02 voltage
+   G2  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} -7.981903e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+L36 +G3   both: {B1,B2,B4,B5,B6,B7,B8,B9} -7.933451e-03 secure
+   L36 →G3   already_lost  {B1,B2,B4,B5,B6,B7,B8,B9} +0.000000e+00 secure
+   G3  →L36  screened      {B1,B2,B4,B5,B6,B7,B8,B9} +1.841044e-16 secure
+   dispatch A→B vs B→A: max |Δ| 4.441e-13 MW
+L67 +L78  both: {B1,B2,B3,B4,B5,B6,B8,B9} +5.495078e-03 secure
+   L67 →L78  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.200779e-03 secure
+   L78 →L67  screened      {B1,B2,B3,B4,B5,B6,B8,B9} +5.115151e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.055e-13 MW
+L67 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -5.025811e-03 voltage
+   L67 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -5.320110e-03 voltage
+   L82 →L67  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 2.850e+01 MW
+L67 +L89  both: {B1,B3,B4,B5,B6,B9} -1.104026e-03 secure; {B2,B7,B8} +3.414074e-03 secure
+   L67 →L89  screened      {B1,B3,B4,B5,B6,B9} -1.398325e-03 secure; {B2,B7,B8} +3.119774e-03 secure
+   L89 →L67  screened      {B1,B3,B4,B5,B6,B9} -1.458463e-03 secure; {B2,B7,B8} +3.059637e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.175e-12 MW
+L67 +L94  both: {B1,B3,B4,B5,B6} +8.764174e-03 secure; {B2,B7,B8,B9} -1.015519e-02 voltage
+   L67 →L94  screened      {B1,B3,B4,B5,B6} +8.469875e-03 secure; {B2,B7,B8,B9} -1.044949e-02 voltage
+   L94 →L67  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 7.156e+01 MW
+L67 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.311614e-03 voltage
+   L67 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.605913e-03 voltage
+   G1  →L67  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.713e+00 MW
+L67 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.025811e-03 voltage
+   L67 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -5.320110e-03 voltage
+   G2  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 2.850e+01 MW
+L67 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -7.927000e-03 secure
+   L67 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.221299e-03 secure
+   G3  →L67  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.064e-02 MW
+L78 +L82  both: {B1,B3,B4,B5,B6,B7,B8,B9} -9.083378e-03 secure
+   L78 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -9.463305e-03 secure
+   L82 →L78  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 7.191e-03 MW
+L78 +L89  both: {B1,B3,B4,B5,B6,B7,B9} -9.083378e-03 secure
+   L78 →L89  screened      {B1,B3,B4,B5,B6,B7,B9} -9.463305e-03 secure
+   L89 →L78  screened      {B1,B3,B4,B5,B6,B7,B9} -9.437815e-03 secure
+   dispatch A→B vs B→A: max |Δ| 1.144e-12 MW
+L78 +L94  both: {B1,B3,B4,B5,B6,B7} +5.974064e-04 secure; {B2,B8,B9} +2.666160e-03 voltage
+   L78 →L94  screened      {B1,B3,B4,B5,B6,B7} +2.174788e-04 secure; {B2,B8,B9} +2.286233e-03 voltage
+   L94 →L78  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 9.212e+00 MW
+L78 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.255650e-03 voltage
+   L78 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.635578e-03 voltage
+   G1  →L78  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 4.065e+00 MW
+L78 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.083378e-03 secure
+   L78 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.463305e-03 secure
+   G2  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 7.191e-03 MW
+L78 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -4.058366e-03 voltage
+   L78 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -4.438294e-03 voltage
+   G3  →L78  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 2.557e+01 MW
+L82 +L89  both: {B1,B3,B4,B5,B6,B7,B8,B9} -9.083378e-03 secure
+   L82 →L89  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   L89 →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -9.437815e-03 secure
+   dispatch A→B vs B→A: max |Δ| 7.191e-03 MW
+L82 +L94  both: {B1,B3,B4,B5,B6,B7,B8,B9} -3.756464e-03 voltage
+   L82 →L94  screened      {B1,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   L94 →L82  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 7.585e+00 MW
+L82 +G1   both: {B1,B3,B4,B5,B6,B7,B8,B9} -1.920328e-02 voltage
+   L82 →G1   screened      {B1,B3,B4,B5,B6,B7,B8,B9} -1.011864e-02 voltage
+   G1  →L82  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 8.676e+01 MW
+L82 +G2   both: {B1,B3,B4,B5,B6,B7,B8,B9} -9.084646e-03 secure
+   L82 →G2   already_lost  {B1,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 secure
+   G2  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} +3.297815e-16 secure
+   dispatch A→B vs B→A: max |Δ| 4.596e-12 MW
+L82 +G3   both: {B1,B3,B4,B5,B6,B7,B8,B9} -3.007211e-02 voltage
+   L82 →G3   screened      {B1,B3,B4,B5,B6,B7,B8,B9} -7.981903e-02 voltage
+   G3  →L82  screened      {B1,B3,B4,B5,B6,B7,B8,B9} -6.401337e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 8.882e-14 MW
+L89 +L94  both: {B1,B2,B3,B4,B5,B6,B7,B8} +6.565956e-03 secure
+   L89 →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8} +6.211519e-03 secure
+   L94 →L89  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.378e+01 MW
+L89 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} +4.525254e-04 voltage
+   L89 →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} +9.808817e-05 voltage
+   G1  →L89  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 2.743e+01 MW
+L89 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.083378e-03 secure
+   L89 →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -9.437815e-03 secure
+   G2  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 7.191e-03 MW
+L89 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -7.289679e-03 secure
+   L89 →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -7.644116e-03 secure
+   G3  →L89  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.056e+00 MW
+L94 +G1   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.841361e-03 voltage
+   L94 →G1   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G1  →L94  not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   dispatch A→B vs B→A: max |Δ| 3.216e+01 MW
+L94 +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.756464e-03 voltage
+   L94 →G2   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 7.585e+00 MW
+L94 +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -6.031392e-03 voltage
+   L94 →G3   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →L94  screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 7.585e+00 MW
+G1  +G2   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.920328e-02 voltage
+   G1  →G2   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G2  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.011864e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 8.676e+01 MW
+G1  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -1.663799e-02 voltage
+   G1  →G3   not_restored  {B1,B2,B3,B4,B5,B6,B7,B8,B9} +0.000000e+00 voltage
+   G3  →G1   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -8.704541e-03 voltage
+   dispatch A→B vs B→A: max |Δ| 8.024e+01 MW
+G2  +G3   both: {B1,B2,B3,B4,B5,B6,B7,B8,B9} -3.007211e-02 voltage
+   G2  →G3   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -7.981903e-02 voltage
+   G3  →G2   screened      {B1,B2,B3,B4,B5,B6,B7,B8,B9} -6.401337e-02 voltage
+   dispatch A→B vs B→A: max |Δ| 3.109e-13 MW
+TALLY case9 default AC: dispatch_differs=20, milder_order_milder_than_both=5, milder_order_worse_than_both=9, no_number=20, not_both_screened=32, orders_differ=14, same_dispatch=14, worse_order_milder_than_both=5, worse_order_worse_than_both=9
+  worse_order_worse_than_both: L45+L78(+1.065729e-02/+1.051405e-02/+1.013412e-02)  L45+L89(+6.599765e-03/+6.431040e-03/+6.076603e-03)  L56+L67(+8.207477e-03/+8.221299e-03/+7.927000e-03)  L56+L89(+2.073041e-02/+2.080437e-02/+2.044994e-02)  L36+L82(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L36+G2(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L78+L89(+9.463305e-03/+9.437815e-03/+9.083378e-03)  L82+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)  G2+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)
+  milder_order_worse_than_both: L45+L78(+1.065729e-02/+1.051405e-02/+1.013412e-02)  L45+L89(+6.599765e-03/+6.431040e-03/+6.076603e-03)  L56+L67(+8.207477e-03/+8.221299e-03/+7.927000e-03)  L56+L89(+2.073041e-02/+2.080437e-02/+2.044994e-02)  L36+L82(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L36+G2(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L78+L89(+9.463305e-03/+9.437815e-03/+9.083378e-03)  L82+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)  G2+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)
+  worse_order_milder_than_both: L45+L56(+4.323356e-03/+4.566041e-03/+4.846518e-03)  L45+L67(+3.971534e-03/+4.200397e-03/+4.494696e-03)  L56+L78(+1.881545e-03/+1.782095e-03/+2.162022e-03)  L67+L78(+5.200779e-03/+5.115151e-03/+5.495078e-03)  L67+L89(+3.119774e-03/+3.059637e-03/+3.414074e-03)
+  orders_differ: L45+L56(+4.323356e-03/+4.566041e-03/+4.846518e-03)  L45+L67(+3.971534e-03/+4.200397e-03/+4.494696e-03)  L45+L78(+1.065729e-02/+1.051405e-02/+1.013412e-02)  L45+L89(+6.599765e-03/+6.431040e-03/+6.076603e-03)  L56+L67(+8.207477e-03/+8.221299e-03/+7.927000e-03)  L56+L78(+1.881545e-03/+1.782095e-03/+2.162022e-03)  L56+L89(+2.073041e-02/+2.080437e-02/+2.044994e-02)  L36+L82(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L36+G2(+6.401337e-02/+7.981903e-02/+3.007211e-02)  L67+L78(+5.200779e-03/+5.115151e-03/+5.495078e-03)  L67+L89(+3.119774e-03/+3.059637e-03/+3.414074e-03)  L78+L89(+9.463305e-03/+9.437815e-03/+9.083378e-03)  L82+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)  G2+G3(+7.981903e-02/+6.401337e-02/+3.007211e-02)
+
+=== mesh  — DC — 45 unordered pairs
+AB  +AC   both: {B,C,D,E} -2.187500e-01 shared
+   AB  →AC   screened      {B,C,D,E} -2.187500e-01 shared
+   AC  →AB   screened      {B,C,D,E} -2.187500e-01 shared
+   dispatch A→B vs B→A: max |Δ| 1.776e-13 MW; flows max |Δ| 1.554e-13 MW
+AB  +BC   both: {A,B,C,D,E} +0.000000e+00 shared
+   AB  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BC  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 2.220e-13 MW
+AB  +BD   both: {A,B,C,D,E} +0.000000e+00 shared
+   AB  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BD  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 4.441e-14 MW
+AB  +CD   both: {A,B,C,D,E} +0.000000e+00 shared
+   AB  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   CD  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 4.441e-13 MW
+AB  +DE   both: {A,B,C,D,E} +0.000000e+00 shared
+   AB  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   DE  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 9.437e-14 MW
+AB  +BE   both: {A,B,C,D,E} +0.000000e+00 shared
+   AB  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BE  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 2.442e-13 MW
+AB  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   AB  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →AB   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+AB  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   AB  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.528e+00 MW
+AB  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   AB  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →AB   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 2.676e-01 MW
+AC  +BC   both: {A,B,C,D,E} +0.000000e+00 shared
+   AC  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BC  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 1.554e-13 MW
+AC  +BD   both: {A,B,C,D,E} +0.000000e+00 shared
+   AC  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BD  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 6.661e-14 MW
+AC  +CD   both: {A,B,C,D,E} +0.000000e+00 shared
+   AC  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   CD  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 6.661e-14 MW
+AC  +DE   both: {A,B,C,D,E} +0.000000e+00 shared
+   AC  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   DE  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 5.551e-14 MW
+AC  +BE   both: {A,B,C,D,E} +0.000000e+00 shared
+   AC  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BE  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 7.772e-14 MW
+AC  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   AC  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →AC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+AC  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   AC  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.528e+00 MW
+AC  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   AC  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →AC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 2.676e-01 MW
+BC  +BD   both: {A,B,C,D,E} +0.000000e+00 shared
+   BC  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BD  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 4.580e-14 MW
+BC  +CD   both: {A,B,C,D,E} +0.000000e+00 shared
+   BC  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   CD  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 3.109e-13 MW
+BC  +DE   both: {A,B,C,D,E} +0.000000e+00 shared
+   BC  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   DE  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 8.882e-14 MW
+BC  +BE   both: {A,B,C,D,E} +0.000000e+00 shared
+   BC  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BE  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 1.332e-13 MW
+BC  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   BC  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →BC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+BC  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   BC  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.132e+00 MW
+BC  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   BC  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →BC   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 1.949e-01 MW
+BD  +CD   both: {A,B,C,D,E} +0.000000e+00 shared
+   BD  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   CD  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 1.554e-13 MW
+BD  +DE   both: {A,B,C,D,E} +0.000000e+00 shared
+   BD  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   DE  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 4.441e-14 MW
+BD  +BE   both: {A,B,C,D,E} +0.000000e+00 shared
+   BD  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BE  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 6.939e-14 MW
+BD  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   BD  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →BD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+BD  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   BD  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.019e+00 MW
+BD  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   BD  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →BD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 1.401e-01 MW
+CD  +DE   both: {A,B,C,D,E} +0.000000e+00 shared
+   CD  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   DE  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 6.661e-14 MW
+CD  +BE   both: {A,B,C,D,E} +0.000000e+00 shared
+   CD  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   BE  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 1.776e-13 MW
+CD  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   CD  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →CD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+CD  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   CD  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.188e+00 MW
+CD  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   CD  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →CD   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 1.486e-01 MW
+DE  +BE   both: {A,B,C,D} -3.864734e-03 shared
+   DE  →BE   screened      {A,B,C,D} -3.864734e-03 shared
+   BE  →DE   screened      {A,B,C,D} -3.864734e-03 shared
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW; flows max |Δ| 0.000e+00 MW
+DE  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   DE  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →DE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+DE  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   DE  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.528e+00 MW
+DE  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   DE  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →DE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 1.395e-01 MW
+BE  +G1   both: {A,B,C,D,E} -2.187500e-01 shared
+   BE  →G1   screened      {A,B,C,D,E} -2.187500e-01 shared
+   G1  →BE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.056e+02 MW; flows max |Δ| 0.000e+00 MW
+BE  +G2   both: {A,B,C,D,E} -8.487654e-03 shared
+   BE  →G2   screened      {A,B,C,D,E} -8.487654e-03 shared
+   G2  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 1.528e+00 MW; flows max |Δ| 1.528e+00 MW
+BE  +G3   both: {A,B,C,D,E} -3.864734e-03 shared
+   BE  →G3   screened      {A,B,C,D,E} -3.864734e-03 shared
+   G3  →BE   screened      {A,B,C,D,E} +0.000000e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.676e-01 MW; flows max |Δ| 1.395e-01 MW
+G1  +G2   both: {A,B,C,D,E} -1.138889e+00 shared
+   G1  →G2   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G2  →G1   screened      {A,B,C,D,E} -1.138889e+00 shared
+   dispatch A→B vs B→A: max |Δ| 2.100e+02 MW; flows max |Δ| 0.000e+00 MW
+G1  +G3   both: {A,B,C,D,E} -5.000000e-01 shared
+   G1  →G3   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G3  →G1   screened      {A,B,C,D,E} -5.000000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 1.900e+02 MW; flows max |Δ| 0.000e+00 MW
+G2  +G3   both: {A,B,C,D,E} -1.000000e-01 shared
+   G2  →G3   screened      {A,B,C,D,E} -1.000000e-01 shared
+   G3  →G2   screened      {A,B,C,D,E} -1.000000e-01 shared
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW; flows max |Δ| 0.000e+00 MW
+TALLY mesh  DC: dispatch_differs=14, milder_order_milder_than_both=14, milder_order_same_as_both=22, not_both_screened=9, orders_differ=14, orders_same_worst=22, same_dispatch=22, worse_order_same_as_both=36
+  orders_differ: AB+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  AB+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  AC+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  AC+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  BC+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  BC+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  BD+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  BD+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  CD+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  CD+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  DE+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  DE+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)  BE+G2(+8.487654e-03/+0.000000e+00/+8.487654e-03)  BE+G3(+3.864734e-03/+0.000000e+00/+3.864734e-03)
+
+=== mesh constant_power — AC — 45 unordered pairs
+AB  +AC   both: {B,C,D,E} -2.258488e-01 secure
+   AB  →AC   screened      {B,C,D,E} -2.258488e-01 secure
+   AC  →AB   screened      {B,C,D,E} -2.258488e-01 secure
+   dispatch A→B vs B→A: max |Δ| 4.441e-14 MW
+AB  +BC   both: {A,B,C,D,E}      NaN     secure
+   AB  →BC   screened      {A,B,C,D,E}      NaN     secure
+   BC  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.842e+00 MW
+AB  +BD   both: {A,B,C,D,E}      NaN     secure
+   AB  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.040e+00 MW
+AB  +CD   both: {A,B,C,D,E}      NaN     secure
+   AB  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.618e+00 MW
+AB  +DE   both: {A,B,C,D,E}      NaN     secure
+   AB  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.454e+00 MW
+AB  +BE   both: {A,B,C,D,E}      NaN     secure
+   AB  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.168e+00 MW
+AB  +G1   both: {A,B,C,D,E} -2.258488e-01 secure
+   AB  →G1   screened      {A,B,C,D,E} -2.258488e-01 secure
+   G1  →AB   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.078e+02 MW
+AB  +G2   both: {A,B,C,D,E} -1.069082e-02 secure
+   AB  →G2   screened      {A,B,C,D,E} -1.020038e-02 secure
+   G2  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.151e+01 MW
+AB  +G3   both: {A,B,C,D,E} -4.949812e-03 secure
+   AB  →G3   screened      {A,B,C,D,E} -4.447926e-03 secure
+   G3  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 5.713e+00 MW
+AC  +BC   both: {A,B,C,D,E}      NaN     secure
+   AC  →BC   screened      {A,B,C,D,E}      NaN     secure
+   BC  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.837e-01 MW
+AC  +BD   both: {A,B,C,D,E}      NaN     secure
+   AC  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.449e-02 MW
+AC  +CD   both: {A,B,C,D,E}      NaN     secure
+   AC  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.078e-01 MW
+AC  +DE   both: {A,B,C,D,E}      NaN     secure
+   AC  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 5.721e-01 MW
+AC  +BE   both: {A,B,C,D,E}      NaN     secure
+   AC  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.420e-01 MW
+AC  +G1   both: {A,B,C,D,E} -2.258488e-01 secure
+   AC  →G1   screened      {A,B,C,D,E} -2.258488e-01 secure
+   G1  →AC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.078e+02 MW
+AC  +G2   both: {A,B,C,D,E} -8.858491e-03 secure
+   AC  →G2   screened      {A,B,C,D,E} -8.831915e-03 secure
+   G2  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.590e+00 MW
+AC  +G3   both: {A,B,C,D,E} -4.050668e-03 secure
+   AC  →G3   screened      {A,B,C,D,E} -4.023597e-03 secure
+   G3  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.612e-01 MW
+BC  +BD   both: {A,B,C,D,E}      NaN     secure
+   BC  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.982e-01 MW
+BC  +CD   both: {A,B,C,D,E}      NaN     secure
+   BC  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.241e-01 MW
+BC  +DE   both: {A,B,C,D,E}      NaN     secure
+   BC  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.885e-01 MW
+BC  +BE   both: {A,B,C,D,E}      NaN     secure
+   BC  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.257e-01 MW
+BC  +G1   both: {A,B,C,D,E} -2.292086e-01 secure
+   BC  →G1   screened      {A,B,C,D,E} -2.292086e-01 secure
+   G1  →BC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.088e+02 MW
+BC  +G2   both: {A,B,C,D,E} -8.652977e-03 secure
+   BC  →G2   screened      {A,B,C,D,E} -8.598072e-03 secure
+   G2  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.548e+00 MW
+BC  +G3   both: {A,B,C,D,E} -4.128612e-03 secure
+   BC  →G3   screened      {A,B,C,D,E} -4.072698e-03 secure
+   G3  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 7.749e-01 MW
+BD  +CD   both: {A,B,C,D,E}      NaN     secure
+   BD  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.223e-01 MW
+BD  +DE   both: {A,B,C,D,E}      NaN     voltage
+   BD  →DE   screened      {A,B,C,D,E}      NaN     voltage
+   DE  →BD   screened      {A,B,C,D,E}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+BD  +BE   both: {A,B,C,D,E}      NaN     secure
+   BD  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.275e-01 MW
+BD  +G1   both: {A,B,C,D,E} -2.244511e-01 secure
+   BD  →G1   screened      {A,B,C,D,E} -2.244511e-01 secure
+   G1  →BD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.073e+02 MW
+BD  +G2   both: {A,B,C,D,E} -8.686307e-03 secure
+   BD  →G2   screened      {A,B,C,D,E} -8.661957e-03 secure
+   G2  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.559e+00 MW
+BD  +G3   both: {A,B,C,D,E} -4.074793e-03 secure
+   BD  →G3   screened      {A,B,C,D,E} -4.049994e-03 secure
+   G3  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 5.590e-01 MW
+CD  +DE   both: {A,B,C,D,E}      NaN     voltage
+   CD  →DE   screened      {A,B,C,D,E}      NaN     voltage
+   DE  →CD   screened      {A,B,C,D,E}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+CD  +BE   both: {A,B,C,D,E}      NaN     secure
+   CD  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →CD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 5.498e-01 MW
+CD  +G1   both: {A,B,C,D,E} -2.270597e-01 secure
+   CD  →G1   screened      {A,B,C,D,E} -2.270597e-01 secure
+   G1  →CD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.081e+02 MW
+CD  +G2   both: {A,B,C,D,E} -8.738801e-03 secure
+   CD  →G2   screened      {A,B,C,D,E} -8.649363e-03 secure
+   G2  →CD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.557e+00 MW
+CD  +G3   both: {A,B,C,D,E} -4.259723e-03 voltage
+   CD  →G3   screened      {A,B,C,D,E} -4.168623e-03 voltage
+   G3  →CD   screened      {A,B,C,D,E}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 2.684e+01 MW
+DE  +BE   both: {A,B,C,D} -4.056148e-03 secure
+   DE  →BE   screened      {A,B,C,D} -3.939256e-03 secure
+   BE  →DE   screened      {A,B,C,D} -4.051368e-03 secure
+   dispatch A→B vs B→A: max |Δ| 7.829e-03 MW
+DE  +G1   both: {A,B,C,D,E} -2.294097e-01 secure
+   DE  →G1   screened      {A,B,C,D,E} -2.294097e-01 secure
+   G1  →DE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.088e+02 MW
+DE  +G2   both: {A,B,C,D,E} -8.982483e-03 secure
+   DE  →G2   screened      {A,B,C,D,E} -8.867610e-03 secure
+   G2  →DE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.596e+00 MW
+DE  +G3   both: {A,B,C,D,E} -4.056148e-03 secure
+   DE  →G3   screened      {A,B,C,D,E} -3.939256e-03 secure
+   G3  →DE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.772e-01 MW
+BE  +G1   both: {A,B,C,D,E} -2.249307e-01 secure
+   BE  →G1   screened      {A,B,C,D,E} -2.249307e-01 secure
+   G1  →BE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.075e+02 MW
+BE  +G2   both: {A,B,C,D,E} -8.643026e-03 secure
+   BE  →G2   screened      {A,B,C,D,E} -8.638333e-03 secure
+   G2  →BE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.555e+00 MW
+BE  +G3   both: {A,B,C,D,E} -4.056148e-03 secure
+   BE  →G3   screened      {A,B,C,D,E} -4.051368e-03 secure
+   G3  →BE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.849e-01 MW
+G1  +G2   both: {A,B,C,D,E} -1.167709e+00 secure
+   G1  →G2   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G2  →G1   screened      {A,B,C,D,E} -1.167709e+00 secure
+   dispatch A→B vs B→A: max |Δ| 2.152e+02 MW
+G1  +G3   both: {A,B,C,D,E} -5.194548e-01 secure
+   G1  →G3   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G3  →G1   screened      {A,B,C,D,E} -5.194548e-01 secure
+   dispatch A→B vs B→A: max |Δ| 1.958e+02 MW
+G2  +G3   both: {A,B,C,D,E} -1.124000e-01 secure
+   G2  →G3   screened      {A,B,C,D,E} -1.092278e-01 secure
+   G3  →G2   screened      {A,B,C,D,E} -1.075680e-01 secure
+   dispatch A→B vs B→A: max |Δ| 2.220e-14 MW
+TALLY mesh constant_power AC: dispatch_differs=32, milder_order_milder_than_both=2, milder_order_same_as_both=1, no_number=33, not_both_screened=9, orders_differ=2, orders_same_worst=1, same_dispatch=4, worse_order_milder_than_both=2, worse_order_same_as_both=1
+  worse_order_milder_than_both: DE+BE(+3.939256e-03/+4.051368e-03/+4.056148e-03)  G2+G3(+1.092278e-01/+1.075680e-01/+1.124000e-01)
+  orders_differ: DE+BE(+3.939256e-03/+4.051368e-03/+4.056148e-03)  G2+G3(+1.092278e-01/+1.075680e-01/+1.124000e-01)
+
+=== mesh default — AC — 45 unordered pairs
+AB  +AC   both: {B,C,D,E} -2.154407e-01 secure
+   AB  →AC   screened      {B,C,D,E} -2.154407e-01 secure
+   AC  →AB   screened      {B,C,D,E} -2.154407e-01 secure
+   dispatch A→B vs B→A: max |Δ| 6.661e-14 MW
+AB  +BC   both: {A,B,C,D,E}      NaN     secure
+   AB  →BC   screened      {A,B,C,D,E}      NaN     secure
+   BC  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.189e-01 MW
+AB  +BD   both: {A,B,C,D,E}      NaN     secure
+   AB  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.565e+00 MW
+AB  +CD   both: {A,B,C,D,E}      NaN     secure
+   AB  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.990e-01 MW
+AB  +DE   both: {A,B,C,D,E}      NaN     secure
+   AB  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.152e+00 MW
+AB  +BE   both: {A,B,C,D,E}      NaN     secure
+   AB  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.352e+00 MW
+AB  +G1   both: {A,B,C,D,E} -2.154407e-01 secure
+   AB  →G1   screened      {A,B,C,D,E} -2.154407e-01 secure
+   G1  →AB   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.046e+02 MW
+AB  +G2   both: {A,B,C,D,E} -5.586232e-03 secure
+   AB  →G2   screened      {A,B,C,D,E} -5.842074e-03 secure
+   G2  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.677e+01 MW
+AB  +G3   both: {A,B,C,D,E} -1.371123e-03 secure
+   AB  →G3   screened      {A,B,C,D,E} -1.630981e-03 secure
+   G3  →AB   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.089e+01 MW
+AC  +BC   both: {A,B,C,D,E}      NaN     secure
+   AC  →BC   screened      {A,B,C,D,E}      NaN     secure
+   BC  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.544e+00 MW
+AC  +BD   both: {A,B,C,D,E}      NaN     secure
+   AC  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 9.889e-02 MW
+AC  +CD   both: {A,B,C,D,E}      NaN     secure
+   AC  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.464e+00 MW
+AC  +DE   both: {A,B,C,D,E}      NaN     secure
+   AC  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.816e+00 MW
+AC  +BE   both: {A,B,C,D,E}      NaN     secure
+   AC  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.110e-01 MW
+AC  +G1   both: {A,B,C,D,E} -2.154407e-01 secure
+   AC  →G1   screened      {A,B,C,D,E} -2.154407e-01 secure
+   G1  →AC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.046e+02 MW
+AC  +G2   both: {A,B,C,D,E} -7.517872e-03 secure
+   AC  →G2   screened      {A,B,C,D,E} -7.516696e-03 secure
+   G2  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.557e+00 MW
+AC  +G3   both: {A,B,C,D,E} -3.032882e-03 secure
+   AC  →G3   screened      {A,B,C,D,E} -3.031685e-03 secure
+   G3  →AC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 4.017e-01 MW
+BC  +BD   both: {A,B,C,D,E}      NaN     secure
+   BC  →BD   screened      {A,B,C,D,E}      NaN     secure
+   BD  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.446e+00 MW
+BC  +CD   both: {A,B,C,D,E}      NaN     secure
+   BC  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 8.006e-02 MW
+BC  +DE   both: {A,B,C,D,E}      NaN     secure
+   BC  →DE   screened      {A,B,C,D,E}      NaN     secure
+   DE  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.271e+00 MW
+BC  +BE   both: {A,B,C,D,E}      NaN     secure
+   BC  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.234e+00 MW
+BC  +G1   both: {A,B,C,D,E} -2.059574e-01 secure
+   BC  →G1   screened      {A,B,C,D,E} -2.059574e-01 secure
+   G1  →BC   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.018e+02 MW
+BC  +G2   both: {A,B,C,D,E} -7.905839e-03 secure
+   BC  →G2   screened      {A,B,C,D,E} -8.142993e-03 secure
+   G2  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.156e+00 MW
+BC  +G3   both: {A,B,C,D,E} -2.212066e-03 secure
+   BC  →G3   screened      {A,B,C,D,E} -2.453358e-03 secure
+   G3  →BC   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 5.590e+00 MW
+BD  +CD   both: {A,B,C,D,E}      NaN     secure
+   BD  →CD   screened      {A,B,C,D,E}      NaN     secure
+   CD  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.366e+00 MW
+BD  +DE   both: {A,B,C,D,E}      NaN     voltage
+   BD  →DE   screened      {A,B,C,D,E}      NaN     voltage
+   DE  →BD   screened      {A,B,C,D,E}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+BD  +BE   both: {A,B,C,D,E}      NaN     secure
+   BD  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.121e-01 MW
+BD  +G1   both: {A,B,C,D,E} -2.211890e-01 secure
+   BD  →G1   screened      {A,B,C,D,E} -2.211890e-01 secure
+   G1  →BD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.064e+02 MW
+BD  +G2   both: {A,B,C,D,E} -7.980228e-03 secure
+   BD  →G2   screened      {A,B,C,D,E} -7.994312e-03 secure
+   G2  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.647e+00 MW
+BD  +G3   both: {A,B,C,D,E} -2.759015e-03 secure
+   BD  →G3   screened      {A,B,C,D,E} -2.773345e-03 secure
+   G3  →BD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.128e+00 MW
+CD  +DE   both: {A,B,C,D,E}      NaN     voltage
+   CD  →DE   screened      {A,B,C,D,E}      NaN     voltage
+   DE  →CD   screened      {A,B,C,D,E}      NaN     voltage
+   dispatch A→B vs B→A: max |Δ| 0.000e+00 MW
+CD  +BE   both: {A,B,C,D,E}      NaN     secure
+   CD  →BE   screened      {A,B,C,D,E}      NaN     secure
+   BE  →CD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.153e+00 MW
+CD  +G1   both: {A,B,C,D,E} -2.143308e-01 secure
+   CD  →G1   screened      {A,B,C,D,E} -2.143308e-01 secure
+   G1  →CD   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.043e+02 MW
+CD  +G2   both: {A,B,C,D,E} -7.850048e-03 secure
+   CD  →G2   screened      {A,B,C,D,E} -8.074845e-03 secure
+   G2  →CD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 2.505e+00 MW
+CD  +G3   both: {A,B,C,D,E} -1.644891e-03 secure
+   CD  →G3   screened      {A,B,C,D,E} -1.873610e-03 secure
+   G3  →CD   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 9.162e+00 MW
+DE  +BE   both: {A,B,C,D} -2.834946e-03 secure
+   DE  →BE   screened      {A,B,C,D} -3.589835e-03 secure
+   BE  →DE   screened      {A,B,C,D} -2.882568e-03 secure
+   dispatch A→B vs B→A: max |Δ| 4.915e-02 MW
+DE  +G1   both: {A,B,C,D,E} -1.967676e-01 secure
+   DE  →G1   screened      {A,B,C,D,E} -1.967676e-01 secure
+   G1  →DE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 9.903e+01 MW
+DE  +G2   both: {A,B,C,D,E} -5.420888e-03 secure
+   DE  →G2   screened      {A,B,C,D,E} -6.162924e-03 secure
+   G2  →DE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.790e+01 MW
+DE  +G3   both: {A,B,C,D,E} -2.834946e-03 secure
+   DE  →G3   screened      {A,B,C,D,E} -3.589835e-03 secure
+   G3  →DE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.701e+00 MW
+BE  +G1   both: {A,B,C,D,E} -2.162450e-01 secure
+   BE  →G1   screened      {A,B,C,D,E} -2.162450e-01 secure
+   G1  →BE   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   dispatch A→B vs B→A: max |Δ| 1.049e+02 MW
+BE  +G2   both: {A,B,C,D,E} -7.748882e-03 secure
+   BE  →G2   screened      {A,B,C,D,E} -7.795710e-03 secure
+   G2  →BE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 3.110e+00 MW
+BE  +G3   both: {A,B,C,D,E} -2.834946e-03 secure
+   BE  →G3   screened      {A,B,C,D,E} -2.882568e-03 secure
+   G3  →BE   screened      {A,B,C,D,E}      NaN     secure
+   dispatch A→B vs B→A: max |Δ| 1.652e+00 MW
+G1  +G2   both: {A,B,C,D,E} -1.034515e+00 secure
+   G1  →G2   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G2  →G1   screened      {A,B,C,D,E} -1.034515e+00 secure
+   dispatch A→B vs B→A: max |Δ| 1.912e+02 MW
+G1  +G3   both: {A,B,C,D,E} -4.525228e-01 secure
+   G1  →G3   not_restored  {A,B,C,D,E}      NaN     restore_refused
+   G3  →G1   screened      {A,B,C,D,E} -4.525228e-01 secure
+   dispatch A→B vs B→A: max |Δ| 1.758e+02 MW
+G2  +G3   both: {A,B,C,D,E} -3.029894e-02 secure
+   G2  →G3   screened      {A,B,C,D,E} -4.056572e-02 secure
+   G3  →G2   screened      {A,B,C,D,E} -5.795898e-02 secure
+   dispatch A→B vs B→A: max |Δ| 1.110e-14 MW
+TALLY mesh default AC: dispatch_differs=32, milder_order_same_as_both=1, milder_order_worse_than_both=2, no_number=33, not_both_screened=9, orders_differ=2, orders_same_worst=1, same_dispatch=4, worse_order_same_as_both=1, worse_order_worse_than_both=2
+  worse_order_worse_than_both: DE+BE(+3.589835e-03/+2.882568e-03/+2.834946e-03)  G2+G3(+4.056572e-02/+5.795898e-02/+3.029894e-02)
+  milder_order_worse_than_both: DE+BE(+3.589835e-03/+2.882568e-03/+2.834946e-03)  G2+G3(+4.056572e-02/+5.795898e-02/+3.029894e-02)
+  orders_differ: DE+BE(+3.589835e-03/+2.882568e-03/+2.834946e-03)  G2+G3(+4.056572e-02/+5.795898e-02/+3.029894e-02)
