@@ -537,8 +537,9 @@ within their band (M8's check) is marked BESIDE it in each cell (your choice): *
 outside the voltage band, **O** a line over its rating, **VO** both — never folded into the
 colour. On case9 with default loads, 18 of the 20 green pairs carry a V (losing L14 and L45
 is one). In the full AC view a V also means that part's lines were not checked: the solve
-stops at the voltage band, so a missing O is not "lines fine". The DC view checks every
-pair's ratings. The legend says all of this.
+stops at the voltage band, so a missing O is not "lines fine". The DC view checks the
+ratings of every pair it has a state for, with approximate flows and no voltages. The
+legend says all of this.
 
 **The limit is a design value for a whole synchronous area, not a pass/fail rule for one
 outage on a small grid,** and a split piece of case9 is smaller still. The window says so.

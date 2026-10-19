@@ -503,7 +503,8 @@ function print_claims(io::IO = stdout)
     power passes, have a running piece outside the voltage band [V]; no passing mesh pair
     is marked. Both at once, DC puts 20 of case9's 66 pairs over a line rating and AC 2
     on each load model — but AC checks the voltage band first and does not judge the
-    ratings where it fails, so an AC [V] can hide an overload and the counts do not
+    ratings where it fails, so an AC [V] can hide an overload, and on constant-power
+    loads the 24 pairs of claim m have no AC solution to check at all: the counts do not
     compare.
 """)
 end

@@ -173,7 +173,8 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
                         "are marked beside it: V a bus outside the voltage band, O a line\n" *
                         "over its rating, VO both. A green cell can carry a V. In AC a V\n" *
                         "means its lines were NOT checked (the solve stops at the voltage\n" *
-                        "band): no O is not \"lines fine\". The DC view checks every pair.";
+                        "band): no O is not \"lines fine\". DC checks the ratings of every\n" *
+                        "pair it has a state for (approximate flows, no voltages).";
                         halign = :left, justification = :left, tellwidth = false,
                         fontsize = 11, font = :bold, color = C_WARN))
     rowgap!(gleg, 3)

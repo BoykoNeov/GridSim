@@ -1,0 +1,36 @@
+case9 both dc: overload=20 secure=46  | green with a mark: 0
+case9 both cp: none=24 overload=2 secure=17 voltage=23  | green with a mark: 3
+case9 both def: overload=2 secure=22 voltage=42  | green with a mark: 18
+case9 seq dc: none=3 overload=40 secure=89  | green with a mark: 0
+case9 seq cp: none=78 overload=4 secure=30 voltage=20  | green with a mark: 3
+case9 seq def: none=35 overload=4 secure=41 voltage=52  | green with a mark: 10
+  cp overload vs ac_over mismatches: 0
+  def overload vs ac_over mismatches: 0
+mesh both dc: secure=45  | green with a mark: 0
+mesh both cp: secure=42 voltage=3  | green with a mark: 0
+mesh both def: secure=43 voltage=2  | green with a mark: 0
+mesh seq dc: none=9 secure=81  | green with a mark: 0
+mesh seq cp: none=9 secure=75 voltage=6  | green with a mark: 0
+mesh seq def: none=9 secure=77 voltage=4  | green with a mark: 0
+  cp overload vs ac_over mismatches: 0
+  def overload vs ac_over mismatches: 0
+Double-outage screening (M10 step 6): every pair of elements, at once and one after the
+other, DC and AC, a split grid answered piece by piece
+
+ Limits: continental_europe_limits() — settled 0.2 Hz, from SO GL Annex III Table 1.
+ THESE ARE DESIGN VALUES for a whole synchronous area after its 3,000 MW reference
+ incident, not a pass/fail rule for one outage on a small grid — and a split piece of
+ case9 is smaller still. With the invented droop and damping here, a pass or a FAIL
+ describes that droop, not whether a real grid survives. Only the settled value is
+ judged: no dip or rate per pair (m10-context.md D5).
+
+DC reads no load model, so it is printed once; AC is printed on both load models. A
+piece's verdict: its settled Δf against 0.2 Hz, or why it has none — dead (no generator
+or no load: no frequency), n/a (the event lost no generation and split nothing),
+restored (the second loss did not reach it), no value (the screen refused or found no
+operating point). A pair's verdict: FAIL if any live piece fails; pass if every live
+piece passes or has nothing to judge — "pass, LOAD LOST" where customers are cut off;
+unjudged where a live piece has no value. Lost MW: DC (AC constant power / default).
+[V] / [O] / [VO] after a verdict: a running piece has a bus outside the voltage band /
+a branch over its rating — M8's check, shown beside the frequency verdict and never
+combined with it (m10-context.md D13).

@@ -1065,3 +1065,8 @@ said yes. What that means, made exact:
 - **Sabotages R6 and W6**, predictions first: red exactly where registered.
 - Cells holding a collapse twin AND a marker (`=G1 -0.195 V`) overflowed: found in the render,
   given a smaller font.
+- **After D13's review:** claim r's probe kept as `step6/lines_tally.jl` (+ `.out.txt`), the report
+  re-printed to `step6/report.out.txt` with the markers; "the DC view checks every pair" narrowed
+  to "every pair it has a state for (approximate flows, no voltages)" — DC has no state for the
+  mesh's nine G1-first pairs or the three already-lost ones; claim r also names the 24 pairs of
+  claim m, which have no AC solution to check.
