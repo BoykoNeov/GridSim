@@ -15,3 +15,21 @@ identical mesh_def_ac.bin (33991 bytes)
 identical mesh_def_dc.bin (9109 bytes)
 identical swing_case9_ac.bin (189444 bytes)
 identical swing_case9_dc.bin (46727 bytes)
+
+# Re-run at 6e3653e (the step-5 commit, which edited both loop bodies again), against the same before-snapshot:
+identical case9_cp_ac.bin
+identical case9_cp_dc.bin
+identical case9_def_ac.bin
+identical case9_def_dc.bin
+identical corner_gfl_ac.bin
+identical corner_gfl_dc.bin
+identical corner_gfm_ac.bin
+identical corner_gfm_dc.bin
+identical genmesh_ac.bin
+identical genmesh_dc.bin
+identical mesh_cp_ac.bin
+identical mesh_cp_dc.bin
+identical mesh_def_ac.bin
+identical mesh_def_dc.bin
+identical swing_case9_ac.bin
+identical swing_case9_dc.bin
