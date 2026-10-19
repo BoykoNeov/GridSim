@@ -373,22 +373,9 @@ it, to round-off. Every outcome is reported, never thrown (`m8-context.md` D3).
 The approximation is `dc_powerflow`'s: `R` ignored, every `|V| = 1`, no reactive power.
 """
 function dc_pair_outages(net::NetworkModel)
-    base = dc_powerflow(net)
-    topo = branch_topology(net)
-    n, m = length(net.buses), length(topo.src)
-    f = base.flow
-    b = inv.(topo.X)
-    P = _dc_transfer_factors(net, b)
-    lines = _dc_line_pairs(net, base, P)
-    line_pair = Dict(kl => p for (p, kl) in pairs(lines.pairs))
-    r = _responders(net)
-    nm = r.n_machines
-    la, fa = load_arrays(net), _gfl_arrays(net)
+    ctx = _dc_outage_context(net)
+    m, nm = length(ctx.topo.src), ctx.r.n_machines
     kind, id, elems, same_as = _pair_elements(net)
-    Br, keep = _dc_reduced_susceptance(net, b)
-    F = n > 1 ? LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Br)) : nothing
-    v_ref = net.bus_index[net.slack]
-    busid = Symbol[bs.id for bs in net.buses]
     np = length(elems)
     splits = Vector{Bool}(undef, np)
     pieces = Vector{Vector{DCPiece}}(undef, np)
@@ -401,115 +388,141 @@ function dc_pair_outages(net::NetworkModel)
         for e in (i, j)
             e > m && (lost[e - m] = true)
         end
-        piece, npieces = _pair_pieces(n, topo, out)
-        splits[p] = npieces > 1
-        # Each piece's imbalance: the lost schedule inside it, plus what it imported
-        # across the pair's branches in the base case.
-        imb = zeros(Float64, npieces)
-        for k in 1:nm
-            lost[k] && (imb[piece[r.bus[k]]] += r.P[k])
-        end
-        for e in out
-            ps, pd = piece[topo.src[e]], piece[topo.dst[e]]
-            ps == pd && continue
-            imb[pd] += f[e]
-            imb[ps] -= f[e]
-        end
-        pk = zeros(Float64, length(r.ids))
-        cp = falses(length(r.ids))
-        ps_out = Vector{DCPiece}(undef, npieces)
-        settled = falses(npieces)
-        alive = falses(length(r.ids))
-        for c in 1:npieces
-            pkind = _pair_piece_kind(piece, c, r, lost, la, fa, r.P)
-            bs = busid[piece .== c]
-            if pkind.kind === :live
-                for q in eachindex(r.ids)
-                    alive[q] = piece[r.bus[q]] == c && !(q <= nm && lost[q])
-                end
-                status, dω, pq, cq = _pickup_solve(r.g, r.d, r.h, alive, imb[c])
-                if status === :shared
-                    settled[c] = true
-                    for q in eachindex(r.ids)
-                        alive[q] || continue
-                        pk[q] = pq[q]
-                        cp[q] = cq[q]
-                    end
-                end
-                ps_out[c] = DCPiece(bs, :live, status, imb[c], status === :shared ? dω : NaN,
-                                    0.0, 0.0)
-            elseif pkind.kind === :sources_lost
-                ps_out[c] = DCPiece(bs, :sources_lost, :sources_lost, 0.0, NaN,
-                                    pkind.sources + pkind.gfl, 0.0)
-            elseif pkind.kind === :load_lost
-                ps_out[c] = DCPiece(bs, :load_lost, :load_lost, 0.0, NaN, pkind.gfl,
-                                    pkind.load)
-            else
-                ps_out[c] = DCPiece(bs, :empty, :empty, 0.0, NaN, 0.0, 0.0)
-            end
-        end
-        pieces[p], pickup[p], capped[p] = ps_out, pk, collect(cp)
-        live = Bool[ps_out[c].kind === :live for c in 1:npieces]
-        if !splits[p] && settled[1] && length(out) == 2
-            flow[p] = copy(lines.flow[line_pair[(out[1], out[2])]])
-            continue
-        end
-        # The post-outage injections: the base, less every lost machine, plus every
-        # pickup; nothing in a dead piece or in one that did not settle.
-        Pinj = copy(base.P)
-        for k in 1:nm
-            lost[k] && (Pinj[r.bus[k]] -= r.P[k])
-        end
-        for q in eachindex(r.ids)
-            Pinj[r.bus[q]] += pk[q]
-        end
-        for v in 1:n
-            settled[piece[v]] || (Pinj[v] = 0.0)
-        end
-        post = zeros(Float64, m)
-        if !splits[p]
-            if settled[1]
-                θ = zeros(Float64, n)
-                F === nothing || (θ[keep] = F \ Pinj[keep])
-                for e in 1:m
-                    post[e] = b[e] * (θ[topo.src[e]] - θ[topo.dst[e]])
-                end
-                if length(out) == 1
-                    # The line's single-outage factor, applied to these flows.
-                    k = out[1]
-                    x = post[k] / (1.0 - P[k, k])
-                    for e in 1:m
-                        post[e] += P[e, k] * x
-                    end
-                    post[k] = 0.0
-                end
-            elseif live[1]
-                fill!(post, NaN)
-            end
-            # (A whole grid with no load or no source is dead: it carries nothing.)
-            flow[p] = post
-            continue
-        end
-        # A split: one reference per piece — the model's own where it lies in the
-        # piece, else the piece's first bus.
-        refs = [any(==(v_ref), findall(==(c), piece)) ? v_ref : findfirst(==(c), piece)
-                for c in 1:npieces]
-        kv = [v for v in 1:n if !(v in refs)]
-        keepb = [e for e in 1:m if !(e in out)]
-        θ = zeros(Float64, n)
-        if !isempty(kv)
-            Bs = _dc_susceptance(n, topo.src[keepb], topo.dst[keepb], b[keepb])[kv, kv]
-            θ[kv] = LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Bs)) \ Pinj[kv]
-        end
-        for e in keepb
-            c = piece[topo.src[e]]
-            post[e] = settled[c] ? b[e] * (θ[topo.src[e]] - θ[topo.dst[e]]) :
-                      live[c] ? NaN : 0.0
-        end
-        flow[p] = post
+        splits[p], pieces[p], pickup[p], capped[p], flow[p] = _dc_outage_set(ctx, out, lost)
     end
-    return DCPairOutages(base, kind, id, elems, same_as, splits, r.ids, pieces, pickup,
-                         capped, flow)
+    return DCPairOutages(ctx.base, kind, id, elems, same_as, splits, ctx.r.ids, pieces,
+                         pickup, capped, flow)
+end
+
+# Everything `_dc_outage_set` reads that does not depend on which elements are out: the
+# base solve, the factor table and step 1's line pairs on it, the responders, and the
+# base factorisation.
+function _dc_outage_context(net::NetworkModel)
+    base = dc_powerflow(net)
+    topo = branch_topology(net)
+    n = length(net.buses)
+    b = inv.(topo.X)
+    P = _dc_transfer_factors(net, b)
+    lines = _dc_line_pairs(net, base, P)
+    line_pair = Dict(kl => p for (p, kl) in pairs(lines.pairs))
+    Br, keep = _dc_reduced_susceptance(net, b)
+    F = n > 1 ? LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Br)) : nothing
+    return (; net, base, topo, b, P, lines, line_pair, r = _responders(net),
+            la = load_arrays(net), fa = _gfl_arrays(net), keep, F,
+            v_ref = net.bus_index[net.slack], busid = Symbol[bs.id for bs in net.buses])
+end
+
+# The branches `out` (indices, at most two) and the machines `lost` (a mask) out at
+# once, answered piece by piece: `(split, pieces, pickup, capped, flow)`, one pair's
+# entries of `DCPairOutages`. Step 5 asks it of ONE element on a restored model.
+function _dc_outage_set(ctx, out::Vector{Int}, lost::BitVector)
+    (; base, topo, b, P, lines, line_pair, r, la, fa, keep, F, v_ref, busid) = ctx
+    n, m = length(ctx.net.buses), length(topo.src)
+    nm = r.n_machines
+    f = base.flow
+    piece, npieces = _pair_pieces(n, topo, out)
+    split = npieces > 1
+    # Each piece's imbalance: the lost schedule inside it, plus what it imported
+    # across the pair's branches in the base case.
+    imb = zeros(Float64, npieces)
+    for k in 1:nm
+        lost[k] && (imb[piece[r.bus[k]]] += r.P[k])
+    end
+    for e in out
+        ps, pd = piece[topo.src[e]], piece[topo.dst[e]]
+        ps == pd && continue
+        imb[pd] += f[e]
+        imb[ps] -= f[e]
+    end
+    pk = zeros(Float64, length(r.ids))
+    cp = falses(length(r.ids))
+    ps_out = Vector{DCPiece}(undef, npieces)
+    settled = falses(npieces)
+    alive = falses(length(r.ids))
+    for c in 1:npieces
+        pkind = _pair_piece_kind(piece, c, r, lost, la, fa, r.P)
+        bs = busid[piece .== c]
+        if pkind.kind === :live
+            for q in eachindex(r.ids)
+                alive[q] = piece[r.bus[q]] == c && !(q <= nm && lost[q])
+            end
+            status, dω, pq, cq = _pickup_solve(r.g, r.d, r.h, alive, imb[c])
+            if status === :shared
+                settled[c] = true
+                for q in eachindex(r.ids)
+                    alive[q] || continue
+                    pk[q] = pq[q]
+                    cp[q] = cq[q]
+                end
+            end
+            ps_out[c] = DCPiece(bs, :live, status, imb[c], status === :shared ? dω : NaN,
+                                0.0, 0.0)
+        elseif pkind.kind === :sources_lost
+            ps_out[c] = DCPiece(bs, :sources_lost, :sources_lost, 0.0, NaN,
+                                pkind.sources + pkind.gfl, 0.0)
+        elseif pkind.kind === :load_lost
+            ps_out[c] = DCPiece(bs, :load_lost, :load_lost, 0.0, NaN, pkind.gfl,
+                                pkind.load)
+        else
+            ps_out[c] = DCPiece(bs, :empty, :empty, 0.0, NaN, 0.0, 0.0)
+        end
+    end
+    live = Bool[ps_out[c].kind === :live for c in 1:npieces]
+    if !split && settled[1] && length(out) == 2
+        return split, ps_out, pk, collect(cp), copy(lines.flow[line_pair[(out[1], out[2])]])
+    end
+    # The post-outage injections: the base, less every lost machine, plus every
+    # pickup; nothing in a dead piece or in one that did not settle.
+    Pinj = copy(base.P)
+    for k in 1:nm
+        lost[k] && (Pinj[r.bus[k]] -= r.P[k])
+    end
+    for q in eachindex(r.ids)
+        Pinj[r.bus[q]] += pk[q]
+    end
+    for v in 1:n
+        settled[piece[v]] || (Pinj[v] = 0.0)
+    end
+    post = zeros(Float64, m)
+    if !split
+        if settled[1]
+            θ = zeros(Float64, n)
+            F === nothing || (θ[keep] = F \ Pinj[keep])
+            for e in 1:m
+                post[e] = b[e] * (θ[topo.src[e]] - θ[topo.dst[e]])
+            end
+            if length(out) == 1
+                # The line's single-outage factor, applied to these flows.
+                k = out[1]
+                x = post[k] / (1.0 - P[k, k])
+                for e in 1:m
+                    post[e] += P[e, k] * x
+                end
+                post[k] = 0.0
+            end
+        elseif live[1]
+            fill!(post, NaN)
+        end
+        # (A whole grid with no load or no source is dead: it carries nothing.)
+        return split, ps_out, pk, collect(cp), post
+    end
+    # A split: one reference per piece — the model's own where it lies in the
+    # piece, else the piece's first bus.
+    refs = [any(==(v_ref), findall(==(c), piece)) ? v_ref : findfirst(==(c), piece)
+            for c in 1:npieces]
+    kv = [v for v in 1:n if !(v in refs)]
+    keepb = [e for e in 1:m if !(e in out)]
+    θ = zeros(Float64, n)
+    if !isempty(kv)
+        Bs = _dc_susceptance(n, topo.src[keepb], topo.dst[keepb], b[keepb])[kv, kv]
+        θ[kv] = LinearAlgebra.cholesky(LinearAlgebra.Symmetric(Bs)) \ Pinj[kv]
+    end
+    for e in keepb
+        c = piece[topo.src[e]]
+        post[e] = settled[c] ? b[e] * (θ[topo.src[e]] - θ[topo.dst[e]]) :
+                  live[c] ? NaN : 0.0
+    end
+    return split, ps_out, pk, collect(cp), post
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -627,19 +640,9 @@ Measured from `ac_powerflow(net)`, and refused as `ac_generator_outages` refuses
 outside its reactive limits. Every outcome of every piece is reported, never thrown.
 """
 function ac_pair_outages(net::NetworkModel)
-    base = _ac_screen_base(net, "ac_pair_outages")
-    topo = branch_topology(net)
-    n, m = length(net.buses), length(topo.src)
-    r = _responders(net)
-    nm = r.n_machines
-    la, fa = load_arrays(net), _gfl_arrays(net)
+    ctx = _ac_outage_context(net, _ac_screen_base(net, "ac_pair_outages"))
+    m, nm = length(ctx.topo.src), ctx.r.n_machines
     kind, id, elems, same_as = _pair_elements(net)
-    # What each responder produced in the base: its schedule, or, for the slack's one
-    # source, its solved output less the grid-following share there (M8 D8.1).
-    v_slack = net.bus_index[net.slack]
-    Pfix_s = sum((fa.P[q] for q in eachindex(fa.bus) if fa.bus[q] == v_slack); init = 0.0)
-    P_base = [r.bus[q] == v_slack ? base.Pgen[v_slack] - Pfix_s : r.P[q] for q in eachindex(r.ids)]
-    busid = Symbol[bs.id for bs in net.buses]
     np = length(elems)
     splits = Vector{Bool}(undef, np)
     pieces = Vector{Vector{ACPiece}}(undef, np)
@@ -648,45 +651,68 @@ function ac_pair_outages(net::NetworkModel)
     for (p, (i, j)) in pairs(elems)
         out = Int[e for e in (i, j) if e <= m]
         lost_ids = Int[e - m for e in (i, j) if e > m]
-        lost = falses(nm)
-        lost[lost_ids] .= true
-        piece, npieces = _pair_pieces(n, topo, out)
-        splits[p] = npieces > 1
-        pk = zeros(Float64, length(r.ids))
-        cp = falses(length(r.ids))
-        ps_out = Vector{ACPiece}(undef, npieces)
-        for c in 1:npieces
-            vs = findall(==(c), piece)
-            bs = busid[vs]
-            k = _pair_piece_kind(piece, c, r, lost, la, fa, P_base)
-            if k.kind !== :live
-                ps_out[c] = ACPiece(bs, k.kind, k.kind, NaN,
-                                    k.kind === :load_lost ? k.gfl : k.sources + k.gfl,
-                                    k.kind === :load_lost ? k.load : 0.0,
-                                    nothing, _OverEntry[], _LowEntry[], :none)
-                continue
-            end
-            if !splits[p] && isempty(lost_ids)
-                # Two lines, the grid whole: M8's line screen on the rebuilt model.
-                o = _ac_powerflow_outcome(_without_branch(net, out))
-                ps_out[c] = _ac_live_piece(bs, o, NaN,
-                                           o.outcome === :no_solution ? o.detail.reason : :none)
-                continue
-            end
-            ref = piece[v_slack] == c ? v_slack : vs[1]
-            st = _ac_piece_setup(net, base, lost_ids, vs, out, findfirst(==(ref), vs))
-            o = _ac_piece_solve(net, st)
-            for q in eachindex(r.ids)
-                st.alive[q] || continue
-                pk[q] = o.pickup[q]
-                cp[q] = o.capped[q]
-            end
-            ps_out[c] = _ac_live_piece(bs, o, o.Δω, o.reason)
-        end
-        pieces[p], pickup[p], capped[p] = ps_out, pk, collect(cp)
+        splits[p], pieces[p], pickup[p], capped[p] = _ac_outage_set(ctx, out, lost_ids)
     end
-    return ACPairOutages(base, kind, id, elems, same_as, splits, r.ids, pieces, pickup,
-                         capped)
+    return ACPairOutages(ctx.base, kind, id, elems, same_as, splits, ctx.r.ids, pieces,
+                         pickup, capped)
+end
+
+# Everything `_ac_outage_set` reads that does not depend on which elements are out,
+# measured from `base` (`_ac_screen_base`'s: the caller decides what refuses it).
+function _ac_outage_context(net::NetworkModel, base::ACPowerFlow)
+    r = _responders(net)
+    la, fa = load_arrays(net), _gfl_arrays(net)
+    # What each responder produced in the base: its schedule, or, for the slack's one
+    # source, its solved output less the grid-following share there (M8 D8.1).
+    v_slack = net.bus_index[net.slack]
+    Pfix_s = sum((fa.P[q] for q in eachindex(fa.bus) if fa.bus[q] == v_slack); init = 0.0)
+    P_base = [r.bus[q] == v_slack ? base.Pgen[v_slack] - Pfix_s : r.P[q] for q in eachindex(r.ids)]
+    return (; net, base, topo = branch_topology(net), r, la, fa, v_slack, P_base,
+            busid = Symbol[bs.id for bs in net.buses])
+end
+
+# The branches `out` and the machines `lost_ids` (indices; at most two elements in all)
+# out at once, answered piece by piece: `(split, pieces, pickup, capped)`, one pair's
+# entries of `ACPairOutages`. Step 5 asks it of ONE element on a restored model.
+function _ac_outage_set(ctx, out::Vector{Int}, lost_ids::Vector{Int})
+    (; net, base, topo, r, la, fa, v_slack, P_base, busid) = ctx
+    n, nm = length(net.buses), r.n_machines
+    lost = falses(nm)
+    lost[lost_ids] .= true
+    piece, npieces = _pair_pieces(n, topo, out)
+    split = npieces > 1
+    pk = zeros(Float64, length(r.ids))
+    cp = falses(length(r.ids))
+    ps_out = Vector{ACPiece}(undef, npieces)
+    for c in 1:npieces
+        vs = findall(==(c), piece)
+        bs = busid[vs]
+        k = _pair_piece_kind(piece, c, r, lost, la, fa, P_base)
+        if k.kind !== :live
+            ps_out[c] = ACPiece(bs, k.kind, k.kind, NaN,
+                                k.kind === :load_lost ? k.gfl : k.sources + k.gfl,
+                                k.kind === :load_lost ? k.load : 0.0,
+                                nothing, _OverEntry[], _LowEntry[], :none)
+            continue
+        end
+        if !split && isempty(lost_ids)
+            # Lines only, the grid whole: M8's line screen on the rebuilt model.
+            o = _ac_powerflow_outcome(_without_branch(net, out))
+            ps_out[c] = _ac_live_piece(bs, o, NaN,
+                                       o.outcome === :no_solution ? o.detail.reason : :none)
+            continue
+        end
+        ref = piece[v_slack] == c ? v_slack : vs[1]
+        st = _ac_piece_setup(net, base, lost_ids, vs, out, findfirst(==(ref), vs))
+        o = _ac_piece_solve(net, st)
+        for q in eachindex(r.ids)
+            st.alive[q] || continue
+            pk[q] = o.pickup[q]
+            cp[q] = o.capped[q]
+        end
+        ps_out[c] = _ac_live_piece(bs, o, o.Δω, o.reason)
+    end
+    return split, ps_out, pk, collect(cp)
 end
 
 """
