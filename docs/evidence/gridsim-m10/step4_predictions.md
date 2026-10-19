@@ -79,3 +79,28 @@ Second dated note, same day, still before any sabotage: the rerun passed every i
 assertion and failed only the testset's two counts, which were written wrong (11 pieces and 5
 up/down splits; the case list holds four two-piece splits and two dead-piece rests, so 10 and
 4 — what the run counted). Corrected in the test; no measured number moved.
+
+## Added 2026-10-19 after the step-4 commit (review): the inverter half, predictions first
+
+The report grids carry no inverter, so nothing above reached `TripElements`' inverter code: the
+`lost[q]` line added to `_pair_piece_kind`, the online-only grid-following list, and
+`_source_off!`'s two inverter branches. Two cases on step 2's corner triangle, with a 10 MW load
+added at A (G1 at 70 MW) so that cutting {B, C} off leaves A live:
+
+- **Grid-forming:** `TripGenerator(:I3)`, then `TripElements` on AB+CA. Predicted: runs; {B, C}
+  holds LB and only the tripped I3, so it is load lost — `deenergised_buses == [:B, :C]`, the
+  log ends `trip_line` ×2, `deenergise` B, C, and no `trip_generator` (I3 is already out).
+- **Grid-following:** `TripElements` on AB+CA. Predicted: I3 tripped in the same event
+  (`trip_generator I3` logged, offline), B and C de-energised.
+- **S7 — the `lost[q]` line deleted:** red on the grid-forming case only — {B, C} then reads as
+  live (the tripped I3 counted as a source), B and C are not grounded, and the re-solve of a
+  piece with load and no source refuses or the de-energised list is wrong. The grid-following
+  case and everything else green.
+
+And two testsets that ground a bus move from FBDF to Rodas5P (the 19.4 run and the dead
+piece), for the identity testset's reason; their bands are unchanged.
+
+Dated note, same day, after the first run of the two inverter cases and before S7 ran: both ran
+as predicted (B and C de-energised, the logs as written), but the grid-following case's grounded
+buses integrate to |V| = 5e-324, not to an exact 0.0 as the test had asserted (the prediction
+said only "de-energised"). The assertion now reads <= 1e-300.

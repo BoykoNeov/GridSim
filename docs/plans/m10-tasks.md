@@ -150,6 +150,8 @@ runs.
       intermediate/stranded network step 0 measured (D10).
 - [x] Gate: M9's seven captures byte-identical (digests in D10). Suites 16525 core / 1439 ref
       / 745 UI, done 2026-10-19.
+- [x] (On review, after the commit) the inverter half: a tripped grid-forming inverter is
+      no source, a grid-following one goes with its piece; sabotage S7 red there alone.
 
 ## Step 5 — fail, restore, fail again (Hurdle 21)
 

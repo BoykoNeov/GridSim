@@ -734,3 +734,15 @@ the first test runs and before any sabotage), `step4_spike.jl`, `step4_relay_pro
     source), as predicted.
   - S5 (the relay's record not put back): red on the relay testset alone.
   - S6 (no halt): red on the relay testset alone (its four "cannot go on" assertions).
+- **Added after the step-4 commit, on review: the inverter half.** The report grids carry no
+  inverter, so nothing above reached `TripElements`' inverter code. Step 2's corner triangle
+  with a 10 MW load added at A: a grid-forming I3 tripped first, then AB+CA — {B, C} is load
+  lost, B and C de-energised (exact 0.0), nothing else tripped; a grid-following I3 and AB+CA —
+  I3 tripped in the same event, B and C de-energised, their voltages integrating to 5e-324 rather
+  than an exact 0 (the test had asserted 0.0; it reads <= 1e-300, dated note). Sabotage S7
+  (the `lost[q]` line deleted, a tripped grid-forming inverter read as a source): red on that
+  testset alone, through the grid-forming case — {B, C} read as live, its re-solve refused —
+  which stops the testset before the grid-following case. The 19.4 and dead-piece testsets
+  moved to Rodas5P with the identity's, since they too ground a bus. Step-4 testset 180/180,
+  run alone; the full core suite was not re-run for this test-only change (16525 at the commit
+  before, +6).

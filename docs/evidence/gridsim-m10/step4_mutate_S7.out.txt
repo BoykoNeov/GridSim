@@ -1,0 +1,15 @@
+== S7_tripped_inverter_source
+Test Summary:                                                                                  | Pass  Error  Total     Time
+M10 step 4 — one event, one re-solve                                                           |  174      1    175  3m31.1s
+  TripElements refuses what is not one event                                                   |    6             6     0.8s
+  positive control: refused as two trips, runs as one (default loads, L45+L67)                 |    6             6    31.1s
+  a refused event changes nothing: the run on is its never-asked twin, bit for bit             |   12            12     0.6s
+  the out-of-step relay's refused trip: nothing done, and the run stops                        |   10            10    18.7s
+  a dead piece is switched off, not solved (L45+L56, both load models)                         |   12            12     8.8s
+  a generator cut off alone is tripped in the same event (19.4): it IS its outage              |    6             6    57.5s
+  per piece, the settled run IS step 3's AC piece, through the losses identity                 |  110           110  1m03.5s
+  inverters: a tripped grid-forming one is no source, a grid-following one goes with its piece |           1      1    12.7s
+  names, refusals, and elements already out                                                    |    5             5     0.0s
+  the swing tier: the single trips at one instant, and the graph's lost machines               |    7             7    17.5s
+RNG of the outermost testset: Random.Xoshiro(0x9429bdc25f77ce57, 0xd19bd82024fbbcf7, 0xdd6d23bcafed3bb1, 0x995ef970a31aadd8, 0x8db7cae6b3c7f099)
+restored: True

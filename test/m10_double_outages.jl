@@ -1203,7 +1203,7 @@ end
     @testset "a dead piece is switched off, not solved (L45+L56, both load models)" begin
         for loads in (:constant_power, :default)
             net = _M10_CASE9(; loads)
-            eng = _m10_de(net)
+            eng = _m10_de(net; solver = OrdinaryDiffEq.Rodas5P())   # a grounded bus: D10
             solve!(eng, (0.0, 1.0); saveat = 0.05)
             inject!(eng, _m10_trip(net, :L45, :L56))
             @test deenergised_buses(eng) == [:B5]
@@ -1222,7 +1222,8 @@ end
     @testset "a generator cut off alone is tripped in the same event (19.4): it IS its outage" begin
         net = _M10_CASE9(loads = :constant_power)
         base = ac_powerflow(net)
-        a, b = _m10_de(net; base, tol = 1e-10), _m10_de(net; base, tol = 1e-10)
+        # Rodas5P: FBDF's step collapses, isolated, where a bus is grounded (D10).
+        a, b = (_m10_de(net; base, tol = 1e-10, solver = OrdinaryDiffEq.Rodas5P()) for _ in 1:2)
         solve!(a, (0.0, 1.0); saveat = 0.5)
         solve!(b, (0.0, 1.0); saveat = 0.5)
         inject!(a, _m10_trip(net, :L36))
@@ -1278,6 +1279,41 @@ end
         end
         @test nchecked == 10            # four two-piece splits, and two dead pieces' rest
         @test updown == 4               # every two-piece split: one piece up, one down
+    end
+
+    @testset "inverters: a tripped grid-forming one is no source, a grid-following one goes with its piece" begin
+        # Step 2's corner triangle with a 10 MW load added at A, so that cutting {B, C} off
+        # leaves A live. The report grids carry no inverter; only this reaches the event's
+        # inverter half (`step4_predictions.md`, the review addendum).
+        corner(mode) = let c = _m10_inverter_corner(mode)
+            NetworkModel(c.S_base, c.f0, c.buses, c.branches,
+                [Machine(:G1, :A, 200.0, 5.0, 1.0, 0.25, 1.0, 70.0, 0.05, 200.0)],
+                [c.loads; Load(:LA, :A, 10.0, 0.0, 0.0, 0.0, 1.0)];
+                slack = :A, inverters = c.inverters)
+        end
+        cut = TripElements(lines = [(:A, :B), (:C, :A)])
+        # Grid-forming: tripped first, so {B, C} holds load and no live source.
+        net = corner(:grid_forming)
+        eng = _m10_de(net; solver = OrdinaryDiffEq.Rodas5P())
+        inject!(eng, TripGenerator(:I3))
+        inject!(eng, cut)
+        @test deenergised_buses(eng) == [:B, :C]
+        @test [(e.kind, e.a) for e in event_log(eng)] == [(:trip_generator, :I3),
+              (:trip_line, :A), (:trip_line, :C), (:deenergise, :B), (:deenergise, :C)]
+        solve!(eng, (0.0, 10.0); saveat = 0.5)
+        @test current_state(eng).V[2:3] == [0.0, 0.0] && current_state(eng).ω[1] > 0
+        # Grid-following: lost with its piece, in the same event.
+        net = corner(:grid_following)
+        eng = _m10_de(net; solver = OrdinaryDiffEq.Rodas5P())
+        inject!(eng, cut)
+        @test !is_online(eng, :I3) && deenergised_buses(eng) == [:B, :C]
+        @test [(e.kind, e.a) for e in event_log(eng)] == [(:trip_line, :A), (:trip_line, :C),
+              (:trip_generator, :I3), (:deenergise, :B), (:deenergise, :C)]
+        solve!(eng, (0.0, 10.0); saveat = 0.5)
+        # Zero to the last subnormal, not to the bit: with the PLL's states on the grounded
+        # buses the integrated voltages sit at 5e-324 (measured; case9's passive B5 and the
+        # grid-forming case above hold an exact 0.0).
+        @test maximum(abs, current_state(eng).V[2:3]) <= 1e-300
     end
 
     @testset "names, refusals, and elements already out" begin

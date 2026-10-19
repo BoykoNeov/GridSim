@@ -1,15 +1,16 @@
 # M10 step 4 sabotages: apply one mutation to the source, run step 4's testset alone
 # (step4_run.jl), record the summary, restore the original. Usage: python step4_mutate.py
-# [names] (no names: all six). Predictions (which testsets go red) are in
+# [names] (no names: all seven). Predictions (which testsets go red) are in
 # step4_predictions.md, written before any of these ran.
 # Bytes in, bytes out: `write_text` on Windows would turn the files' LF into CRLF.
 import pathlib, subprocess, sys
 sys.stdout.reconfigure(encoding="utf-8")
 SRC = pathlib.Path(r"W:\Claude_projects\GridSim\src")
 DET, OOS = SRC / "engines" / "detailed.jl", SRC / "protection" / "out_of_step.jl"
+PAIRS = SRC / "steadystate" / "double_outages.jl"
 OUT = pathlib.Path(r"W:\temp\claude\gridsim-m10-step4\mutations")   # scratch logs only
 OUT.mkdir(parents=True, exist_ok=True)
-orig = {p: p.read_bytes().decode("utf-8") for p in (DET, OOS)}
+orig = {p: p.read_bytes().decode("utf-8") for p in (DET, OOS, PAIRS)}
 MUT = {
  # S1: a refused event's writes are not put back.
  "S1_no_restore": [(DET,
@@ -37,6 +38,10 @@ MUT = {
  # S6: a refusal from inside the solver does not stop the run.
  "S6_no_halt": [(DET,
    "        eng.halted = sprint(showerror, err)\n", "")],
+ # S7 (added after the commit, on review): a tripped grid-forming inverter read as a source.
+ # Run by name, to its own output.
+ "S7_tripped_inverter_source": [(PAIRS,
+   "        q <= length(lost) && lost[q] && continue\n", "")],
 }
 try:
     for name, reps in MUT.items():
