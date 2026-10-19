@@ -40,6 +40,12 @@ module OutageScreenScript
 include(joinpath(@__DIR__, "..", "scripts", "outage_screen.jl"))
 end
 
+# The double-outage report (M10 step 6) is the fifth: its claims are asserted in
+# `m10_report.jl`. It includes the fourth into a submodule of its own for its grids.
+module DoubleOutageScript
+include(joinpath(@__DIR__, "..", "scripts", "double_outage_screen.jl"))
+end
+
 # The suite is split across files (M5 step 0b). Two Julia facts make the split
 # work, and both are load-bearing:
 #
@@ -85,5 +91,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m9_rates.jl"))
     include(joinpath(@__DIR__, "m9_report.jl"))
     include(joinpath(@__DIR__, "m10_double_outages.jl"))
+    include(joinpath(@__DIR__, "m10_report.jl"))
 
 end

@@ -10,8 +10,8 @@ Built on `GLMakie` (native window). There are **seven**: two real-time windows,
 one per fidelity tier, chosen by the model you hand `launch` — two more for the
 other *execution mode*, the playback overlays, which have their own verbs — the
 scenario editor, which has no engine in it at all and produces the model the
-others start from, and two that each draw one study script: the low-inertia
-window and the frequency screen (all below).
+others start from, and three that each draw one study script: the low-inertia
+window, the frequency screen and the double-outage window (all below).
 
 The two real-time windows:
 
@@ -505,13 +505,49 @@ own samples — a test asserts both exactly. `frequency_screen_render(; path)` d
 PNG. Design notes: `docs/plans/m9-context.md` D11. Figure:
 `../docs/images/fig-m9-frequency-screen.png`.
 
+## The double-outage window — every pair of failures, and what each leaves of the grid
+
+```
+julia --project=ui -e "using GridSimUI; wait_for_close(double_outages())"
+```
+
+The M10 report (`scripts/double_outage_screen.jl`) drawn. On the left, every pair of
+elements of one report grid as a table: row and column are the two elements lost. "Both at
+once" is one event, so the table is symmetric; "one after the other" reads the row as lost
+first, 50 Hz restored, then the column. Each cell is coloured by the pair's settled-
+frequency verdict at the fidelity chosen (the linear DC screen, or the full AC one on
+either load model): green only where every part of the grid still running stays within
+0.2 Hz, red where any part fails, **amber** where every running part passes but customers
+are cut off (none does, on these grids), grey where something is not judged — and the
+cell says which ("n/a" two lines that split nothing, "?" no value, "NR" 50 Hz could not be
+restored after the first loss, "AL" the second element was already lost). A pair that IS
+one outage — a generator and the line it hangs on — is marked "=G1".
+
+Click a cell and the grid on the right shows that pair: what was lost crossed out in red,
+every bus coloured by the part it ends up in, and each part listed with its settled
+frequency and verdict, or what it took with it if it went dark. No time traces: M10 runs
+no dynamic simulation per pair, and a curve would suggest it did.
+
+Expect a lot of grey on case9 in AC "one after the other": after L14, L94 and G1 (and L45
+on constant-power loads) the restored state is outside the voltage band, so the second
+loss is never screened. That is the result, not a gap.
+
+**The limit is a design value for a whole synchronous area, not a pass/fail rule for one
+outage on a small grid,** and a split piece of case9 is smaller still. The window says so.
+
+Controls: the grid, the timing, the fidelity, and the table itself. The window builds both
+grids' screens when it opens (well under a second once compiled). The read-out is the
+script's own row and each cell says what its row says — tests assert both.
+`double_outages_render(; path)` draws it to a PNG. Design notes:
+`docs/plans/m10-context.md` D12. Figure: `../docs/images/fig-m10-double-outages.png`.
+
 ## Tests
 
 ```
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-745 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+3413 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do

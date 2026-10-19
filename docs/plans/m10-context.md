@@ -903,3 +903,103 @@ with its `.out.txt`; tests in `test/m10_double_outages.jl`, run alone by `step5_
   exactly its 100 MVA rating at both fidelities (in AC it lands on the rating within the switch's
   tolerance, uncapped, and the rebuilt model clamps it there). Added to the walk's learned list.
   The eight new names are clear of `names(GLMakie)`.
+
+---
+
+## D12 — How step 6 judges a piece, and the refused piece's flags (2026-10-19, before the code)
+
+Written after a probe of every piece shape the four screens return on the report grids
+(`docs/evidence/gridsim-m10/step6/`) and before the report's code. The user chose, at the start
+of step 6, that the report gets a window (the eighth).
+
+1. **A refused piece carries no capped flags.** `ac_restore(mesh, :G1)` is refused at both
+   fidelities; DC returns every flag `false`, AC returned G2 and G3 `true` — the switching state
+   of the shared solve when it gave up, while its pickups were zero. The settle's refusal hands
+   back the same state, so `ACPairOutages` broke its own docstring ("zero and `false` outside a
+   live piece the shared solve solved") wherever a piece was refused, and the sequential screen
+   copied it into `:not_restored` pairs. Fixed in ONE place, `_ac_outage_set`: a live piece's
+   pickups and flags are kept only where it has a solution or a settled `Δω` — the same mask the
+   sequential screen already applies (`_answered_mask`), asserted equal by a test. M8's own
+   `refused()` is not touched (the captures). Gated by `step6/snapshot.jl`: all four screens on
+   step 5's eight fixtures, before and after, every moved entry named.
+2. **The settled verdict per live piece, per fidelity** — M9's rule (`|Δf| ≤ settled`, reaching
+   it passes) where the piece has a value, and five names where it has none:
+   - `:dead` — the piece is not live (`:sources_lost`, `:load_lost`, `:empty`): it has no
+     frequency. Its MW lost is printed instead.
+   - `:not_applicable` — the event lost no generation and left the piece it hit whole: a pair
+     of lines that splits nothing, or a second-loss line that leaves its restored piece whole.
+     M9 D4's rule for a line outage, one level up. DC gives such a piece exactly `0.0` and AC
+     gives `NaN` by M8's line convention (the slack takes the losses); neither is judged, so the
+     two fidelities cannot disagree about a number one of them does not have.
+   - `:restored` — a piece the second loss did not touch: frequency on target by construction.
+     None occurs on the report grids (no single element leaves two live pieces there, D11.1);
+     named so the rule is total.
+   - `:no_value` — DC `:no_response`/`:reserve_exhausted`; AC `:no_solution`, `:no_response`,
+     `:reserve_exhausted` (M9's `_AC_SETTLED`: `:voltage` and `:overload` are solved operating
+     points and ARE judged).
+   - an AC answered outcome with a `NaN` `Δω` outside the `:not_applicable` shape is a broken
+     contract and throws, as M9's `_settled_verdict` does.
+3. **One colour per pair is a combining rule, named here.** The window colours a pair cell by
+   "every live piece passes": red if any judged piece fails, green only if every live piece is
+   judged and passes, grey otherwise (a piece unjudged, nothing applicable, or a sequential pair
+   with no state after both losses: `:already_lost`, `:not_restored`, `:base_refused`). The cell
+   text says which. A pair that IS one outage (D4's collapse, `same_as`) is marked as that
+   outage, never as a double.
+   **Amended the same day, on a note the user forwarded:** a dead piece has no frequency, so
+   the rule above would paint a pair green while customers sit in the dark (case9 L45+L56
+   strands B5's 90 MW). So a pair that leaves any `:load_lost` piece is never green: where its
+   live pieces pass it is AMBER ("pass, load lost"), and its MW lost is in the cell. A fail
+   stays red. A dead piece of sources alone needs no mark of its own: the generation it takes
+   is the imbalance the live pieces are judged on.
+4. **DC reads no load model**, so the report prints DC once per grid and says so; a test asserts
+   the DC screens of the two load models `isequal`, rather than skipping one silently.
+5. **No per-pair dynamic run is drawn** (D5): the window shows pieces on a network sketch and
+   the screens' numbers, no time traces. Bus positions for the sketch are render state and live
+   in `ui/`, tied to the rows by bus id.
+
+### What step 6 measured (2026-10-19)
+
+`docs/evidence/gridsim-m10/step6/`: `predictions.md` (each sabotage's prediction written
+before it ran), `snapshot.jl` + `snapshot_diff.jl` + `snapshot.out.txt` (the D12.1 gate),
+`run_tests.jl` / `run_report.jl` / `run_window.jl` (focused runners), `mutate.py` +
+`mutate.out.txt`. The report is `scripts/double_outage_screen.jl`, its claims (k–q) asserted
+in `test/m10_report.jl`; the window is `ui/src/double_outage_window.jl` (the user's choice),
+tested in `ui/test/double_outage_tests.jl`.
+
+- **The D12.1 fix moved exactly what it should.** 32 serialized screens (pair and sequential,
+  DC and AC, eight fixtures): 29 byte-identical; the three that moved are the AC sequential
+  screens of the mesh (both load models) and genmesh, and every one of the 64 moved entries is
+  a capped flag `true → false` — the refused restore of G1 and the nine `G1→X` pairs that copy
+  it. No pair screen moved on any fixture: no fixture has a SETTLE refusal with flags set, so
+  the pair half of the rule is guarded (a test asserts it on both report grids) but never
+  exercised by data.
+- **The screens are cheap**: all four screens of both grids on both load models in 0.2 s once
+  compiled (23 s the first time, compiling), so the window builds everything at open and the
+  precompile workload builds the window.
+- **Found by LOOKING at the window, after the claims' test had passed — not a sabotage.** A
+  sequential pair with no state after both (`:not_restored`, `:already_lost`) kept its FIRST
+  loss's restored pieces, and in AC those keep an answered outcome at `Δω = 0.0`, so they were
+  judged "pass" and their 0.0 compared with both at once: claim q's case9 "milder" counts read
+  58 (constant power) and 60 (default) where the truth is 28 and 25. The test passed because
+  it counted the same rows. Fixed in `_sequential_side` (such a pair's running pieces carry
+  its outcome as their verdict, and it has no worst), guarded by assertions of its own, and
+  sabotage R2 puts it back. DC was never affected (its restored pieces are `:restored`, which
+  DC never judges), so claim p's numbers did not move.
+- **The amber rule (D12.3, amended on the user's forwarded note) is never reached on these
+  grids**: the three pairs that strand customers all FAIL, because the rest of the grid runs
+  fast. It is tested on hand-built pieces only, and its sabotage R1 is red there alone.
+- **No report-grid pair has a piece the second loss never reaches** (D11.1, as registered in
+  D12.2), so that rule is tested on step 5's tie fixture, and R4 is red there alone.
+- **The claims, written after the tables** (section 4 of the report): k — where the grid splits
+  and who is left in the dark; l — nearly every pair fails, and what passes sits within
+  0.05 Hz of the limit; m — 24 case9 pairs have no AC solution on constant-power loads, every
+  one losing a generator or its line; n — DC and AC disagree on 17 case9 pairs on the default
+  loads (16 DC-fail/AC-pass: load relief) and on the mesh's 8 G3 pairs on constant power; o —
+  what the second loss starts from (43 / 32 case9 ordered pairs have no state after both); p —
+  in DC the order never moves the worst piece except the three "generator, then its own line"
+  pairs, because every generator-first pair ends with a governor at its cap; q — in AC it does,
+  mostly milder on constant-power loads and mostly worse on default loads, and flips one pair's
+  verdict on each grid.
+- **The window's first draft of sabotage W4 was invisible by construction** (a no-state pair's
+  pieces are grey whatever the colouring) and was replaced before any W run; the replacement
+  is recorded in the predictions file.

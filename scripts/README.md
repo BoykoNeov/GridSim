@@ -124,3 +124,27 @@ constant-impedance loads. Three sections:
 
 Read claim (d) before quoting a "secure": the screen judges line loading and voltage
 only. It has no frequency criterion, and one "secure" row settles 10.9 Hz low.
+
+## `double_outage_screen.jl`
+
+M10 step 6's report: **every pair of elements of the same two grids** — two lines, two
+generators, one of each — lost at once, and lost one after the other with 50 Hz restored
+in between (each remaining generator taking extra output in proportion to its governor
+gain). A pair that cuts the grid is answered **piece by piece**: each part with a
+generator and a load settles at its own frequency; a part with no generator is load lost
+(customers in the dark); a part with no load is its generators lost. Every running part's
+settled frequency is judged against the Continental Europe preset's 0.2 Hz, with the
+preset's caveat printed beside it. The linear (DC) screen is printed once — it reads no
+load model — beside the full (AC) one on both load models. Four sections:
+
+1. **Both at once** — per pair, every part left, its frequency and verdict at the three
+   fidelities, and what the dead parts took with them.
+2. **One loss, then 50 Hz restored** — what the second loss starts from: restored,
+   refused (not enough headroom), or a restored state outside the voltage band.
+3. **One after the other** — per ordered pair, the worst part's frequency and verdict, and
+   whether the order made it milder, worse or no different than both at once.
+4. **What the tables say** — seven claims (k–q), written after the tables and each
+   asserted in `test/m10_report.jl`.
+
+It includes `outage_screen.jl` into a submodule for its grids, so the two reports read the
+same models. The window `double_outages()` in `ui/` draws it.

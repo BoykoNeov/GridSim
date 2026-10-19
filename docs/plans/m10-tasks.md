@@ -178,12 +178,25 @@ runs.
 - [x] Suites 19151 core / 1439 ref / 745 UI. M9's captures not re-run: step 5 touches no
       code they call (`screening.jl` untouched; the refactor gated byte for byte).
 
-## Step 6 — the report
+## Step 6 — the report — done 2026-10-19
 
-- [ ] Script, both grids, both load models, both timings, per piece, both fidelities,
-      settled verdict with the preset's caveat.
-- [ ] Claims asserted at printed precision; prose after the table.
-- [ ] Window: the user's call.
+- [x] Decisions recorded before the code (`m10-context.md` D12): a refused piece keeps no
+      flags; the verdict per piece and its five names; one colour per pair (amended the same
+      day on a note the user forwarded: customers cut off is never green — amber); DC printed
+      once; no per-pair traces.
+- [x] The screens' one fix (D12.1, `_ac_outage_set`): gated by 32 serialized screens, the 64
+      moved entries all named (`step6/snapshot.out.txt`); sabotage F1 red where predicted.
+- [x] Script `scripts/double_outage_screen.jl`: both grids, DC once and AC on both load models,
+      both timings, per piece, the settled verdict with the preset's caveat.
+- [x] Claims k–q written after the tables, asserted at printed precision (`test/m10_report.jl`).
+      A no-state sequential pair judged at its restored 0.0 was found by looking at the window
+      and fixed (claim q's counts 58/60 → 28/25) before any sabotage ran.
+- [x] Window (the user's choice): `ui/src/double_outage_window.jl`, the eighth; figure
+      `docs/images/fig-m10-double-outages.png`.
+- [x] Sabotages, predictions first: F1, R1–R5, W1–W4 all red exactly where registered.
+- [x] Suites 24360 core / 1439 ref / 3413 UI (19151 + 469 + 4740 core; 745 + 2668 UI). M9's
+      captures not re-run: step 6 touches no code they call (`screening.jl` untouched; the
+      one change is in M10's `_ac_outage_set`, gated by `step6/snapshot.out.txt`).
 
 ## Step 7 — close
 

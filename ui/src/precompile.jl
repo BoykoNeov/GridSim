@@ -79,6 +79,13 @@ using PrecompileTools
                 # with its six dynamic runs, the overview and both trace panels.
                 frequency_screen_render(; path = tmp)
 
+                # The double-outage window (M10 step 6): both grids' four screens (well
+                # under a second once compiled), the pair table and the grid sketch, and a
+                # sequential view so both timings' branches compile.
+                double_outages_render(; path = tmp)
+                double_outages_render(; path = tmp, grid = :mesh, timing = :sequential,
+                                      view = :cp, pair = (:G1, :G2))
+
                 rm(tmp; force = true)
             catch err
                 @warn "GridSimUI precompile workload skipped" exception = (err, catch_backtrace())

@@ -1096,4 +1096,7 @@ end
     # --- the frequency-screen window (M9 step 7): the outage report, drawn --------
     include(joinpath(@__DIR__, "frequency_screen_tests.jl"))
 
+    # --- the double-outage window (M10 step 6): the pair report, drawn -------------
+    include(joinpath(@__DIR__, "double_outage_tests.jl"))
+
 end

@@ -38,6 +38,11 @@ generator outage of `scripts/outage_screen.jl`'s two grids, the line-and-voltage
 beside the frequency verdict, and the selected outage's dynamic run against the limits.
 Its grids, runs and numbers are the script's own (included here), so it takes no model.
 
+An **eighth** (`double_outage_window.jl`, M10 step 6) draws the double-outage report: every
+pair of elements of `scripts/double_outage_screen.jl`'s two grids as a table of verdicts,
+both at once or one after the other, and the selected pair on the grid with each piece it
+leaves coloured. Its grids and numbers are the script's own (included here); no model.
+
 The first two are siblings rather than one window with a runtime switch, because
 the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
@@ -152,6 +157,7 @@ include("editor.jl")
 include("editor_window.jl")
 include("low_inertia_window.jl")
 include("frequency_screen_window.jl")
+include("double_outage_window.jl")
 
 export launch, smoke_render, wait_for_close
 # M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
@@ -185,6 +191,10 @@ export low_inertia_playback, low_inertia_render
 # Its own verb pair, for M4's reason; like the low-inertia window it takes no model — its
 # grids are the report script's (`scripts/outage_screen.jl`).
 export frequency_screen, frequency_screen_render
+# M10 step 6 — the double-outage window: the pair report, drawn. Its own verb pair, for M4's
+# reason; it takes no model — its grids are the report script's
+# (`scripts/double_outage_screen.jl`).
+export double_outages, double_outages_render
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.
