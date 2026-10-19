@@ -58,6 +58,10 @@ MUT = {
  "W3_seq_reads_both": ("window", [(WIN,
    "    rows = timing === :both ? rep.both : rep.seq\n    timing === :both && return only(",
    "    rows = rep.both\n    return only(")]),
+ # W5 (added after review): the mouse handler no longer reaches the table.
+ "W5_mouse_unwired": ("window", [(WIN,
+   "        matrix_press!(p[1], p[2])\n        return Consume(true)\n",
+   "        return Consume(true)\n")]),
  # W4: a pair with no state after both drawn as if screened.
  "W4_no_state_drawn": ("window", [(WIN,
    "        screened = side.outcome === :screened\n",

@@ -135,8 +135,36 @@ end
     @test occursin("DESIGN VALUES", t) && occursin("settled 0.2 Hz", t)
     @test occursin("not a pass/fail rule for one outage on a small grid", t)
     @test all(l -> in_layout(win.fig.layout, l), win.legend)
+    # The colour is frequency alone, and the legend says so: case9 default loads, L14+L45
+    # is green with a running piece outside the voltage band (a note the user forwarded).
+    @test any(l -> occursin("FREQUENCY ONLY", l.text[]), win.legend)
+    r = only(r for r in win.cache[:case9].both if (r.first, r.second) === (:L14, :L45))
+    @test r.def.verdict === :pass && any(p -> p.outcome === :voltage, r.def.pieces)
     @test_throws ArgumentError _dow(; grid = :case9, pair = (:L45, :L45))
     @test_throws ArgumentError _dow(; grid = :mesh, pair = (:L45, :L67))
+end
+
+@testset "double-outage window: a real mouse press on a cell reaches the table" begin
+    # The tests above call `matrix_press!` directly; this one proves a click gets there —
+    # one MouseButtonEvent through the figure's events, at the pixel of a known cell (the
+    # editor's offscreen route, `editor_tests.jl`).
+    win = _dow(; grid = :case9, timing = :both, pair = (:L45, :L67))
+    Makie.colorbuffer(win.fig)                       # solve the layout so pixels mean something
+    ids = win.cache[:case9].ids
+    N = length(ids)
+    i, j = findfirst(==(:G1), ids), findfirst(==(:L82), ids)     # row G1, column L82
+    px = Makie.shift_project(win.axes.m.scene, Point3f(j - 0.5, N - i + 0.5, 0.0))
+    ev = events(win.fig.scene)
+    ev.mouseposition[] = (px[1], px[2])
+    ev.mousebutton[] = Makie.MouseButtonEvent(Mouse.left, Mouse.press)
+    ev.mousebutton[] = Makie.MouseButtonEvent(Mouse.left, Mouse.release)
+    @test win.choice.pair[] === (:G1, :L82)
+    @test Set((win.row[].first, win.row[].second)) == Set((:G1, :L82))
+    # ...and a press outside the table selects nothing.
+    ev.mouseposition[] = (1.0, 1.0)
+    ev.mousebutton[] = Makie.MouseButtonEvent(Mouse.left, Mouse.press)
+    ev.mousebutton[] = Makie.MouseButtonEvent(Mouse.left, Mouse.release)
+    @test win.choice.pair[] === (:G1, :L82)
 end
 
 @testset "double_outages_render writes a PNG of the same window" begin

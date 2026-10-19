@@ -409,10 +409,11 @@ function print_claims(io::IO = stdout)
     runs FAST (+0.2613, +0.2904, +0.3630 Hz in DC): losing customers is a surplus. So no
     pair here is "pass, LOAD LOST"; that rule guards a case these grids never reach. The
     mesh splits on 2 of its 45 pairs, AB+AC and DE+BE, each cutting off one generator.
- l. Under the preset nearly every pair fails, and what passes sits close to the limit.
-    case9: DC passes 5 of 66 — five of the nine two-piece splits (L45+L67, L56+L78,
-    L56+L94, L67+L89, L78+L94) — and AC on constant-power loads passes the same five; the
-    default loads pass 20. The mesh: 19 pairs of lines split nothing and lose no
+ l. Under the preset nearly every pair fails; on the mesh, what passes sits close to the
+    limit. case9: DC passes 5 of 66 — five of the nine two-piece splits (L45+L67, L56+L78,
+    L56+L94, L67+L89, L78+L94), their worst pieces 0.0328 to 0.1210 Hz off nominal, well
+    inside it — and AC on constant-power loads passes the same five; the default loads
+    pass 20. The mesh: 19 pairs of lines split nothing and lose no
     generation (n/a). DC and default-load AC pass the same 8 pairs — G3 lost with any
     line, or cut off by DE+BE — DC at -0.1932 Hz each, and AC on constant-power loads
     fails all 8, at -0.2025 to -0.2475 Hz: the losses AC also has to cover.
@@ -435,10 +436,10 @@ function print_claims(io::IO = stdout)
     both at once on 90 of the 93 case9 ordered pairs where both have a number, and on all
     29 of the mesh's. The other three are one shape: a generator lost, 50 Hz restored,
     then the line it hung on (G1→L14, G2→L82, G3→L36), which cuts off an empty bus and
-    leaves the frequency on target (printed ±0.0000: round-off of zero). Why: a first line loses no generation,
-    so nothing is restored (L14, L36 and L82 are their generators' outages, D4), and on
-    these grids every pair that starts with a generator ends with a governor at its cap,
-    after which both timings leave the same deficit to damping.
+    leaves the frequency on target (printed ±0.0000: round-off of zero). Why: a first
+    line loses no generation, so nothing is restored (L14, L36 and L82 are their
+    generators' outages, D4), and every generator-first pair where the two timings agree
+    ends with a governor at its cap, after which both leave the same deficit to damping.
  q. In AC the order matters, and which way follows the load model. One after the other
     is milder than both at once on 28 case9 and 18 mesh pairs with constant-power loads
     (worse on 10, all case9), and worse on 48 case9 and 16 mesh pairs with the default

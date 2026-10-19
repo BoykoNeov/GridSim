@@ -162,6 +162,15 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
     push!(legend, Label(gleg[length(legend_rows) + 1, 1:2],
                         "\"=G1\": the pair IS one outage, that generator (D4)";
                         halign = :left, tellwidth = false, fontsize = 11))
+    # The colour is the frequency verdict ALONE. M8's line-and-voltage outcome sits beside
+    # it, per piece, and the two are never combined (m9-context.md D2.5) — so a green cell
+    # can hide a bus outside the voltage band (case9 default loads, L14+L45).
+    push!(legend, Label(gleg[length(legend_rows) + 2, 1:2],
+                        "The colour judges FREQUENCY ONLY. Lines and voltages (M8's check)\n" *
+                        "are each piece's (secure / overload / voltage) in the list and the\n" *
+                        "read-out: a green cell can still have a bus outside the voltage band.";
+                        halign = :left, justification = :left, tellwidth = false,
+                        fontsize = 11, font = :bold, color = C_WARN))
     rowgap!(gleg, 3)
     section_label!(gc[9, 1], "the selected pair")
     readout = Label(gc[10, 1], ""; halign = :left, valign = :top, justification = :left,

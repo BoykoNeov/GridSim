@@ -59,3 +59,9 @@ verdict, no worst) and guarded by its own assertions; R2 puts the bug back.
   no banner). Green: the rest. (Replaced before any W run: the first draft, "bus colours
   ignore the outcome", is invisible by construction — a no-state pair's running pieces
   carry its outcome as their verdict, which is grey anyway.)
+
+## Added after the step's review (written before W5 ran)
+
+- **W5 — the mouse handler no longer calls `matrix_press!`.** Red: "a real mouse press on a
+  cell reaches the table" alone (the pair stays L45+L67). Green: every other testset — they
+  call `matrix_press!` directly, which is why this testset was added.

@@ -1,0 +1,51 @@
+== case9
+  dc order: milder=3 none=39 same=90
+    flips vs both (3): G1→L14 pass (both fail) -0.0000 vs -0.4012; G2→L82 pass (both fail) +0.0000 vs -0.5277; G3→L36 pass (both fail) +0.0000 vs -0.4490
+    orders disagree (0): 
+    max |worst seq − worst both| 0.5277 Hz at G2→L82
+    milder: G1→L14 G2→L82 G3→L36
+  cp order: milder=28 none=94 worse=10
+    flips vs both (2): G2→L82 pass (both fail) +0.0000 vs -0.5329; G3→L36 pass (both fail) -0.0000 vs -0.4515
+    orders disagree (0): 
+    max |worst seq − worst both| 0.5329 Hz at G2→L82
+    milder: L56→L36 L56→L67 L56→L82 L56→L89 L56→G2 L56→G3 L67→L14 L67→L56 L67→L36 L67→L94 L67→G1 L67→G3 L78→L14 L78→L45 L78→L82 L78→L89 L78→L94 L78→G1 L78→G2 L89→L45 L89→L56 L89→L36 L89→L78 L89→L82 L89→G2 L89→G3 G2→L82 G3→L36
+  def order: milder=25 none=59 worse=48
+    flips vs both (6): L45→L14 fail (both pass) -0.2182 vs -0.1921; L45→L67 pass (both fail) +0.1986 vs +0.2247; L45→L94 fail (both pass) -0.2182 vs -0.1921; L45→G1 fail (both pass) -0.2182 vs -0.1921; G2→L82 pass (both fail) +0.0000 vs -0.4542; G3→L36 pass (both fail) +0.0000 vs -0.3967
+    orders disagree (1): L45/L67: pass vs fail
+    max |worst seq − worst both| 2.4873 Hz at L82→G3
+    milder: L45→L56 L45→L67 L56→L45 L56→L78 L56→L94 L36→L14 L36→G1 L67→L45 L67→L78 L67→L89 L78→L56 L78→L67 L78→L94 L82→L14 L82→G1 L89→L14 L89→L67 L89→L94 L89→G1 G2→L14 G2→L82 G2→G1 G3→L14 G3→L36 G3→G1
+  both-at-once DC vs cp verdict differ (0): 
+  both-at-once DC vs def verdict differ (17): L14+L45 DC fail AC pass -0.4012/-0.1921; L14+L56 DC fail AC pass -0.4012/-0.0083; L14+L67 DC fail AC pass -0.4012/-0.1656; L14+L78 DC fail AC pass -0.4012/-0.1628; L14+L89 DC fail AC pass -0.4012/+0.0226; L14+L94 DC fail AC pass -0.4012/-0.1921; L14+G1 DC fail AC pass -0.4012/-0.1950; L45+L67 DC pass AC fail +0.1210/+0.2247; L45+L94 DC fail AC pass -0.4012/-0.1921; L45+G1 DC fail AC pass -0.4012/-0.1921; L56+G1 DC fail AC pass -0.4012/-0.0083; L67+G1 DC fail AC pass -0.4012/-0.1656; L78+G1 DC fail AC pass -0.4012/-0.1628; L82+L94 DC fail AC pass -0.5277/-0.1878; L89+G1 DC fail AC pass -0.4012/+0.0226; L94+G1 DC fail AC pass -0.4012/-0.1921; L94+G2 DC fail AC pass -0.5277/-0.1878
+  load lost: L45+L56 fail fail fail 0.2613 0.2661 0.2423
+  load lost: L67+L78 fail fail fail 0.2904 0.2888 0.2748
+  load lost: L89+L94 fail fail fail 0.3630 0.3701 0.3283
+  dc worst both: L36+L82 -13.0000; passes: L45+L67 L56+L78 L56+L94 L67+L89 L78+L94
+  cp worst both: L56+L89 -1.1322; passes: L45+L67 L56+L78 L56+L94 L67+L89 L78+L94
+  def worst both: G2+G3 -1.5036; passes: L14+G1 L14+L45 L14+L56 L14+L67 L14+L78 L14+L89 L14+L94 L45+G1 L45+L94 L56+G1 L56+L78 L56+L94 L67+G1 L67+L89 L78+G1 L78+L94 L82+L94 L89+G1 L94+G1 L94+G2
+  cp no-value pieces: 24 [:no_solution]
+  def no-value pieces: 0 Any[]
+  two live pieces: 9 L45+L67 L45+L78 L45+L89 L56+L78 L56+L89 L56+L94 L67+L89 L67+L94 L78+L94
+== mesh
+  dc order: none=61 same=29
+    flips vs both (0): 
+    orders disagree (0): 
+    max |worst seq − worst both| 0.0000 Hz at AB→AC
+    milder: 
+  cp order: milder=18 none=61 same=11
+    flips vs both (2): DE→BE pass (both fail) -0.1970 vs -0.2028; DE→G3 pass (both fail) -0.1970 vs -0.2028
+    orders disagree (1): BE/DE: fail vs pass
+    max |worst seq − worst both| 0.2416 Hz at G3→G2
+    milder: AB→G2 AB→G3 AC→G2 AC→G3 BC→G2 BC→G3 BD→G2 BD→G3 CD→G2 CD→G3 DE→BE DE→G2 DE→G3 BE→DE BE→G2 BE→G3 G2→G3 G3→G2
+  def order: milder=2 none=61 same=11 worse=16
+    flips vs both (0): 
+    orders disagree (0): 
+    max |worst seq − worst both| 1.3830 Hz at G3→G2
+    milder: AC→G2 AC→G3
+  both-at-once DC vs cp verdict differ (8): AB+G3 DC pass AC fail -0.1932/-0.2475; AC+G3 DC pass AC fail -0.1932/-0.2025; BC+G3 DC pass AC fail -0.1932/-0.2064; BD+G3 DC pass AC fail -0.1932/-0.2037; CD+G3 DC pass AC fail -0.1932/-0.2130; DE+BE DC pass AC fail -0.1932/-0.2028; DE+G3 DC pass AC fail -0.1932/-0.2028; BE+G3 DC pass AC fail -0.1932/-0.2028
+  both-at-once DC vs def verdict differ (0): 
+  dc worst both: G1+G2 -56.9444; passes: AB+G3 AC+G3 BC+G3 BD+G3 BE+G3 CD+G3 DE+BE DE+G3
+  cp worst both: G1+G2 -58.3855; passes: 
+  def worst both: G1+G2 -51.7257; passes: AB+G3 AC+G3 BC+G3 BD+G3 BE+G3 CD+G3 DE+BE DE+G3
+  cp no-value pieces: 0 Any[]
+  def no-value pieces: 0 Any[]
+  two live pieces: 0 

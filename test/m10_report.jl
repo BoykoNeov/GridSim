@@ -207,11 +207,14 @@ end
     end
 end
 
-@testset "claim l: nearly every pair fails, and what passes sits close" begin
+@testset "claim l: nearly every pair fails; on the mesh what passes sits close" begin
     c9, me = _DO_BOTH[:case9], _DO_BOTH[:mesh]
     passes(rows, k) = [_do_pair(r) for r in rows if getfield(r, k).verdict === :pass]
     five = ["L45+L67", "L56+L78", "L56+L94", "L67+L89", "L78+L94"]
     @test passes(c9, :dc) == five && passes(c9, :cp) == five
+    # ...well inside the limit on case9 — "close to the limit" is the mesh's alone.
+    w5 = [abs(_do_row(:case9, Symbol.(split(p, "+"))...).dc.worst) for p in five]
+    @test _do_hz(minimum(w5)) == "+0.0328" && _do_hz(maximum(w5)) == "+0.1210"
     @test all(p -> length(_do_live(_do_row(:case9, Symbol.(split(p, "+"))...).dc)) == 2, five)
     @test length(passes(c9, :def)) == 20
     @test count(r -> r.dc.verdict === :fail, c9) == 61

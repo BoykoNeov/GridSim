@@ -1,0 +1,23 @@
+== case9
+  2 live L45+L67: dc [-1.0, 1.0]  cp [-1.0, 1.0]  def [-1.0, 1.0]  verdicts pass pass fail
+  2 live L45+L78: dc [1.0, -1.0]  cp [1.0, -1.0]  def [1.0, -1.0]  verdicts fail fail fail
+  2 live L45+L89: dc [-1.0, 1.0]  cp [-1.0, 1.0]  def [-1.0, 1.0]  verdicts fail fail fail
+  2 live L56+L78: dc [-1.0, 1.0]  cp [-1.0, 1.0]  def [-1.0, 1.0]  verdicts pass pass pass
+  2 live L56+L89: dc [-1.0, 1.0]  cp [-1.0, 1.0]  def [-1.0, 1.0]  verdicts fail fail fail
+  2 live L56+L94: dc [1.0, -1.0]  cp [1.0, -1.0]  def [-1.0, 1.0]  verdicts pass pass pass
+  2 live L67+L89: dc [-1.0, 1.0]  cp [-1.0, 1.0]  def [-1.0, 1.0]  verdicts pass pass pass
+  2 live L67+L94: dc [1.0, -1.0]  cp [1.0, -1.0]  def [1.0, -1.0]  verdicts fail fail fail
+  2 live L78+L94: dc [1.0, -1.0]  cp [1.0, -1.0]  def [1.0, 1.0]  verdicts pass pass pass
+  DC same, machine first, nothing capped after both: none
+  DC line-first restores with a nonzero pickup: L14 L36 L82
+  cp unjudged both (24): L14+L56 L14+L36 L14+L82 L14+L89 L14+G2 L14+G3 L45+L36 L45+G3 L56+G1 L36+L78 L36+L82 L36+G1 L36+G2 L67+L82 L67+G2 L78+G3 L82+L94 L82+G1 L82+G3 L89+G1 L94+G2 G1+G2 G1+G3 G2+G3
+  cp not restored after: L14 L45 L94 G1 ; count 43
+  def not restored after: L14 L94 G1 ; count 32
+  DC pair screens equal across load models: true; sequential: false
+== mesh
+  DC same, machine first, nothing capped after both: none
+  DC line-first restores with a nonzero pickup: none
+  cp unjudged both (0): 
+  cp not restored after: G1 ; count 9
+  def not restored after: G1 ; count 9
+  DC pair screens equal across load models: true; sequential: false

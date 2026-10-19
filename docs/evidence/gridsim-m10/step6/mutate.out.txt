@@ -103,3 +103,13 @@ double-outage window                                                            
   double-outage window: a pair with no state after both draws no verdict           |    6     2      8     5.0s
   double-outage window: the controls, the table press, the caveat                  |   17           17     3.1s
   double_outages_render writes a PNG of the same window                            |    2            2    26.1s
+
+== W5 (2026-10-19, added after review) — as predicted: red on the real-mouse testset alone
+Test Summary:                                                                      | Pass  Fail  Total     Time
+double-outage window                                                               | 2668     3   2671  1m11.1s
+  double-outage window: the row is the script's, every cell says what its row says | 2623         2623    53.3s
+  double-outage window: the grid sketch colours each bus by its piece, by id       |   18           18     2.5s
+  double-outage window: a pair with no state after both draws no verdict           |    8            8     1.0s
+  double-outage window: the controls, the table press, the caveat                  |   17           17     1.8s
+  double-outage window: a real mouse press on a cell reaches the table             |          3      3    10.7s
+  double_outages_render writes a PNG of the same window                            |    2            2     1.6s

@@ -1,0 +1,32 @@
+case9 constant_power: first 14.4 s, again 0.19 s
+  DC pair shapes: [(:empty, :empty, :NaN), (:live, :shared, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  AC pair shapes: [(:empty, :empty, :NaN), (:live, :no_solution, :NaN), (:live, :overload, :value), (:live, :secure, :value), (:live, :voltage, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq shapes:  [(:empty, :empty, :NaN), (:live, :shared, :value), (:live, :shared, :zero), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  AC seq shapes:  [(:empty, :empty, :NaN), (:live, :no_solution, :NaN), (:live, :overload, :NaN), (:live, :overload, :value), (:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:live, :voltage, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq outcomes: already_lost=3 screened=129 | AC seq outcomes: already_lost=3 not_restored=43 screened=86
+  pairs: 66 splits=45 same_as=3
+case9 default: first 0.1 s, again 0.01 s
+  DC pair shapes: [(:empty, :empty, :NaN), (:live, :shared, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  AC pair shapes: [(:empty, :empty, :NaN), (:live, :overload, :value), (:live, :secure, :value), (:live, :voltage, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq shapes:  [(:empty, :empty, :NaN), (:live, :shared, :value), (:live, :shared, :zero), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  AC seq shapes:  [(:empty, :empty, :NaN), (:live, :overload, :NaN), (:live, :overload, :value), (:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:live, :voltage, :value), (:load_lost, :load_lost, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq outcomes: already_lost=3 screened=129 | AC seq outcomes: already_lost=3 not_restored=32 screened=97
+  pairs: 66 splits=45 same_as=3
+mesh constant_power: first 0.0 s, again 0.01 s
+  DC restore G1: [:restore_refused] capped=Bool[0, 0, 0] pickup=[0.0, 0.0, 0.0]
+  AC restore G1: [:restore_refused] capped=Bool[0, 0, 0] pickup=[0.0, 0.0, 0.0]
+  DC pair shapes: [(:live, :shared, :value), (:live, :shared, :zero), (:sources_lost, :sources_lost, :NaN)]
+  AC pair shapes: [(:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:live, :voltage, :value), (:sources_lost, :sources_lost, :NaN)]
+  DC seq shapes:  [(:live, :shared, :value), (:live, :shared, :zero), (:sources_lost, :sources_lost, :NaN)]
+  AC seq shapes:  [(:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:live, :voltage, :value), (:sources_lost, :sources_lost, :NaN)]
+  DC seq outcomes: not_restored=9 screened=81 | AC seq outcomes: not_restored=9 screened=81
+  pairs: 45 splits=2 same_as=0
+mesh default: first 0.0 s, again 0.01 s
+  DC restore G1: [:restore_refused] capped=Bool[0, 0, 0] pickup=[0.0, 0.0, 0.0]
+  AC restore G1: [:restore_refused] capped=Bool[0, 0, 0] pickup=[0.0, 0.0, 0.0]
+  DC pair shapes: [(:live, :shared, :value), (:live, :shared, :zero), (:sources_lost, :sources_lost, :NaN)]
+  AC pair shapes: [(:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq shapes:  [(:live, :shared, :value), (:live, :shared, :zero), (:sources_lost, :sources_lost, :NaN)]
+  AC seq shapes:  [(:live, :secure, :NaN), (:live, :secure, :value), (:live, :voltage, :NaN), (:sources_lost, :sources_lost, :NaN)]
+  DC seq outcomes: not_restored=9 screened=81 | AC seq outcomes: not_restored=9 screened=81
+  pairs: 45 splits=2 same_as=0

@@ -940,8 +940,11 @@ of step 6, that the report gets a window (the eighth).
    - an AC answered outcome with a `NaN` `Δω` outside the `:not_applicable` shape is a broken
      contract and throws, as M9's `_settled_verdict` does.
 3. **One colour per pair is a combining rule, named here.** The window colours a pair cell by
-   "every live piece passes": red if any judged piece fails, green only if every live piece is
-   judged and passes, grey otherwise (a piece unjudged, nothing applicable, or a sequential pair
+   "every live piece passes": red if any judged piece fails, green only if at least one live
+   piece passes and every other one passes or has nothing to judge (`:not_applicable`,
+   `:restored` — neutral, as the code and the tie testset have it; corrected after the step's
+   review, the first wording said "every live piece judged"), grey otherwise (a piece with no
+   value, nothing applicable at all, or a sequential pair
    with no state after both losses: `:already_lost`, `:not_restored`, `:base_refused`). The cell
    text says which. A pair that IS one outage (D4's collapse, `same_as`) is marked as that
    outage, never as a double.
@@ -991,15 +994,33 @@ tested in `ui/test/double_outage_tests.jl`.
 - **No report-grid pair has a piece the second loss never reaches** (D11.1, as registered in
   D12.2), so that rule is tested on step 5's tie fixture, and R4 is red there alone.
 - **The claims, written after the tables** (section 4 of the report): k — where the grid splits
-  and who is left in the dark; l — nearly every pair fails, and what passes sits within
-  0.05 Hz of the limit; m — 24 case9 pairs have no AC solution on constant-power loads, every
+  and who is left in the dark; l — nearly every pair fails; the mesh's passes sit within
+  0.05 Hz of the limit, case9's well inside it (0.0328–0.1210 Hz); m — 24 case9 pairs have no AC solution on constant-power loads, every
   one losing a generator or its line; n — DC and AC disagree on 17 case9 pairs on the default
   loads (16 DC-fail/AC-pass: load relief) and on the mesh's 8 G3 pairs on constant power; o —
   what the second loss starts from (43 / 32 case9 ordered pairs have no state after both); p —
   in DC the order never moves the worst piece except the three "generator, then its own line"
-  pairs, because every generator-first pair ends with a governor at its cap; q — in AC it does,
+  pairs, because every generator-first pair where the timings agree ends with a governor at
+  its cap (narrowed after review: a generator-first pair whose second loss is n/a has no
+  cap); q — in AC it does,
   mostly milder on constant-power loads and mostly worse on default loads, and flips one pair's
   verdict on each grid.
 - **The window's first draft of sabotage W4 was invisible by construction** (a no-state pair's
   pieces are grey whatever the colouring) and was replaced before any W run; the replacement
   is recorded in the predictions file.
+- **After the step's review (same day):** claim l's heading and claim p's "why" narrowed to
+  what the tables and the test show (case9's passes sit 0.0328–0.1210 Hz off nominal, well
+  inside the limit; the cap holds on the generator-first pairs where the timings agree); D12.3
+  aligned with the code (n/a and restored pieces are neutral). The probes moved from scratch to
+  `step6/` and re-run on the committed code (`probe`, `tally`, `verify`, `report.out.txt`). A
+  real `MouseButtonEvent` through the figure now proves a click reaches the table (W5 red there
+  alone). The precompile workload had never run in this step's suites (every rebuild was made
+  with `GRIDSIM_UI_PRECOMPILE=0`, and the cache persisted): forced once with it unset — no
+  warning, 174 s to precompile, and the window's first build in a fresh session 1.6 s (120 s
+  without the workload).
+- **A second note the user forwarded: green is frequency only.** On case9 default loads L14+L45
+  is green (−0.192 Hz) while its running piece is outside the voltage band. The colour stays the
+  frequency verdict alone — M9 D2.5 never combines it with M8's line-and-voltage outcome, and a
+  combined cell would be a new rule, the user's to choose — and the window's legend now says so
+  in red, asserted by a test on that very pair. Whether the cells should also MARK a piece's
+  line-or-voltage outcome is put to the user.
