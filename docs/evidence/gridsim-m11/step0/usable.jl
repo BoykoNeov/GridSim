@@ -13,4 +13,7 @@ d = PowerModels.parse_file(f)
 show("AC, MATPOWER case9 as published", d, ACPPowerModel)
 show("DC, MATPOWER case9 as published", d, DCPPowerModel)
 d0 = deepcopy(d); for (_, b) in d0["branch"]; b["b_fr"] = 0.0; b["b_to"] = 0.0; end
-show("AC, no line charging (our case9)", d0, ACPPowerModel)
+show("AC, no charging, V free", d0, ACPPowerModel)
+d1 = deepcopy(d0)
+for (i, v) in ((1, 1.04), (2, 1.025), (3, 1.025)); b = d1["bus"][string(i)]; b["vmin"] = v; b["vmax"] = v; end
+show("AC, no charging, PV V held", d1, ACPPowerModel)

@@ -1014,7 +1014,9 @@ it found is not a hole but a *width*:
       *subject to* line limits and losses — is owed on **criterion 4**
       (`PowerModels` unresolvable; no other external OPF checker is on the stack).
       It reopens when `PowerModels` (or another OPF with printed answers) resolves
-      against us, re-measured the way this step did.
+      against us, re-measured the way this step did. **Re-measured 2026-10-21:
+      0.21.7 resolves (it allows NLsolve 5), moving nothing of ours —
+      `docs/evidence/gridsim-m11/step0/`.**
 - F1 (what the plan did not anticipate): **the gate's two failures are not the
   same kind.** Criterion 2 fails in the repo and is fixable by import; criterion 4
   fails in the ecosystem and is not fixable by us. That is why the narrow rung is

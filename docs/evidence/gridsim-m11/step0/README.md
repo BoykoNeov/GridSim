@@ -30,7 +30,12 @@ its `gencost` rows are the ones `test/m6_economic_dispatch.jl` typed), Ipopt def
 |---|---|---|---|
 | AC OPF, case9 as published | LOCALLY_SOLVED | 5296.6862 | 89.799, 134.321, 94.187 |
 | DC OPF, case9 as published | LOCALLY_SOLVED | 5216.0266 | 86.564, 134.378, 94.058 |
-| AC OPF, line charging removed (our `case9`) | LOCALLY_SOLVED | 5310.0704 | 90.100, 134.442, 94.313 |
+| AC OPF, line charging removed, generator voltages free | LOCALLY_SOLVED | 5310.0704 | 90.100, 134.442, 94.313 |
+| AC OPF, line charging removed, G1–G3 held at 1.04 / 1.025 / 1.025 (our `case9`'s set-points) | LOCALLY_SOLVED | 5325.2661 | 90.721, 134.411, 94.332 |
+
+These are PowerModels' answers, measured — not checked here against a MATPOWER-stored
+solution. The last row is the one shaped like `scripts/outage_screen.jl`'s `case9` (no
+line charging, PV voltages held; Q ±300 MVAr, band 0.9–1.1, the same ratings).
 
 PowerModels' own bundled `test/data/matpower/case9.m` is a DIFFERENT case (250 MW of
 load; AC cost 347.70) — do not take it for MATPOWER's.

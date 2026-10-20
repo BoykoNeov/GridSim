@@ -478,7 +478,8 @@ end
    M6 (closed 2026-09-29)**: the DC and AC solves in `src/steadystate/`, checked by
    two oracles; the gate opened **narrow** — a network-free cheapest dispatch
    (`JuMP` + `HiGHS` as a package extension). The network AC-OPF stays **owed** on
-   D7's criterion 4, because `PowerModels` does not resolve against our stack.
+   D7's criterion 4, because `PowerModels` does not resolve against our stack
+   (re-measured 2026-10-21: 0.21.7 resolves — `docs/evidence/gridsim-m11/step0/`).
 6. Wider protection (M3 builds the first two schemes: per-area load shedding and
    out-of-step tripping), then **markets/OPF** (`PowerSimulations.jl`, `JuMP`).
 7. Renewables / low-inertia studies (the M1 lesson, scaled up). **Taken as M7**

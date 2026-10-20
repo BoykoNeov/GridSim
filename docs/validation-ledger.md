@@ -460,7 +460,7 @@ cheapest dispatch, network-free".
 | The slack's pickup = losses + the loads' voltage-driven shift | On `Load`'s default (constant impedance): the draw recomputed from the textbook ZIP polynomial, not from the solver's; +4.30 MW losses, −18.46 MW shift, gap −318 $/h — so the sum is never labelled "the losses' cost" | **derived** (F7) |
 | The loss gap on a lossless network | **Not exactly zero** (the plan said it would be): within the flow's residual bound; only `|I|²R` at `R = 0` is exactly zero | **derived**, the plan's claim corrected |
 | The solver's own dual values (λ) | **Not used as a check** — the solver restating its answer | **un-oracled by design** |
-| Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **un-oracled: the network OPF is owed** (criterion 4, `PowerModels` unresolvable) |
+| Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **un-oracled: the network OPF is owed** (criterion 4, `PowerModels` unresolvable until 0.21.7 — re-measured 2026-10-21, `docs/evidence/gridsim-m11/step0/`) |
 
 ## Inverter-based resources — M7, `model/network_model.jl` (`Inverter`)
 

@@ -891,7 +891,8 @@ time instead of discovered.
 
 **§7 — Owed, not built.** The network OPF (owed on criterion 4: `PowerModels`
 does not resolve against our stack at any registered version, the resolver's log
-ending at its `NLsolve` requirement against our `NonlinearSolve`); unit on/off
+ending at its `NLsolve` requirement against our `NonlinearSolve`; re-measured
+2026-10-21: 0.21.7 allows NLsolve 5 and resolves — `docs/evidence/gridsim-m11/step0/`); unit on/off
 decisions; loss-aware dispatch; the scenario file and the editor carrying costs.
 
 ### What step 7 measured (2026-09-23) — four of D16's claims did not survive

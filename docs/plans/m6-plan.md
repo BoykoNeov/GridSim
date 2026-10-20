@@ -198,7 +198,7 @@ lesson, learned on Figure 3-67).
 
 **Decided 2026-09-23 — opened narrow.** Criteria 1 and 3 met by measurement; 2
 and 4 fail for a network OPF (no cost data in the repo; `PowerModels` does not
-resolve against our stack). The user opened the **network-free** rung, where
+resolve against our stack (re-measured 2026-10-21: PowerModels 0.21.7 resolves, moving nothing of ours — `docs/evidence/gridsim-m11/step0/`)). The user opened the **network-free** rung, where
 costs are imported from a cited published case and the optimum has three checks
 that need nothing from outside. The network OPF stays owed on criterion 4.
 
