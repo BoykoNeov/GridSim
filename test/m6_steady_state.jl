@@ -1492,8 +1492,11 @@ end
         ma, bt = machine_arrays(net), branch_topology(net)
         V, _, _, _, _ = GridSim._seed_from_powerflow(net, sol, ma)
         fl = GridSim._branch_flows(net, bt, V, ones(Float64, length(net.branches)))
+        # Both judge the LARGER end (the M10 cleanup; the engine read the sending end
+        # until then) — which differs from the other even here, by |I|²X in Q.
         for e in eachindex(net.branches)
-            @test abs(hypot(sol.flow[e], sol.qflow[e]) - fl[e]) < 1e-14
+            @test abs(max(hypot(sol.flow[e], sol.qflow[e]),
+                          hypot(sol.flow_rev[e], sol.qflow_rev[e])) - fl[e]) < 1e-14
         end
         # …and the cost of the R = 0 restriction, stated as an assertion rather than
         # left in a comment: on every fixture oracle A can run, the loss channel is

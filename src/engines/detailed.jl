@@ -1352,25 +1352,25 @@ function _power_flow_violation(net::NetworkModel, V::Vector{ComplexF64},
     return (:ok, nothing)
 end
 
-# |S| on each branch, from the solved bus voltages: `S = V_from · conj(I)`.
-# Computed from the same current expression the edge model integrates, so the
-# check and the physics cannot come to hold different conventions.
+# |S| on each branch, from the solved bus voltages, at the LARGER of its two ends:
+# `V_from · conj(I)` and `V_to · conj(−I)`. Computed from the same current expression
+# the edge model integrates, so the check and the physics cannot come to hold
+# different conventions.
 #
-# THE SENDING END ONLY, and that is a known gap carried forward rather than changed
-# (M9 step 1's audit, `m9-tasks.md`). `ac_powerflow` judges the LARGER end. The two
-# ends differ even on a lossless branch — reactive power by `|I|²X` — and now by
-# `|I|²R` in real power too; widening this to both ends would move lossless refusals,
-# which the step's gate forbids. At initialisation on the seeded path it is moot
-# (`ac_powerflow` has already refused an overload at either end); at a
-# re-initialisation after an event it is not.
+# Both ends, as `ac_powerflow` judges them: the rating is the conductor's, and the two
+# ends differ even on a lossless branch — reactive power by `|I|²X` — and by `|I|²R`
+# in real power on a lossy one. Until the M10 cleanup this read the sending end only,
+# a gap M9 step 1's audit carried forward because widening it moved lossless
+# refusals, which that step's gate forbade; it mattered at a re-initialisation after
+# an event, where a line whose far end was over its rating passed.
 function _branch_flows(net::NetworkModel, bt, V::Vector{ComplexF64},
                        status::Vector{Float64})
     n = length(net.branches)
     out = Vector{Float64}(undef, n)
     for e in 1:n
-        d = V[bt.src[e]] - V[bt.dst[e]]
-        I = _series_current(d, bt.R[e], bt.X[e], status[e])
-        out[e] = abs(V[bt.src[e]] * conj(I))
+        Vf, Vt = V[bt.src[e]], V[bt.dst[e]]
+        I = _series_current(Vf - Vt, bt.R[e], bt.X[e], status[e])
+        out[e] = max(abs(Vf * conj(I)), abs(Vt * conj(-I)))
     end
     return out
 end

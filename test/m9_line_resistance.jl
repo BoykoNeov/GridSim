@@ -56,6 +56,48 @@ end
     end
 end
 
+@testset "a rating is judged at the larger end, as ac_powerflow judges it" begin
+    # The M10 cleanup. At the seed the tier's voltages ARE the AC solution's, so the
+    # tier's |S| per branch must be the larger of `ac_powerflow`'s two ends, built from
+    # its own flows — a separately written admittance.
+    nrev = 0
+    for (name, net) in _r_fixtures()
+        sol = ac_powerflow(net)
+        ma, bt = machine_arrays(net), branch_topology(net)
+        V, _, _, _, _ = GridSim._seed_from_powerflow(net, sol, ma)
+        fl = GridSim._branch_flows(net, bt, V, ones(Float64, length(net.branches)))
+        fwd = hypot.(sol.flow, sol.qflow)
+        rev = hypot.(sol.flow_rev, sol.qflow_rev)
+        @test fl ≈ max.(fwd, rev) atol = 1e-12
+        nrev += count(rev .> fwd .+ 1e-6)
+    end
+    @test nrev > 0          # a sending-end read-out would fail the line above
+    # …and where it decides something: the tier's own steady state, and a
+    # re-initialisation after an event — neither of which a seed's `ac_powerflow` sees.
+    # `load_bus_system` with L23 and L31 lossy. L31 carries 55.4 MVA at B3 (its `from`)
+    # and 59.5 at B1 at the start, so rated 59 the build is refused; L12's trip leaves
+    # it 57.1 and 61.4, so rated 60 the trip is refused and rated 62 it goes through.
+    # The sending end alone passes all three.
+    lbs(r31) = let b = load_bus_system()
+        NetworkModel(b.S_base, b.f0, b.buses,
+            [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0, R = 0.05),
+             Branch(:L31, :B3, :B1, 0.25, r31, R = 0.05)], b.machines, b.loads)
+    end
+    err = try init!(DetailedEngine, lbs(59.0); dt = 0.01); nothing catch e; e end
+    @test err isa ErrorException && occursin("branch L31 carries 59.45", err.msg)
+    for (r31, refused) in ((60.0, true), (62.0, false))
+        eng = init!(DetailedEngine, lbs(r31); dt = 0.01)
+        solve!(eng, (0.0, 0.5))
+        err = try inject!(eng, TripLine(:B1, :B2)); nothing catch e; e end
+        if refused
+            @test err isa ErrorException && occursin("branch L31 carries 61.4", err.msg)
+            @test is_online(eng, :B1, :B2)
+        else
+            @test err === nothing && !is_online(eng, :B1, :B2)
+        end
+    end
+end
+
 @testset "the seeded run is flat on a lossy grid, per state, at two tolerances" begin
     # Hurdle 17.2 — M6 step 4's oracle A carried to a lossy network. `init!` already
     # refuses a seed that is not a fixpoint of the DYNAMIC network's equations; this is

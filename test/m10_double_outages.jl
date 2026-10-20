@@ -1087,7 +1087,8 @@ _m10_engine_state(eng::DetailedEngine) =
 
 # The out-of-step relay fixture of `m5_detailed.jl` (governed ring, relay on B1–B2), with
 # G1 ramped UP so that L12's trip pushes more power over L31 (`step4_relay_probe.jl`: L31
-# carries 63.4 MVA at the start and 105.8 just after the trip) and L31 rated `r31` MVA.
+# carries 63.4 MVA at the start and 105.8 just after the trip, read at its sending end; 106.7
+# at its larger end, which the rating check reads since the M10 cleanup) and L31 rated `r31` MVA.
 _m10_relay_ring(r31) = let g = governed_ring()
     NetworkModel(g.S_base, g.f0, g.buses,
                  [Branch(:L12, :B1, :B2, 0.25, 500.0), Branch(:L23, :B2, :B3, 0.25, 500.0),
@@ -1184,7 +1185,7 @@ end
         @test out_of_step_log(out_of_step_relay(ok, :B1, :B2)).tripped
         @test !out_of_step_relay(ok, :B1, :B2).armed       # its own trip latched it
         @test !is_online(ok, :B1, :B2) && n_events(ok) == 1
-        # L31 rated 85 MVA: the re-solve after L12's trip refuses it (105.8 MVA).
+        # L31 rated 85 MVA: the re-solve after L12's trip refuses it (106.7 MVA).
         eng = _m10_relay_de(_m10_relay_ring(85.0))
         p0, ps0 = copy(eng.params), copy(eng.p_static)
         err = try solve!(eng, (0.0, 6.0)); nothing catch e; e end
@@ -1214,7 +1215,7 @@ end
         @test !lg.tripped && !lg.armed && isnan(lg.t)
         @test [(e.kind, e.a, e.b) for e in event_log(eng)] == [(:trip_line, :B1, :B2)]
         # During the ramp with L31 rated 85 MVA, the same trip is refused (L31 would carry
-        # 87.1 MVA): the latch goes back with the line, and the relay still operates later.
+        # 87.9 MVA): the latch goes back with the line, and the relay still operates later.
         eng = _m10_relay_de(_m10_relay_ring(85.0))
         solve!(eng, (0.0, 1.5))
         err = try inject!(eng, TripLine(:B2, :B1)); nothing catch e; e end
@@ -1223,7 +1224,7 @@ end
         @test is_online(eng, :B1, :B2) && n_events(eng) == 0
         @test !lg.tripped && lg.armed
         err = try solve!(eng, (1.5, 6.0)); nothing catch e; e end   # it fires, and is refused
-        @test err isa ErrorException && occursin("105.7", err.msg)
+        @test err isa ErrorException && occursin("carries 106.69", err.msg)
     end
 
     @testset "a dead piece is switched off, not solved (L45+L56, both load models)" begin
