@@ -5,7 +5,8 @@ decisions and, as steps run, the measurements behind them). Living document: eac
 step ticks its own boxes and records what it found, **including what it found that
 the plan did not anticipate**.
 
-Status: **steps 0–3 done (step 3 2026-10-19); step 4 next.** Entered at M9's close counts,
+Status: **COMPLETE (closed 2026-10-20), all steps done (0–7).** Closed at **25151 core / 1439
+reference / 4212 UI** on re-resolved manifests (step 7). Entered at M9's close counts,
 **6718 core / 1439 reference / 745 UI**, re-measured at HEAD (`a9ec5bd`) before step 1's
 first edit — unchanged. Step 1 leaves **6905 core / 1439 reference / 745 UI**; step 2
 (entered at those, re-measured at `8889b86`) leaves **14479 core / 1439 / 745** — the
@@ -202,7 +203,45 @@ runs.
       captures not re-run: step 6 touches no code they call (`screening.jl` untouched; the
       one change is in M10's `_ac_outage_set`, gated by `step6/snapshot.out.txt`).
 
-## Step 7 — close
+## Step 7 — close (2026-10-20)
 
-- [ ] Manifests re-resolved, counts re-measured, captures before and after.
-- [ ] Ledger, README row and hurdles, `SPEC.md`, memory.
+- [x] **Predictions first** (`docs/evidence/m10-close/predictions.txt`, written at `485204c`
+      before any suite ran): 25151 / 1439 / 4212, every capture unchanged unless a solver
+      package moves. The starting manifests had not drifted since M9 closed (root and
+      reference byte-identical to M9's copies, UI only by M9's own `Roots` bump).
+- [x] **Baseline on the old manifests at `485204c`**: M9's six captures, the PowerDynamics
+      oracle capture, M10's 32 serialized screens (`step6/snapshot.jl`) and the printed
+      report. `criterion`, `ac`, `dips` byte-identical to M9 step 2's committed copies, `swing`
+      to `swing-STEP2.txt` (not `swing-HEAD.txt`, which predates M9's caller-order fix —
+      they differ by that one exact negation), `screen` and `verdict` at M9's MD5s, the
+      oracle at M9 step 3's `oracle-HEAD.txt`, the report at `step6/report.out.txt`.
+- [x] **Manifests re-resolved**: all four deleted (root, reference, UI copies kept in
+      `docs/evidence/m10-close/`) and re-resolved in sequence at below-normal priority
+      (`resolve_all.sh`). **25151 core / 1439 reference / 4212 UI**, 0 failed, 0 errored —
+      the predicted counts, with `GRIDSIM_UI_PRECOMPILE` unset. `[[deps.` entries 191 → 191 /
+      301 → 301 / 366 → 371 (UI: five new, under Makie 0.24.16) / testenv 206 → 206. **This
+      time the solver and network stack moved** (`moved.txt`): `OrdinaryDiffEqCore` 4.18.1 →
+      4.19.0, `OrdinaryDiffEqBDF`/`SDIRK`, `DiffEqBase` 7.21.3 → 7.21.4, `SciMLBase` 3.57.0 →
+      3.58.0, `NonlinearSolveBase` 2.54.1 → 2.55.0 everywhere; `PowerFlows` 0.25.2 → 0.25.4,
+      `PowerNetworkMatrices`, `PowerSystems` in `reference/`. No `Project.toml` changed.
+- [x] **Every capture re-run after**: all byte-identical to the baseline (the 32 screens by
+      `snapshot_diff.jl`, 0 entries moved; its control — one screen saved under another's
+      name — 1966 moved). `.err` files differ only by package install-folder hashes and
+      one-time precompile lines.
+- [x] **A capture of M10's dynamic runs, added at the close** (the advisor's catch: every
+      capture above is a static screen, and this is the first close where the integrators
+      moved). `docs/evidence/m10-close/dynamic_snapshot.jl`: the detailed tier on Rodas5P at
+      1e-10, step 4's seven `TripElements` cases and step 5's eleven restored-model cases,
+      every state `repr` at 1, 5 and 20 s; three refusals, the ones steps 4–5 recorded. Run
+      on the old root manifest (a detached worktree at `485204c`) and on the new:
+      **byte-identical** (36,486 bytes, MD5 `3d2fc0d65c96f1d22d7cb786dd14c197`; the old run loaded
+      `OrdinaryDiffEqCore` 4.18.1, the new 4.19.0, checked by `pkgversion`). Output committed as
+      `dynamic_snapshot.out.txt`..
+- [x] `ui/README.md`'s count already said 4212; its window count said "seven" over a list
+      of eight — fixed.
+- [x] **Ledger**: an M10 section, one row per hurdle claim, with what is not checked said
+      (the no-flags rule on pairs never exercised by data, amber never reached, a `V` hiding
+      an `O`, the relay path halting). **SPEC** §9 item 8: delivered, scoped to D5.
+      **README**s: status, "what you can do", the layout; the plans index row.
+- [x] **Hurdle list**: 18–21 closed with what closed each; the list ends empty, the carried
+      items under "still owed".

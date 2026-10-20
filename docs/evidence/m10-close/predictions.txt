@@ -1,0 +1,22 @@
+M10 close — written 2026-10-20 before any suite ran, at HEAD 485204c, Julia 1.12.6.
+
+Starting manifests: root 191 / reference 301 / ui 366 / harness testenv 206 [[deps. entries;
+root and reference byte-identical to docs/evidence/m9-close copies; ui differs only by
+Roots 3.0.10 -> 3.0.11 (M9's re-resolve move). So nothing has drifted since M9 closed.
+
+Predicted suite counts: 25151 core / 1439 reference / 4212 UI, 0 failed, 0 errored.
+  Source: m10-tasks.md step 6 line 198 ("after D13, suites 25151 core / 4212 UI") and
+  commit 536b0f3; 485204c changed no test file. Reference untouched since M9 (1439).
+
+Predicted captures: all of M9's (swing, criterion, ac, dips vs committed step2 *-HEAD.txt;
+screen and verdict vs M9's recorded MD5s; oracle vs step3 oracle-HEAD.txt) unchanged
+before AND after the re-resolve, unless a solver package moves.
+M10's 32 serialized screens and the printed report: unchanged after the re-resolve.
+
+RESULTS (2026-10-20, after the re-resolve):
+Suites: 25151 core (42m39s) / 1439 reference / 4212 UI, 0 failed, 0 errored -- exactly as predicted.
+  GRIDSIM_UI_PRECOMPILE unset. ui/README.md already says 4212.
+Captures AFTER vs BASE: swing, criterion, ac, dips, screen, verdict, oracle, report -- all .txt byte-identical.
+  screen MD5 b20a76294878b4606a483482aa5c993a, verdict MD5 9e669016cf236ef39b3a564ab7e9f56a (= M9's).
+  .err differ only by package install-folder hashes (DiffEqBase, OrdinaryDiffEqCore) and one-time precompile lines.
+  32 M10 screens: snapshot_diff.jl 0 entries differ in each; control (case9_def_ac saved as case9_cp_ac) -> 1966 differ.

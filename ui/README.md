@@ -6,7 +6,7 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **seven**: two real-time windows,
+Built on `GLMakie` (native window). There are **eight**: two real-time windows,
 one per fidelity tier, chosen by the model you hand `launch` — two more for the
 other *execution mode*, the playback overlays, which have their own verbs — the
 scenario editor, which has no engine in it at all and produces the model the

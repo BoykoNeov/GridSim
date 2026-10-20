@@ -11,7 +11,7 @@ NREL-Sienna stack where it fits) and build only the bespoke part — the orchest
 layer that steps models in wall-clock time, injects live perturbations, and routes
 between fidelity tiers.
 
-> **Status: Milestones 1–9 complete (M9 closed 2026-10-18).** Three fidelity
+> **Status: Milestones 1–10 complete (M10 closed 2026-10-20).** Three fidelity
 > tiers behind one interface — an aggregate centre-of-inertia frequency model (M1),
 > a multi-machine network swing model (M2) with governor droop, load shedding,
 > out-of-step protection and generation ramps (M3), and a detailed tier with
@@ -21,7 +21,9 @@ between fidelity tiers.
 > Grid-forming and grid-following inverters, phase-locked-loop frequency meters and
 > a low-inertia study (M7). Every single line and generator outage screened at
 > both power-flow fidelities (M8), and each generator outage given a frequency verdict —
-> settled value, lowest dip, rate of fall — on grids with line resistance (M9). Each
+> settled value, lowest dip, rate of fall — on grids with line resistance (M9). Every
+> pair of outages screened too, lost at once and one after the other with frequency
+> restored in between, a grid cut in two answered piece by piece (M10). Each
 > tier has a GLMakie window, plus a scenario editor. The
 > 28 April 2025 Iberian blackout is the standing real test case. The milestone map
 > and what each one found is [`docs/plans/README.md`](docs/plans/README.md); the
@@ -72,6 +74,11 @@ between fidelity tiers.
   and — beside each generator outage — how far the frequency settles, how low it
   dips and how fast it falls, judged against limits you supply or a cited
   Continental Europe preset (`frequency_screen()` in `ui/` draws it).
+- Lose every pair of lines and generators (`scripts/double_outage_screen.jl`), both
+  at once and one after the other with 50 Hz restored in between, and see where the
+  grid splits, which piece runs fast and which slow, who is left in the dark, and
+  where the order of the two losses changes the answer (`double_outages()` in `ui/`
+  draws it).
 
 ## Getting started
 
@@ -142,14 +149,14 @@ GridSim/
 │   ├── GridSim.jl        # module root, exports
 │   ├── model/            # SystemModel (aggregate) and NetworkModel (canonical); coi_model
 │   ├── engines/          # SimulationEngine interface, recorder, playback driver, three tiers
-│   ├── events/           # perturbation event types (TripGenerator, StepLoad, TripLine)
+│   ├── events/           # perturbation event types (TripGenerator, StepLoad, TripLine, TripElements)
 │   ├── protection/       # armed, state-triggered schemes: load shedding, out-of-step
 │   ├── scenarios/        # scheduled inputs: generation ramps
 │   ├── analysis/         # post-processing: windowed RoCoF, cross-run divergence
-│   ├── steadystate/      # DC and AC power flow, cheapest dispatch, outage screening, frequency verdicts
+│   ├── steadystate/      # DC and AC power flow, cheapest dispatch, outage screening, frequency verdicts, double outages
 │   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
 ├── test/                 # one suite: closed-form, cross-fidelity and control checks
-├── scripts/              # headless experiments; the Iberian replays, the low-inertia study, the outage screen
+├── scripts/              # headless experiments; the Iberian replays, the low-inertia study, the single and double outage screens
 ├── ui/                   # separate package: `using GridSim`, `using GLMakie`; the windows and the editor
 ├── reference/            # separate package: the external oracles (PowerDynamics, PowerFlows, PowerNetworkMatrices); checkers, not tiers
 └── docs/

@@ -15,6 +15,12 @@ edited; this folder is the working copy.
 - `suites.sh TAG [core|ref|ui ...]` — the three `Pkg.test()` suites at below-normal
   priority, one after another.
 - `run_m9.jl` with `--project=…/harness/testenv` — the M9 testsets alone.
+- From M10's close, beside this folder: `../../m10-close/m10_captures.sh` (the oracle,
+  M10's 32 serialized screens, the double-outage report) and
+  `../../m10-close/dynamic_snapshot.jl` (M10's detailed-tier runs at full precision; its
+  committed output is `dynamic_snapshot.out.txt`). A close takes all of these as well.
+- The swing capture's reference is `../step2/swing-STEP2.txt`, not `swing-HEAD.txt`
+  (which predates M9's caller-order fix by one negated line).
 
 Never edit `src/` while a capture or suite runs: each Julia launch loads the working
 tree.

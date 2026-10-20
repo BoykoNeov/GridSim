@@ -523,3 +523,17 @@ end
    with frequency restored in between, and a grid cut in two solved piece by piece
    at each piece's own frequency — hurdles 18–21 (`docs/plans/m10-context.md` D0).
    Filtering of pairs, N-3 and beyond, and a per-pair dip verdict are not in it (D5).
+   **Delivered in M10 (closed 2026-10-20)**: `src/steadystate/double_outages.jl`
+   screens every pair of lines and generators in DC (an exact rank-two update, cut
+   pairs from the graph) and in AC (one Newton solve per live piece, each with its own
+   reference and frequency), each piece judged by M9's settled verdict — the DC pieces
+   checked against the swing tier, the AC ones against the detailed tier, per piece;
+   `TripElements` makes several losses one event
+   with one re-solve in both dynamic tiers (a bus left with no source grounded to
+   `V = 0`, a refused event leaving the run as it was); "one after the other" restores
+   50 Hz per piece in between (shares by governor gain, capped at headroom and `Pmin`)
+   and screens the second loss on the restored grid, checked by a detailed-tier run
+   from it. `scripts/double_outage_screen.jl` prints the report and `double_outages()`
+   draws it, with a piece's line-and-voltage outcome marked beside its frequency
+   colour, never combined. Still not built (D5): filtering, N-3, a per-pair dip or
+   rate verdict, re-dispatch beyond restoring frequency.

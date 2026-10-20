@@ -624,6 +624,51 @@ So on these grids the screen answers what a settled-only check answers; that is 
 property of this preset and these invented dynamics, not of the method: a tighter
 dip or a rate limit with its window, supplied by the caller, would decide.
 
+## Double outages — M10, `src/steadystate/double_outages.jl`, `TripElements` (both dynamic tiers)
+
+Every pair of lines and generators at both fidelities, lost at once and one after the
+other with 50 Hz restored in between; a grid cut in two answered piece by piece
+(`plans/m10-context.md` D2–D13). M8's per-branch loop is copied, never edited (tied by a
+`===` test); M8's shared AC solve was generalised in place behind byte-identical
+captures (D9). test: `test/m10_double_outages.jl`, `test/m10_report.jl`; the window in
+`ui/test/double_outage_tests.jl`.
+
+| Claim | Checked against | Label |
+|---|---|---|
+| The two-line DC update is exact on its own model (Hurdle 18.1) | Rebuild-and-re-solve on the mesh's 19 connected pairs, 0.005–0.119 of the band (case9 has no connected line pair). At a near-cut, error ∝ 1/\|det M\|, band stated first; where the reference sits on the nearly cut-off side the rebuild drifts more than the factors, so the closed form is the oracle there and the test asserts which | **closed form** |
+| Adding two single-outage factors is wrong (18.2) | Outside the band on all 19 mesh pairs (9.8e11–2.5e13 × it); exact on the control's 9 cross pairs (two triangles sharing a bus) | **closed form** (positive and anti-vacuity) |
+| A cut pair is decided from the graph (18.3) | Cut set = the rebuild's refusals (case9 36, mesh 2); `det M` at every cut ≤ 2.6e-16, of both signs and zero | **structural** |
+| Without a re-adjustment the order does not matter (18.4) | Swing tier: trip, settle, trip, settle against both at once, every pair kind, ≤ 4.2e-8 against 1e-7; a governor cap seen to bind (9.1e-11) | **cross-fidelity** |
+| Each live piece settles by M8's rule run inside it (19.1–19.4) | Brute force, every live piece rebuilt as its own model on six fixtures; the swing tier per piece ≤ 5.5e-10 on speed (shrinks with the solver tolerance); one piece up, one down (case9 L45+L67); a load-only piece is load lost, a source-only piece its sources lost; a whole grid can be dead (genmesh LB+LD) | **cross-fidelity** |
+| In AC each piece is its own solve (19.5) | One Newton solve per live piece with its own reference, frequency and reactive limits; per-piece losses identity on every piece that solved; lossless constant power = step 2 within 1e-10; collapsed pairs = M8's single AC outage within 1e-10. The six M9 captures byte-identical after the shared solve was generalised — which also means a check against M8's screen cannot see a bug in that shared setup; only the per-piece identity can | **derived** + **structural** |
+| "At the same instant" is one event with one re-solve (Hurdle 20) | `TripElements` in the detailed tier: the case9 default L45+L67 pair runs where its first single trip is refused (positive control); a refused event leaves the run bit-identical to its never-asked twin; a bus with no source grounded through its own load slot (`V = 0` exactly — a recorded deviation from "taken out of the solve"); per-piece settled frequency = step 3's AC piece through M9's losses identity, rtol 1e-6, where whole-grid Σw and losses fail it | **cross-fidelity** + **structural** |
+| Restoring 50 Hz is exact, and can be refused (21.1–21.2) | Shares by governor gain, capped at headroom, mirrored down to `Pmin`, every limit to the bit; refused on the mesh's G1 where the settle answers; AC: losses identity and `ac_powerflow` gives the restored state back | **closed form** |
+| The second loss is a single-outage screen of the restored grid (21.3) | By construction (the pair screens' one-element case on the restored model), stated; checked independently by a detailed-tier run from the restored model, nine pieces ≤ 1.4e-9 relative | **cross-fidelity** |
+| A-then-B, B-then-A and both at once are three answers (21.4) | `Δω(both) − Δω(A→B) = −Σ restore pickups / Σ(1/R + D)` per piece: exact in DC, to the solver in AC on case9 (equal D·R hides restore against settle), 5e-4 on the mesh | **derived** |
+| The report and window say what the tables say (step 6, D12–D13) | Claims k–r asserted at printed precision, written after the tables; the window's cells and read-out equal the script's rows; a real mouse click reaches the table. A no-state sequential pair judged on its first loss's restored 0.0 Hz was found by looking at the rendered window after the claims' test passed (claim q 58/60 → 28/25) | **derived** |
+
+Sabotages were run with predictions written first at every step, and each was red where it
+was registered (`docs/evidence/gridsim-m10/`).
+
+**At the close (2026-10-20).** The solver and network packages moved this time
+(`OrdinaryDiffEqCore` 4.18.1 → 4.19.0, `SciMLBase` 3.57.0 → 3.58.0, `DiffEqBase`,
+`NonlinearSolveBase`; in `reference/` also `PowerFlows` 0.25.2 → 0.25.4,
+`PowerNetworkMatrices`, `PowerSystems`), with no `Project.toml` changed. M9's six
+captures, the PowerDynamics oracle capture, M10's 32 serialized screens, the printed
+report and a new full-precision capture of M10's dynamic runs
+(`evidence/m10-close/dynamic_snapshot.jl`: every state of the detailed tier on Rodas5P
+for step 4's and step 5's cases) are byte-identical before and after.
+
+**Not checked, and said:** (1) the rule that a refused AC piece keeps no capped flags
+(D12.1) is guarded on pairs but exercised by no data — no fixture has a settle refusal
+with flags set; only the sequential half moved. (2) Amber (customers cut off) is never
+reached on these grids — the three load-stranding pairs all fail — so it is tested on
+hand-built pieces only. (3) In AC a `V` hides any `O`: the solve checks the voltage band
+first and judges no rating where it fails; only DC checks every pair it has a state for.
+(4) A refused event on the out-of-step relay's path puts the engine and the relay record
+back but stops the run, and the detailed tier's `TripLine` never latches its relay — both
+measured, neither changed.
+
 ## Owed rows
 
 - SPEC §7.6's third lesson, **IBR behaviour**: **scheduled as M7** (2026-09-29) and

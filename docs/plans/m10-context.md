@@ -1070,3 +1070,34 @@ said yes. What that means, made exact:
   to "every pair it has a state for (approximate flows, no voltages)" — DC has no state for the
   mesh's nine G1-first pairs or the three already-lost ones; claim r also names the 24 pairs of
   claim m, which have no AC solution to check.
+
+---
+
+## D14 — The close (2026-10-20)
+
+**Predicted before any suite ran** (`docs/evidence/m10-close/predictions.txt`, at
+`485204c`): 25151 core / 1439 reference / 4212 UI, and every capture unchanged unless a
+solver package moves. Measured: exactly those counts on manifests deleted and
+re-resolved in all four environments.
+
+**What is different from M9's close: the stack moved.** `OrdinaryDiffEqCore` 4.18.1 →
+4.19.0, `SciMLBase` 3.57.0 → 3.58.0, `DiffEqBase`, `NonlinearSolveBase` and the BDF/SDIRK
+solvers in every environment; `PowerFlows` 0.25.2 → 0.25.4, `PowerNetworkMatrices` and
+`PowerSystems` in `reference/` (the full list in `moved.txt`). No `Project.toml` changed.
+So "byte-identical after" is a result this time, not a formality: M9's six captures, the
+PowerDynamics oracle capture, M10's 32 serialized screens and the printed report all held.
+
+**A capture of M10's own dynamic runs, added first** (the advisor's catch at
+orientation): every capture above is a static screen, and steps 4–5's detailed-tier runs
+were pinned only by the suite's tolerances (1e-6 to 1e-9). `m10-close/dynamic_snapshot.jl`
+prints every state of the detailed tier on Rodas5P at 1e-10 — step 4's seven
+`TripElements` cases and step 5's eleven restored-model cases — at 1, 5 and 20 s, run on
+the old root manifest in a detached worktree at `485204c` and on the new. **Byte-identical**
+(36,486 bytes, MD5 `3d2fc0d65c96f1d22d7cb786dd14c197`), with the old run confirmed on
+`OrdinaryDiffEqCore` 4.18.1 and the new on 4.19.0 (`pkgversion`, so the comparison is not
+vacuous); three refusals, the ones steps 4–5 recorded (constant power L45+L67 at the trip,
+L78→G2 and L89→G2). The output is committed as `dynamic_snapshot.out.txt`.
+
+**Read while closing:** M9's `step2/swing-HEAD.txt` is the capture from before M9's
+caller-order fix; the swing baseline matches `swing-STEP2.txt`, and differs from
+`swing-HEAD.txt` by that one exact negation. A later close compares against STEP2.
