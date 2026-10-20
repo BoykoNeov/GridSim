@@ -1182,6 +1182,7 @@ end
         ok = _m10_relay_de(_m10_relay_ring(500.0))
         solve!(ok, (0.0, 6.0))
         @test out_of_step_log(out_of_step_relay(ok, :B1, :B2)).tripped
+        @test !out_of_step_relay(ok, :B1, :B2).armed       # its own trip latched it
         @test !is_online(ok, :B1, :B2) && n_events(ok) == 1
         # L31 rated 85 MVA: the re-solve after L12's trip refuses it (105.8 MVA).
         eng = _m10_relay_de(_m10_relay_ring(85.0))
@@ -1198,6 +1199,31 @@ end
         @test occursin("cannot go on", try inject!(eng, TripGenerator(:G2)); "" catch e; e.msg end)
         @test occursin("cannot go on",
                        try inject!(eng, TripElements(sources = [:G2])); "" catch e; e.msg end)
+    end
+
+    @testset "a user's TripLine latches the relay on its line; a refused one does not" begin
+        # Asked in the reverse bus order, before the ramp: the line opens, the relay is
+        # latched without firing, and the log names the line in the model's order. Left
+        # armed, it would read the angle across the open line (≈ 2.3 rad by t = 6 against
+        # its 0.20) and claim a protection operation that opened nothing.
+        eng = _m10_relay_de(_m10_relay_ring(500.0))
+        solve!(eng, (0.0, 0.5))
+        inject!(eng, TripLine(:B2, :B1))
+        solve!(eng, (0.5, 6.0))
+        lg = out_of_step_log(out_of_step_relay(eng, :B1, :B2))
+        @test !lg.tripped && !lg.armed && isnan(lg.t)
+        @test [(e.kind, e.a, e.b) for e in event_log(eng)] == [(:trip_line, :B1, :B2)]
+        # During the ramp with L31 rated 85 MVA, the same trip is refused (L31 would carry
+        # 87.1 MVA): the latch goes back with the line, and the relay still operates later.
+        eng = _m10_relay_de(_m10_relay_ring(85.0))
+        solve!(eng, (0.0, 1.5))
+        err = try inject!(eng, TripLine(:B2, :B1)); nothing catch e; e end
+        @test err isa ErrorException && occursin("branch L31 carries", err.msg)
+        lg = out_of_step_log(out_of_step_relay(eng, :B1, :B2))
+        @test is_online(eng, :B1, :B2) && n_events(eng) == 0
+        @test !lg.tripped && lg.armed
+        err = try solve!(eng, (1.5, 6.0)); nothing catch e; e end   # it fires, and is refused
+        @test err isa ErrorException && occursin("105.7", err.msg)
     end
 
     @testset "a dead piece is switched off, not solved (L45+L56, both load models)" begin

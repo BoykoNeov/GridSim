@@ -2739,6 +2739,10 @@ out-of-service branch is an open circuit exactly — there is no `X = Inf` anywh
 near a denominator, and the network's structure never changes. Tripping a line
 already out is a no-op, logged as such rather than silently re-applied.
 
+An out-of-step relay on the line is **latched** by the trip, whoever asked for it — the
+user, or the relay itself — so it neither goes on watching an open branch nor fires a
+second time; the swing tier's rule. The log names the line by its own bus order.
+
 **A refused trip changes nothing** (M10 step 4, Hurdle 20.2): when the re-solve refuses
 the network the trip leaves, the line is back in service, every parameter and state is
 what it was, nothing is logged, and the refusal is thrown. Until M10 the line stayed
@@ -2759,12 +2763,20 @@ end
 function _trip_line!(eng::DetailedEngine, ev::TripLine)
     e = _detailed_branch_index(eng, ev.from, ev.to)
     e in eng.lines_online || return (:ok, nothing)
+    br = eng.model.branches[e]
     return _refusable!(eng) do
         delete!(eng.lines_online, e)
         eng.params[eng.status_pidx[e]] = 0.0
         eng.p_static[eng.sstatus_pidx[e]] = 0.0
+        # A relay on an open branch is latched — the user's trip, another relay's and
+        # its own alike (`out_of_step.jl`). Inside the refusable block, so a refused
+        # trip leaves the relay armed with everything else.
+        for rl in eng.relays
+            rl.from === br.from && rl.to === br.to && disarm!(rl)
+        end
         reason, err = _reinitialise_outcome!(eng)
-        err === nothing && _log_event!(eng, :trip_line, ev.from, ev.to)
+        # Logged by the branch's own bus order, as the swing tier logs it.
+        err === nothing && _log_event!(eng, :trip_line, br.from, br.to)
         (reason, err)
     end
 end
