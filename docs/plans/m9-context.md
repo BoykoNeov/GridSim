@@ -287,7 +287,8 @@ are byte-identical after the change.
    move lossless refusals, which this step's gate forbids, so it is **carried, not
    changed**. At initialisation on the seeded path it is moot (`ac_powerflow` has
    refused any overload at either end); at a re-initialisation after an event it is
-   not.
+   not. **Fixed in the M10 cleanup (2026-10-21):** the check reads the larger end. No
+   capture moved — no recorded case has a rating between its two ends.
 
 **The antisymmetry audit (Hurdle 17.7).** Every reader of a branch's power or
 current in this tier, and every hand-written copy of `ΔV/(jX)`:
@@ -296,7 +297,7 @@ current in this tier, and every hand-written copy of `ΔV/(jX)`:
 |---|---|---|
 | `branch_power(::DetailedEngine, a, b)` | the end named first | fixed: receiving end read at its own terminal |
 | `branch_power_series(::DetailedEngine, …)` | same | fixed, same way |
-| `_branch_flows` (rating check) | sending end `|S|` | `R` read; sending-end-only carried (finding 5) |
+| `_branch_flows` (rating check) | sending end `|S|` | `R` read; sending-end-only carried (finding 5); larger end since the M10 cleanup |
 | `scripts/iberia_two_area.jl` `peak_export` | `:ES → :FR`, the branch's own orientation | correct end; lossless fixture |
 | `scripts/low_inertia.jl` `bus_export` | its own copy of `ΔV/(jX)` | now `ΔV/(R + jX)`, the same number at `R = 0` |
 | `test/m5_detailed.jl`, `test/m7_inverters.jl` | hand copies of `ΔV/(jX)` | same change, same reason |
@@ -669,8 +670,8 @@ every existing caller throws exactly what it threw. Predictions first, in
   within the limit, `:fail` only if both exceed it, `:tolerance_dependent` otherwise.
   The fine run's own accuracy is pinned against the closed form instead.
 - **Classified, never text-matched:** the voltage band or a branch rating at the trip
-  is `:refused_at_trip` (reasons `:voltage`/`:rating` kept apart — the rating check is
-  still sending-end only); a stalled static solve (`NetworkInitError`, by type) or a
+  is `:refused_at_trip` (reasons `:voltage`/`:rating` kept apart — the rating check read the
+  sending end only until the M10 cleanup); a stalled static solve (`NetworkInitError`, by type) or a
   residual over threshold is `:solver_failure`, as is a failed integration, read off
   the integrator's retcode; an error raised while the retcode reads success is
   rethrown. The dynamic-network Kirchhoff check stays a throw: it means an event wrote

@@ -670,7 +670,8 @@ governor, weight and latches, which M9's dip screen never saw because it abandon
 
 **The out-of-step relay's path cannot change nothing, and the run stops there — also by
 measurement** (`step4_relay_probe.jl`, `.out.txt`; the governed ring of `m5_detailed.jl` with G1
-ramped UP and L31 rated 85 MVA, so L12's trip leaves L31 at 105.8 MVA). Before the fix: the
+ramped UP and L31 rated 85 MVA, so L12's trip leaves L31 at 105.8 MVA at its sending end —
+106.7 at its larger end, which the check reads since the cleanup below). Before the fix: the
 refused trip left L12 open in both networks, unlogged, the relay's record "tripped" while still
 armed, and a `solve!` continued from there collapsed its step size at 9.23 s. After it: the
 engine is put back, and the relay's record too (`out_of_step.jl`'s affect restores its
@@ -681,12 +682,32 @@ again**: its one crossing is spent, so a continued run is silently a run without
 that tried to act. So a refusal on this path sets `halted`, and every later `solve!`/`inject!`
 refuses with the reason (`_assert_running`).
 
-**Found, not fixed: the detailed tier's `TripLine` never latched the relay on the line it opens**
+**Found here, fixed in the cleanup: the detailed tier's `TripLine` never latched the relay on the line it opens**
 (the swing tier's does, and `out_of_step.jl` states the rule). A relay that fired stays armed;
 if its angle came back under the threshold and crossed again it would overwrite its own record
 and call a no-op trip. Fixing it in `TripLine` changes a callback's condition, which can move a
 step sequence the M5 criterion capture holds — not this step's to decide. `TripElements` latches
-the relay on every line it opens.
+the relay on every line it opens. **Fixed in the M10 cleanup** (below).
+
+**The M10 cleanup (2026-10-21, after the close; the user's call to do it before M11).**
+- *`TripLine` latches the relay on the line it opens* (`_trip_line!`), inside the refusable
+  block, so a refused trip leaves it armed with everything else. Measured before the fix: a
+  user's trip of L12 left its relay reading the angle across the open line, about 2.3 rad by
+  t = 6 against its 0.20 threshold — a protection operation that would open nothing. The
+  same change logs the line in the branch's own bus order (`TripLine(:B2, :B1)` logs
+  `(:trip_line, :B1, :B2)`), as the swing tier does. The feared step-sequence move did not
+  happen: every capture byte-identical.
+- *The rating check reads the larger end* (`_branch_flows`: `max(|V_f I*|, |V_t (−I)*|)`),
+  closing M9's finding 5. Every capture byte-identical — no recorded case has a rating
+  between its two ends. Two refusal messages on the relay fixture moved: 105.77 → 106.69 MVA
+  (after the relay's trip) and 87.1 → 87.9 (a user's trip during the ramp); the lines are
+  lossless, so the difference is `|I|²X` in reactive power. `test/m9_line_resistance.jl`
+  matches `ac_powerflow` end for end and has a rating between the ends refused at
+  initialisation and at a trip; with the sending end alone, 7 of its 9 checks fail.
+- Suites after both: 25 167 core (+9) / 1 439 reference / 4 212 UI.
+- Left as they are, on purpose: the relay path's halt (the stop is the point, above), the
+  low-inertia nadir overlay, Hurdle 12's clause, and a sourced rate-of-fall limit (none
+  exists).
 
 **The swing tier's half is built**, though it is cut-first item 2: it was the single trips run
 back to back (that tier re-solves nothing), plus the graph's answer, about thirty lines. Checked

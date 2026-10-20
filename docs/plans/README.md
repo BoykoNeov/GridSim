@@ -274,7 +274,8 @@ its window.
 
 Still owed and not yet hurdles: the network optimal power flow (M6 D7 criterion 4),
 Hurdle 12's untested clause, the low-inertia study's aggregate nadir overlay, the
-detailed tier's line-rating check reading the sending end only (predates M9, D5),
+detailed tier's line-rating check reading the sending end only (predates M9, D5;
+fixed in the M10 cleanup, 2026-10-21),
 and a sourced area-wide rate-of-fall limit (none exists, D3). The next milestone
 names its hurdle first.
 
@@ -334,13 +335,18 @@ running two simultaneous line trips in the detailed tier (D1):
   mesh. In AC the order flips one pair's verdict on each grid (claim q).
 
 Still owed and not yet hurdles: M9's carried list (the network optimal power flow,
-Hurdle 12's untested clause, the low-inertia study's aggregate nadir overlay, the
-detailed tier's line-rating check reading the sending end only, a sourced area-wide
-rate-of-fall limit); from M10, the detailed tier's `TripLine` never latching its relay,
-the relay path's refused event halting the run, a refused piece's no-flags rule on pairs
+Hurdle 12's untested clause, the low-inertia study's aggregate nadir overlay, a sourced
+area-wide rate-of-fall limit); from M10, the relay path's refused event halting the run
+(kept: the stop is the point), a refused piece's no-flags rule on pairs
 guarded but never exercised by data, the amber colour never reached on these grids, and
 D5's exclusions (filtering, N-3, a per-pair dip or rate verdict, re-dispatch beyond
 restoring frequency). The next milestone names its hurdle first.
+
+**The M10 cleanup (2026-10-21)** fixed two more that were owed: the detailed tier's `TripLine` now
+latches the out-of-step relay on the line it opens, and logs the line in the model's bus
+order as the swing tier does; its rating check reads the larger of a line's two ends, as
+`ac_powerflow` does. Every capture held byte for byte; two refusal messages on the relay
+fixture name the larger end's figure (`m10-context.md`, "The M10 cleanup").
 
 ## Structure notes
 

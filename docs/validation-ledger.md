@@ -592,6 +592,8 @@ has the same blindness one level up: a resistance misread the same way by both t
 builders is green in step 2, and red in PowerDynamics at step 3. (2) The detailed tier's line-rating check reads the sending end only,
 where `ac_powerflow` reads the larger end — a gap that predates M9 (reactive power)
 and is carried, not changed, because widening it would move lossless refusals.
+**Fixed in the M10 cleanup (2026-10-21):** it reads the larger end; no capture moved,
+and a lossy fixture refuses a rating between the two ends at initialisation and at a trip.
 
 ## The frequency verdict — M9 steps 4–7, `src/steadystate/frequency_verdict.jl`, `generator_dips.jl`
 
@@ -666,8 +668,8 @@ reached on these grids — the three load-stranding pairs all fail — so it is 
 hand-built pieces only. (3) In AC a `V` hides any `O`: the solve checks the voltage band
 first and judges no rating where it fails; only DC checks every pair it has a state for.
 (4) A refused event on the out-of-step relay's path puts the engine and the relay record
-back but stops the run, and the detailed tier's `TripLine` never latches its relay — both
-measured, neither changed.
+back but stops the run, and the detailed tier's `TripLine` never latched its relay — both
+measured; the halt kept, the latch fixed in the M10 cleanup (2026-10-21).
 
 ## Owed rows
 
