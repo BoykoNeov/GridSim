@@ -375,6 +375,16 @@ half in a new extension `ext/GridSimOPFExt.jl` on JuMP + Ipopt; tests in
   the captures were not re-taken.
   Reference 1493 and UI 4212 unchanged; all passing. `ACOPF`/`ac_opf` checked clear against
   `names(GLMakie)` in `ui/`.
+- **For step 5 (raised after the step closed, checked in the code):** the slack's
+  scheduled `P0` is the nominal balance, not its OPF output, so anything that reads `P0`
+  directly starts the slack a few MW off the optimum. The detailed tier takes `Pm` from the
+  power flow (`_seed_from_powerflow`), but its governor headroom is still `Pmax − P0` from
+  `machine_arrays` — on case9 at published load the slack's headroom is overstated by the
+  losses (schedule 86.26 MW, optimum 90.72 MW). Not new to M11: every schedule in the repo
+  balances at nominal load and the slack picks up the losses only in the flow. Before step 5
+  claims the optimum "feeds the simulators as is", list which engines read `P0` (the
+  frequency and swing tiers do, and the detailed tier's headroom) and either state the gap
+  or close it.
 - **For step 4:** in `reference/` only `GridSimDispatchExt` precompiled after the change,
   although Ipopt and JuMP are both there — its manifest still records GridSim's old
   extension list. Re-resolve `reference/` (and check `GridSimOPFExt` loads) before the AC
