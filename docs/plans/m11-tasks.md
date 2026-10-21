@@ -23,12 +23,18 @@ expected text, corrected, and that group re-run alone, 187/187).
 - [x] **The user's five choices** (D2): DC then AC; voltages held; PowerModels in
       `reference/`; case9 only; the DC oracle given our formula.
 - [x] **Hurdles 22–24 named** (D0) in `m11-context.md` and `docs/plans/README.md`.
+- [x] **Review of the plan** (2026-10-21) added D9 (an optimum on a limit vs strict
+      checks: a stated margin), D10 (the costed case9 in the script, `costed`
+      keyword), D11 (voltage-dependent loads: the load-draw shift reported apart),
+      and D7's reader path (`parse_matpower`; its ±60° angle bound).
 
 ## Step 1 — The DC OPF (Hurdle 22)
 
 - [ ] Predictions file: bands for the degeneration, the cap identity and the closed
       form; which fixture sees which sabotage.
-- [ ] `dc_opf` in core (formulation, refusals) + its HiGHS method in
+- [ ] `case9(; costed = true)` in `scripts/outage_screen.jl` (D10) and its row-for-row
+      check against `_ed_case9`.
+- [ ] `dc_opf` in core (formulation, refusals, D9's margin) + its HiGHS method in
       `GridSimDispatchExt`; the result type.
 - [ ] Gate: captures and counts unchanged.
 - [ ] 22.1 degeneration on case9 as published.
@@ -60,7 +66,8 @@ expected text, corrected, and that group re-run alone, 187/187).
       models.
 - [ ] 24.1 handed back to `ac_powerflow`, both load models.
 - [ ] 24.2 the bound against M6's dispatch-then-flow, recomputed, feasibility first.
-- [ ] 24.3 the 1.5× voltage fixture and its positive control.
+- [ ] 24.3 the voltage fixture and its positive control — the control's margin
+      re-measured on the exact dispatch first.
 - [ ] 24.4 1.75× reported as Ipopt's word; the floor-lowered variant pins the cause.
 - [ ] 24.5 two starts agree.
 - [ ] Sabotages executed.

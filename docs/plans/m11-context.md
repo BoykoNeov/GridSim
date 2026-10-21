@@ -182,6 +182,12 @@ rating of zero. **Infeasible limits are an outcome**: HiGHS's infeasibility proo
 on an LP/QP is a real certificate (unlike Ipopt's local word), and the result says
 which.
 
+**The angles carry no cost, and HiGHS regularizes its QP Hessian** (`qp_regularization_value`,
+M6's 2.0e-4 MW finding): with `θ` as variables the regularization also touches them,
+so the θ formulation is not exactly `economic_dispatch`'s problem even where nothing
+binds. 22.1's band is sized for that, or measured with the regularization off, as M6
+did — written in step 1's predictions before the comparison.
+
 The answer is a schedule for the existing tools: a dispatch handed to
 `dc_powerflow` reproduces the OPF's flows (an identity of the formulation, checked
 once as a gate), and handed to `ac_powerflow` shows what the network adds — M6's
@@ -221,16 +227,26 @@ at the report step.
 - **PowerModels: `reference/` only** (D2.3), re-measured there at step 2 before it
   is added; `reference/Project.toml`'s comments restored after.
 
-## D7 — The oracle's data: typed from MATPOWER's file, never committed, never built from ours
+## D7 — The oracle's data: typed from MATPOWER's file, read by PowerModels' own reader
 
-MATPOWER's licence covers its code (3-clause BSD) and says outright that **its case
-files are not covered** by it. So `case9.m` is **not committed**. The reference test
-carries the case's rows (bus, gen, branch, gencost) **typed from the file**, with
-its URL and the commit it was fetched at, as `test/m6_economic_dispatch.jl` already
-carries the cost rows — and builds PowerModels' data dictionary from those literals.
-It never builds the oracle's input from our `NetworkModel`: a conversion mistake
-shared by both sides would be invisible (Hurdle 23.2). The invented binding
-fixtures are written the same way on both sides, from the same typed literals.
+The reference test carries case9's rows (bus, gen, branch, gencost) **typed from the
+file**, with its URL and the commit it was fetched at, as
+`test/m6_economic_dispatch.jl` already carries the cost rows. They are written out
+as **MATPOWER-format text and handed to `PowerModels.parse_matpower(IOBuffer(...))`**
+— their reader, the path step 0 measured (5216.0266) — never as a hand-built
+PowerModels dictionary, which would be a third conversion (per-unit, angles, cost
+scaling) checked by nothing. Nor is the input ever built from our `NetworkModel`: a
+conversion mistake shared by both sides would be invisible (Hurdle 23.2). The
+invented binding fixtures are edits to the same text on the oracle's side and to the
+same literals on ours.
+
+`case9.m` itself is not committed: the test needs only its rows. (MATPOWER's licence
+covers its code and says its case files are not covered by it; the typed rows are
+the same data the repo has carried since M6.)
+
+**PowerModels' reader adds a constraint we do not have**: `correct_voltage_angle_differences!`
+tightens case9's ±360° branch angle-difference bounds to ±60° (1.0472 rad, measured
+in the installed 0.21.7 source). Steps 2 and 4 name it and assert it never binds.
 
 ## D8 — Bands are stated before the gap is seen
 
@@ -240,3 +256,53 @@ the handed-back power flow, the two starting points, the degeneration to
 `docs/evidence/gridsim-m11/stepN_predictions.md`, derived from the solvers'
 tolerances, **before** the comparison first runs (M4 D7, M6's oracle B: the
 oracle's accuracy is a floor, not a ceiling).
+
+## D9 — An optimum ON a limit, handed to a check that refuses strictly
+
+The binding fixtures exist to put the optimum exactly on a limit — B9 at the 0.9 pu
+floor, a ring line at its rating. An interior-point solver holds a constraint only to
+its tolerance, so B9 can come back at 0.8999999…, and `ac_powerflow` (and the detailed
+tier's initialisation) refuse a bus below 0.9 or a branch over its rating **strictly**.
+M6's `30.000000000000004` lesson, one level up: the handed-back check (24.1), the
+voltage fixture (24.3) and step 5's flat run would then fail by round-off, with no bug
+anywhere.
+
+**Decided: the optimiser works against limits pulled in by a stated margin** — the
+voltage band to `[0.9 + δ_V, 1.1 − δ_V]`, each rating to `rating·(1 − δ_S)`, with
+`δ` stated, at least the solver's constraint tolerance, and **carried on the result**
+(as M6's `tol` is), so an answer is strictly inside every limit the strict checks
+read. The alternative — comparing the handed-back solve through a path that skips
+the refusals (`_ac_first_round`/`_ac_newton`) — was rejected: the claim is that the
+schedule *feeds the simulators as they are*, and a path around their checks does not
+show that. The outside comparisons (steps 2, 4) give PowerModels the unmargined
+limits and their band covers `δ`, stated before the run. A binding constraint is
+then "at its limit" when within `δ` + tolerance of the **margined** limit.
+
+## D10 — Where the costed case9 lives
+
+The report grids' `case9()` (`scripts/outage_screen.jl`) carries no costs and no
+`Pmin`, so `economic_dispatch` — and the OPF — refuse it by name. The only costed
+case9 is `_ed_case9` in `test/m6_economic_dispatch.jl`, and a deliverable script must
+not reach into the test suite (that script's own rule). **Decided: `case9` gains a
+`costed` keyword** (default `false`, so no existing caller or capture moves) that
+adds MATPOWER's `gencost` rows and the 10 MW minimums, typed in the script; a test
+asserts the two copies agree row for row — the pattern M8 used for the branches.
+Checked at step 0: `_ed_case9`'s set-points (1.04 / 1.025 / 1.025) and reactive
+limits (±300 MVAr) are the shape the AC evidence used.
+
+**`Machine` refuses `P0 > Pmax`**, so 22.2's "G2's maximum lowered to the rating"
+model moves G2's schedule down with it (and the slack's up) — the schedule is not
+what the dispatch reads, but the model must exist to be dispatched.
+
+## D11 — On voltage-dependent loads the AC optimum can buy cheaper load, not cheaper generation
+
+`Load`'s default is constant **impedance**: a load draws less at a lower voltage. An
+AC optimiser with the default loads can lower its cost by choosing a dispatch that
+lets the load-bus voltages sag — serving less load, not generating more cheaply. M6
+met the same term after the fact (−318 $/h on case9's default loads, `m6-tasks.md`
+step 7, F7). **Decided: M6's rule carries** — the AC result reports the load-draw
+shift (`Σ Pload` at the solved voltages − `Σ P0`) separately from the losses, and no
+text calls the cost difference against the network-free optimum "the cost of the
+network" on default loads. The bound (24.2) compares two points feasible for the
+*same* problem — same load model — so it holds as an inequality on either load
+model; the report says what the difference is made of.

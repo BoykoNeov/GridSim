@@ -52,12 +52,16 @@ branch flow, the cost **recomputed from the answer** (M6's rule), the lines at t
 limit, and an outcome (`:optimal`, or the infeasibility HiGHS proves).
 
 - **Gate:** every M6–M10 capture and suite count unchanged — nothing existing
-  changes; the extension only gains a method.
+  changes; the extension only gains a method. `case9(; costed = true)` added to
+  `scripts/outage_screen.jl` (D10), its rows checked against `_ed_case9`'s; the
+  default path byte-identical.
 - **Degeneration (22.1):** case9 as published — equal to `economic_dispatch` within
-  the stated band; no line at its limit.
+  the stated band (sized for HiGHS's regularization touching the angles, D3); no
+  line at its limit.
 - **A generator's own line is its cap (22.2):** L82 rated below G2's unconstrained
-  output ≡ `economic_dispatch` with G2's maximum lowered to that rating — an
-  identity, so the band is the solver's alone.
+  output ≡ `economic_dispatch` with G2's maximum lowered to that rating (its
+  schedule moved down with it, D10) — an identity, so the band is the solver's
+  alone.
 - **A ring line reroutes (22.3):** case9 with one ring line's rating invented below
   its unconstrained flow (chosen from step 0's table, printed as invented); the
   line sits at its limit, all three outputs move, the cost rises.
@@ -80,8 +84,11 @@ PowerModels + Ipopt added to `reference/` after re-measuring resolution **in tha
 environment** (D6); comments restored. The oracle's data typed from MATPOWER's file
 (D7), its DC copy with `R = 0` (D2.5).
 
-- **Band (23.3)** stated before the run, from Ipopt's and HiGHS's tolerances, on
-  every output, cost and branch flow.
+- **Band (23.3)** stated before the run, from Ipopt's and HiGHS's tolerances and
+  D9's margin, on every output, cost and branch flow.
+- **Input through their reader** (D7): the typed rows written as MATPOWER text,
+  `parse_matpower(IOBuffer(...))`; the ±60° angle bound it adds named and asserted
+  never binding.
 - **Fixtures:** case9 as published (cost 5216.0266 already measured — the cost
   conversion's free check, 23.2), and every binding fixture of step 1 that exists on
   case9.
@@ -99,7 +106,9 @@ the step's centre — generator voltages fixed at `V_set` and reactive output bo
 (D4), the load-bus voltage band, each branch's `|S|` at its larger end within its
 rating (the M10-cleanup reading, the same one the detailed tier uses), constant-
 power and the default voltage-dependent loads. Ipopt in a new extension (D6),
-added after the root environment's own re-measurement.
+added after the root environment's own re-measurement. Every limit pulled in by
+D9's stated margin, carried on the result; the load-draw shift reported apart from
+the losses (D11).
 
 - **Handed back (24.1):** the dispatch through `ac_powerflow` reproduces the OPF's
   `|V|`, angles and flows within the stated band, on both load models.
@@ -107,7 +116,10 @@ added after the root environment's own re-measurement.
   to the flow is checked feasible first, then the OPF's cost may not exceed its
   cost, **recomputed in the test**.
 - **The voltage fixture (24.3):** 1.5× load — `ac_powerflow` refuses the DC dispatch
-  (positive control), the OPF's answer passes it, with B9 at the floor.
+  (positive control), the OPF's answer passes it, with B9 at the margined floor.
+  The control's margin (0.8996 against 0.9) was measured on a dispatch rounded to
+  0.01 MW: re-measured on the exact dispatch first, and a load between 1.5× and
+  1.75× chosen instead if it stays that thin.
 - **Locally infeasible (24.4):** 1.75× — reported as Ipopt's word, never as
   "infeasible"; a test pins the voltage-floor cause by the floor-lowered variant.
 - **Two starts (24.5):** flat and DC-OPF starts agree within the band.
@@ -120,7 +132,8 @@ added after the root environment's own re-measurement.
 
 Constant-power loads only (PowerModels has no voltage-dependent load), voltages held
 by `vmin = vmax` at the machine buses, line charging zero, `R` kept (the AC physics
-is the same on both sides). Band stated before. **Named, not hidden:** both sides
+is the same on both sides), input through their reader (D7). Band stated before,
+covering D9's margin; the ±60° angle bound asserted never binding. **Named, not hidden:** both sides
 use Ipopt, so this checks the formulation, not the solver — 24.1, 24.2 and 24.5 are
 the solver-independent checks, and they are already green at step 3.
 
