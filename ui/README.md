@@ -89,6 +89,11 @@ owns that).
 
 ## Run the window
 
+On Windows, `GridSim.bat` in the repo root does all of this from a double-click:
+one Julia session, a numbered menu of the eight windows below, back to the menu
+when a window closes (`scripts/start.jl`; `julia --project=ui ui/scripts/start.jl`
+runs the same menu anywhere). By hand:
+
 ```
 julia --project=ui -e "using GridSimUI; wait_for_close(launch())"
 ```

@@ -90,6 +90,10 @@ not registered, which points at the wrong cause. Measured, both ways round, in
 M4 step 5 (`docs/plans/m4-context.md` D15); the core itself resolves on 1.10 fine,
 which is why its own floor stays where it is.
 
+**On Windows, double-click `GridSim.bat`** in the repo root to start the program:
+it finds Julia, installs the UI's packages on the first run, and shows a menu of
+the windows (the menu is `ui/scripts/start.jl`; close a window to return to it).
+
 ```julia
 # from the repo root
 julia --project=. -e 'import Pkg; Pkg.instantiate(); using GridSim; println(example_system())'
