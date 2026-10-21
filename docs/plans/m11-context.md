@@ -556,6 +556,10 @@ edits in `reference/src/opf_oracle.jl`; tests in `reference/test/m11_ac_opf_orac
     binds" red four times (B9, L94's ends, the 5325.2661 cost), the input testset red; and
     A4 red because **their side then solves at 1.75×** — line charging is enough reactive
     support to lift the voltage floor's bind. Not predicted either way; recorded.
+- **For step 5 (from SC):** every load limit this milestone states — 1.5× bound by B9's
+  floor (24.3), locally infeasible from 1.75× (24.4, A4) — is a fact about **our case9,
+  which has no line charging**, not about MATPOWER's published case9, which carries it and
+  solves at 1.75× on their side. The report says so wherever it states those limits.
 - **Gate.** The reference oracle capture (`oracle_snapshot.jl`) byte-identical between a
   HEAD worktree carrying the pre-resolve manifest and the working tree after; stderr
   differs only by the precompile lines. Reference suite 1493 → 1582, all passing. Core and
