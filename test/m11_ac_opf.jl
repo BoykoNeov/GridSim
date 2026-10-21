@@ -266,4 +266,45 @@ end
     @test occursin("dispatch_schedule", msg(() -> dispatch_schedule(_opf_triangle(), ac_opf(net))))
 end
 
+# The guards no clean fixture reaches, each made to fire once (a guard that never runs is
+# decoration — m6-context.md D12).
+@testset "the refusals no clean fixture reaches" begin
+    msg(f) = try f(); "" catch e; sprint(showerror, e) end
+    net = _ac_c9()
+    r = ac_opf(net)
+    τ = r.tol
+    prob = GridSim._ac_opf_problem(net, τ, r.margin_V, r.margin_S, 0.9, 1.1)
+    sol() = (; outcome = :locally_optimal, status = "doctored", p = copy(r.P),
+               θ = copy(r.θ), Vm = copy(r.Vm))
+    readback(p) = GridSim._ac_opf_result(net, p, sol(), τ, r.margin_V, r.margin_S)
+    # The read-back's three breach refusals, on the real answer against limits it never had.
+    @test readback(prob).outcome === :locally_optimal          # the control: untouched
+    @test occursin("over the margined limit",
+                   msg(() -> readback(merge(prob, (; limit = prob.limit .* 0.1)))))
+    @test occursin("outside the margined band", msg(() -> readback(merge(prob, (; vlo = 0.97)))))
+    @test occursin("give Q =", msg(() -> readback(merge(prob, (; Q_max = fill(0.1, prob.n))))))
+    # Two machines on one bus asking for different voltages; and the same pair agreeing,
+    # whose schedule then has no rule for which slack machine takes the balance.
+    g1 = net.machines[1]
+    pair(V) = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+                           [GridSim._machine_with(g1; id = :G1b, P0 = 0.0, V_set = V); net.machines],
+                           net.loads; slack = net.slack)
+    @test occursin("different V_set", msg(() -> ac_opf(pair(1.03))))
+    two = pair(g1.V_set)
+    @test occursin("carries 2 machines", msg(() -> dispatch_schedule(two, ac_opf(two))))
+    # The nominal balance above the slack machine's Pmax: G1 capped at 50 MW (its schedule
+    # moved to G2 so the model balances), handed this model's answer, whose other two
+    # outputs leave G1 86.26 MW to balance.
+    cut = g1.P0 - 50.0
+    low = NetworkModel(net.S_base, net.f0, net.buses, net.branches,
+                       [GridSim._machine_with(g1; Pmax = 50.0, P0 = 50.0),
+                        GridSim._machine_with(net.machines[2]; P0 = net.machines[2].P0 + cut),
+                        net.machines[3]], net.loads; slack = net.slack)
+    @test occursin("above its Pmax", msg(() -> dispatch_schedule(low, r)))
+    # A DC OPF with no point, given as the start (step 1's infeasible fixture).
+    inf = dc_opf(_opf_rated(_ac_c9(), :L45 => 40.0, :L56 => 40.0))
+    @test inf.outcome === :infeasible
+    @test occursin("no point", msg(() -> ac_opf(net; start = inf)))
+end
+
 end

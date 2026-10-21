@@ -278,7 +278,7 @@ handed-back comparison (Hurdle 24.1) is refused for it by name rather than bande
 holds the probes it cites, the gap table and the sabotage definitions. Code:
 `src/steadystate/ac_opf.jl` (`ac_opf`, `ACOPF`, `dispatch_schedule(net, ::ACOPF)`), the Ipopt
 half in a new extension `ext/GridSimOPFExt.jl` on JuMP + Ipopt; tests in
-`test/m11_ac_opf.jl` (207).
+`test/m11_ac_opf.jl` (216).
 
 - **The root environment.** Re-measured on a scratch copy first (190 → 201 with Ipopt,
   → 215 with the test target's JuMP + HiGHS; nothing moved or removed), then
@@ -367,6 +367,12 @@ half in a new extension `ext/GridSimOPFExt.jl` on JuMP + Ipopt; tests in
   `Project.toml` changed; every run exited 0; stderr differs only by one-off precompile
   lines. Core 25242 → **25450** = + 207 new + 1, the +1 read as M7's exported-surface walk
   reaching `ac_opf` (the mechanism step 1 measured for `dc_opf`; not isolated this time).
+  Then, from the closing review: **nine more tests make every new guard fire once** — the
+  read-back's three breach refusals (on a doctored problem), two machines on one bus with
+  different `V_set`, the schedule's several-slack-machines and over-Pmax refusals, and a
+  failed DC OPF as the start — plus a docstring corrected (the over-Pmax refusal has no
+  lower end). Core **25459**, all passing; the source change was the docstring alone, so
+  the captures were not re-taken.
   Reference 1493 and UI 4212 unchanged; all passing. `ACOPF`/`ac_opf` checked clear against
   `names(GLMakie)` in `ui/`.
 - **For step 4:** in `reference/` only `GridSimDispatchExt` precompiled after the change,

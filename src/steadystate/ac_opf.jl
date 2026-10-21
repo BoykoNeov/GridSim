@@ -339,8 +339,9 @@ slack output is what is compared with the OPF's.
 
 Refused: an answer that is not `:locally_optimal`; a slack bus carrying more than one
 machine (which of them takes the balance is a rule the model does not have, as in
-[`dispatch_loss_gap`](@ref)); and a nominal balance outside the slack machine's
-`[0, Pmax]` reach as `Machine` would refuse it, named here.
+[`dispatch_loss_gap`](@ref)); and a nominal balance above the slack machine's `Pmax`,
+which `Machine` would refuse, named here (there is no lower bound to check: `Machine`
+admits any `P0 ≤ Pmax`, negative included).
 """
 function dispatch_schedule(net::NetworkModel, r::ACOPF)
     r.outcome === :locally_optimal || throw(ArgumentError(

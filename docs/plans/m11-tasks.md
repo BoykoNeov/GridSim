@@ -94,7 +94,7 @@ expected text, corrected, and that group re-run alone, 187/187).
 - [x] Sabotages executed — SA1, SA2 (added), SB, SC, SD each red where predicted, plus
       reds the table did not credit (`m11-context.md`, "What step 3 measured").
 - [x] Gate: core 25242 → 25450 (+207 new, +1 from M7's exported-surface walk reaching
-      `ac_opf`); reference 1493 and UI 4212 unchanged, all passing; the eleven captures
+      `ac_opf`), then 25459 (+9: every new guard made to fire once); reference 1493 and UI 4212 unchanged, all passing; the eleven captures
       byte-compared against fresh `-HEAD` ones.
 
 ## Step 4 — PowerModels' AC OPF in `reference/`
