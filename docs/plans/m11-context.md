@@ -375,7 +375,11 @@ in the installed 0.21.7 source). Steps 2 and 4 name it and assert it never binds
     halves compare outputs and generator-line flows).
   - SB (the invented rating written into their text in pu): F1 green (blind), F2, F3,
     F4 red, F5 green, as predicted. **Not in the table:** the input testset is red too
-    (it reads the edited rating back through their reader, 0.005 for 0.5 pu).
+    (it reads the edited rating back through their reader, 0.005 for 0.5 pu). SB is
+    the plan's sabotage turned round: the plan's "rating in MW where pu is expected" can
+    only happen in a hand-edited parsed dictionary, which this code never builds (D7), so
+    it has no path to break. The unit mistake that CAN happen is in the text edit, pu
+    written where the file expects MVA, and that is the one run.
   SA1 and SA2 red is Hurdle 23.2 shown: a literal wrong on our side only is seen, so
   their input does not pass through our data.
 - **Gate.** The reference oracle capture (`oracle_snapshot.jl`, the one capture that runs
