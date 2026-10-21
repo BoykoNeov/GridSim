@@ -9,13 +9,14 @@
 # Labels are ASCII only — the console this runs in is cmd's, and its code page is
 # not something to bet on.
 
+import Pkg
+
 const UI_DIR = normpath(joinpath(@__DIR__, ".."))
 
 # `ui/Manifest.toml` is gitignored, so a fresh clone has to resolve before the
 # package can load (ui/README.md, "Setup").
 if !isfile(joinpath(UI_DIR, "Manifest.toml"))
     println("First run: installing the UI's packages. This takes several minutes...")
-    import Pkg
     Pkg.instantiate()
 end
 
@@ -42,8 +43,9 @@ function menu()
         end
         println("  q. Quit")
         print("> ")
+        # Checked before the read: after it, on a console, `eof` would wait for a key.
+        eof(stdin) && return
         answer = strip(readline())
-        (isempty(answer) && eof(stdin)) && return
         lowercase(answer) in ("q", "quit", "exit") && return
         i = tryparse(Int, answer)
         if i === nothing || !(1 <= i <= length(WINDOWS))
