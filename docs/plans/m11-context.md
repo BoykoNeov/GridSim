@@ -293,7 +293,9 @@ at the report step.
   the one being changed). `Pkg.add` drops `Project.toml`'s comments — `git diff` and
   restore them.
 - **PowerModels: `reference/` only** (D2.3), re-measured there at step 2 before it
-  is added; `reference/Project.toml`'s comments restored after.
+  is added; `reference/Project.toml`'s comments restored after. (Step 2: with Ipopt,
+  JuMP and HiGHS — the last two so that our `dc_opf` runs there; "What step 2
+  measured", under D7.)
 
 ## D7 — The oracle's data: typed from MATPOWER's file, read by PowerModels' own reader
 
@@ -315,6 +317,72 @@ the same data the repo has carried since M6.)
 **PowerModels' reader adds a constraint we do not have**: `correct_voltage_angle_differences!`
 tightens case9's ±360° branch angle-difference bounds to ±60° (1.0472 rad, measured
 in the installed 0.21.7 source). Steps 2 and 4 name it and assert it never binds.
+
+### What step 2 measured (2026-10-21)
+
+`docs/evidence/gridsim-m11/step2_predictions.md` (written first, not edited after);
+`step2/` holds the probes it cites and the sabotage definitions. Code:
+`reference/src/opf_oracle.jl` (`matpower_edit`, `oracle_dc_opf`); tests in
+`reference/test/m11_dc_opf_oracle.jl` (54), included by `reference/test/runtests.jl`.
+
+- **Four packages, not two.** The task line named PowerModels + Ipopt. Our `dc_opf` runs
+  only with `GridSimDispatchExt` loaded, so `reference/` also needed **JuMP and HiGHS**
+  (the package imports HiGHS for that side effect). Re-measured on a copy of
+  `reference/`'s own environment first: 300 → 321 packages, nothing of ours moved,
+  nothing removed; the real add then gave the identical manifest. `[compat]` floors
+  PowerModels at 0.21.7, the first release that resolves here; comments restored.
+  **And Printf in the test target**: the test includes the report script for our side
+  (D10), the script uses Printf, and `Pkg.test()`'s sandbox cannot see a stdlib it does
+  not list — the first full run failed to load the file exactly so (the probes ran outside
+  the sandbox and passed). Added by `Pkg.add`, moved to `[extras]` as the root has it.
+- **The source, pinned.** MATPOWER `data/case9.m` last changed at `31e3308e` (2017-10-31),
+  byte-identical at master `80b6e16f` (2026-10-21), sha256 `ee50fc7b…8623`. The typed
+  rows parse `==` to the downloaded file through `parse_matpower(IOBuffer)`.
+- **D9's margin, as read for an outside comparison.** Our side runs at `margin = 0`
+  against PowerModels' unmargined ratings — the same problem on both sides. D9's reason
+  (strict tools downstream) does not apply to a comparison, and on the binding fixtures
+  the margin (5e-7 pu on L89) is four to five orders above the tolerance terms, so a band that
+  covered it would be blind below it. This replaces D9's "their band covers δ" for
+  step 2; step 4 decides its own reading.
+- **The band** is each side's own convergence, summed and doubled, plus a stated
+  round-off allowance `ρ = 1e-11` (pu; `1e-11·|cost|` on cost). Our convergence is
+  **exactly 0** (HiGHS's QP is active-set: one linear solve once the active set is
+  found); HiGHS also refuses tolerances below 1e-10, so our tight run is 1e-10, theirs
+  1e-11 (Ipopt reports SLOW_PROGRESS at 1e-13 on the binding fixtures).
+- **Agreement, strict.** On F1 (published), F2 (L82 at 100 MVA), F3 (L89 at 50 MVA) and
+  F4 (L45 and L56 at 46 MVA) every output, flow, angle and cost agrees within the band:
+  gaps 2.5e-13 to 1.4e-12 pu, bands 1.05e-11 to 1.28e-11 pu; cost gaps ≤ 9.1e-10 \$/h
+  against ~5.5e-8. **The gap is Ipopt's own convergence**: on F1 it equals their
+  `|run(1e-8) − run(1e-11)|` (2.52e-13) to three figures, so our answer matches their
+  tight run to round-off. The same line binds on both sides, on its rating. Their ±60°
+  bound is present on every branch and never within 0.9 rad of binding (largest angle
+  difference 0.116 rad). 23.2: both costs round to 5216.0266.
+- **F5, the infeasible fixture**: ours `:infeasible` with HiGHS's certificate; theirs
+  LOCALLY_INFEASIBLE / INFEASIBLE_POINT. Reported side by side, not called agreement.
+- **23.1, the formula difference with `R` left in**: on F1 every ring line differs by
+  **0.01399 MW** (the same circulating amount on all six; step 0's "0.014"), the
+  generator lines and the outputs not at all beyond the strict band. On F3, with L89
+  binding, `R` moves the outputs too: G1 0.092, G2 0.202, G3 0.294 MW. Both asserted to
+  exceed the strict band; never used as one.
+- **Sabotages, all three run, every one red where predicted.**
+  - SA1 (our L89 `x` 0.161 → 0.116, script only): F1 red on flows and angles (outputs
+    green — nothing binds), F2 red on flows and angles, F3 and F4 red on everything; F5
+    green (blind), as predicted. Largest gap 0.088 pu.
+  - SA2 (our G2 `c1` 1.2 → 1.25): F1, F3, F4 red on everything; F2 red on cost ALONE,
+    by exactly 5.0 \$/h (0.05 \$/MWh × G2's 100 MW pinned by its line — the predicted "other
+    two may move" did not happen: with G2 on its line the other two see no change);
+    F5 green. **Not in the table:** 23.2 red (the cost) and 23.1 red twice (its strict
+    halves compare outputs and generator-line flows).
+  - SB (the invented rating written into their text in pu): F1 green (blind), F2, F3,
+    F4 red, F5 green, as predicted. **Not in the table:** the input testset is red too
+    (it reads the edited rating back through their reader, 0.005 for 0.5 pu).
+  SA1 and SA2 red is Hurdle 23.2 shown: a literal wrong on our side only is seen, so
+  their input does not pass through our data.
+- **Gate.** The reference oracle capture (`oracle_snapshot.jl`, the one capture that runs
+  in `reference/`) is byte-identical before and after the package change; its stderr
+  differs only by the one-off precompile lines. Core and UI environments were not
+  touched, so their captures and counts are not re-run at this step. Reference suite
+  1439 → 1493 (the 54 new tests), all passing.
 
 ## D8 — Bands are stated before the gap is seen
 
@@ -344,7 +412,9 @@ the refusals (`_ac_first_round`/`_ac_newton`) — was rejected: the claim is tha
 schedule *feeds the simulators as they are*, and a path around their checks does not
 show that. The outside comparisons (steps 2, 4) give PowerModels the unmargined
 limits and their band covers `δ`, stated before the run. A binding constraint is
-then "at its limit" when within `δ` + tolerance of the **margined** limit.
+then "at its limit" when within `δ` + tolerance of the **margined** limit. (Step 2 read
+the outside comparison differently, before its run: our side at `margin = 0`, the same
+problem on both sides — "What step 2 measured", under D7.)
 
 ## D10 — Where the costed case9 lives
 

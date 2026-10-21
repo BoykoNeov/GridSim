@@ -51,14 +51,22 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 2 — PowerModels' DC OPF in `reference/` (Hurdle 23)
 
-- [ ] Re-measure resolution in `reference/` itself; add PowerModels + Ipopt;
-      restore `reference/Project.toml`'s comments.
-- [ ] case9's rows typed from MATPOWER's file (URL + commit), the oracle's data
-      built from them (D7).
-- [ ] Band stated first (23.3); comparisons on case9 and the binding fixtures with
-      `R = 0` in the oracle's DC copy.
-- [ ] The formula difference with `R` left in: measured, printed, not a band (23.1).
-- [ ] Sabotages executed.
+- [x] Re-measure resolution in `reference/` itself; add PowerModels + Ipopt;
+      restore `reference/Project.toml`'s comments. **Plus JuMP + HiGHS** (our
+      `dc_opf` needs its extension loaded there): 300 → 321, nothing moved.
+- [x] case9's rows typed from MATPOWER's file (URL + commit), the oracle's data
+      built from them (D7). Commit `31e3308e`, sha256 recorded; `parse_matpower` of
+      the typed text `==` `parse_file` of the file.
+- [x] Band stated first (23.3); comparisons on case9 and the binding fixtures with
+      `R = 0` in the oracle's DC copy. Our side at `margin = 0` (D9 as read for a
+      comparison); gaps ≤ 1.4e-12 pu against bands ~1.1e-11 on F1–F4; F5 reported side
+      by side.
+- [x] The formula difference with `R` left in: measured, printed, not a band (23.1).
+      0.01399 MW on every ring line (F1); 0.09 / 0.20 / 0.29 MW on the outputs (F3).
+- [x] Sabotages executed — SA1, SA2, SB each red where predicted, plus three reds the
+      table did not credit (`m11-context.md`, "What step 2 measured").
+- [x] Gate: the reference oracle capture byte-identical; reference suite
+      1439 → 1493 (+54), all passing; core and UI not touched.
 
 ## Step 3 — The AC OPF, voltages held (Hurdle 24)
 

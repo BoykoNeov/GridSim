@@ -76,8 +76,15 @@ export OracleCase, build_oracle, oracle_solve, oracle_band, reduced_line_reactan
 export set_mechanical_power!
 export to_powersystems, oracle_powerflow, oracle_dc_powerflow, powerflow_band
 export float32_admittance_twin, independent_mismatch, flow_scale
+export matpower_edit, oracle_dc_opf
+
+# M11 step 2. Loaded for its side effect: with JuMP (imported by `opf_oracle.jl`) it is
+# the pair that loads GridSim's `GridSimDispatchExt`, so `dc_opf` — the side the DC OPF
+# oracle checks — runs wherever this package is loaded. The oracle itself is Ipopt's.
+import HiGHS
 
 include("oracle.jl")
 include("powerflow_oracle.jl")
+include("opf_oracle.jl")
 
 end # module

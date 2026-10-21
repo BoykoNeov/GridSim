@@ -5,10 +5,14 @@ authors = ["BoykoNeov <boikoneov@gmail.com>"]
 
 [deps]
 GridSim = "eb5af87e-af5a-4058-ac7e-47b2baa55413"
+HiGHS = "87dc4568-4c63-4d18-b0c0-bb2238e4078b"
+Ipopt = "b6b21f68-93f8-5de0-b562-5493be1d77c9"
+JuMP = "4076af6c-e467-56ae-b986-b466b2749572"
 NetworkDynamics = "22e9dc34-2a0d-11e9-0de0-8588d035468b"
 OrdinaryDiffEq = "1dea7af3-3e70-54e6-95c3-0bf5283fa5ed"
 PowerDynamics = "cc46b21f-1b17-51c2-b642-af74c3d3a8be"
 PowerFlows = "94fada2c-fd9a-4e89-8d82-81405f5cb4f6"
+PowerModels = "c36e90e8-916a-50a6-bd94-075b64ef4655"
 PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 
 # The dev link to the core package, carried FROM BIRTH rather than added later —
@@ -19,13 +23,23 @@ PowerSystems = "bcd98974-b02a-5e2f-9ee0-a103f5c450dd"
 #
 # NOTE: `Pkg.add` rewrites this file and DROPS these comments, and MOVES this
 # section above `[compat]`. It did exactly that on 2026-09-08 when PowerSystems
-# and PowerFlows were added for M6 step 4's oracle B. After any Pkg operation on
-# this environment, `git diff reference/Project.toml` and put them back.
+# and PowerFlows were added for M6 step 4's oracle B, and again on 2026-10-21 for
+# M11 step 2's four. After any Pkg operation on this environment,
+# `git diff reference/Project.toml` and put them back.
 [sources]
 GridSim = {path = ".."}
 
 [compat]
 GridSim = "0.1"
+# M11 step 2, the DC OPF oracle (m11-context.md D6, "What step 2 measured"). HiGHS
+# and JuMP are here although the oracle itself uses neither HiGHS nor anything of
+# JuMP beyond its optimizer attributes: they are what loads `GridSimDispatchExt`,
+# without which OUR `dc_opf` — the side being checked — does not run in this
+# environment. Re-measured in a copy of THIS environment before they were added:
+# 300 packages -> 321, nothing of ours moved and nothing was removed.
+HiGHS = "1.26.1"
+Ipopt = "1.16.0"
+JuMP = "1.32.1"
 NetworkDynamics = "1.3.0"
 OrdinaryDiffEq = "7.8.1"
 PowerDynamics = "5.0.0"
@@ -40,6 +54,10 @@ PowerDynamics = "5.0.0"
 # `NonlinearSolveBase` versions, measured, so this package runs our solver on a
 # base the core suite never sees and gets the same numbers out of it.
 PowerFlows = "0.25.2"
+# The floor matters: 0.21.7 is the first release that allows NLsolve 5, and every
+# release up to 0.21.6 failed to resolve against this stack (M6, 2026-09-23; M11
+# step 0 found why). Do not relax it below 0.21.7.
+PowerModels = "0.21.7"
 PowerSystems = "5.12.3"
 # 1.11 and not the 1.10 the other two packages declare: the `[sources]` section
 # above is only honoured from the Pkg that ships with Julia 1.11, and a package
@@ -49,7 +67,12 @@ PowerSystems = "5.12.3"
 julia = "1.11"
 
 [extras]
+# M11 step 2: the DC OPF oracle's test includes `scripts/outage_screen.jl` (our side is
+# the report grid, m11-context.md D10), and that script uses Printf. A stdlib not listed
+# here is invisible inside `Pkg.test()`'s sandbox (it failed exactly so, 2026-10-21).
+# Entry written by `Pkg.add("Printf")`, then moved here from [deps], as the root does.
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Test"]
+test = ["Printf", "Test"]

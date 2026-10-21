@@ -1,7 +1,8 @@
 # GridSimReference
 
 The **external oracle** for [GridSim](../), kept as a separate Julia
-package/environment so the core never acquires a `PowerDynamics` dependency — the
+package/environment so the core never acquires a `PowerDynamics` (or, since M11,
+`PowerModels`) dependency — the
 same structural treatment `ui/` gets for Makie (`../docs/SPEC.md` §3.1, and
 `../docs/plans/m4-context.md` D3). The dependency points one way only:
 `GridSimReference` → `GridSim` → `PowerDynamics`, never the reverse, and the
@@ -76,6 +77,23 @@ resistance misread the same way by all of them passes every in-house identity,
 comparison and formula (its one in-house red is a convergence failure on an outage
 refused anyway); this is the check that sees it (`../docs/plans/m9-context.md` D7, sabotage T5). The same rule
 applies: a sabotage of `R` goes in the arithmetic that reads it, never in `Branch`.
+
+## The DC OPF oracle (M11 step 2) — the opposite shape, on purpose
+
+`oracle_dc_opf` (in `src/opf_oracle.jl`) runs PowerModels' DC optimal power flow, on
+Ipopt, against our `dc_opf`, on HiGHS. Its input is **not** compiled from `NetworkModel`.
+It is MATPOWER case9's rows, typed from the file into the test (`C9_MATPOWER`, with its
+commit and checksum) and read by PowerModels' own `parse_matpower`. The invented-rating
+fixtures are edits to that text, in MVA (`matpower_edit`). So the per-unit conversion,
+the cost scaling and the angles on their side are theirs alone. A literal wrong only on
+our side shows up as a disagreement, and the step-2 sabotages show that it does
+(`../docs/plans/m11-context.md`, "What step 2 measured").
+
+Their copy has `R = 0` on every branch, so their DC formula `x/(r² + x²)` is our `1/X`
+and the comparison is strict. The difference with `R` left in is printed, never used as a
+band. Their reader adds a ±60° angle bound we do not have; the test asserts it never
+binds. JuMP and HiGHS are dependencies here only because they load GridSim's dispatch
+extension, without which `dc_opf` does not run.
 
 ## Running it
 
