@@ -1,0 +1,44 @@
+281c281
+<           | A,B,C,D,E                  | -5.0000 FAIL shared         | -5.6200 FAIL secure         | -1.5149 FAIL secure        
+---
+>           | A,B,C,D,E                  | -5.0000 FAIL shared         | -6.1230 FAIL secure         | -2.5194 FAIL secure        
+358c358
+< L36→L82    | -13.0000 FAIL [O], same              | — unjudged                           | -3.2007 FAIL [V], worse             
+---
+> L36→L82    | -13.0000 FAIL [O], same              | — unjudged                           | -1.1069 FAIL [V], milder            
+362c362
+< L36→G2     | -13.0000 FAIL [O], same              | — unjudged                           | -3.2007 FAIL [V], worse             
+---
+> L36→G2     | -13.0000 FAIL [O], same              | — unjudged                           | -1.1069 FAIL [V], milder            
+389c389
+< L82→L36    | -13.0000 FAIL [O], same              | — unjudged                           | -3.9910 FAIL [V], worse             
+---
+> L82→L36    | -13.0000 FAIL [O], same              | — unjudged                           | -1.0494 FAIL [V], milder            
+396c396
+< L82→G3     | -13.0000 FAIL [O], same              | — unjudged                           | -3.9910 FAIL [V], worse             
+---
+> L82→G3     | -13.0000 FAIL [O], same              | — unjudged                           | -1.0494 FAIL [V], milder            
+433c433
+< G2→L36     | -13.0000 FAIL [O], same              | — unjudged                           | -3.9910 FAIL [V], worse             
+---
+> G2→L36     | -13.0000 FAIL [O], same              | — unjudged                           | -1.0494 FAIL [V], milder            
+440c440
+< G2→G3      | -13.0000 FAIL [O], same              | — unjudged                           | -3.9910 FAIL [V], worse             
+---
+> G2→G3      | -13.0000 FAIL [O], same              | — unjudged                           | -1.0494 FAIL [V], milder            
+447c447
+< G3→L82     | -13.0000 FAIL [O], same              | — unjudged                           | -3.2007 FAIL [V], worse             
+---
+> G3→L82     | -13.0000 FAIL [O], same              | — unjudged                           | -1.1069 FAIL [V], milder            
+451c451
+< G3→G2      | -13.0000 FAIL [O], same              | — unjudged                           | -3.2007 FAIL [V], worse             
+---
+> G3→G2      | -13.0000 FAIL [O], same              | — unjudged                           | -1.1069 FAIL [V], milder            
+538c538
+< G2→G3      | -5.0000 FAIL, same                   | -5.4614 FAIL, milder                 | -2.0283 FAIL, worse                 
+---
+> G2→G3      | -5.0000 FAIL, same                   | -6.1230 FAIL, same                   | -2.5194 FAIL, same                  
+547c547
+< G3→G2      | -5.0000 FAIL, same                   | -5.3784 FAIL, milder                 | -2.8979 FAIL, worse                 
+---
+> G3→G2      | -5.0000 FAIL, same                   | -6.1230 FAIL, same                   | -2.5194 FAIL, same                  

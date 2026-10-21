@@ -53,7 +53,9 @@ _m8_c9rated(; loads = :constant_power, kw...) = (n = _OS.case9(; loads);
 
 # A mesh where losing G2 (60 MW) is covered by G1's 61 MW of headroom in DC but not in
 # AC, whose added line losses push the need to 61.13 MW. No damping anywhere, so a
-# capped governor leaves nothing to carry the rest (D7's second refusal).
+# capped governor leaves nothing to carry the rest (D7's second refusal). Since M11 step 5
+# (m11-context.md D12) AC measures G1's reserve from its base output, 3.02 MW above its
+# schedule (the base losses it already carries), so AC needs 64.15 MW on the schedule.
 function _m8_tight(h = 61.0)
     ms = [Machine(:G1, :A, 300.0, 5.0, 0.0, 0.25, 1.05, 150.0, 0.05, 150.0 + h, 0.5; V_set = 1.05),
           Machine(:G2, :C, 150.0, 4.0, 0.0, 0.25, 1.04, 60.0, Inf, 100.0, 0.4; V_set = 1.04),
@@ -190,10 +192,13 @@ _m8_gens(net) = compare_generator_screens(net, dc_generator_outages(net),
         g = _m8_gens(_ed_case9())
         @test g.class == fill(:refused, 3) && g.dc_outcome == g.ac_outcome == fill(:no_response, 3)
         # Only one refuses: 61 MW of headroom covers the 60 MW DC loses, not the
-        # 61.13 MW AC needs once losses rise. With 62 MW both settle.
+        # 61.13 MW AC needs once losses rise. Until M11 step 5 62 MW settled both; AC now
+        # reads G1's reserve from its base output, 3.02 MW above its schedule (D12), so
+        # 64 MW still refuses and 65 MW settles both.
         g = _m8_gens(_m8_tight(61.0))
         @test (g.dc_outcome[2], g.ac_outcome[2], g.class[2]) == (:secure, :reserve_exhausted, :refusals_differ)
-        @test _m8_gens(_m8_tight(62.0)).class[2] === :agree
+        @test _m8_gens(_m8_tight(64.0)).class[2] === :refusals_differ
+        @test _m8_gens(_m8_tight(65.0)).class[2] === :agree
         # Screens of another model are refused.
         a, b = _OS.case9(), _m8_tight()
         @test_throws ArgumentError compare_generator_screens(a, dc_generator_outages(b),

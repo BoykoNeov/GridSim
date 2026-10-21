@@ -490,14 +490,18 @@ function print_claims(io::IO = stdout)
     generators' outages, D4), and every generator-first pair where the two timings agree
     ends with a governor at its cap, after which both leave the same deficit to damping.
  q. In AC the order matters, and which way follows the load model. One after the other
-    is milder than both at once on 28 case9 and 18 mesh pairs with constant-power loads
-    (worse on 10, all case9), and worse on 48 case9 and 16 mesh pairs with the default
-    loads (milder on 25 and 2). It changes the verdict against both at once on 2 and 6
+    is milder than both at once on 28 case9 and 16 mesh pairs with constant-power loads
+    (worse on 10, all case9), and worse on 40 case9 and 14 mesh pairs with the default
+    loads (milder on 33 and 2). It changes the verdict against both at once on 2 and 6
     case9 pairs (constant power, default) and 2 and 0 mesh pairs, and the two orders of
     one pair disagree once on each grid: case9 default loads, L45→L67 passes (+0.1986 Hz)
     and L67→L45 fails (+0.2100); the mesh with constant-power loads, DE→BE passes
-    (-0.1970) and BE→DE fails (-0.2026). The largest move is case9 default loads L82→G3:
-    -3.9910 Hz, against -1.5036 Hz both at once.
+    (-0.1970) and BE→DE fails (-0.2026). The largest move is claim p's shape, case9
+    constant-power loads G2→L82: +0.0000 against -0.5329 Hz both at once. Revised at M11
+    step 5 (m11-context.md D12), which measures the reference machine's reserve from what
+    it produces: the mesh's G2→G3 and G3→G2 now land exactly on both at once in AC (G1 at
+    its real ceiling either way), and case9 default loads L82→G3, until then the largest
+    move at -3.9910 Hz, is -1.0494 against -1.5036 — G1 has the 14 MW the old rule took.
  r. Green is frequency only, and the markers show what it leaves out (D13, the user's
     choice). On case9, 18 of the 20 pairs the default loads pass, and 3 of the 5 constant-
     power passes, have a running piece outside the voltage band [V]; no passing mesh pair

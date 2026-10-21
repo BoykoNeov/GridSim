@@ -377,9 +377,17 @@ end
 @testset "claim q: in AC the order matters, and which way follows the load model" begin
     cnt(grid, k, o) = count(r -> getfield(r.order, k) === o, _DO_SEQ[grid])
     @test (cnt(:case9, :cp, :milder), cnt(:case9, :cp, :worse)) == (28, 10)
-    @test (cnt(:mesh, :cp, :milder), cnt(:mesh, :cp, :worse)) == (18, 0)
-    @test (cnt(:case9, :def, :worse), cnt(:case9, :def, :milder)) == (48, 25)
-    @test (cnt(:mesh, :def, :worse), cnt(:mesh, :def, :milder)) == (16, 2)
+    # The three below moved at M11 step 5 (D12: the reference's reserve from its output).
+    @test (cnt(:mesh, :cp, :milder), cnt(:mesh, :cp, :worse)) == (16, 0)
+    @test (cnt(:case9, :def, :worse), cnt(:case9, :def, :milder)) == (40, 33)
+    @test (cnt(:mesh, :def, :worse), cnt(:mesh, :def, :milder)) == (14, 2)
+    # The mesh's G2 and G3 lost in either order: exactly both at once in AC (G1 capped at its
+    # real ceiling either way), on both load models.
+    for (a, b) in ((:G2, :G3), (:G3, :G2)), k in (:cp, :def)
+        r = _do_seq(:mesh, a, b)
+        @test getfield(r.order, k) === :same
+        @test abs(getfield(r, k).worst - getfield(_do_row(:mesh, a, b), k).worst) ≤ 1e-12
+    end
     flips(grid, k) = count(_DO_SEQ[grid]) do r
         a = getfield(r, k).verdict
         b = getfield(_do_row(grid, r.first, r.second), k).verdict
@@ -409,8 +417,12 @@ end
              for g in (:case9, :mesh) for k in _DO.SIDES for r in _DO_SEQ[g]
              if !isnan(getfield(r, k).worst) && !isnan(getfield(_do_row(g, r.first, r.second), k).worst)]
     _, g, k, r = moves[argmax([x[1] for x in moves])]
-    @test (g, k, _do_ord(r)) == (:case9, :def, "L82→G3")
-    @test _do_hz(r.def.worst) == "-3.9910" && _do_hz(_do_row(:case9, :L82, :G3).def.worst) == "-1.5036"
+    @test (g, k, _do_ord(r)) == (:case9, :cp, "G2→L82")
+    @test _do_hz(r.cp.worst) == "+0.0000" && _do_hz(_do_row(:case9, :G2, :L82).cp.worst) == "-0.5329"
+    # Until M11 step 5 the largest: L82→G3 on the default loads, now milder than both at once.
+    r = _do_seq(:case9, :L82, :G3)
+    @test _do_hz(r.def.worst) == "-1.0494" && r.order.def === :milder
+    @test _do_hz(_do_row(:case9, :L82, :G3).def.worst) == "-1.5036"
 end
 
 end

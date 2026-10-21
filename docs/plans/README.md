@@ -372,6 +372,16 @@ resolves, so that is no longer a hurdle — and finding where the network binds 
     rating; "locally infeasible" from 1.75× reported as the solver's word; the same
     answer from two starts.
 
+**M11 step 5 (2026-10-22) fixed one more, the user's choice when asked** (`m11-context.md`
+D12): the reference bus's machine is scheduled without the losses its solve makes it
+carry, and its governor's up-reserve had been read from that schedule everywhere. It is
+now measured from what it produces, in the detailed and swing tiers and the AC screens
+(case9: 4.14 MW less reserve on constant-power loads, 14.08 MW MORE on the default loads).
+Ten captures held byte for byte; M10's AC pair screens moved where the reference caps, and
+two of its claims with them. **Found while checking it and owed** (D13): the detailed
+tier's governor passes its cap by one integrator step and stays there (up to 0.011 pu);
+the swing tier guards against this, the detailed tier does not.
+
 ## Structure notes
 
 - **`test/runtests.jl` was one 5,000-line file** with one outer `@testset`. **Split

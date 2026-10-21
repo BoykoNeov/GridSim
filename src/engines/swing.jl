@@ -434,7 +434,13 @@ function _swing_slack_solve!(s, g, edge, vref::Int, t0f::Float64)
     p[SII.parameter_index(nws, NetworkDynamics.VPIndex(vref, :mode))] = 0.0
     p[SII.parameter_index(nws, NetworkDynamics.VPIndex(vref, :Pm))] = 0.0
     nws(du, u, p, t0f)
+    Pm_schedule = s.p.v[vref, :Pm]
     s.p.v[vref, :Pm] = -du[iδ(vref)]
+    # Its governor's up-reserve measured from that output, not from its schedule (M11
+    # step 5, m11-context.md D12): the losses it now covers are reserve it no longer has.
+    # A grid-forming vertex carries a headroom of zero, unread, and keeps it.
+    s.p.v[vref, :headroom] = _reference_headroom(s.p.v[vref, :headroom],
+                                                 s.p.v[vref, :Pm] - Pm_schedule)
     for i in 1:nb
         s.v[i, :δ] = u[iδ(i)]
     end
@@ -1036,8 +1042,10 @@ bit.
 gains its conductance and each end its own self term (`swing_edge_lossy!`), and the
 model's **reference bus** (`net.slack`) picks up the losses — its `Pm` is its
 schedule plus whatever the lines burn at the steady state, while every other source
-holds its schedule (the detailed tier's rule). Headroom stays `Pmax − P0`: it caps
-the governor's deviation, not the dispatch. A grid-forming inverter on the reference
+holds its schedule (the detailed tier's rule). The reference's governor up-reserve is
+measured from that output, `Pmax` less what it produces (M11 step 5, `m11-context.md`
+D12, the user's choice — until then it stayed `Pmax − P0`, crediting the reference with
+the losses as reserve); every other machine's is `Pmax − P0`, its output's too. A grid-forming inverter on the reference
 bus of a lossy model is refused by name. A model with every `R = 0` is compiled
 exactly as before.
 """

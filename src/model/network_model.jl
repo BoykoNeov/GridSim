@@ -149,7 +149,10 @@ every M2 model still describes a real system:
   - `R`       — pu **on the machine's own base**, governor droop. The gain is
                 `1/R`, so `R = Inf` (the default) means *no primary response*.
   - `Pmax`    — MW, the **net-injection ceiling**; up-reserve is `Pmax − P0`, and
-                the default `Pmax = P0` is zero headroom.
+                the default `Pmax = P0` is zero headroom. The reference bus's machine
+                is the exception wherever a solved network starts a run or a screen:
+                there it produces more (or less) than `P0`, and its up-reserve is
+                `Pmax` less what it produces, floored at zero (M11 D12).
 
                 **On an aggregated area machine this is not a fleet nameplate.**
                 Such a machine is generation *minus* load, so its `P0` is the
@@ -1272,6 +1275,20 @@ function machine_arrays(net::NetworkModel)
     return (; bus, H, D, Pm, E, Xd′, invR, headroom, Tg, Xd, Xq, Xq′, Td0′, Tq0′, Ra,
               K_A, T_E, Efd_min, Efd_max)
 end
+
+# THE REFERENCE MACHINE'S UP-RESERVE (M11 step 5, m11-context.md D12 — the user's choice).
+# `headroom` above is the SCHEDULE's, `Pmax − P0`, and for every machine but one that is
+# also its output's: a solve holds each of them at its schedule. The exception is the
+# reference bus's machine. `NetworkModel` balances the schedule at nominal voltage, with
+# no losses, while every solve of the network makes the reference produce whatever the
+# network needs on top — the losses, and on voltage-dependent loads the change in what
+# they draw. So wherever a tier or a screen starts from such a solve, the reference's
+# up-reserve is measured from what it PRODUCES there: its schedule's headroom less
+# `shift`, the solved terminal output minus the schedule (pu). Floored at zero: a machine
+# already at or past its ceiling has no reserve left, and a governor-free one (`Pmax = P0`
+# by default) keeps the zero it had. Written as a subtraction from the schedule's number,
+# not as `Pmax − output`, so a shift of zero gives back that number to the bit.
+_reference_headroom(headroom::Float64, shift::Float64) = max(0.0, headroom - shift)
 
 """
     branch_arrays(net::NetworkModel) -> (; src, dst, X, K)

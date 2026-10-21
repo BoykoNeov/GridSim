@@ -627,3 +627,99 @@ text calls the cost difference against the network-free optimum "the cost of the
 network" on default loads. The bound (24.2) compares two points feasible for the
 *same* problem — same load model — so it holds as an inequality on either load
 model; the report says what the difference is made of.
+
+## D12 — The reference machine's up-reserve is measured from what it produces (the user's choice, 2026-10-21)
+
+Raised under D4 ("For step 5"): `NetworkModel` requires a schedule that balances at
+nominal voltage, so the reference bus's machine is scheduled WITHOUT the losses (and, on
+voltage-dependent loads, without the change in what the loads draw), while every tier
+that solves a network makes that machine produce them. Its governor's up-reserve was
+`Pmax − P0` everywhere — the schedule's, not the output's — so on case9 at the AC optimum
+the reference machine was credited with ~4.5 MW it does not have. Asked at step 5 in plain
+words with "state it" recommended; **the user chose to fix it now**, and also chose a
+window for the report (step 5's own question).
+
+**Who read the schedule's up-reserve** (checked in the code at step 5): the detailed tier
+(`machine_arrays.headroom` into its governor), the swing tier (the same, after its lossy
+reference-bus solve, M9 step 2 — whose docstring said "Headroom stays `Pmax − P0`: it caps
+the governor's deviation, not the dispatch"; that sentence is the decision reversed here),
+M8's AC generator-outage settle (`_responders`, capped "as the detailed tier's seeded
+governor is"), and M10's AC pair, restore and sequential screens built on it. NOT the
+frequency tier: `coi_model` refuses lossy branches and loads, so no case with a gap reaches
+it. NOT the DC screens: lossless, the reference's DC output is its schedule.
+
+**Decided:** the reference bus's machine's up-reserve is `Pmax` less what it produces at
+the steady state the run or screen starts from — its terminal output in that solve —
+floored at zero (a machine already at or past its ceiling has no up-reserve; a
+governor-free machine, `Pmax = P0` by default, keeps zero). Its room DOWN to `Pmin` in M10's
+restore is measured from the same output. **Every other machine is untouched**: each
+solve holds its output at its schedule, so its schedule's up-reserve already is its
+output's — and leaving its arithmetic alone keeps every number that does not depend on the
+reference's cap identical to the bit. Not covered, and said so: stator resistance (`Ra`)
+puts a machine's mechanical power above its terminal output; `Pmax` is a net-injection
+ceiling (`Machine`'s docstring), so the up-reserve is read in terminal terms. A grid-forming
+inverter on the reference bus has no governor cap in the settle; its restore room is left as
+it was.
+
+The gate: the eleven captures re-taken after, compared byte for byte with fresh `-HEAD`
+ones, every moved number explained in "What step 5 measured" below; predictions in
+`docs/evidence/gridsim-m11/step5_predictions.md`, written before the after-captures.
+
+### What the fix measured (2026-10-22)
+
+Code: `_reference_headroom` (`src/model/network_model.jl`), applied in the detailed tier's
+back-substitution (`hr` for `k_slack`), the swing tier's lossy reference solve
+(`_swing_slack_solve!`), and `_responders(net, base)` (`src/steadystate/screening.jl`),
+which M8's AC settle (`_ac_piece_setup`) and M10's AC contexts (`_ac_outage_context`, and
+through it the restore's limits, whose room down to `Pmin` reads its `shift`) now take.
+Tests: `test/m11_headroom.jl` (57). Instruments: `docs/evidence/gridsim-m11/step5/` (the
+probes, the capture script, M10's report diff).
+
+- **The shift per report grid** (the reference's base output minus its schedule): case9
+  +4.1431 MW on constant-power loads and **−14.0785 MW on the default loads** (the sagging
+  loads draw less, by more than the losses add), the mesh +3.0182 / +6.0266 MW. So on case9's
+  default loads the reference had been credited with 14 MW LESS reserve than it has. The
+  screen and the detailed tier give the same number on all four (≤ 1e-12); every other
+  machine's is unchanged to the bit.
+- **The eleven captures against fresh `-HEAD` ones** (`step5_predictions.md`, Part A):
+  ten byte-identical — swing, criterion, ac, screen, dips, verdict, oracle, both reports'
+  M8 half, the dynamic-run capture — as predicted (A1). **M10's moved, as predicted (A3),
+  and only its AC side:**
+  - the mesh's G2+G3 both at once: −5.6200 → −6.1230 Hz (constant power), −1.5149 →
+    −2.5194 (default). And its two orders, G2→G3 and G3→G2, now land on EXACTLY the
+    both-at-once answer (−6.1230 / −2.5194, to 1e-15 pu) where they had been "milder"
+    (−5.4614, −5.3784) and "worse" (−2.0283, −2.8979). With G1 capped at its real ceiling
+    the end state does not depend on the path — DC's claim p, now true in AC too; under
+    the old rule G1's ceiling silently carried whatever losses that path's base had.
+  - case9 on the default loads, the eight ordered pairs that leave G1 alone (L36/G3 then
+    L82/G2 and the reverse): −3.2007 / −3.9910 Hz "worse" → −1.1069 / −1.0494 Hz "milder".
+    G1 is no longer capped there: it has the 14 MW the old rule took from it.
+  - **Prediction A2 failed, at round-off:** the two LOSSLESS fixtures of M10's serialized
+    screens (`genmesh`, `swing_case9`) moved by at most 1.7e-13 pu in their AC screens — a
+    lossless AC base still puts the reference off its schedule by rounding. No outcome,
+    verdict or `capped` flag changed on either.
+- **Sabotage** (the old rule put back in `_reference_headroom`): `test/m11_headroom.jl` red
+  in every testset (14 of 57).
+- **What moved in the suites, and was revised:** M8's tight-reserve fixture
+  (`test/m8_outage_screen.jl`) — G1 needs 61.1281 MW of REAL reserve to cover G2's loss in
+  AC, the old comment's 61.13; with 3.0182 MW of base losses on it that is 64.15 MW on the
+  schedule, so "62 MW settles both" became 64 refuses / 65 settles. M10's claim q (counts;
+  its largest move is now claim p's trivial shape, G2→L82, and the old one is kept, dated);
+  its test gains the mesh's G2/G3 orders landing exactly on both at once. **Counts: core
+  25459 → 25527** (+57 `m11_headroom.jl`, +1 M8, +10 M10), all passing; UI 4212 unchanged,
+  all passing; reference not re-run (its oracle capture is byte-identical).
+
+## D13 — Found at step 5: the detailed tier's governor overshoots its cap by one step
+
+Measured while writing the fix's dynamic check (case9, default loads, G1 given 10 MW of
+schedule reserve, G2 lost): G1's `ΔPm` passes its `headroom` and STAYS above it — 0.0075 pu
+with Rodas5P, up to 0.011 with FBDF's own steps, 0.0015 at `dtmax = 0.01`. The saturation
+(`ΔPm ≥ headroom && dΔPm > 0` → 0) stops it rising once it is there but cannot bring back a
+step that crossed it; the swing tier has a domain guard for this (`_swing_outofdomain`),
+the detailed tier's was written at M5, measured to make the ceiling unreachable, and
+removed. **Older than D12 and independent of it**: any detailed-tier run in which a
+governor caps sits above its ceiling by about one step's slope. It is not what moved any capture
+here (the dynamic-run capture is byte-identical). Which earlier detailed-tier runs cap a
+governor, and so carry it, was not surveyed at step 5. **Not fixed in M11** — owed, with its own
+check (a callback that lands on the cap, measured against the swing tier's guard). The
+fix's test bounds the overshoot at `dtmax = 0.01` and says why.

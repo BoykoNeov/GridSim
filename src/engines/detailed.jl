@@ -2012,6 +2012,13 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         # pinned in `test/` by asserting `E′d = 0` and `E′q = E′` at the
         # degeneration, where the convention is what decides which state holds what.
         worst_pm = max(worst_pm, abs(Pm - Pe[k]))
+        # The governor's up-reserve: the schedule's, except at the reference machine,
+        # whose output this solve set free — measured from its TERMINAL output here
+        # (`Pmax` is a net-injection ceiling), not from `P0` (D12, `_reference_headroom`).
+        # Every other machine is held at its schedule by the solve and keeps its number.
+        hr = k == k_slack ?
+             _reference_headroom(ma.headroom[k], (Vre * Ire + Vim * Iim) - ma.Pm[k]) :
+             ma.headroom[k]
         u0[δ_idx[k]]   = δ
         u0[ω_idx[k]]   = 0.0
         u0[ΔPm_idx[k]] = 0.0
@@ -2037,7 +2044,7 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
         for (sym, val) in ((:Xd, ma.Xd[k]), (:Xq, ma.Xq[k]), (:Xd′, ma.Xd′[k]),
                            (:Xq′, ma.Xq′[k]), (:Td0′, ma.Td0′[k]), (:Tq0′, ma.Tq0′[k]),
                            (:Ra, ma.Ra[k]), (:H, ma.H[k]), (:D, ma.D[k]), (:ω₀, ω₀),
-                           (:invR, ma.invR[k]), (:headroom, ma.headroom[k]),
+                           (:invR, ma.invR[k]), (:headroom, hr),
                            (:Tg, ma.Tg[k]), (:mstat, 1.0),
                            (:K_A, ma.K_A[k]), (:T_E, ma.T_E[k]),
                            (:Efd_min, ma.Efd_min[k]), (:Efd_max, ma.Efd_max[k]),

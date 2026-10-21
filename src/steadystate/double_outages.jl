@@ -673,7 +673,7 @@ end
 # Everything `_ac_outage_set` reads that does not depend on which elements are out,
 # measured from `base` (`_ac_screen_base`'s: the caller decides what refuses it).
 function _ac_outage_context(net::NetworkModel, base::ACPowerFlow)
-    r = _responders(net)
+    r = _responders(net, base)          # the slack machine's cap from its base output (D12)
     la, fa = load_arrays(net), _gfl_arrays(net)
     # What each responder produced in the base: its schedule, or, for the slack's one
     # source, its solved output less the grid-following share there (M8 D8.1).
@@ -878,8 +878,15 @@ end
 function _restore_limits(net::NetworkModel, r)
     up = copy(r.h)
     down = fill(Inf, length(r.ids))
+    # An AC context's responders carry `shift` (M11 step 5, D12): the slack machine's
+    # base output minus its schedule. Its room down is measured from that output, as its
+    # room up already is (`r.h`); every other machine, and every DC context, has none.
+    shift = hasproperty(r, :shift) ? r.shift : nothing
     for (k, mc) in pairs(net.machines)
-        isnan(mc.Pmin) || (down[k] = max(0.0, mc.P0 - mc.Pmin) / net.S_base)
+        isnan(mc.Pmin) && continue
+        down[k] = shift === nothing || shift[k] == 0.0 ?
+                  max(0.0, mc.P0 - mc.Pmin) / net.S_base :
+                  max(0.0, (mc.P0 - mc.Pmin) / net.S_base + shift[k])
     end
     ia = _inverter_arrays(net)
     for (j, kk) in pairs(ia.k)

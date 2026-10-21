@@ -429,6 +429,29 @@ function _responders(net::NetworkModel)
     return (; ids, bus, g, d, h, P, n_machines = length(net.machines))
 end
 
+# The same, for a screen measured from an AC base solve (M11 step 5, m11-context.md D12,
+# the user's choice). The base puts the losses (and on voltage-dependent loads the change
+# in their draw) on the slack bus's one source, so a MACHINE there has its up-reserve
+# measured from what it produced in the base, not from its schedule
+# (`_reference_headroom`). `shift` is that machine's base output minus its schedule (pu),
+# zero for every other responder; M10's restore reads it for the room down to `Pmin` too.
+# `P` stays the schedule: every caller already reads the slack's base output from `base`.
+# The DC screens never call this — lossless, their slack's output is its schedule.
+function _responders(net::NetworkModel, base::ACPowerFlow)
+    r = _responders(net)
+    v_slack = net.bus_index[net.slack]
+    fa = _gfl_arrays(net)
+    Pfix_s = sum((fa.P[q] for q in eachindex(fa.bus) if fa.bus[q] == v_slack); init = 0.0)
+    h = copy(r.h)
+    shift = zeros(Float64, length(r.ids))
+    for k in 1:r.n_machines
+        r.bus[k] == v_slack || continue
+        shift[k] = (base.Pgen[v_slack] - Pfix_s) - r.P[k]
+        h[k] = _reference_headroom(r.h[k], shift[k])
+    end
+    return merge(r, (; h, shift))
+end
+
 # The settled pickup of every element marked `alive`, for a loss of `P_lost` pu.
 # Returns `(status, Δω, pickup, capped)`; `status` is `:shared`, `:no_response` or
 # `:reserve_exhausted`, and the last two carry `Δω = NaN` and zero pickups.
@@ -634,8 +657,10 @@ end
 #
 # THE BASE IS `ac_powerflow`'S (D8.1). Each machine's lost power is what it actually
 # produced there: its schedule, or, for the slack's own machine, its solved output,
-# base losses included. Pickups are measured from that base and capped at
-# `machine_arrays`' headroom, as the detailed tier's seeded governor is.
+# base losses included. Pickups are measured from that base and capped at the
+# headroom left above it, as the detailed tier's seeded governor is: `machine_arrays`'
+# for every machine the base held at its schedule, and for the slack's own machine its
+# schedule's less what the base added to it (M11 step 5, D12; `_responders(net, base)`).
 #
 # GOVERNOR CAPS AND REACTIVE LIMITS ARE SWITCHED, BIND-ONLY, in one loop (D8.7): solve,
 # cap every governor past its headroom and hold every voltage-holding bus past its
@@ -763,7 +788,7 @@ function _ac_piece_setup(net::NetworkModel, base::ACPowerFlow, lost::Vector{Int}
     full = _ac_schedule(net; skip_machine = lost)
     sch = map(a -> a[vs], full)
     v_slack = net.bus_index[net.slack]
-    r = _responders(net)
+    r = _responders(net, base)          # the slack machine's cap from its base output (D12)
     alive = [loc[r.bus[i]] > 0 && !(i in lost) for i in eachindex(r.ids)]
     # The base output of every bus. Every other bus held its schedule in the base solve.
     Pbase = copy(sch.Pgen)

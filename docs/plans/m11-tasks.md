@@ -118,10 +118,19 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 5 — The report
 
+- [x] Who reads the slack's `P0` listed (detailed headroom, swing headroom, M8's AC settle,
+      M10's AC screens; not the frequency tier, which refuses lossy and loaded models) and
+      the gap put to the user in plain words, "state it" recommended: **the user chose to
+      fix it** (D12). Fixed as `_reference_headroom` in the four readers; ten captures
+      byte-identical, M10's AC screens moved where predicted (and its lossless fixtures by
+      round-off, which was not); M8's tight-reserve fixture and M10's claim q revised;
+      `test/m11_headroom.jl` (57), red in every testset under the old rule.
+- [x] Found while checking the fix: the detailed tier's governor overshoots its cap by
+      one step (D13). Owed, not fixed here.
 - [ ] `scripts/network_dispatch.jl`; claims asserted at printed precision; prose
       after the table.
 - [ ] The optimum handed to the detailed tier's flat run.
-- [ ] Window: the user's call.
+- [ ] Window: the user's call — **the user chose a window** (2026-10-21).
 
 ## Step 6 — Close
 
