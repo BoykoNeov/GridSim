@@ -99,10 +99,22 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 4 — PowerModels' AC OPF in `reference/`
 
-- [ ] Band stated first; case9 published and 1.5×, constant-power loads; a ring-line
-      fixture if one binds in AC (measured).
-- [ ] The shared solver named in the test's header.
-- [ ] Sabotage executed.
+- [x] `reference/` re-resolved first (its manifest still listed GridSim's step-2
+      extensions): 321 → 321, nothing moved, only GridSim's extension list changed;
+      `GridSimOPFExt` loads there; `Project.toml` untouched.
+- [x] Band stated first (`step4_predictions.md`): step 2's form, tight runs 1e-10 on both
+      sides (each stalls at 1e-11 somewhere); our side at `margin_V = margin_S = 0`.
+      Fixtures: published, 1.5× (B9 on its floor on both), L94 at an invented 60 MVA
+      (binds at the receiving end on both — measured on their side, not assumed), and
+      1.75× reported side by side. Constant-power loads only. `matpower_edit` gained
+      `b0` (line charging off), `held` (Vmin = Vmax = their own `Vg`) and `load`.
+- [x] The shared solver named in the test's header (and the default loads' missing
+      outside check).
+- [x] Sabotage executed — SQ (our `Q_max` typed 100 MVAr for 300, the plan's) red on
+      1.5× only, blind elsewhere, as predicted; SC (their line charging left in, added)
+      red everywhere, and at 1.75× their side then SOLVES.
+- [x] Gate: the reference oracle capture byte-identical before (HEAD + the old manifest)
+      and after; reference 1493 → 1582 (+89). Core and UI not touched.
 
 ## Step 5 — The report
 

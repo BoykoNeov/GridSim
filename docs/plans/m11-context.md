@@ -506,6 +506,62 @@ in the installed 0.21.7 source). Steps 2 and 4 name it and assert it never binds
   touched, so their captures and counts are not re-run at this step. Reference suite
   1439 → 1493 (the 54 new tests), all passing.
 
+### What step 4 measured (2026-10-21)
+
+`docs/evidence/gridsim-m11/step4_predictions.md` (written first, not edited after; it says
+plainly that each probe's rounded printout had been seen); `step4/` holds the probes, the
+resolve and the sabotage definitions. Code: `oracle_ac_opf` and three new `matpower_edit`
+edits in `reference/src/opf_oracle.jl`; tests in `reference/test/m11_ac_opf_oracle.jl`
+(89), included after step 2's file, whose module, text and helpers they reuse.
+
+- **The manifest first.** `reference/`'s manifest still listed GridSim's step-2
+  extensions. `Pkg.resolve()` (on a scratch copy first, then for real): 321 → 321, nothing
+  moved, nothing added or removed — the only change is GridSim's weakdeps gaining Ipopt
+  and its extensions gaining `GridSimOPFExt`, which then loads there. `Project.toml`
+  untouched, so no comments to restore.
+- **Three edits to their text, each off by default** (the edited-at-defaults text parses
+  `==` to the plain one, asserted): `b0` zeroes line charging (MATPOWER's case9 has it,
+  ours has none — the edit that matters most, see SC); `held` sets each generator bus's
+  Vmin = Vmax = its gen row's `Vg`, read from THEIR text (PowerModels' AC OPF never reads
+  `Vg`); `load` scales Pd and Qd. Read back through their reader in the test.
+- **The tight runs are 1e-10 on both sides**: ours throws at 1e-11 (SLOW_PROGRESS on 1.5×,
+  ALMOST_LOCALLY_SOLVED on L94), theirs is ALMOST_LOCALLY_SOLVED at 1e-11 on 1.5×. Our own
+  convergence is no longer zero (interior point, not step 2's active-set QP): 3.6e-14 to
+  5.6e-13 pu; theirs 6.2e-13 to 6.4e-12.
+- **D9's margin, read as step 2 read it**: our side at `margin_V = margin_S = 0`, the same
+  problem on both sides. A 1e-6 pu shift of B9's floor would move the outputs ~1e-5 pu,
+  six orders over the band.
+- **Agreement, strict, on all nine channels** (outputs, reactive outputs, |V|, θ, the four
+  branch quantities, cost) on A1 published, A2 1.5× and A3 L94 at an invented 60 MVA, `R`
+  kept on both. Largest gaps (pu) against their bands: A1 5.9e-13 / 1.13e-11 (outputs), A2
+  5.8e-12 / 2.38e-11, A3 6.9e-13 / 1.17e-11; cost gaps ≤ 8.3e-10 \$/h against ≥ 5.3e-8. As
+  at step 2 the gap is about THEIR own convergence. Their branch convention (`pt`, `qt` =
+  power entering the branch at the to end) is ours (`flow_rev`, `qflow_rev`). The same
+  thing binds on both: nothing on A1; B9 on 0.9 on A2; L94 on 60 MVA **at the receiving end
+  (bus 4)** on A3, measured on their side. Held voltages exact on both; the ±60° bound
+  present and never within 0.87 rad of binding; no reactive output above 132.4 of 300 MVAr,
+  so D4's switch is not exercised by any fixture. Both costs at published load round to
+  5325.2661, step 0's figure.
+- **A4, 1.75×**: ours `:locally_infeasible`, theirs LOCALLY_INFEASIBLE / INFEASIBLE_POINT.
+  Side by side, never called agreement — both are Ipopt's local word.
+- **What this does not check, said in the test's header**: the solver (both are Ipopt —
+  step 3's 24.1, 24.2 and 24.5 are the checks that do not share it), and the default
+  voltage-dependent loads (PowerModels has none; step 3's checks run on them).
+- **Sabotages, both run, both red where predicted.**
+  - SQ (the plan's: our `Q_max` typed 1.0 for 3.0 in the script, 100 MVAr on every
+    machine): A1, A3, A4 green — blind, as predicted (G1 at 79.4 and 84.0 MVAr); A2 red, and
+    the open question in the table answered: ours went **locally infeasible** rather than
+    to a dearer point. "What binds" red on A2 too.
+  - SC (added: their text built without `b0`): A1, A2, A3 red on all nine channels, "what
+    binds" red four times (B9, L94's ends, the 5325.2661 cost), the input testset red; and
+    A4 red because **their side then solves at 1.75×** — line charging is enough reactive
+    support to lift the voltage floor's bind. Not predicted either way; recorded.
+- **Gate.** The reference oracle capture (`oracle_snapshot.jl`) byte-identical between a
+  HEAD worktree carrying the pre-resolve manifest and the working tree after; stderr
+  differs only by the precompile lines. Reference suite 1493 → 1582, all passing. Core and
+  UI not touched (only the sabotages edited `scripts/outage_screen.jl` and the extension,
+  each restored and diffed clean), so their suites and captures are not re-run here.
+
 ## D8 — Bands are stated before the gap is seen
 
 Every comparison against an outside or a second answer — PowerModels' DC and AC,
@@ -534,9 +590,10 @@ the refusals (`_ac_first_round`/`_ac_newton`) — was rejected: the claim is tha
 schedule *feeds the simulators as they are*, and a path around their checks does not
 show that. The outside comparisons (steps 2, 4) give PowerModels the unmargined
 limits and their band covers `δ`, stated before the run. A binding constraint is
-then "at its limit" when within `δ` + tolerance of the **margined** limit. (Step 2 read
-the outside comparison differently, before its run: our side at `margin = 0`, the same
-problem on both sides — "What step 2 measured", under D7.)
+then "at its limit" when within `δ` + tolerance of the **margined** limit. (Steps 2 and 4
+both read the outside comparison differently, before their runs: our side at margin 0,
+the same problem on both sides — "What step 2 measured" and "What step 4 measured",
+under D7.)
 
 ## D10 — Where the costed case9 lives
 
