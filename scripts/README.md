@@ -148,3 +148,33 @@ load model — beside the full (AC) one on both load models. Four sections:
 
 It includes `outage_screen.jl` into a submodule for its grids, so the two reports read the
 same models. The window `double_outages()` in `ui/` draws it.
+
+## `network_dispatch.jl`
+
+M11 step 5's report: **the cheapest dispatch of case9 subject to the network.** For case9
+(no line charging, MATPOWER's costs) and its binding fixtures — three INVENTED line ratings
+(L82 at 100 MVA, G2's own line; L89 at 50 MVA and L94 at 60 MVA, ring lines) and the loads at
+1.5× and 1.75× — on constant-power and on the default loads: M6's network-free dispatch, the
+same dispatch handed to the AC flow, the DC network optimum and the AC one (generator
+voltages held), with cost, outputs and what binds. Three sections:
+
+1. **The dispatch, four ways** — and where the AC flow refuses M6's dispatch, why.
+2. **Every AC optimum handed to the detailed tier** — a flat run from its own power flow,
+   seven of the eleven sitting on a limit; the drift, the mechanical-power gap, and the
+   reference machine's up-reserve as the engine holds it (from what it produces,
+   `docs/plans/m11-context.md` D12) against the schedule's.
+3. **What the tables say** — six claims (s–x), written after the tables and each asserted in
+   `test/m11_report.jl`.
+
+**It needs the solvers**, which are optional extensions of GridSim, so run it in an
+environment that carries JuMP, HiGHS and Ipopt beside GridSim:
+
+```julia
+julia --project=reference scripts/network_dispatch.jl
+```
+
+Read claim w before quoting an AC cost on the default loads: there the sagging voltages
+serve less load, and the difference is load not served, not generation saved. Every load
+limit (B9's floor at 1.5×, no AC answer at 1.75×) is case9's without line charging; the
+published case9 has it, and PowerModels solves it at 1.75×. It includes `outage_screen.jl`
+into a submodule for its grid.

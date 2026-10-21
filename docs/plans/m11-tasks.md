@@ -127,9 +127,13 @@ expected text, corrected, and that group re-run alone, 187/187).
       `test/m11_headroom.jl` (57), red in every testset under the old rule.
 - [x] Found while checking the fix: the detailed tier's governor overshoots its cap by
       one step (D13). Owed, not fixed here.
-- [ ] `scripts/network_dispatch.jl`; claims asserted at printed precision; prose
-      after the table.
-- [ ] The optimum handed to the detailed tier's flat run.
+- [x] `scripts/network_dispatch.jl`; claims s–x asserted at printed precision in
+      `test/m11_report.jl` (157); prose after the table — three drafts corrected on
+      re-reading it, two of them by the test (differences of rounded numbers).
+- [x] The optimum handed to the detailed tier's flat run — every AC optimum, eleven, seven
+      on a limit; flat to 8.3e-13. The margin-0 mutation was BLIND (all eleven start at
+      margin 0 too); the controls kept are a refused off-limit schedule and a 1 MW-off
+      schedule in the Pm gap.
 - [ ] Window: the user's call — **the user chose a window** (2026-10-21).
 
 ## Step 6 — Close

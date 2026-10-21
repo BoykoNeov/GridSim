@@ -723,3 +723,40 @@ here (the dynamic-run capture is byte-identical). Which earlier detailed-tier ru
 governor, and so carry it, was not surveyed at step 5. **Not fixed in M11** — owed, with its own
 check (a callback that lands on the cap, measured against the swing tier's guard). The
 fix's test bounds the overshoot at `dtmax = 0.01` and says why.
+
+## What step 5's report measured (2026-10-22)
+
+`scripts/network_dispatch.jl` (run with `--project=reference`: the solvers are optional
+extensions, so the root environment alone cannot run it); its claims
+s–x asserted in `test/m11_report.jl` (157), against the script's own rows. Every claim was
+written after the table was read; three drafts did not survive re-reading it against the
+numbers — "six on a limit" (seven), "dearer than DC by more than the losses' worth" (not
+checked, and at G1's marginal ~25 \$/MWh the 4.46 MW are worth ~111 \$/h against the 109.24
+shown), and two differences taken from the ROUNDED outputs (+35.33, +13.20 printed; +35.32,
++13.21 true — the test caught both).
+
+- **Where no limit binds, DC is the network-free dispatch to the cent** (published, 1.5×,
+  1.75×). **L94 at an invented 60 MVA binds only in AC** (its DC flow is under 60 MW; the
+  reactive power crossing it is what fills the rating) — DC cannot see a rating set by Q.
+- **Where something binds, M6's dispatch handed to the AC flow is refused**, every time:
+  L82 at 143.0 / 100 MVA, L89 74.0 / 50, L94 71.8 / 60, and B9 at 0.8996 pu at 1.5× — the
+  OPF is not a refinement there, it is the only operating point of the two.
+- **On the default loads every AC cost is below the network-free one** (−123 to −2674
+  \$/h), because 17–81 MW of load goes unserved at the sagging voltages (D11). At 1.75× that
+  load model has an AC point where constant power has none.
+- **Every AC optimum (eleven) starts and runs flat in the detailed tier**, seven of them ON
+  a limit: drift ≤ 8.3e-13 over 10 s, mechanical power = the optimum's output within
+  3.4e-14 pu, G1's up-reserve `Pmax` less its OPF output to 1e-12 (D12). On the default
+  loads at 1.75× the schedule's `Pmax − P0` had understated it by **70.61 MW**.
+- **An anti-vacuity mutation that was BLIND, recorded as such:** the eleven AC optima solved
+  at `margin_V = margin_S = 0` and handed to the same start ALL start too. Ipopt with its
+  bound relaxation off keeps every bounded quantity strictly inside, and the flow's re-solve
+  pushed none of them past a limit. So D9's margin is a guarantee against the re-solve's
+  band (step 3's sizing), and no fixture here needed it — not evidence that it is wrong,
+  and not evidence that it is load-bearing. The controls the test keeps instead: a schedule
+  outside a limit (the DC optimum at 1.5×) is refused at the start, and a schedule 1 MW off
+  the optimum shows in the Pm gap (> 0.009 pu).
+- **What a flat run does not show:** it never moves a governor, so the reserve being right is
+  `test/m11_headroom.jl`'s, not this table's.
+- **Counts:** core 25527 → **25684** (+157 `test/m11_report.jl`), all passing; the script
+  enters the suite as `NetworkDispatchScript` (the test target carries JuMP, HiGHS, Ipopt).

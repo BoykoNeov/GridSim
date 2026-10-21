@@ -13,3 +13,6 @@ in `docs/plans/m11-context.md` ("What the fix measured", D13) can be re-derived.
   the schedule's threshold under the fix (64.1463 MW).
 - `cap_probe.jl` — D13: the detailed tier's governor passing its cap and staying there.
 - `run_headroom.jl` — `test/m11_headroom.jl` alone, in the harness `testenv`.
+- `run_report.jl` — `test/m11_report.jl` alone, in the `reference` environment.
+- `margin_probe.jl` (+ `.out.txt`) — the report's blind anti-vacuity mutation: every AC
+  optimum solved at margin 0 still starts in the detailed tier.

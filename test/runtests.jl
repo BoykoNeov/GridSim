@@ -47,6 +47,13 @@ module DoubleOutageScript
 include(joinpath(@__DIR__, "..", "scripts", "double_outage_screen.jl"))
 end
 
+# The network-dispatch report (M11 step 5) is the sixth: its claims are asserted in
+# `m11_report.jl`. It loads JuMP, HiGHS and Ipopt itself (the test target carries all three)
+# and includes the fourth into a submodule of its own for its grid.
+module NetworkDispatchScript
+include(joinpath(@__DIR__, "..", "scripts", "network_dispatch.jl"))
+end
+
 # The suite is split across files (M5 step 0b). Two Julia facts make the split
 # work, and both are load-bearing:
 #
@@ -96,5 +103,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m11_dc_opf.jl"))
     include(joinpath(@__DIR__, "m11_ac_opf.jl"))
     include(joinpath(@__DIR__, "m11_headroom.jl"))
+    include(joinpath(@__DIR__, "m11_report.jl"))
 
 end
