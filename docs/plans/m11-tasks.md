@@ -30,21 +30,24 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 1 — The DC OPF (Hurdle 22)
 
-- [ ] Predictions file: bands for the degeneration, the cap identity and the closed
+- [x] Predictions file: bands for the degeneration, the cap identity and the closed
       form; which fixture sees which sabotage.
-- [ ] `case9(; costed = true)` in `scripts/outage_screen.jl` (D10) and its row-for-row
+- [x] `case9(; costed = true)` in `scripts/outage_screen.jl` (D10) and its row-for-row
       check against `_ed_case9`.
-- [ ] `dc_opf` in core (formulation, refusals, D9's margin) + its HiGHS method in
+- [x] `dc_opf` in core (formulation, refusals, D9's margin) + its HiGHS method in
       `GridSimDispatchExt`; the result type.
-- [ ] Gate: captures and counts unchanged.
-- [ ] 22.1 degeneration on case9 as published.
-- [ ] 22.2 L82 ≡ G2's cap.
-- [ ] 22.3 a ring line rated low (invented, labelled): it binds, every output moves.
-- [ ] 22.4 the three-bus closed form with one binding line, and its non-binding
+- [x] Gate: captures and counts unchanged — eleven captures byte-identical; core
+      25242 (25167 + 74 + 1 from M7's exported-surface walk reaching `dc_opf`);
+      reference 1439 and UI 4212 unchanged.
+- [x] 22.1 degeneration on case9 as published.
+- [x] 22.2 L82 ≡ G2's cap.
+- [x] 22.3 a ring line rated low (invented, labelled): it binds, every output moves.
+- [x] 22.4 the three-bus closed form with one binding line, and its non-binding
       control.
-- [ ] The `dc_powerflow` identity; the refusals; an infeasible set of limits as an
+- [x] The `dc_powerflow` identity; the refusals; an infeasible set of limits as an
       outcome.
-- [ ] Sabotages executed, each red where predicted.
+- [x] Sabotages executed, each red where predicted (and more: the infeasible fixture
+      under three, 22.1 under two — `m11-context.md`, "What step 1 measured").
 
 ## Step 2 — PowerModels' DC OPF in `reference/` (Hurdle 23)
 

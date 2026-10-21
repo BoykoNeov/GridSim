@@ -54,6 +54,13 @@ const CASE9_MW = 315.0
 # and damping 1 on its own base, H 5 s. These decide how a lost generator's power is
 # shared and nothing else; no line-outage row reads them.
 const R_DROOP, D_DAMP, H_INV = 0.05, 1.0, 5.0
+# MATPOWER case9's gencost rows (c2 $/MW²h, c1 $/MWh, c0 $/h) and its generators' Pmin
+# (MW) — the rows `test/m6_economic_dispatch.jl` types as `_C9`, read only by
+# `case9(; costed = true)` (M11 step 1, m11-context.md D10). `test/m11_dc_opf.jl`
+# asserts the two copies agree row for row.
+const CASE9_GENCOST = ((c2 = 0.11, c1 = 5.0, c0 = 150.0, Pmin = 10.0),
+                       (c2 = 0.085, c1 = 1.2, c0 = 600.0, Pmin = 10.0),
+                       (c2 = 0.1225, c1 = 1.0, c0 = 335.0, Pmin = 10.0))
 
 _zip(loads::Symbol, id, bus, P, Q) =
     loads === :constant_power ? Load(id, bus, P, Q, 0.0, 0.0, 1.0) :
@@ -61,20 +68,25 @@ _zip(loads::Symbol, id, bus, P, Q) =
     throw(ArgumentError("loads must be :constant_power or :default, got :$loads"))
 
 """
-    case9(; loads = :constant_power, mw = 315.0) -> NetworkModel
+    case9(; loads = :constant_power, mw = 315.0, costed = false) -> NetworkModel
 
 case9 without line charging: published branches, loads, set-points and the published
 Pmax-share schedule at 315 MW, reactive limits ±300 MVAr; invented droop and damping.
 `mw` scales every load and the schedule with it (the published case is 315).
+`costed = true` adds MATPOWER's costs and minimum outputs (`CASE9_GENCOST`), which the
+dispatch and the OPF need; nothing else changes.
 """
-function case9(; loads::Symbol = :constant_power, mw::Real = CASE9_MW)
+function case9(; loads::Symbol = :constant_power, mw::Real = CASE9_MW, costed::Bool = false)
     s = mw / CASE9_MW
     buses = [Bus(Symbol(:B, i), 345.0) for i in 1:9]
     br = [Branch(id, Symbol(:B, f), Symbol(:B, t), x, rate; R = r)
           for (id, f, t, r, x, rate) in CASE9_BRANCHES]
     ms = [Machine(Symbol(:G, i), Symbol(:B, i), CASE9_PMAX[i], H_INV, D_DAMP, 0.2, 1.0,
                   mw * CASE9_PMAX[i] / sum(CASE9_PMAX), R_DROOP, CASE9_PMAX[i];
-                  V_set = CASE9_VSET[i], Q_min = -3.0, Q_max = 3.0)
+                  V_set = CASE9_VSET[i], Q_min = -3.0, Q_max = 3.0,
+                  (costed ? (cost_c2 = CASE9_GENCOST[i].c2, cost_c1 = CASE9_GENCOST[i].c1,
+                             cost_c0 = CASE9_GENCOST[i].c0, Pmin = CASE9_GENCOST[i].Pmin) :
+                            NamedTuple())...)
           for i in 1:3]
     ls = [_zip(loads, id, bus, s * P, s * Q) for (id, bus, P, Q) in CASE9_LOADS]
     return NetworkModel(100.0, F0, buses, br, ms, ls; slack = :B1)

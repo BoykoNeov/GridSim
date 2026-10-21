@@ -92,23 +92,25 @@ end
 # the reachable range by less than that is one the solver can meet, and refusing it
 # would refuse the exact edge — measured: three 10 MW minimums sum to
 # 30.000000000000004 MW once divided by `S_base` and added, so "load = Σ Pmin" was
-# refused as below it (m6-tasks.md step 7).
-function _dispatch_problem(net::NetworkModel, tol::Float64 = 1.0e-9)
+# refused as below it (m6-tasks.md step 7). `who` names the caller in every refusal:
+# `dc_opf` (M11 step 1) makes the same checks under its own name.
+function _dispatch_problem(net::NetworkModel, tol::Float64 = 1.0e-9;
+                           who::String = "economic_dispatch")
     # M7 step 1. The dispatch meets Σ loads with machines; an inverter's output would
     # be dropped from the balance. How an uncosted must-run injection enters a cost
     # minimisation is a modelling choice no M7 step makes, so this is refused, not
     # scheduled.
-    _assert_no_inverters(net, "economic_dispatch")
+    _assert_no_inverters(net, who)
     isempty(net.machines) && throw(ArgumentError(
-        "economic_dispatch: the model has no machines, so there is nothing to dispatch."))
+        "$who: the model has no machines, so there is nothing to dispatch."))
     ca = cost_arrays(net)
     for m in net.machines
         isnan(m.cost_c2) && throw(ArgumentError(
-            "economic_dispatch: machine $(m.id) has no cost (cost_c2, cost_c1, " *
+            "$who: machine $(m.id) has no cost (cost_c2, cost_c1, " *
             "cost_c0 not given). It is refused rather than costed at zero: a zero is " *
             "an invented number, and it would make $(m.id) the first unit loaded."))
         isnan(m.Pmin) && throw(ArgumentError(
-            "economic_dispatch: machine $(m.id) has no minimum output (Pmin not " *
+            "$who: machine $(m.id) has no minimum output (Pmin not " *
             "given). It is refused rather than given a minimum of zero: a unit that " *
             "may run at zero is a modelling claim the data never made."))
     end
@@ -121,10 +123,10 @@ function _dispatch_problem(net::NetworkModel, tol::Float64 = 1.0e-9)
     # enforced in two other files; a reachable refusal below it (the minimum) is the
     # same check, and it IS reached.
     demand > hi + tol && throw(ArgumentError(
-        "economic_dispatch: the load ($(demand * S) MW) is above every machine at its " *
+        "$who: the load ($(demand * S) MW) is above every machine at its " *
         "maximum together ($(hi * S) MW). No dispatch meets it."))
     demand < lo - tol && throw(ArgumentError(
-        "economic_dispatch: the load ($(demand * S) MW) is below every machine at its " *
+        "$who: the load ($(demand * S) MW) is below every machine at its " *
         "minimum together ($(lo * S) MW). No dispatch meets it without switching a " *
         "unit off, and on/off decisions are out of scope (m6-context.md D16 §7)."))
     return (; ca..., demand)

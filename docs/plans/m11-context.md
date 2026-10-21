@@ -193,6 +193,74 @@ The answer is a schedule for the existing tools: a dispatch handed to
 once as a gate), and handed to `ac_powerflow` shows what the network adds — M6's
 `dispatch_loss_gap` reading, now from a network-feasible start.
 
+### What step 1 measured (2026-10-21)
+
+`docs/evidence/gridsim-m11/step1_predictions.md` (written first, not edited after);
+`step1/` holds the probe it cites (`probe.jl`, first run from scratch), the script that
+printed the numbers below (`numbers.jl`) and the sabotage definitions (`sabotage.py`).
+Code: `src/steadystate/dc_opf.jl`, the HiGHS half in `ext/GridSimDispatchExt.jl`; tests
+in `test/m11_dc_opf.jl` (74). `τ = 1e-9`, `δ = 1e-6` throughout.
+
+- **22.1 degeneration.** case9 as published binds nothing; the OPF equals
+  `economic_dispatch` to 6.1e-13 pu against a band of 2.6e-8, at `ε = 0` and `1e-7`;
+  5216.03 $/h. The `dc_powerflow` identity holds on every fixture.
+- **22.2.** L82 at 100 MVA: `at_limit == [:L82]`, L82 at −99.9999 MW, outputs
+  104.68 / 100.00 / 110.32 MW — `economic_dispatch` with G2 capped, within the band.
+- **22.3.** L89 at an invented 50 MVA: only L89 binds (+49.9999 MW); G1 +35.32,
+  G2 −33.80, **G3 −1.53 MW**; +234.65 $/h. The directions are as predicted, but G3's
+  move only just clears the predicted "more than 1 MW" — the prediction was right by a
+  margin of half a megawatt, not comfortably. The closed form on case9's own PTDFs
+  agrees within its band.
+- **22.4.** Control: 122.56 / 77.44 MW, A→C 130.64, nothing binds. Binding (A–C at
+  120): 80.00 / 120.00 MW, A→B −40.00, B→C 80.00; λ = 64.6, μ = 66.4 > 0 from the
+  backslash solve. **The predictions file's 22.4 band has an arithmetic slip**: its
+  formula `2·4·1.5·(n+1)τ` gives 4.8e-8 pu, not the 3.6e-8 written. The test does not
+  use that number; it uses the `‖K⁻¹‖∞` band of the literal 4 × 4 system, 5.6e-8 pu
+  (5.6e-6 MW).
+- **Infeasible is an outcome.** B5 fed by two 40 MVA lines → `:infeasible` with
+  HiGHS's certificate, NaN fields, no throw; `dispatch_schedule` refuses it. The
+  control at 46 MVA is optimal **with L56 binding** (L45 44 MW, L56 46 MW into B5):
+  the control is a feasible point *at* a limit, not a slack one.
+- **Refusals.** The shared checks now take the caller's name (`who`), so `dc_opf`
+  refuses as `dc_opf: …` — including the inverter (`I2`). As predicted, a grid in
+  pieces and a zero rating cannot reach the OPF: `NetworkModel` and `Branch` refuse
+  them first, and the tests assert those refusals instead. An `Inf` rating is
+  reachable and means no limit (no row written).
+- **Flows are recomputed from θ**, not read from the solver's expressions, and the
+  dispatch is projected into `[Pmin, Pmax]` with a refusal past the tolerance — the
+  result is what `dc_powerflow` would say, by construction.
+- **Sabotages, all five run, every one red.** (A solver time limit was added to each
+  mutant, after S4's first run spun for two hours without an answer.)
+  - S1a (upper limit only): 22.2 red, as predicted.
+  - S1b (lower limit only): 22.3 and 22.4 red, as predicted.
+  - S2 (rating not ÷ `S_base`): 22.2, 22.3, 22.4 red, as predicted.
+  - S3 (`X` for `1/X`): identity, 22.3, 22.4 red, as predicted.
+  - S4 (balance on the total): identity, 22.2, 22.3, 22.4 red, as predicted — but
+    on case9 by a **thrown solver error**, not a wrong answer: HiGHS stops with
+    `OTHER_ERROR` on 22.1–22.3 and hits the time limit on the infeasible and `Inf`
+    fixtures (without the limit, that was the two-hour spin). Only on 22.4's
+    triangle does the mutant give an answer, and it is wrong: 42.6 MW off the
+    closed form, the identity red, A→B at +250 instead of −40.
+  - **Not in the table:** the infeasible fixture is red under S1a, S1b and S2. The
+    table had no column for it; it catches a missing limit in **either** direction,
+    because it needs both lines' limits (L45 carries power into B5 forwards, L56
+    backwards).
+  - **Contradicts the table — 22.1 is not green under every sabotage.** Under S3 its
+    dispatch-vs-dispatch check fails once (7.4e-8 pu against 2.6e-8). This is
+    consistent with the regularization acting on angles the mutant makes far larger,
+    but not isolated. Under S4, HiGHS cannot solve 22.1 at all (`OTHER_ERROR`): with
+    one total balance row, the angles appear only in the limit rows. The prediction
+    that the degeneration is a gate, and blind, was wrong in the safe direction (it saw
+    more than predicted).
+- **Gate.** All eleven captures (the M9 harness's six, the oracle, the M10 snapshot
+  directory, both report scripts, the dynamic-run capture) are byte-identical to fresh
+  `-HEAD` captures taken before the change; every run exited 0. The only stderr change
+  is the oracle's one-off precompile lines. Core 25242 = 25167 + the 74 new tests
+  + **1 not planned**: M7's walk of the exported surface (`test/m7_inverters.jl`)
+  reaches `dc_opf`, a new one-argument `NetworkModel` function, and it passes by
+  refusing the inverter (`_assert_no_inverters`, through the shared
+  `_dispatch_problem`), so no list needed growing. Reference 1439 and UI 4212, unchanged.
+
 ## D4 — What "held" means in the AC OPF
 
 `ac_powerflow` holds a PV bus's voltage until its reactive output reaches a limit,
