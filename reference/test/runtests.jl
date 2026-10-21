@@ -2651,3 +2651,7 @@ end # M9 step 3
 # M11 step 2 — its own file: it defines a module (the report script's grid) and is run
 # alone by the step-2 sabotages.
 include("m11_dc_opf_oracle.jl")
+
+# M11 step 4 — after step 2's file, whose module, text and helpers it reuses; run alone
+# by the step-4 sabotages.
+include("m11_ac_opf_oracle.jl")

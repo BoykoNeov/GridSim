@@ -95,6 +95,22 @@ band. Their reader adds a ±60° angle bound we do not have; the test asserts it
 binds. JuMP and HiGHS are dependencies here only because they load GridSim's dispatch
 extension, without which `dc_opf` does not run.
 
+## The AC OPF oracle (M11 step 4) — same text, same reader, same solver
+
+`oracle_ac_opf` runs PowerModels' AC optimal power flow (`ACPPowerModel`) against our
+`ac_opf`, on the same typed text through the same reader, with three more edits: line
+charging zeroed (our case9 has none), each generator bus held at its own `Vg` by Vmin =
+Vmax (their AC OPF never reads `Vg`), and the loads scaled. `R` is kept on both sides.
+
+**Both sides solve with Ipopt.** No second open-source nonlinear solver is on the stack,
+so agreement checks the formulation — the network equations, the held voltages, the band,
+the ratings at both ends, the costs — and not the solver. The checks that do not share
+it are core's (`../test/m11_ac_opf.jl`: the answer handed back to `ac_powerflow`, the
+cost bound, the two starts). **Constant-power loads only**: PowerModels has no
+voltage-dependent load, so the default loads have no outside check here. Ipopt now loads
+GridSim's `GridSimOPFExt` here as well, so `ac_opf` runs; this needed the manifest
+re-resolved once (`Pkg.resolve()`), after which it records the new extension.
+
 ## Running it
 
 ```

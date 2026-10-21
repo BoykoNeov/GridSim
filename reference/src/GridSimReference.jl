@@ -76,7 +76,7 @@ export OracleCase, build_oracle, oracle_solve, oracle_band, reduced_line_reactan
 export set_mechanical_power!
 export to_powersystems, oracle_powerflow, oracle_dc_powerflow, powerflow_band
 export float32_admittance_twin, independent_mismatch, flow_scale
-export matpower_edit, oracle_dc_opf
+export matpower_edit, oracle_dc_opf, oracle_ac_opf
 
 # M11 step 2. Loaded for its side effect: with JuMP (imported by `opf_oracle.jl`) it is
 # the pair that loads GridSim's `GridSimDispatchExt`, so `dc_opf` — the side the DC OPF

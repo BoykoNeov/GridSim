@@ -1,0 +1,92 @@
+
+******************************************************************************
+This program contains Ipopt, a library for large-scale nonlinear optimization.
+ Ipopt is released as open source code under the Eclipse Public License (EPL).
+         For more information visit https://github.com/coin-or/Ipopt
+******************************************************************************
+
+Precompiling packages...
+  20248.9 ms  ✓ GridSimReference
+  1 dependency successfully precompiled in 26 seconds. 470 already precompiled.
+b_fr/b_to all 0: true
+bus 1  vmin 1.0400 vmax 1.0400  pd 0.0000 qd 0.0000
+bus 2  vmin 1.0250 vmax 1.0250  pd 0.0000 qd 0.0000
+bus 3  vmin 1.0250 vmax 1.0250  pd 0.0000 qd 0.0000
+bus 4  vmin 0.9000 vmax 1.1000  pd 0.0000 qd 0.0000
+bus 5  vmin 0.9000 vmax 1.1000  pd 1.3500 qd 0.4500
+bus 6  vmin 0.9000 vmax 1.1000  pd 0.0000 qd 0.0000
+bus 7  vmin 0.9000 vmax 1.1000  pd 1.5000 qd 0.5250
+bus 8  vmin 0.9000 vmax 1.1000  pd 0.0000 qd 0.0000
+bus 9  vmin 0.9000 vmax 1.1000  pd 1.8750 qd 0.7500
+unedited parse == edited-with-defaults parse: true
+
+== published
+  tol 1e-08: LOCALLY_SOLVED / FEASIBLE_POINT  (21.0 s)
+  tol 1e-10: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-11: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-12: ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT  (0.1 s)
+  cost 5325.266075
+  pg  [90.7214, 134.4109, 94.3315] MW
+  qg  [79.3708, 48.9724, 37.8745] MVAr
+  vm  [1.04, 1.025, 1.025, 0.997307, 0.967847, 1.004795, 0.980223, 0.998508, 0.953674]
+  br 1-4  pf +90.7214 pt -90.7214 qf +79.3708 qt -71.6329  |S|f 120.5409 |S|t 115.5926  rate 250.00
+  br 4-5  pf +35.5250 pt -35.1954 qf +25.8227 qt -24.0385  |S|f 43.9185 |S|t 42.6212  rate 250.00
+  br 5-6  pf -54.8046 pt +56.0699 qf -5.9615 qt +11.4769  |S|f 55.1279 |S|t 57.2325  rate 150.00
+  br 3-6  pf +94.3315 pt -94.3315 qf +37.8745 qt -32.1112  |S|f 101.6509 |S|t 99.6472  rate 300.00
+  br 6-7  pf +38.2616 pt -38.0388 qf +20.6343 qt -18.7476  |S|f 43.4709 |S|t 42.4078  rate 150.00
+  br 7-8  pf -61.9612 pt +62.3242 qf -16.2524 qt +19.3272  |S|f 64.0572 |S|t 65.2522  rate 250.00
+  br 8-2  pf -134.4109 pt +134.4109 qf -36.7984 qt +48.9724  |S|f 139.3572 |S|t 143.0545  rate 250.00
+  br 8-9  pf +72.0868 pt -70.3209 qf +17.4711 qt -8.5868  |S|f 74.1737 |S|t 70.8433  rate 250.00
+  br 9-4  pf -54.6791 pt +55.1964 qf -41.4132 qt +45.8102  |S|f 68.5919 |S|t 71.7302  rate 250.00
+  max |angle diff| 0.1163 rad (bound 1.0472)
+  |run(1e-8) - run(1e-10)|: pg 6.23e-13 qg 8.30e-14 vm 7.11e-15 va 1.71e-13 pf 6.23e-13 qf 9.06e-14 pt 6.23e-13 cost 0.00e+00
+  |run(1e-8) - run(1e-11)|: pg 6.29e-13 qg 8.38e-14 vm 7.11e-15 va 1.73e-13 pf 6.29e-13 qf 9.14e-14 pt 6.29e-13 cost 0.00e+00
+
+== 1.5x
+  tol 1e-08: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-10: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-11: ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT  (0.0 s)
+  tol 1e-12: ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT  (0.0 s)
+  cost 10241.625090
+  pg  [149.1041, 195.1168, 138.7035] MW
+  qg  [132.3982, 92.3894, 70.8795] MVAr
+  vm  [1.04, 1.025, 1.025, 0.970193, 0.924714, 0.987666, 0.947625, 0.975944, 0.9]
+  br 1-4  pf +149.1041 pt -149.1041 qf +132.3982 qt -111.2235  |S|f 199.4024 |S|t 186.0181  rate 250.00
+  br 4-5  pf +58.7349 pt -57.8445 qf +38.4742 qt -33.6556  |S|f 70.2143 |S|t 66.9230  rate 250.00
+  br 5-6  pf -77.1555 pt +79.9293 qf -11.3444 qt +23.4353  |S|f 77.9850 |S|t 83.2941  rate 150.00
+  br 3-6  pf +138.7035 pt -138.7035 qf +70.8795 qt -57.3467  |S|f 155.7645 |S|t 150.0910  rate 300.00
+  br 6-7  pf +58.7742 pt -58.2126 qf +33.9114 qt -29.1536  |S|f 67.8557 |S|t 65.1048  rate 150.00
+  br 7-8  pf -91.7874 pt +92.6365 qf -23.3464 qt +30.5385  |S|f 94.7100 |S|t 97.5403  rate 250.00
+  br 8-2  pf -195.1168 pt +195.1168 qf -64.6640 qt +92.3894  |S|f 205.5529 |S|t 215.8851  rate 250.00
+  br 8-9  pf +102.4803 pt -98.5606 qf +34.1255 qt -14.4046  |S|f 108.0128 |S|t 99.6077  rate 250.00
+  br 9-4  pf -88.9394 pt +90.3692 qf -60.5954 qt +72.7493  |S|f 107.6197 |S|t 116.0132  rate 250.00
+  max |angle diff| 0.1763 rad (bound 1.0472)
+  |run(1e-8) - run(1e-10)|: pg 6.36e-12 qg 1.59e-12 vm 9.73e-14 va 1.90e-12 pf 6.36e-12 qf 1.25e-12 pt 6.36e-12 cost 9.02e-10
+
+== 1.75x
+  tol 1e-08: LOCALLY_INFEASIBLE / INFEASIBLE_POINT  (0.2 s)
+  tol 1e-10: LOCALLY_INFEASIBLE / INFEASIBLE_POINT  (0.1 s)
+  tol 1e-11: LOCALLY_INFEASIBLE / INFEASIBLE_POINT  (0.2 s)
+  tol 1e-12: LOCALLY_INFEASIBLE / INFEASIBLE_POINT  (0.2 s)
+
+== L94@60
+  tol 1e-08: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-10: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-11: LOCALLY_SOLVED / FEASIBLE_POINT  (0.0 s)
+  tol 1e-12: ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT  (0.0 s)
+  cost 5582.657749
+  pg  [53.8689, 167.7039, 99.6966] MW
+  qg  [84.0011, 55.0945, 39.8625] MVAr
+  vm  [1.04, 1.025, 1.025, 0.993924, 0.963942, 1.00383, 0.978636, 0.996666, 0.948097]
+  br 1-4  pf +53.8689 pt -53.8689 qf +84.0011 qt -78.6980  |S|f 99.7900 |S|t 95.3690  rate 250.00
+  br 4-5  pf +20.7398 pt -20.5243 qf +28.6734 qt -27.5072  |S|f 35.3879 |S|t 34.3204  rate 250.00
+  br 5-6  pf -69.4757 pt +71.5043 qf -2.4928 qt +11.3353  |S|f 69.5204 |S|t 72.3971  rate 150.00
+  br 3-6  pf +99.6966 pt -99.6966 qf +39.8625 qt -33.4324  |S|f 107.3705 |S|t 105.1529  rate 300.00
+  br 6-7  pf +28.1923 pt -28.0408 qf +22.0971 qt -20.8136  |S|f 35.8202 |S|t 34.9212  rate 150.00
+  br 7-8  pf -71.9592 pt +72.4366 qf -14.1864 qt +18.2305  |S|f 73.3443 |S|t 74.6955  rate 250.00
+  br 8-2  pf -167.7039 pt +167.7039 qf -36.5579 qt +55.0945  |S|f 171.6423 |S|t 176.5219  rate 250.00
+  br 8-9  pf +95.2672 pt -92.2353 qf +18.3274 qt -3.0729  |S|f 97.0141 |S|t 92.2865  rate 250.00
+  br 9-4  pf -32.7647 pt +33.1291 qf -46.9271 qt +50.0246  |S|f 57.2335 |S|t 60.0000  rate 60.00
+  max |angle diff| 0.1568 rad (bound 1.0472)
+  |run(1e-8) - run(1e-10)|: pg 7.57e-13 qg 1.28e-13 vm 1.22e-14 va 1.82e-13 pf 7.57e-13 qf 1.28e-13 pt 7.57e-13 cost 9.00e-10
+  |run(1e-8) - run(1e-11)|: pg 7.59e-13 qg 1.40e-13 vm 1.24e-14 va 1.83e-13 pf 7.59e-13 qf 1.40e-13 pt 7.59e-13 cost 9.05e-10
