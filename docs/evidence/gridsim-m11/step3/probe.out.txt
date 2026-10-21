@@ -1,0 +1,70 @@
+
+
+== A. the power flow alone
+-- published, loads = constant_power: M6 dispatch MW [86.564498, 134.377586, 94.057917] cost_flowed 5325.285712
+   G1  P 91.017862 MW in [10.0, 250.0]   Q 79.348406 MVAr in [-300, 300]
+   G2  P 134.377586 MW in [10.0, 300.0]   Q 48.959804 MVAr in [-300, 300]
+   G3  P 94.057917 MW in [10.0, 270.0]   Q 37.858684 MVAr in [-300, 300]
+   min |V| 0.953702291 at B9, max |V| 1.040000000
+   worst loading L82 143.0189 / 250 MVA;  losses 4.453364 MW, load_shift 0.000000 MW
+   ‖J⁻¹‖∞ = 1.2961  (N = 14)
+-- published, loads = default: M6 dispatch MW [86.564498, 134.377586, 94.057917] cost_flowed 4897.545590
+   G1  P 72.401110 MW in [10.0, 250.0]   Q 74.323051 MVAr in [-300, 300]
+   G2  P 134.377586 MW in [10.0, 300.0]   Q 45.818390 MVAr in [-300, 300]
+   G3  P 94.057917 MW in [10.0, 270.0]   Q 35.347882 MVAr in [-300, 300]
+   min |V| 0.959226699 at B9, max |V| 1.040000000
+   worst loading L82 141.9742 / 250 MVA;  losses 4.298496 MW, load_shift -18.461884 MW
+   ‖J⁻¹‖∞ = 1.4110  (N = 14)
+-- 1.5x, loads = constant_power: DC OPF dispatch MW [135.905416, 198.230538, 138.364047] at_limit Symbol[] -> ac_powerflow :voltage
+   B9 |V| = 0.899554438
+   unchecked solve: min |V| 0.899554438;  ‖J⁻¹‖∞ = 1.3833
+-- 1.5x, loads = default: DC OPF dispatch MW [135.905416, 198.230538, 138.364047] at_limit Symbol[] -> ac_powerflow :secure
+   unchecked solve: min |V| 0.918901189;  ‖J⁻¹‖∞ = 1.5751
+
+== B. the optimiser alone
+-- published cp
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 5325.266074754  P MW [90.72139, 134.41095, 94.331501]
+   at_band Symbol[]  at_limit Symbol[]  q_at_limit Symbol[]  min|V| 0.9536741758  residual 9.49e-15  losses 4.463841 MW  shift 0.000000 MW
+   vs 1.0e-10:   own convergence |1e-8 − tight|: P 3.96e-13  Vm 4.22e-15  θ 1.04e-13  flow 3.96e-13  cost 0.00e+00
+   vs 1.0e-11:   own convergence |1e-8 − tight|: P 4.00e-13  Vm 3.66e-15  θ 1.06e-13  flow 4.00e-13  cost 0.00e+00
+-- published default
+   tol 1.0e-11 THREW: ac_opf: Ipopt stopped with SLOW_PROGRESS / FEASIBLE_POINT / UNKNOWN_RESULT_STATUS — neither a local optimum with a feasible point nor its word that no feasible point was found nearby. The problem pa
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 4883.325761822  P MW [81.857893, 129.066487, 89.951591]
+   at_band Symbol[]  at_limit Symbol[]  q_at_limit Symbol[]  min|V| 0.9601415385  residual 5.88e-15  losses 3.960474 MW  shift -18.084502 MW
+   vs 1.0e-10:   own convergence |1e-8 − tight|: P 4.01e-13  Vm 3.89e-15  θ 1.08e-13  flow 4.01e-13  cost 0.00e+00
+-- 1.5x cp
+   tol 1.0e-11 THREW: ac_opf: Ipopt stopped with ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT / NEARLY_FEASIBLE_POINT — neither a local optimum with a feasible point nor its word that no feasible point was found nearby.
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 10241.634349068  P MW [149.110663, 195.110861, 138.702602]
+   at_band [:B9]  at_limit Symbol[]  q_at_limit Symbol[]  min|V| 0.9000010000  residual 3.77e-15  losses 10.424126 MW  shift 0.000000 MW
+   vs 1.0e-10:   own convergence |1e-8 − tight|: P 6.18e-12  Vm 9.71e-14  θ 1.88e-12  flow 6.18e-12  cost 8.99e-10
+-- 1.5x default
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 8279.215842392  P MW [119.077858, 181.060429, 124.879718]
+   at_band Symbol[]  at_limit Symbol[]  q_at_limit Symbol[]  min|V| 0.9227674602  residual 5.11e-15  losses 8.083804 MW  shift -55.565800 MW
+   vs 1.0e-10:   own convergence |1e-8 − tight|: P 9.47e-13  Vm 9.66e-15  θ 2.45e-13  flow 9.47e-13  cost 0.00e+00
+   vs 1.0e-11:   own convergence |1e-8 − tight|: P 9.56e-13  Vm 9.77e-15  θ 2.47e-13  flow 9.57e-13  cost 0.00e+00
+-- 1.75x cp
+   locally_infeasible  LOCALLY_INFEASIBLE / INFEASIBLE_POINT / INFEASIBLE_POINT
+   vs 1.0e-10:   vs 1.0e-11:-- 1.75x default
+   tol 1.0e-11 THREW: ac_opf: Ipopt stopped with ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT / NEARLY_FEASIBLE_POINT — neither a local optimum with a feasible point nor its word that no feasible point was found nearby.
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 10146.294950316  P MW [135.096, 205.0088, 140.530764]
+   at_band Symbol[]  at_limit Symbol[]  q_at_limit Symbol[]  min|V| 0.9039971806  residual 6.55e-15  losses 10.558115 MW  shift -81.172550 MW
+   vs 1.0e-10:   own convergence |1e-8 − tight|: P 2.66e-12  Vm 2.96e-14  θ 7.03e-13  flow 2.66e-12  cost 0.00e+00
+-- 1.75x cp, floor lowered to 0.8
+   LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT  cost 13469.230919460  P MW [179.709862, 219.971738, 166.351034]
+   at_band Symbol[]  at_limit [:L82]  q_at_limit Symbol[]  min|V| 0.8673379329  residual 7.22e-15  losses 14.782633 MW  shift 0.000000 MW
+-- 1.75x cp, reactive limits removed
+   locally_infeasible  LOCALLY_INFEASIBLE / INFEASIBLE_POINT / INFEASIBLE_POINT
+-- the DC start, published cp and 1.5x cp (statuses only, no comparison)
+   locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT
+   locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT
+
+== B2. the rating fixture: each ring line at the unconstrained AC optimum (published, cp)
+   L14  |S_from| 120.5409  |S_to| 115.5926 MVA  (rating 250)
+   L45  |S_from| 43.9185  |S_to| 42.6212 MVA  (rating 250)
+   L56  |S_from| 55.1279  |S_to| 57.2325 MVA  (rating 150)
+   L36  |S_from| 101.6509  |S_to| 99.6472 MVA  (rating 300)
+   L67  |S_from| 43.4709  |S_to| 42.4078 MVA  (rating 150)
+   L78  |S_from| 64.0572  |S_to| 65.2522 MVA  (rating 250)
+   L82  |S_from| 139.3572  |S_to| 143.0545 MVA  (rating 250)
+   L89  |S_from| 74.1737  |S_to| 70.8433 MVA  (rating 250)
+   L94  |S_from| 68.5919  |S_to| 71.7302 MVA  (rating 250)

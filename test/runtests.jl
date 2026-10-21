@@ -9,6 +9,7 @@ import NetworkDynamics      # to read SwingEngine state symbolically, independen
 import Pkg                  # to inspect the dependency closure (no-Makie invariant)
 import SparseArrays         # to check M6's susceptance matrix STRUCTURALLY, not by type alone
 import JuMP, HiGHS          # loads the dispatch solver, a package extension (M6 step 7)
+import Ipopt                # loads the AC OPF's solver, a second extension (M11 step 3)
 
 # The Iberian scenario script is a DELIVERABLE, so its claims are asserted below.
 # Included as a module so the scenario data stays single-sourced (no second copy of
@@ -93,5 +94,6 @@ include(joinpath(@__DIR__, "helpers.jl"))
     include(joinpath(@__DIR__, "m10_double_outages.jl"))
     include(joinpath(@__DIR__, "m10_report.jl"))
     include(joinpath(@__DIR__, "m11_dc_opf.jl"))
+    include(joinpath(@__DIR__, "m11_ac_opf.jl"))
 
 end

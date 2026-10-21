@@ -272,6 +272,108 @@ case9 fixture the reactive outputs stay at most 166 of 300 MVAr, so the two read
 agree wherever this milestone looks. If a fixture ever reaches a limit, the
 handed-back comparison (Hurdle 24.1) is refused for it by name rather than banded.
 
+### What step 3 measured (2026-10-21)
+
+`docs/evidence/gridsim-m11/step3_predictions.md` (written first, not edited after); `step3/`
+holds the probes it cites, the gap table and the sabotage definitions. Code:
+`src/steadystate/ac_opf.jl` (`ac_opf`, `ACOPF`, `dispatch_schedule(net, ::ACOPF)`), the Ipopt
+half in a new extension `ext/GridSimOPFExt.jl` on JuMP + Ipopt; tests in
+`test/m11_ac_opf.jl` (207).
+
+- **The root environment.** Re-measured on a scratch copy first (190 → 201 with Ipopt,
+  → 215 with the test target's JuMP + HiGHS; nothing moved or removed), then
+  `Pkg.add("Ipopt"; target = :weakdeps)` and the extension, `[compat]` (1.16.0),
+  `[extras]` and test target by hand. `Project.toml` carries no comments, so none were
+  lost. Both extensions load in one session.
+- **The two copies.** The optimiser's AC equations are written in branch form (each
+  end's power from the series admittance, summed per bus) with the loads' draw as the
+  polynomial `a_z|V|² + a_i|V| + a_p`; `ac_powerflow` writes bus-admittance form through
+  `_ac_flows` and `_zip_scale`. The answer is read back through the flow's own
+  `_ac_branch_flows` and `_zip_scale`, and anything past a margined limit by more than
+  `near = 2(n + 1)τ` is refused, as `dc_opf` refuses a projection past `tol` (the plan
+  review's addition).
+- **The schedule handed back is NOT the OPF's outputs verbatim** — a departure the plan
+  did not foresee. `NetworkModel` refuses a schedule that does not balance at nominal
+  voltage, and an AC dispatch carries the losses (and, on default loads, the load-draw
+  shift). So `dispatch_schedule(net, ::ACOPF)` gives every machine but the slack's its OPF
+  output and the slack's machine the nominal balance; the flow never reads the slack's
+  `P0`, and 24.1 compares the flow's solved slack output with the OPF's. Refused by name: a
+  non-optimal answer, a slack bus with several machines, a balance over the slack's Pmax.
+- **The margins, sized against the re-solve, not the solver** (the plan review's point).
+  The handed-back flow can move |V| and θ by `band_x = 2κ(2τ + ρ_pf)` and a branch's |S| by
+  `6.82·|y|max·band_x`; κ, the flow Jacobian's inverse norm, is 1.30 – 1.42 at the five
+  handed-back points (computed in the test, at each). At `τ = 1e-9`: 5.4e-9 – 5.9e-9 pu and
+  6.4e-7 – 7.0e-7 pu. **`margin_S` is therefore 1e-5 by default**, not step 1's 1e-6: 1e-6
+  of L94's 60 MVA is 6e-7 pu, below the flow band. `margin_V` stays 1e-6. The test asserts
+  both inequalities on every fixture's own κ.
+- **24.1, handed back** (published cp and default, 1.5× cp, L94 at an invented 60 MVA cp and
+  default): every gap at round-off — |V| and θ ≤ 1.5e-14, flows and |S| ≤ 1.3e-13, the
+  slack's output ≤ 3.4e-14 pu, against the bands above. The answer's own recomputed balance
+  residual is 4e-15 – 1e-14: Ipopt's final equality violation is far below its stated
+  `τ`, so the bands are 5–7 orders wider than the gaps. They are the tolerance's bands,
+  stated first, and the sabotages below are what shows they are not blind.
+- **24.2.** M6's dispatch handed to the flow is feasible for the OPF's own margined problem
+  on both load models (Q of all three machines inside ±300 MVAr, the slack inside its
+  limits, min |V| 0.9537 / 0.9592, worst branch L82 at 143 / 142 of 250 MVA). The OPF is
+  cheaper by **0.019638 \$/h** on constant power (5325.266075 against 5325.285712) and
+  **14.219829 \$/h** on default loads (4883.325762 against 4897.545590). Asserted as
+  recomputed inequalities.
+- **24.3.** The control's margin on the EXACT dispatch is 4.5e-4 pu (B9 at 0.899554), not
+  the 0.8996-on-rounded-numbers the plan worried about, so 1.5× stays. **On default loads
+  the DC dispatch already passes at 1.5×** (min |V| 0.9189), so the voltage fixture is a
+  constant-power fixture only. The OPF holds B9 at `0.9 + margin_V` = 0.900001 (cost
+  10241.634349 against the DC 9857.82), and its schedule passes `ac_powerflow` with B9 at
+  0.9000010000.
+- **24.4.** 1.75× on constant power: LOCALLY_INFEASIBLE. With the floor at 0.8 it solves
+  (13469.230919, step 0's PowerModels figure); with the reactive limits removed it does not.
+  So the cause is the floor. On default loads 1.75× solves (10146.29; the loads sag).
+- **24.5.** Flat and DC-OPF starts reach the same answer on all five fixtures: gaps ≤ 2.6e-14
+  pu, at most 0.2 % of step 2's band form `2(c_flat + c_dc) + ρ`.
+- **L94 at an invented 60 MVA, the AC rating fixture** (chosen from the unconstrained
+  optimum's end-to-end table: L94 carries the larger |S| at its receiving end, 68.59 → 71.73
+  MVA). It binds there on both load models, the sending end 2.8 MVA below; every unit moves
+  (G1 −36.9 MW on constant power); +257.43 \$/h. At 50 MVA it is locally infeasible; L56 at
+  45–50 MVA stops Ipopt at ALMOST_LOCALLY_SOLVED, which throws.
+- **Ipopt at `tol = 1e-11`** stops at SLOW_PROGRESS or ALMOST_LOCALLY_SOLVED on three
+  fixtures; the tight run is 1e-10. Its own convergence `|run(1e-8) − run(1e-10)|`: 4e-13 –
+  6.2e-12 pu.
+- **Sabotages, all five run, every one red where predicted** (each with Ipopt's 120 s CPU
+  limit; none hit it).
+  - SA1 (every branch's `R` dropped from the optimiser's copy): 24.1 red on all five
+    fixtures — on the published ones by 4.5 MW on the slack and up to 11 MW on a branch
+    (bands ~6.5e-5 MW), and on 1.5× and L94 by the
+    handed-back flow refusing (B9 at 0.89955; L94 at 65.65 MVA over 60); 24.3 red.
+    **Not in the table:** the answer's own read-back residual (0.22 pu against 2e-8), the
+    L94 testset (on default loads L94 no longer binds), and **24.2 on default loads** (4916.03
+    against 4897.55 — the table called 24.2 blind to a lossless copy. The cost is read from
+    the outputs alone, so the mutant's dispatch itself is dearer; the likely reading, not
+    isolated, is that without resistance its voltages sag less and its default loads draw
+    more).
+  - SA2 (only L94's `R` dropped — added, stricter than the plan's): 24.1 red on the
+    published fixtures, on L94 (|V| off by 1.9e-3) and on 1.5× (the flow refuses B9).
+  - SB (the rating at the sending end only): the L94 fixture red on both load models — the
+    read-back refuses L94 at 62.85 / 62.52 MVA against 59.9994. **Not in the table:** 24.4's
+    floor-lowered variant, where L82's receiving end runs to 260.55 MVA against its 250.
+  - SC (the held voltages left free): 24.1 red everywhere (|V| off by up to 0.10 pu, Q by up
+    to 1.8 pu; the flow refuses 1.5× and L94), 24.3 red, the read-back residual
+    red (1.38 pu).
+  - SD (every load read as constant power): 24.1 red on both default-load fixtures (|V| off by
+    5.5e-3, the slack by 0.19 pu) and green on every constant-power one — blind there by
+    construction, as predicted. **Not in the table:** 24.2 on default loads (the mutant
+    serves the full load: 5325.27 against 4897.55).
+  The 24.5 two-starts check is green under every sabotage, as predicted: it checks that one
+  local answer is reached twice, not that it is the right problem's.
+- **Gate.** All eleven captures byte-identical to fresh `-HEAD` captures taken before
+  `Project.toml` changed; every run exited 0; stderr differs only by one-off precompile
+  lines. Core 25242 → **25450** = + 207 new + 1, the +1 read as M7's exported-surface walk
+  reaching `ac_opf` (the mechanism step 1 measured for `dc_opf`; not isolated this time).
+  Reference 1493 and UI 4212 unchanged; all passing. `ACOPF`/`ac_opf` checked clear against
+  `names(GLMakie)` in `ui/`.
+- **For step 4:** in `reference/` only `GridSimDispatchExt` precompiled after the change,
+  although Ipopt and JuMP are both there — its manifest still records GridSim's old
+  extension list. Re-resolve `reference/` (and check `GridSimOPFExt` loads) before the AC
+  oracle is written.
+
 ## D5 — What M11 is not
 
 Not built, and not implied: unit on/off decisions (M6 D16 §7); several hours at

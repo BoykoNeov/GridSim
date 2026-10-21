@@ -70,18 +70,32 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 3 — The AC OPF, voltages held (Hurdle 24)
 
-- [ ] Re-measure the root environment with Ipopt as a weak dependency; add it;
-      restore `Project.toml`'s comments; extension in place.
-- [ ] Predictions file: bands for the handed-back flow, the two starts.
-- [ ] `ac_opf`: held voltages (D4), voltage band, larger-end ratings, both load
-      models.
-- [ ] 24.1 handed back to `ac_powerflow`, both load models.
-- [ ] 24.2 the bound against M6's dispatch-then-flow, recomputed, feasibility first.
-- [ ] 24.3 the voltage fixture and its positive control — the control's margin
-      re-measured on the exact dispatch first.
-- [ ] 24.4 1.75× reported as Ipopt's word; the floor-lowered variant pins the cause.
-- [ ] 24.5 two starts agree.
-- [ ] Sabotages executed.
+- [x] Re-measure the root environment with Ipopt as a weak dependency; add it;
+      restore `Project.toml`'s comments; extension in place. 190 → 201 (→ 215 with the
+      test target's JuMP + HiGHS), nothing moved; the file has no comments to restore;
+      `GridSimOPFExt` and `GridSimDispatchExt` load in one session.
+- [x] Predictions file: bands for the handed-back flow, the two starts — plus the
+      margins sized against the flow's re-solve (`margin_S` default 1e-5, not 1e-6).
+- [x] `ac_opf`: held voltages (D4), voltage band, larger-end ratings, both load
+      models. Plus `dispatch_schedule(net, ::ACOPF)` — the slack's machine takes the
+      nominal balance (`NetworkModel` refuses an unbalanced schedule; not foreseen).
+- [x] 24.1 handed back to `ac_powerflow`, both load models — five fixtures, every gap at
+      round-off (≤ 1.3e-13 pu).
+- [x] 24.2 the bound against M6's dispatch-then-flow, recomputed, feasibility first:
+      0.019638 \$/h (constant power), 14.219829 \$/h (default loads).
+- [x] 24.3 the voltage fixture and its positive control — the control's margin
+      re-measured on the exact dispatch first: B9 at 0.899554, 1.5× kept; constant-power
+      loads only (on default loads the DC dispatch passes).
+- [x] 24.4 1.75× reported as Ipopt's word; the floor-lowered variant pins the cause (and
+      the reactive limits removed does not).
+- [x] 24.5 two starts agree (≤ 2.6e-14 pu).
+- [x] An AC rating fixture (the plan review's addition, for the sending-end sabotage): L94
+      at an invented 60 MVA binds at its receiving end on both load models.
+- [x] Sabotages executed — SA1, SA2 (added), SB, SC, SD each red where predicted, plus
+      reds the table did not credit (`m11-context.md`, "What step 3 measured").
+- [x] Gate: core 25242 → 25450 (+207 new, +1 from M7's exported-surface walk reaching
+      `ac_opf`); reference 1493 and UI 4212 unchanged, all passing; the eleven captures
+      byte-compared against fresh `-HEAD` ones.
 
 ## Step 4 — PowerModels' AC OPF in `reference/`
 

@@ -1,0 +1,44 @@
+
+
+ERROR: LoadError: ac_opf: Ipopt stopped with ALMOST_LOCALLY_SOLVED / NEARLY_FEASIBLE_POINT / NEARLY_FEASIBLE_POINT — neither a local optimum with a feasible point nor its word that no feasible point was found nearby. The problem passed every check in core, so this is the solver's refusal, reported as is.
+Stacktrace:
+  [1] _ac_opf_solve(::GridSim._IpoptOPF, prob::@NamedTuple{ids::Vector{Symbol}, a2::Vector{Float64}, a1::Vector{Float64}, a0::Vector{Float64}, pmin::Vector{Float64}, pmax::Vector{Float64}, demand::Float64, n::Int64, gen_bus::Vector{Int64}, src::Vector{Int64}, dst::Vector{Int64}, g::Vector{Float64}, b::Vector{Float64}, limit::Vector{Float64}, V_set::Vector{Float64}, Q_min::Vector{Float64}, Q_max::Vector{Float64}, load_bus::Vector{Int64}, load_P::Vector{Float64}, load_Q::Vector{Float64}, load_az::Vector{Float64}, load_ai::Vector{Float64}, load_ap::Vector{Float64}, vlo::Float64, vhi::Float64, slack::Int64}, tol::Float64, x0::@NamedTuple{p::Vector{Float64}, θ::Vector{Float64}, Vm::Vector{Float64}}, max_iter::Int64)
+    @ GridSimOPFExt W:\Claude_projects\GridSim\ext\GridSimOPFExt.jl:104
+  [2] ac_opf(net::NetworkModel; tol::Float64, margin_V::Float64, margin_S::Float64, vmin::Float64, vmax::Float64, start::Symbol, max_iter::Int64)
+    @ GridSim W:\Claude_projects\GridSim\src\steadystate\ac_opf.jl:235
+  [3] ac_opf
+    @ W:\Claude_projects\GridSim\src\steadystate\ac_opf.jl:221 [inlined]
+  [4] #3
+    @ .\none:-1 [inlined]
+  [5] iterate
+    @ .\generator.jl:48 [inlined]
+  [6] collect_to!
+    @ .\array.jl:848 [inlined]
+  [7] collect_to_with_first!
+    @ .\array.jl:826 [inlined]
+  [8] collect(itr::Base.Generator{Tuple{Float64, Float64}, var"#3#4"{NetworkModel}})
+    @ Base .\array.jl:800
+  [9] top-level scope
+    @ W:\temp\claude\gridsim-m11-step3\probe_rating.jl:15
+ [10] include(mod::Module, _path::String)
+    @ Base .\Base.jl:306
+ [11] exec_options(opts::Base.JLOptions)
+    @ Base .\client.jl:317
+ [12] _start()
+    @ Base .\client.jl:550
+in expression starting at W:\temp\claude\gridsim-m11-step3\probe_rating.jl:12
+L94 at 65 MVA, constant_power: locally_optimal cost 5389.753939 P [72.4935, 151.5595, 96.1995] at_limit [:L94] at_band Symbol[] q Symbol[]
+   |Sf| 62.086992 |St| 64.999935 MVA  limit 64.999935   conv P 1.3e-12 flow 1.3e-12
+   DC start: locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT
+L94 at 60 MVA, constant_power: locally_optimal cost 5582.661610 P [53.8687, 167.7041, 99.6967] at_limit [:L94] at_band Symbol[] q Symbol[]
+   |Sf| 57.233472 |St| 59.999940 MVA  limit 59.999940   conv P 7.1e-13 flow 7.1e-13
+   DC start: locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT
+L94 at 50 MVA, constant_power: locally_infeasible cost NaN P [NaN, NaN, NaN] at_limit Symbol[] at_band Symbol[] q Symbol[]
+   |Sf| NaN |St| NaN MVA  limit 49.999950   conv P NaN flow NaN
+   DC start: locally_infeasible LOCALLY_INFEASIBLE / INFEASIBLE_POINT / INFEASIBLE_POINT
+L94 at 65 MVA, default: locally_optimal cost 4883.325762 P [81.8579, 129.0665, 89.9516] at_limit Symbol[] at_band Symbol[] q Symbol[]
+   |Sf| 62.123556 |St| 64.720983 MVA  limit 64.999935   conv P 3.9e-11 flow 3.9e-11
+   DC start: locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT
+L94 at 60 MVA, default: locally_optimal cost 4910.930983 P [69.4586, 140.3462, 90.9938] at_limit [:L94] at_band Symbol[] q Symbol[]
+   |Sf| 57.560932 |St| 59.999940 MVA  limit 59.999940   conv P 2.1e-12 flow 2.1e-12
+   DC start: locally_optimal LOCALLY_SOLVED / FEASIBLE_POINT / FEASIBLE_POINT

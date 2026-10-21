@@ -131,6 +131,10 @@ include("steadystate/economic_dispatch.jl")
 # M11 step 1 - the cheapest dispatch subject to the network, DC form. After the dispatch,
 # whose checks, costs and hand-off it reuses; the same extension carries its solver.
 include("steadystate/dc_opf.jl")
+# M11 step 3 - the same, AC form, generator voltages held. After the DC OPF (one of its two
+# starts) and the AC power flow, whose branch flows and load law read its answer back.
+# Its solver is a second extension (`ext/GridSimOPFExt.jl`, `using JuMP, Ipopt`).
+include("steadystate/ac_opf.jl")
 # M8 - single-outage screening. After the steady-state solves it reads: step 2's
 # line-outage factors are dc_powerflow's base case plus one solve per outage; step
 # 3's AC screen is ac_powerflow's classified solve, once per outage.
@@ -207,6 +211,9 @@ export dispatch_loss_gap
 # M11 step 1 - the DC network OPF. Both checked clear against `names(GLMakie)` in the
 # `ui/` environment before being added (2026-10-21).
 export DCOPF, dc_opf
+# M11 step 3 - the held-voltage AC network OPF. Both checked clear against
+# `names(GLMakie)` in the `ui/` environment before being added (2026-10-21).
+export ACOPF, ac_opf
 # M8 step 2 - the DC line-outage screen. Both checked clear against
 # `names(GLMakie)` in the `ui/` environment before being added (2026-10-06).
 export DCLineOutages, dc_line_outages

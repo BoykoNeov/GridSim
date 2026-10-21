@@ -1,0 +1,22 @@
+
+
+== 24.1
+published cp       κ 1.2960  band_x 5.44e-09 band_S 6.44e-07 | Vm 2.0e-15 θ 1.8e-15 flows 2.2e-14 mva 1.8e-14 slackP 3.1e-15 (band 6.47e-07) | cost 5325.266075
+    P MW [90.7214, 134.4109, 94.3315]  at_limit Symbol[] at_band Symbol[]  losses 4.4638 MW shift 0.0000 MW  min|V| flow 0.9536741758
+published default  κ 1.4032  band_x 5.89e-09 band_S 6.98e-07 | Vm 6.7e-16 θ 2.6e-16 flows 1.2e-14 mva 6.7e-15 slackP 1.9e-15 (band 7.00e-07) | cost 4883.325762
+    P MW [81.8579, 129.0665, 89.9516]  at_limit Symbol[] at_band Symbol[]  losses 3.9605 MW shift -18.0845 MW  min|V| flow 0.9601415385
+1.5x cp            κ 1.3840  band_x 5.81e-09 band_S 6.88e-07 | Vm 6.7e-16 θ 8.3e-17 flows 6.0e-15 mva 3.3e-15 slackP 6.7e-16 (band 6.90e-07) | cost 10241.634349
+    P MW [149.1107, 195.1109, 138.7026]  at_limit Symbol[] at_band [:B9]  losses 10.4241 MW shift 0.0000 MW  min|V| flow 0.9000010000
+L94 cp             κ 1.3044  band_x 5.48e-09 band_S 6.49e-07 | Vm 1.5e-14 θ 1.2e-14 flows 1.2e-13 mva 1.3e-13 slackP 3.4e-14 (band 6.51e-07) | cost 5582.696361
+    P MW [53.8661, 167.7061, 99.6974]  at_limit [:L94] at_band Symbol[]  losses 6.2695 MW shift 0.0000 MW  min|V| flow 0.9480959913
+L94 default        κ 1.4150  band_x 5.94e-09 band_S 7.04e-07 | Vm 7.8e-16 θ 8.3e-16 flows 1.0e-14 mva 4.9e-15 slackP 3.7e-15 (band 7.06e-07) | cost 4910.937816
+    P MW [69.4571, 140.3476, 90.9939]  at_limit [:L94] at_band Symbol[]  losses 4.4261 MW shift -18.6275 MW  min|V| flow 0.9587950424
+== 24.2
+constant_power  OPF 5325.266075  M6 flowed 5325.285712  margin 0.019638 $/h
+default         OPF 4883.325762  M6 flowed 4897.545590  margin 14.219829 $/h
+== 24.5
+published cp       max gap 8.0e-15 pu (P 6.7e-16)  worst gap/band 0.001  cost gap 9.1e-13
+published default  max gap 8.1e-15 pu (P 1.0e-15)  worst gap/band 0.001  cost gap 1.8e-12
+1.5x cp            max gap 2.6e-14 pu (P 2.6e-14)  worst gap/band 0.002  cost gap 1.8e-12
+L94 cp             max gap 6.9e-15 pu (P 6.9e-15)  worst gap/band 0.001  cost gap 9.1e-12
+L94 default        max gap 4.8e-15 pu (P 3.9e-15)  worst gap/band 0.000  cost gap 3.6e-12
