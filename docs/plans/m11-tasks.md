@@ -134,7 +134,10 @@ expected text, corrected, and that group re-run alone, 187/187).
       on a limit; flat to 8.3e-13. The margin-0 mutation was BLIND (all eleven start at
       margin 0 too); the controls kept are a refused off-limit schedule and a 1 MW-off
       schedule in the Pm gap.
-- [ ] Window: the user's call — **the user chose a window** (2026-10-21).
+- [x] Window: the user's call — **the user chose a window** (2026-10-21).
+      `network_dispatch()`, the ninth (menu item 9); `ui/` gained JuMP, HiGHS, Ipopt (370 →
+      388, nothing moved; comments restored); rendered and looked at three times before the
+      labels stopped colliding; UI 4212 → 4388.
 
 ## Step 6 — Close
 

@@ -86,6 +86,15 @@ using PrecompileTools
                 double_outages_render(; path = tmp, grid = :mesh, timing = :sequential,
                                       view = :cp, pair = (:G1, :G2))
 
+                # The network-dispatch window (M11 step 5): the report's twelve rows of
+                # solves and eleven flat runs, the table, the grid and the bars; then the DC
+                # answer and a fixture with no AC point, so every branch of the sketch compiles.
+                nd_cache = Dict{Symbol,Any}()
+                network_dispatch_render(; path = tmp, cache = nd_cache)
+                network_dispatch_render(; path = tmp, cache = nd_cache, fixture = :x175,
+                                        answer = :dc)
+                network_dispatch_render(; path = tmp, cache = nd_cache, fixture = :x175)
+
                 rm(tmp; force = true)
             catch err
                 @warn "GridSimUI precompile workload skipped" exception = (err, catch_backtrace())

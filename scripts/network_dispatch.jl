@@ -2,12 +2,13 @@
 # the network-free dispatch (M6) beside the linear (DC) and the nonlinear (AC) network
 # optimum, and the AC optimum handed to the detailed tier as a schedule that runs.
 #
-#   julia --project=reference scripts/network_dispatch.jl
+#   julia --project=ui scripts/network_dispatch.jl          (or --project=reference)
 #
 # The solvers are optional extensions of GridSim (HiGHS for the dispatch and the DC OPF,
 # Ipopt for the AC OPF), so the root environment alone cannot run this file: it needs one
-# that carries JuMP, HiGHS and Ipopt beside GridSim, as `reference/` does. The test suite
-# includes this file into a module; its test target carries all three.
+# that carries JuMP, HiGHS and Ipopt beside GridSim. `ui/` does (its window draws this
+# report) and so does `reference/`. The test suite includes this file into a module; its
+# test target carries all three.
 #
 # Plan + decisions: docs/plans/m11-plan.md step 5, docs/plans/m11-context.md D2, D4, D9,
 # D11, D12.

@@ -170,11 +170,11 @@ voltages held), with cost, outputs and what binds. Three sections:
 environment that carries JuMP, HiGHS and Ipopt beside GridSim:
 
 ```julia
-julia --project=reference scripts/network_dispatch.jl
+julia --project=ui scripts/network_dispatch.jl          # or --project=reference
 ```
 
 Read claim w before quoting an AC cost on the default loads: there the sagging voltages
 serve less load, and the difference is load not served, not generation saved. Every load
 limit (B9's floor at 1.5×, no AC answer at 1.75×) is case9's without line charging; the
 published case9 has it, and PowerModels solves it at 1.75×. It includes `outage_screen.jl`
-into a submodule for its grid.
+into a submodule for its grid. The window `network_dispatch()` in `ui/` draws it.

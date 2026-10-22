@@ -1,5 +1,5 @@
 # The menu behind `GridSim.bat` at the repo root: one Julia session, a numbered
-# list of the eight windows, and back to the list when a window is closed. Run
+# list of the nine windows, and back to the list when a window is closed. Run
 # from the repo root:
 #
 #     julia --project=ui ui/scripts/start.jl
@@ -32,6 +32,7 @@ const WINDOWS = [
     ("Low-inertia study (inverters)",                         () -> low_inertia_playback()),
     ("Frequency screen (single outages)",                     () -> frequency_screen()),
     ("Double outages",                                        () -> double_outages()),
+    ("Network dispatch (cheapest dispatch with the network)", () -> network_dispatch()),
 ]
 
 function menu()

@@ -43,6 +43,12 @@ pair of elements of `scripts/double_outage_screen.jl`'s two grids as a table of 
 both at once or one after the other, and the selected pair on the grid with each piece it
 leaves coloured. Its grids and numbers are the script's own (included here); no model.
 
+A **ninth** (`network_dispatch_window.jl`, M11 step 5) draws the network-dispatch report:
+case9's fixtures as a table — the network-free dispatch beside the DC and the AC network
+optimum — and the answer selected on the grid, what binds marked. Its fixtures, solves and
+numbers are the script's own (`scripts/network_dispatch.jl`, included here); no model. It
+is the one window that needs the optimisers, so this package carries JuMP, HiGHS and Ipopt.
+
 The first two are siblings rather than one window with a runtime switch, because
 the two engines do not accept the same events — the set of controls a window can offer is
 a property of the engine, not of the `SimulationEngine` interface, so dispatch on
@@ -144,6 +150,9 @@ using GridSim: ac_powerflow, bus_generation
 # the screen, the dip runs and the preset its rows are judged against. Checked clear
 # against GLMakie's exports by the standing test.
 using GridSim: outage_screen, generator_dips, continental_europe_limits
+# M11 step 5 — the network-dispatch window dispatches on the two answer types. Checked clear
+# against GLMakie's exports by the standing test.
+using GridSim: DCOPF, ACOPF
 
 # The shared look (fonts, colours, widget shapes, the two-label read-out) — one
 # file, applied by every builder through `themed`. Included first because the
@@ -158,6 +167,7 @@ include("editor_window.jl")
 include("low_inertia_window.jl")
 include("frequency_screen_window.jl")
 include("double_outage_window.jl")
+include("network_dispatch_window.jl")
 
 export launch, smoke_render, wait_for_close
 # M4 step 3, a DIFFERENT VERB rather than a third `launch` method: both execution
@@ -195,6 +205,10 @@ export frequency_screen, frequency_screen_render
 # reason; it takes no model — its grids are the report script's
 # (`scripts/double_outage_screen.jl`).
 export double_outages, double_outages_render
+# M11 step 5 — the network-dispatch window: the OPF report, drawn. Its own verb pair, for M4's
+# reason; it takes no model — its fixtures are the report script's
+# (`scripts/network_dispatch.jl`).
+export network_dispatch, network_dispatch_render
 
 # Last, after every entry point exists: build each window once at precompile
 # time so a session does not pay ~2 minutes of Makie specialisation at launch.

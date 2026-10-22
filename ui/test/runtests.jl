@@ -1099,4 +1099,7 @@ end
     # --- the double-outage window (M10 step 6): the pair report, drawn -------------
     include(joinpath(@__DIR__, "double_outage_tests.jl"))
 
+    # --- the network-dispatch window (M11 step 5): the OPF report, drawn ------------
+    include(joinpath(@__DIR__, "network_dispatch_tests.jl"))
+
 end

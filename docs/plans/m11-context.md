@@ -760,3 +760,31 @@ shown), and two differences taken from the ROUNDED outputs (+35.33, +13.20 print
   `test/m11_headroom.jl`'s, not this table's.
 - **Counts:** core 25527 → **25684** (+157 `test/m11_report.jl`), all passing; the script
   enters the suite as `NetworkDispatchScript` (the test target carries JuMP, HiGHS, Ipopt).
+
+### The window (the user's choice, 2026-10-21)
+
+`network_dispatch()` in `ui/` (`ui/src/network_dispatch_window.jl`, the ninth window; menu
+item 9): the six fixtures as a table on the load model chosen, coloured green (an answer,
+nothing at a limit), amber (an answer ON a limit) or red (the flow refuses M6's dispatch, or
+no AC point); the answer chosen (DC or AC) on case9's grid — each line by its loading, a line
+at its rating and a bus on the floor in red, voltages in AC only, every output — and the
+three outputs side by side. Everything it draws is the script's row (included as a
+submodule, as M9's and M10's windows include theirs); its caveats are the report's.
+
+- **`ui/` gained JuMP, HiGHS and Ipopt** — the one window that solves. Re-measured on a
+  scratch copy first: 370 → 388 packages, nothing moved or removed, the versions the root's
+  and `reference/`'s (JuMP 1.32.1, HiGHS 1.26.1, Ipopt 1.16.0). `Pkg.add` dropped every
+  comment in `ui/Project.toml` again; restored from the pre-add copy, with one comment for
+  the three.
+- **Looked at, rendered, three times before it was right** (the M10 lesson): the first
+  render had line labels on the bus voltages, the reference generator's output on L14's
+  label, every bus filled green (read as a verdict where none is given), and in the next
+  the two outer generators' outputs clipped at the edge. Labels now go inside the ring for
+  a ring bus and outside for a spur bus; buses are neutral, red only on the voltage floor.
+- **Tests:** `ui/test/network_dispatch_tests.jl` — the rows equal a fresh run of the script
+  field by field, the read-out `===` the selected row, every cell's text and colour its row's
+  (with all three colours present, so the check is not vacuous), each line's loading the
+  answer's own, the no-AC-point fixture drawn as nothing and named as Ipopt's word, the
+  controls, the offscreen render. **UI 4212 → 4388** (+176), all passing; the precompile
+  workload builds the window three ways. The script also runs from `ui/` (table identical
+  to the `reference/` run).

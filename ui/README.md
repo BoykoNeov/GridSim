@@ -6,12 +6,13 @@ The dependency points one way only: `GridSimUI` → `GridSim`, never the reverse
 The core's own test suite asserts the other half — no Makie anywhere in its
 dependency closure.
 
-Built on `GLMakie` (native window). There are **eight**: two real-time windows,
+Built on `GLMakie` (native window). There are **nine**: two real-time windows,
 one per fidelity tier, chosen by the model you hand `launch` — two more for the
 other *execution mode*, the playback overlays, which have their own verbs — the
 scenario editor, which has no engine in it at all and produces the model the
-others start from, and three that each draw one study script: the low-inertia
-window, the frequency screen and the double-outage window (all below).
+others start from, and four that each draw one study script: the low-inertia
+window, the frequency screen, the double-outage window and the network-dispatch window
+(all below).
 
 The two real-time windows:
 
@@ -90,7 +91,7 @@ owns that).
 ## Run the window
 
 On Windows, `GridSim.bat` in the repo root does all of this from a double-click:
-one Julia session, a numbered menu of the eight windows below, back to the menu
+one Julia session, a numbered menu of the nine windows below, back to the menu
 when a window closes (`scripts/start.jl`; `julia --project=ui ui/scripts/start.jl`
 runs the same menu anywhere). By hand:
 
@@ -555,13 +556,49 @@ script's own row and each cell says what its row says — tests assert both.
 `double_outages_render(; path)` draws it to a PNG. Design notes:
 `docs/plans/m10-context.md` D12. Figure: `../docs/images/fig-m10-double-outages.png`.
 
+## The network-dispatch window — the cheapest dispatch, with and without the network
+
+```
+julia --project=ui -e "using GridSimUI; wait_for_close(network_dispatch())"
+```
+
+The M11 report (`scripts/network_dispatch.jl`) drawn. Along the bottom, case9's six
+fixtures as a table, one row each, on the load model chosen: the network-free dispatch
+(which never sees the lines), that dispatch handed to the full power flow, the cheapest
+dispatch the linear (DC) network allows, and the cheapest the full (AC) network allows
+with every generator holding its voltage. Green: an answer with nothing at a limit;
+amber: an answer sitting ON a limit; red: the power flow refuses the network-free
+dispatch (a line over its rating, a bus below 0.9 pu), or the optimiser finds no AC answer.
+Click a row — or a fixture button — to select it.
+
+Above the table, the selected fixture's answer (DC or AC, your choice) on the grid: each
+line drawn by how loaded it is, a line AT its rating in red, each bus's voltage in AC (DC
+has none — it assumes 1 pu everywhere), a bus on the 0.9 pu floor ringed red, and every
+generator's output. Beside it, the three generators' outputs under the three answers —
+what the network moves.
+
+**The binding fixtures are invented.** On case9 as published no line limit binds, so
+three line ratings are made up (L82 100, L89 50, L94 60 MVA) and labelled as such
+everywhere. case9 here has no line charging, so its load limits (B9 on the floor at 1.5×,
+no AC answer at 1.75×) are this case9's, not MATPOWER's. Every AC answer is the
+optimiser's LOCAL one. And on the default loads an AC cost below the network-free one is
+load not served at the sagging voltages, not cheaper generation. The window says all of
+this.
+
+Controls: the load model, DC or AC on the grid, the fixture, and the table itself. The
+window runs the script's solves and its eleven flat runs once when it opens; every click
+after that is a lookup. It is the one window that needs the optimisers, so this package
+carries JuMP, HiGHS and Ipopt. `network_dispatch_render(; path)` draws it to a PNG. Design
+notes: `docs/plans/m11-context.md`, "What step 5's report measured". Figure:
+`../docs/images/fig-m11-network-dispatch.png`.
+
 ## Tests
 
 ```
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-4212 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+4388 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do
