@@ -273,10 +273,12 @@ function print_claims(io::IO = stdout)
     constant-power loads the same ratings cost more (+409.61, +427.03): a rating in MVA is
     spent on reactive power too, so G2 behind its own 100 MVA line gets 88.97 MW, not 100.
  u. Wherever something binds, M6's dispatch is not an operating point. Handed to the AC
-    flow it is refused on every invented rating (L82 at 143.0 of 100 MVA on constant-power
-    loads, L89 at 74.0 of 50, L94 at 71.8 of 60) and at 1.5× (B9 at 0.8996 pu). Where the
-    flow accepts it — the published case — the AC optimum is cheaper, by 0.02 \$/h on
-    constant-power loads (5325.27 against 5325.29) and 14.22 \$/h on the default loads.
+    flow it is refused on every invented rating on both load models (L82 at 143.0 of 100
+    MVA, L89 at 74.0 of 50, L94 at 71.8 of 60 on constant-power loads), at 1.5× on
+    constant-power loads (B9 at 0.8996 pu) and at 1.75× on both. Where the flow accepts it
+    — the published case on both load models and 1.5× on the default loads — the AC
+    optimum is cheaper: by 0.02 \$/h on constant-power loads (5325.27 against 5325.29),
+    14.22 \$/h on the default loads, and 150.54 \$/h at 1.5× on the default loads.
  v. On constant-power loads every AC optimum is dearer than the DC one: +109.24 \$/h on
     the published case, which carries 4.46 MW of losses, and +383.82 at 1.5×, where B9
     sits on the 0.9 pu floor and G1 takes 13.21 MW more. At 1.75× Ipopt finds no AC point

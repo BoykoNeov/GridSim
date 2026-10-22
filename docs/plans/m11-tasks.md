@@ -128,8 +128,12 @@ expected text, corrected, and that group re-run alone, 187/187).
 - [x] Found while checking the fix: the detailed tier's governor overshoots its cap by
       one step (D13). Owed, not fixed here.
 - [x] `scripts/network_dispatch.jl`; claims s–x asserted at printed precision in
-      `test/m11_report.jl` (157); prose after the table — three drafts corrected on
-      re-reading it, two of them by the test (differences of rounded numbers).
+      `test/m11_report.jl` (162); prose after the table — three drafts corrected on
+      re-reading it, two of them by the test (differences of rounded numbers), and claim u
+      at the closing review (the 1.5× default-loads row, which the test had not covered).
+- [x] Gate at the end of step 5 (2026-10-22): **core 25689, reference 1582, UI 4388**, each a
+      full `Pkg.test()` run, all passing — reference re-run after D12 (it compares both
+      dynamic tiers with PowerDynamics on lossy grids).
 - [x] The optimum handed to the detailed tier's flat run — every AC optimum, eleven, seven
       on a limit; flat to 8.3e-13. The margin-0 mutation was BLIND (all eleven start at
       margin 0 too); the controls kept are a refused off-limit schedule and a 1 MW-off

@@ -92,9 +92,13 @@ end
         @test _nd(key, :default).flowed.outcome === :overload
     end
     @test detail(_nd(:x150, :constant_power)) == "voltage, B9 0.8996 pu"
-    for (loads, gap) in ((:constant_power, "0.02"), (:default, "14.22"))
-        R = _nd(:published, loads)
-        @test R.flowed.outcome === :secure && R.flowed.within
+    @test all(_nd(:x175, l).flowed.outcome === :voltage for l in _ND.LOADS)
+    # Where the flow accepts it: exactly these three, and the AC optimum cheaper on each.
+    accepted = [(r.key, r.loads) for r in _ND_ROWS if r.row.flowed.outcome === :secure]
+    @test accepted == [(:published, :constant_power), (:published, :default), (:x150, :default)]
+    for ((key, loads), gap) in zip(accepted, ("0.02", "14.22", "150.54"))
+        R = _nd(key, loads)
+        @test R.flowed.within
         @test R.ac.cost < R.flowed.cost                      # recomputed, not rounded
         @test _nd2(R.flowed.cost - R.ac.cost) == gap
     end

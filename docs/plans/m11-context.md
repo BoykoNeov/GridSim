@@ -707,7 +707,9 @@ probes, the capture script, M10's report diff).
   its largest move is now claim p's trivial shape, G2→L82, and the old one is kept, dated);
   its test gains the mesh's G2/G3 orders landing exactly on both at once. **Counts: core
   25459 → 25527** (+57 `m11_headroom.jl`, +1 M8, +10 M10), all passing; UI 4212 unchanged,
-  all passing; reference not re-run (its oracle capture is byte-identical).
+  all passing. **Reference 1582, all passing, re-run after D12** (at the report's review: its
+  oracle capture is lossless only, while its M9-step-3 testsets compare both dynamic tiers
+  with PowerDynamics on LOSSY grids — the tiers D12 changed; 177 of them, green).
 
 ## D13 — Found at step 5: the detailed tier's governor overshoots its cap by one step
 
@@ -728,9 +730,11 @@ fix's test bounds the overshoot at `dtmax = 0.01` and says why.
 
 `scripts/network_dispatch.jl` (run with `--project=reference`: the solvers are optional
 extensions, so the root environment alone cannot run it); its claims
-s–x asserted in `test/m11_report.jl` (157), against the script's own rows. Every claim was
-written after the table was read; three drafts did not survive re-reading it against the
-numbers — "six on a limit" (seven), "dearer than DC by more than the losses' worth" (not
+s–x asserted in `test/m11_report.jl` (162), against the script's own rows. Every claim was
+written after the table was read; four drafts did not survive re-reading it against the
+numbers — claim u, caught at the review, said the flow refuses M6's dispatch "at 1.5×" and
+accepts it only on the published case, while the 1.5× DEFAULT-loads row shows it accepted
+(and the AC optimum 150.54 \$/h cheaper there); its test now asserts the whole accepted set — "six on a limit" (seven), "dearer than DC by more than the losses' worth" (not
 checked, and at G1's marginal ~25 \$/MWh the 4.46 MW are worth ~111 \$/h against the 109.24
 shown), and two differences taken from the ROUNDED outputs (+35.33, +13.20 printed; +35.32,
 +13.21 true — the test caught both).
@@ -758,7 +762,8 @@ shown), and two differences taken from the ROUNDED outputs (+35.33, +13.20 print
   the optimum shows in the Pm gap (> 0.009 pu).
 - **What a flat run does not show:** it never moves a governor, so the reserve being right is
   `test/m11_headroom.jl`'s, not this table's.
-- **Counts:** core 25527 → **25684** (+157 `test/m11_report.jl`), all passing; the script
+- **Counts:** core 25527 → 25684 (+157 `test/m11_report.jl`), then +5 when claim u's test
+  was widened; all passing (the final count is in the tasks file); the script
   enters the suite as `NetworkDispatchScript` (the test target carries JuMP, HiGHS, Ipopt).
 
 ### The window (the user's choice, 2026-10-21)
