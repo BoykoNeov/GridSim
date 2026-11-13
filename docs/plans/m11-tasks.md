@@ -146,5 +146,22 @@ expected text, corrected, and that group re-run alone, 187/187).
 
 ## Step 6 — Close
 
-- [ ] Fresh `-HEAD` captures; manifests re-resolved; counts; captures byte-compared.
-- [ ] Ledger, README row and hurdles, SPEC, memory.
+- [x] **D13 fixed first** (2026-11-13), since the close's captures would otherwise record
+      the defect: the detailed tier's governor lands on its cap (`m11-context.md`, "D13
+      fixed"). Seven captures before and after: four byte-identical, M9's numbers at
+      ≤ 3.7e-6, M5's criterion at ≤ 1.3e-3 with no yes/no line changed.
+- [x] Fresh captures at the fixed tree; the four manifests (root, `reference/`, `ui/`,
+      the harness `testenv`) deleted and re-resolved — 43 / 84 / 88 packages moved, two
+      added (`ExpressionExplorer`, `ReactantCore`), no `Project.toml` changed; among them
+      `NetworkDynamics` 1.3.0 → 1.4.0, `OrdinaryDiffEqCore` 4.19.0 → 4.19.1, `HiGHS`
+      1.26.1 → 1.27.0, `GLMakie` 0.13.16 → 0.13.17 (`docs/evidence/gridsim-m11/close/moved.txt`).
+      Captures re-taken on the new packages: **six of seven byte-identical; the seventh
+      (M5's criterion) differs on 11 lines of one cell (`av5`) in the 13th significant
+      digit** — round-off from the solver stack, not a result. Not taken at this close,
+      and said: the PowerDynamics oracle capture and M10's 32 serialized screens (the
+      reference suite, which compares against PowerDynamics, passes in full).
+- [x] Counts on the re-resolved manifests, each a full `Pkg.test()`: **25711 core / 1582
+      reference / 4966 UI**, all passing.
+- [x] Ledger (the M11 section), README row and hurdles 22–24, SPEC §9, memory.
+
+**M11 COMPLETE (closed 2026-11-13).**

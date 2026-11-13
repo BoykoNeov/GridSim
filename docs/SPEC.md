@@ -538,3 +538,12 @@ end
    draws it, with a piece's line-and-voltage outcome marked beside its frequency
    colour, never combined. Still not built (D5): filtering, N-3, a per-pair dip or
    rate verdict, re-dispatch beyond restoring frequency.
+   **The network optimal power flow taken as M11** (2026-10-21, the user's choice) — the
+   rung item 5 left owed: hurdles 22–24 (`docs/plans/m11-context.md` D0). **Delivered in
+   M11 (closed 2026-11-13)**: `dc_opf` (HiGHS) and a held-voltage `ac_opf` (Ipopt) as
+   optional extensions, each checked against PowerModels in `reference/` and by checks
+   that use no optimiser (a three-bus closed form; the AC answer handed back to
+   `ac_powerflow`); `scripts/network_dispatch.jl` prints the report and
+   `network_dispatch()` draws it. case9 only, the binding line ratings invented and
+   labelled, no line charging. What comes next is the owner's choice among the
+   candidates in `docs/plans/next-steps.md` (section D).

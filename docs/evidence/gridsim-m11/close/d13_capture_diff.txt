@@ -1,0 +1,99 @@
+== criterion 182 182
+ differing lines 88  non-numeric 5
+  rel 6.83e-02 L92
+     av5.Efd_over                                   = 0.2004114674355364
+     av5.Efd_over                                   = 0.18671408562932434
+  rel 6.68e-02 L71
+     av.Efd_over                                    = 0.12001830335020092
+     av.Efd_over                                    = 0.11200232934137766
+  rel 2.63e-03 L91
+     av5.Efd_peak                                   = 5.200411467435536
+     av5.Efd_peak                                   = 5.186714085629324
+  rel 1.57e-03 L70
+     av.Efd_peak                                    = 5.120018303350201
+     av.Efd_peak                                    = 5.112002329341378
+  rel 1.30e-03 L119
+     Xd=1.5.over                                    = 1.0300089791840166
+     Xd=1.5.over                                    = 1.0313466875258077
+  rel 8.43e-04 L173
+     Efd_max=5.0.over                               = 1.0295256954218046
+     Efd_max=5.0.over                               = 1.0303944965797591
+  NONNUM L32
+     fr.n_steps                                     = 1642
+     fr.n_steps                                     = 1644
+  NONNUM L53
+     fl.n_steps                                     = 3402
+     fl.n_steps                                     = 3441
+  NONNUM L74
+     av.n_steps                                     = 56529
+     av.n_steps                                     = 55596
+  NONNUM L95
+     av5.n_steps                                    = 9538
+     av5.n_steps                                    = 4211
+  NONNUM L140
+     K_A=100.0.retried                              = true
+     K_A=100.0.retried                              = false
+== dips 92 102
+ differing lines 29  non-numeric 12
+  rel 2.36e-01 L40
+     mesh constant_power G1 tnadir = 104.24000000000001
+     mesh constant_power G1 tnadir = 136.36
+  rel 8.09e-03 L73
+     mesh default G1 tnadir = 72.89
+     mesh default G1 tnadir = 72.3
+  rel 3.64e-08 L77
+     mesh default G1 worst = -8.669059307914308
+     mesh default G1 worst = -8.669059623788971
+  rel 3.61e-08 L72
+     mesh default G1 fnadir_ser = -8.668895957319286
+     mesh default G1 fnadir_ser = -8.668896270064991
+  rel 3.61e-08 L71
+     mesh default G1 nadir = -8.668895957319286
+     mesh default G1 nadir = -8.668896270064991
+  rel 3.56e-08 L74
+     mesh default G1 settled = -8.668895646266002
+     mesh default G1 settled = -8.668895954736854
+  NONNUM L81
+     mesh default G2 FAILED ErrorException: DetailedEngine playback integration failed: retcode = Unstable at t = 5.601543843237893
+     mesh default G2 AC.Δω = -0.007998352128319102
+  NONNUM L82
+     mesh default G3 AC.Δω = -0.0032550566543851156
+     mesh default G2 nadir = -0.3911551673380558
+  NONNUM L83
+     mesh default G3 nadir = -0.16718267816735732
+     mesh default G2 fnadir_ser = -0.3911551673380558
+  NONNUM L84
+     mesh default G3 fnadir_ser = -0.16718267816735732
+     mesh default G2 tnadir = 1.3399999999999999
+  NONNUM L85
+     mesh default G3 tnadir = 1.0300000000000002
+     mesh default G2 settled = -0.3216924835074053
+  NONNUM L86
+     mesh default G3 settled = -0.12709096965416933
+     mesh default G2 rocof = -0.6098563434724008
+  NONNUM L87
+     mesh default G3 rocof = -0.3080506890491816
+     mesh default G2 worst_id = :G3
+  NONNUM L88
+     mesh default G3 worst_id = :G2
+     mesh default G2 worst = -0.41346865880370576
+== verdict 284 284
+ differing lines 56  non-numeric 0
+  rel 3.70e-06 L267
+     mesh default rates[1.0] rate_machine_coarse = [[NaN, -2.0926390097082503, -2.170856520174233], [-0.37526531009
+     mesh default rates[1.0] rate_machine_coarse = [[NaN, -2.0926393790237157, -2.1708565010097516], [-0.3752656700
+  rel 1.12e-06 L221
+     mesh default dips Δf_coi_coarse = [-8.905306924191414, -0.3889782791728251, -0.14551987282844436]
+     mesh default dips Δf_coi_coarse = [-8.9053169036208, -0.38897867787245843, -0.14551987282844436]
+  rel 1.10e-06 L265
+     mesh default rates[1.0] rate_coi_coarse = [-2.124846219900121, -0.37200193364081, -0.14543954383171354]
+     mesh default rates[1.0] rate_coi_coarse = [-2.1248464292532603, -0.37200234318513736, -0.14543954383171354]
+  rel 9.59e-07 L270
+     mesh default rates[1.0] rate_worst_coarse = [-2.170856520174233, -0.3752653100975323, -0.15014999077283164]
+     mesh default rates[1.0] rate_worst_coarse = [-2.1708565010097516, -0.3752656700787753, -0.15014999077283164]
+  rel 8.20e-07 L223
+     mesh default dips Δf_machine_coarse = [[NaN, -8.905370694245173, -8.90545666689242], [-0.38752761732650703, Na
+     mesh default dips Δf_machine_coarse = [[NaN, -8.905377998204656, -8.905462906278228], [-0.38752774695961767, N
+  rel 7.01e-07 L226
+     mesh default dips Δf_worst_coarse = [-8.90545666689242, -0.4115683689467495, -0.1514890541617745]
+     mesh default dips Δf_worst_coarse = [-8.905462906278228, -0.41156827729202144, -0.1514890541617745]

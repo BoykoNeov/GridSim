@@ -460,7 +460,7 @@ cheapest dispatch, network-free".
 | The slack's pickup = losses + the loads' voltage-driven shift | On `Load`'s default (constant impedance): the draw recomputed from the textbook ZIP polynomial, not from the solver's; +4.30 MW losses, −18.46 MW shift, gap −318 $/h — so the sum is never labelled "the losses' cost" | **derived** (F7) |
 | The loss gap on a lossless network | **Not exactly zero** (the plan said it would be): within the flow's residual bound; only `|I|²R` at `R = 0` is exactly zero | **derived**, the plan's claim corrected |
 | The solver's own dual values (λ) | **Not used as a check** — the solver restating its answer | **un-oracled by design** |
-| Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **un-oracled: the network OPF is owed** (criterion 4, `PowerModels` unresolvable until 0.21.7 — re-measured 2026-10-21, `docs/evidence/gridsim-m11/step0/`) |
+| Anything about the network in the optimum (line limits, losses) | Nothing — the optimisation does not see the network | **delivered in M11 (2026-11-13) — the section "The network optimal power flow" below**; before that: un-oracled, the network OPF owed (criterion 4, `PowerModels` unresolvable until 0.21.7 — re-measured 2026-10-21, `docs/evidence/gridsim-m11/step0/`) |
 
 ## Inverter-based resources — M7, `model/network_model.jl` (`Inverter`)
 
@@ -670,6 +670,41 @@ first and judges no rating where it fails; only DC checks every pair it has a st
 (4) A refused event on the out-of-step relay's path puts the engine and the relay record
 back but stops the run, and the detailed tier's `TripLine` never latched its relay — both
 measured; the halt kept, the latch fixed in the M10 cleanup (2026-10-21).
+
+## The network optimal power flow — M11, `src/steadystate/dc_opf.jl`, `ac_opf.jl`, `ext/`
+
+The cheapest dispatch of the costed case9 subject to the network: in DC every bus
+balanced and every line inside its rating; in AC with losses, the voltage band, reactive
+limits and every generator's voltage held at its set-point (`plans/m11-context.md`
+D0–D13). The solvers are optional extensions (HiGHS for DC, Ipopt for AC). test:
+`test/m11_dc_opf.jl`, `test/m11_ac_opf.jl`, `test/m11_headroom.jl`, `test/m11_report.jl`;
+the outside checks in `reference/test/m11_dc_opf_oracle.jl`, `m11_ac_opf_oracle.jl`; the
+window in `ui/test/network_dispatch_tests.jl`.
+
+| Claim | Checked against | Label |
+|---|---|---|
+| Where no line binds the DC network optimum IS the network-free dispatch (Hurdle 22.1) | M6's `economic_dispatch` on case9 as published, at 1.5× and 1.75× | **cross-fidelity** (degeneration) |
+| A generator's own line binding is exactly that generator's cap (22.2) | L82 at 100 MVA against G2's `Pmax` lowered to match — an identity, and stated as not the network effect | **derived** |
+| A ring line rated low reroutes every output (22.3) | L89 at an INVENTED 50 MVA: it binds, every output moves; `dc_powerflow` of the answer reproduces its flows | **structural** (the rating is invented and labelled everywhere) |
+| One binding line, by algebra (22.4) | A three-bus closed form with no solver in it, and its non-binding control | **closed form** |
+| The DC answer against somebody else's (Hurdle 23) | PowerModels' DC OPF on Ipopt against ours on HiGHS, input typed from MATPOWER's file and never built from our model, `R = 0` on their side (their `x/(r²+x²)` against our `1/X`: 0.014 MW per ring line, kept as a fact); gaps ≤ 1.4e-12 pu against bands ~1.1e-11 stated first | **external** |
+| The AC optimum is a real operating point (Hurdle 24.1) | Handed back to `ac_powerflow`, which shares no code with the optimiser's equations: five fixtures, both load models, gaps ≤ 1.3e-13 pu | **cross-fidelity** — the check that uses no optimiser |
+| Never dearer than dispatch-then-flow (24.2) | M6's dispatch handed to the flow, where the flow accepts it: 0.0196 \$/h cheaper on constant power, 14.22 on default loads, recomputed | **derived** |
+| What bounds it is the load-bus voltage floor (24.3–24.4) | B9 on 0.9 pu at 1.5×; "no AC point" at 1.75× reported as Ipopt's LOCAL word, with the floor-lowered variant pinning the cause | **structural** |
+| The same answer from two starts (24.5) | ≤ 2.6e-14 pu | **derived** (a local solver: necessary, not sufficient) |
+| The AC answer against somebody else's | PowerModels' AC OPF, constant-power loads, line charging switched off on their side, voltages held: gaps ≤ 5.8e-12 pu against bands ≥ 1e-11 on nine channels. **Both sides run Ipopt**, so this checks the formulation and not the solver | **external** (formulation only) |
+| Every AC optimum feeds the simulator as it is | Eleven optima, seven on a limit, each run flat in the detailed tier: drift ≤ 8.3e-13 | **cross-fidelity** |
+| The reference machine's up-reserve is what it can still add (D12) | `Pmax` less its solved output, in both dynamic tiers and both AC screens; a capped reference stops AT `Pmax`, to the bit since D13's fix | **derived** |
+| A capped governor sits ON its cap (D13, fixed 2026-11-13) | A root-finding callback lands it: overshoot 0 with Rodas5P, ≤ 1.1e-5 pu with FBDF, where it was up to 0.011; released unaided when frequency recovers; seven checks red with the callback removed | **derived** + anti-vacuity |
+| The report and window say what the tables say | Claims s–x asserted at printed precision; the window's cells equal the script's rows | **derived** |
+
+**Not checked, and said:** (1) the AC optimum on the DEFAULT (voltage-dependent) loads has
+no outside check — PowerModels has no such load. (2) Every AC answer is a local optimum;
+nothing here proves a global one. (3) case9 here has no line charging, so its load limits
+are this case9's and not the published one's (`plans/next-steps.md` D1). (4) The binding
+line ratings are invented. (5) The margin-0 mutation was blind (an interior-point answer
+never sits exactly on a bound); the controls kept are a refused off-limit schedule and a
+1 MW-off schedule.
 
 ## Owed rows
 

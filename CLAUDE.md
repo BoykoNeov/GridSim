@@ -39,16 +39,35 @@ This layers on top of the global `~/.claude/CLAUDE.md`; that still applies.
 - **Validation-first.** Every engine ships a reference check (closed-form or
   cross-fidelity). This is also the main learning payoff.
 
-## Milestone 1 scope (SPEC §7)
+## Where the project stands (updated 2026-11-13)
 
-Real-time aggregate (center-of-inertia) frequency & RoCoF after generator loss.
-Only `FrequencyResponseEngine` — do NOT build the engine zoo. Do NOT adopt the
-full PowerSystems.jl data model yet; use the minimal `SystemModel`
-(`src/model/system_model.jl`).
+Milestones 1–11 are done. This section used to describe Milestone 1's scope ("only
+`FrequencyResponseEngine`, do not build the engine zoo"); that scope ended with M1 and
+the text was stale for ten milestones.
 
-**Carried-forward correctness note:** the "clamp ΔPm to headroom" requirement
-must be a **saturation in the derivative / a solver callback**, NOT post-hoc
-clamping of the state variable (which corrupts the integration).
+- **Three dynamic tiers** behind the one interface: aggregate
+  (`FrequencyResponseEngine`), network swing (`SwingEngine`), detailed
+  (`DetailedEngine`). **Steady state** in `src/steadystate/`: power flows, dispatch
+  with and without the network, single and double outage screens, frequency verdicts.
+- **Nine windows** in `ui/`, one launcher (`GridSim.bat` → `ui/scripts/start.jl`).
+- **`NetworkModel` is the canonical model.** Adopting `PowerSystems.jl` as the data
+  model was measured to work and refused on purpose (`docs/plans/m6-context.md` D1).
+- **What is next is the owner's choice**, and a milestone names the hard thing it is
+  for (its "hurdle") before it is planned: `docs/plans/README.md` (the index and the
+  hurdle list), `docs/plans/next-steps.md` (ready work packages and the candidates).
+- **Unfamiliar word?** `docs/glossary.md` — and write for the owner in those plain
+  terms, not in the plans' shorthand.
+
+**Carried-forward correctness note (M1, still live in every tier):** a limit on a
+state — a governor's power ceiling, a regulator's output limits — must be a
+**saturation in the derivative and/or a solver callback that lands on the limit**
+(`_governor_cap_callbacks` in `src/engines/detailed.jl`), NEVER post-hoc clamping of
+the state variable (which corrupts the integration).
+
+**A change that can move a recorded number** takes the captures before the first
+edit and again after, and compares them byte for byte
+(`docs/evidence/gridsim-m9/harness/README.md`). A green suite is not that check: its
+assertions carry tolerances.
 
 ## Working in this repo
 
@@ -69,8 +88,10 @@ clamping of the state variable (which corrupts the integration).
 
 ## Workflow
 
-- **Plan first** for non-trivial work; keep the M1 plan trio in `docs/plans/`
-  (`m1-plan.md` / `m1-context.md` / `m1-tasks.md`) as living documents.
+- **Plan first** for non-trivial work; each milestone keeps a plan trio in
+  `docs/plans/` (`mN-plan.md` / `mN-context.md` / `mN-tasks.md`) as living documents.
+- **A UI change is not done until its figure is rendered and looked at**
+  (`julia --project=ui ui/scripts/figures.jl <scratch folder>`).
 - **Commits:** Conventional Commits, small and incremental; each commit should
   load and pass tests. Don't reference "Claude"/"AI" in commit subjects (the
   `Co-Authored-By` trailer is fine).

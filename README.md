@@ -11,7 +11,7 @@ NREL-Sienna stack where it fits) and build only the bespoke part — the orchest
 layer that steps models in wall-clock time, injects live perturbations, and routes
 between fidelity tiers.
 
-> **Status: Milestones 1–10 complete (M10 closed 2026-10-20).** Three fidelity
+> **Status: Milestones 1–11 complete (M11 closed 2026-11-13).** Three fidelity
 > tiers behind one interface — an aggregate centre-of-inertia frequency model (M1),
 > a multi-machine network swing model (M2) with governor droop, load shedding,
 > out-of-step protection and generation ramps (M3), and a detailed tier with
@@ -23,11 +23,15 @@ between fidelity tiers.
 > both power-flow fidelities (M8), and each generator outage given a frequency verdict —
 > settled value, lowest dip, rate of fall — on grids with line resistance (M9). Every
 > pair of outages screened too, lost at once and one after the other with frequency
-> restored in between, a grid cut in two answered piece by piece (M10). Each
-> tier has a GLMakie window, plus a scenario editor. The
+> restored in between, a grid cut in two answered piece by piece (M10). The cheapest
+> dispatch the network can actually carry — no line over its rating, every voltage in
+> its band — in the linear and the full formulation, each checked against an outside
+> solver (M11). Nine GLMakie windows, among them a scenario editor. The
 > 28 April 2025 Iberian blackout is the standing real test case. The milestone map
 > and what each one found is [`docs/plans/README.md`](docs/plans/README.md); the
-> durable brief is [`docs/SPEC.md`](docs/SPEC.md).
+> durable brief is [`docs/SPEC.md`](docs/SPEC.md). **New to the vocabulary?**
+> [`docs/glossary.md`](docs/glossary.md) says what every term here means in plain
+> language. What comes next: [`docs/plans/next-steps.md`](docs/plans/next-steps.md).
 
 ## Design in one breath
 
@@ -79,6 +83,10 @@ between fidelity tiers.
   grid splits, which piece runs fast and which slow, who is left in the dark, and
   where the order of the two losses changes the answer (`double_outages()` in `ui/`
   draws it).
+- Find the cheapest dispatch of a costed grid three ways (`scripts/network_dispatch.jl`)
+  — ignoring the network, with the linear network, with the full one — and see which
+  line or which bus voltage makes the answer dearer, and by how much
+  (`network_dispatch()` in `ui/` draws it).
 
 ## Getting started
 
@@ -144,6 +152,26 @@ inter-machine swing content:
 
 ![Playback overlay, line trip](docs/images/fig-m4-playback-line-trip.png)
 
+What replacing machines with inverters does to the same generator trip — no inverters,
+grid-following, grid-forming — and, below, what a frequency meter at each bus *reads*
+in the first second and a half:
+
+![Low-inertia study](docs/images/fig-m7-low-inertia.png)
+
+Every pair of outages on the nine-bus grid, coloured by where frequency settles, and
+the selected pair on the grid with the piece it cuts off:
+
+![Double outages](docs/images/fig-m10-double-outages.png)
+
+The cheapest dispatch with and without the network: one line given a (labelled,
+invented) low rating, the line it pins drawn in red, and what that does to each
+generator's output and to the cost:
+
+![Network dispatch](docs/images/fig-m11-network-dispatch.png)
+
+`julia --project=ui ui/scripts/figures.jl` regenerates every figure here from the
+windows themselves.
+
 ## Repository layout
 
 ```
@@ -157,16 +185,18 @@ GridSim/
 │   ├── protection/       # armed, state-triggered schemes: load shedding, out-of-step
 │   ├── scenarios/        # scheduled inputs: generation ramps
 │   ├── analysis/         # post-processing: windowed RoCoF, cross-run divergence
-│   ├── steadystate/      # DC and AC power flow, cheapest dispatch, outage screening, frequency verdicts, double outages
+│   ├── steadystate/      # DC and AC power flow, cheapest dispatch with and without the network, outage screening, frequency verdicts, double outages
 │   └── orchestration/    # real-time loop, event queue, pacing, Observables (no UI import)
 ├── test/                 # one suite: closed-form, cross-fidelity and control checks
-├── scripts/              # headless experiments; the Iberian replays, the low-inertia study, the single and double outage screens
+├── ext/                  # optional optimiser back-ends (JuMP + HiGHS, JuMP + Ipopt), loaded only where installed
+├── scripts/              # headless experiments; the Iberian replays, the low-inertia study, the outage screens, the network dispatch
 ├── ui/                   # separate package: `using GridSim`, `using GLMakie`; the windows and the editor
 ├── reference/            # separate package: the external oracles (PowerDynamics, PowerFlows, PowerNetworkMatrices); checkers, not tiers
 └── docs/
     ├── SPEC.md           # the durable brief (architecture invariants, conventions)
+    ├── glossary.md       # the project's vocabulary in plain language
     ├── validation-ledger.md  # every mechanism and what checks it
-    ├── plans/            # per-milestone plan / context / tasks trios, and the index
+    ├── plans/            # per-milestone plan / context / tasks trios, the index, and next-steps.md
     └── scenarios/        # extracted ENTSO-E data with page citations
 ```
 
