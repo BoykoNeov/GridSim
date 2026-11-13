@@ -713,7 +713,7 @@ end
                         Machine(:G3, :B3, 100.0, 3.0, 2.0, 0.3, 1.0, 0.0)], Load[];
                        inverters = [Inverter(:IF, :B2, :grid_forming, 120.0, -30.0)])
     win = GridSimUI._build_network_window(net; window_seconds = 10.0, rtf = Inf)
-    @test occursin("2 machines, 1 inverters", win.status[])
+    @test occursin("2 machines, 1 inverter, ", win.status[])
     @test [id for (id, _) in win.widgets.machine_buttons] == [:G1, :G3, :IF]
     @test occursin("(inverter)", win.widgets.machine_buttons[3][2].label[])
     click!(win.widgets.machine_buttons[3][2])

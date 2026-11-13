@@ -123,7 +123,9 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
         "($(join(ids0, ", "))), got $pair."))
 
     fig = Figure(size = (1700, 1000))
-    ax_m = Axis(fig[1, 1]; aspect = DataAspect())
+    # The table fills its cell (its cells need not be square, and a square table left a
+    # third of the window's height empty); the sketch keeps the grid's proportions.
+    ax_m = Axis(fig[1, 1])
     ax_g = Axis(fig[1, 2]; aspect = DataAspect())
     for ax in (ax_m, ax_g)
         hidedecorations!(ax); hidespines!(ax)
@@ -131,7 +133,7 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
         deregister_interaction!(ax, :scrollzoom)
         deregister_interaction!(ax, :dragpan)
     end
-    colsize!(fig.layout, 1, Relative(0.40))
+    colsize!(fig.layout, 1, Relative(0.44))
 
     choice = (; grid = Observable(grid), timing = Observable(timing), view = Observable(view),
               pair = Observable(pair))
@@ -215,7 +217,7 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
             # A collapse twin with a marker ("=G1 -0.195 V") is the longest text; it gets a
             # smaller font rather than spilling into the next cell.
             i == j || text!(ax_m, j - 0.5, y(i) + 0.5; text = T[i, j], align = (:center, :center),
-                            fontsize = length(T[i, j]) > 9 ? 6.8 : N > 10 ? 8.5 : 10,
+                            fontsize = length(T[i, j]) > 9 ? 7.6 : N > 10 ? 9.5 : 10.5,
                             font = MONO_FONT)
         end
         for (k, id) in enumerate(ids)
@@ -260,14 +262,20 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
                           p.verdict === :pass ? C_PASS : p.verdict === :fail ? C_FAIL : C_NONE
         end
         bus_colour[] = cols
+        centre = grid_centre(values(pos))
+        edges = [(br.from, br.to) for br in net.branches]
         for br in net.branches
             gone = br.id in lost
             lines!(ax_g, [P(br.from), P(br.to)]; color = gone ? C_WARN : C_MUTED,
                    linewidth = gone ? 2.0 : 2.4, linestyle = gone ? :dash : :solid)
-            mid = (P(br.from) + P(br.to)) / 2
-            text!(ax_g, mid; text = String(br.id), fontsize = 10, color = gone ? C_WARN : C_MUTED,
-                  align = (:left, :bottom), offset = (5, 3))
-            gone && scatter!(ax_g, [mid]; marker = :xcross, markersize = 18, color = C_WARN)
+            # Beside the line, on the side away from the grid's centre (`grid_map.jl`); a
+            # lost line's cross needs a little more room than a bare name.
+            pl = line_label_placement(P(br.from), P(br.to), centre, String(br.id);
+                                      fontsize = 10.5, gap = gone ? 11 : 5)
+            text!(ax_g, pl.at; text = String(br.id), fontsize = 10.5,
+                  color = gone ? C_WARN : C_MUTED, font = gone ? :bold : :regular,
+                  align = pl.align, offset = pl.offset)
+            gone && scatter!(ax_g, [pl.at]; marker = :xcross, markersize = 18, color = C_WARN)
         end
         bus_pts = [P(bs.id) for bs in net.buses]
         scatter!(ax_g, bus_pts; color = [cols[bs.id] for bs in net.buses], markersize = 30,
@@ -276,8 +284,10 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
             text!(ax_g, P(bs.id); text = String(bs.id), align = (:center, :center), fontsize = 11,
                   font = :bold)
         end
+        # A generator and a load each go where no line leaves their bus (`grid_map.jl`).
+        hang = Dict(bs.id => free_directions(pos, edges, bs.id, 2; centre) for bs in net.buses)
         for mc in net.machines
-            q = P(mc.bus) + Point2f(0.0, 0.24)
+            q = P(mc.bus) + 0.27f0 * hang[mc.bus][1]
             gone = mc.id in lost
             scatter!(ax_g, [q]; marker = :circle, markersize = 20, color = :white,
                      strokewidth = 1.5, strokecolor = gone ? C_WARN : C_SWING)
@@ -286,7 +296,8 @@ function _build_double_outage_window_impl(; grid::Symbol = :case9, timing::Symbo
             gone && scatter!(ax_g, [q]; marker = :xcross, markersize = 22, color = C_WARN)
         end
         for ld in net.loads
-            scatter!(ax_g, [P(ld.bus) + Point2f(0.0, -0.22)]; marker = :dtriangle,
+            k = isempty(net.machines_at_bus[net.bus_index[ld.bus]]) ? 1 : 2
+            scatter!(ax_g, [P(ld.bus) + 0.24f0 * hang[ld.bus][k]]; marker = :dtriangle,
                      markersize = 13, color = C_MUTED)
         end
         labels = String[]

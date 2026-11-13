@@ -158,6 +158,8 @@ using GridSim: DCOPF, ACOPF
 # file, applied by every builder through `themed`. Included first because the
 # windows reference its constants at definition time.
 include("theme.jl")
+# The geometry the grid sketches share: where a line's name and a bus's attachments go.
+include("grid_map.jl")
 include("window.jl")
 include("network_window.jl")
 include("playback_window.jl")

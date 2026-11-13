@@ -134,3 +134,11 @@ of equally weighted widgets.
 section_label!(cell, text::AbstractString) =
     Label(cell, uppercase(text); halign = :left, tellwidth = false, fontsize = 11,
           color = C_MUTED, font = :bold)
+
+"""
+    counted(n, noun) -> String
+
+`n` and its noun, singular for one: "1 line", "3 lines". The network window's status
+line read "1 lines in service" on the two-area Iberian figure.
+"""
+counted(n::Integer, noun::AbstractString) = string(n, " ", noun, n == 1 ? "" : "s")

@@ -200,8 +200,19 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     text!(ax, mach_labels; offset = (0, 13), align = (:center, :bottom), fontsize = 11)
     text!(ax, load_labels; offset = (0, -13), align = (:center, :top), fontsize = 11)
     text!(ax, inv_labels; offset = (0, 13), align = (:center, :bottom), fontsize = 11)
-    text!(ax, branch_labels; align = (:center, :bottom), offset = (0, 4), fontsize = 10,
-          color = C_MUTED)
+    # Beside the line, never on it (`grid_map.jl`): one pixel offset per label, derived from
+    # the segment it names. `branch_segs` is written before `branch_labels` on every path,
+    # and in the same order; a length that disagrees falls back to the old fixed offset.
+    branch_label_offsets = lift(branch_labels) do labs
+        segs = branch_segs[]
+        length(segs) == 2 * length(labs) || return fill(Vec2f(0, 8), length(labs))
+        c = grid_centre(segs)
+        return Vec2f[Vec2f(line_label_placement(segs[2e - 1], segs[2e], c, labs[e][1];
+                                                fontsize = 10, centred = true).offset...)
+                     for e in eachindex(labs)]
+    end
+    text!(ax, branch_labels; align = (:center, :center), offset = branch_label_offsets,
+          fontsize = 10, color = C_MUTED)
     text!(ax, slack_labels; offset = (0, -20), align = (:center, :top), fontsize = 11,
           color = C_INERTIA, font = :bold)
     # Direction, not magnitude: the head says which way P leaves the branch's `from`
@@ -773,7 +784,7 @@ function _build_editor_window_impl(ed::ScenarioEditor;
     # than what the state holds — the two are meant to agree, and only reading
     # both can say so.
     plots = (; bus_pts, mach_pts, inv_pts, inv_fill, inv_labels, load_pts, branch_segs, stub_segs, sel_pts, sel_segs,
-               pend_pts, slack_pts, slack_labels, bus_labels, branch_labels,
+               pend_pts, slack_pts, slack_labels, bus_labels, branch_labels, branch_label_offsets,
                solved_pts, solved_V, flow_pts, flow_dirs)
     return (; fig, ax, ed, tool, pending, status, validation_text, solve_text, widgets,
               plots, last_run, last_solve,

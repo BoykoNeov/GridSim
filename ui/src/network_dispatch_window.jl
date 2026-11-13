@@ -108,7 +108,7 @@ function _build_network_dispatch_window_impl(; fixture::Symbol = :L89,
     rep = get!(_nd_report, cache, :report)
 
     fig = Figure(size = (1700, 1000))
-    ax_g = Axis(fig[1, 1]; aspect = DataAspect())
+    ax_g = Axis(fig[1, 1]; aspect = DataAspect(), subtitlesize = 13, subtitlecolor = C_MUTED)
     ax_b = Axis(fig[1, 2]; ylabel = "output (MW)", xticks = (1:3, ["G1", "G2", "G3"]))
     ax_t = Axis(fig[2, 1:2])
     for ax in (ax_g, ax_t)
@@ -204,6 +204,7 @@ function _build_network_dispatch_window_impl(; fixture::Symbol = :L89,
         S = net.S_base
         solved = a isa DCOPF ? a.outcome === :optimal : a.outcome === :locally_optimal
         load = Dict{Symbol,Float64}()
+        centre = grid_centre(values(ND_POSITIONS))
         for (e, br) in pairs(net.branches)
             ratio = !solved ? NaN : a isa DCOPF ? abs(a.flow[e]) * S / br.rating :
                                    a.mva[e] * S / br.rating
@@ -213,15 +214,14 @@ function _build_network_dispatch_window_impl(; fixture::Symbol = :L89,
                 _nd_mix(C_MUTED, C_AGGREGATE, clamp(ratio, 0, 1))
             lines!(ax_g, [P(br.from), P(br.to)]; color = c,
                    linewidth = on_limit ? 6.0 : 1.5 + 4.0 * (isnan(ratio) ? 0.0 : clamp(ratio, 0, 1)))
-            mid = (P(br.from) + P(br.to)) / 2
             lbl = String(br.id) * (isnan(ratio) ? "" : @sprintf(" %.0f%%", 100ratio)) *
                   (on_limit ? " AT LIMIT" : "")
-            # A ring line's label outside the ring; a spur's beside it.
-            d = P(br.to) - P(br.from)
-            at = br.from in ND_RING && br.to in ND_RING ? mid + 0.16f0 * _nd_unit(mid) :
-                 mid + 0.2f0 * _nd_unit(Point2f(-d[2], d[1]))
-            text!(ax_g, at; text = lbl, fontsize = 10, color = on_limit ? C_WARN : C_MUTED,
-                  font = on_limit ? :bold : :regular, align = (:center, :center))
+            # Beside the line, outside the ring, clear of it whatever its length
+            # (`grid_map.jl`) — "L89 100% AT LIMIT" used to be struck through by L89.
+            pl = line_label_placement(P(br.from), P(br.to), centre, lbl; fontsize = 10.5,
+                                      gap = on_limit ? 8 : 5)
+            text!(ax_g, pl.at; text = lbl, fontsize = 10.5, color = on_limit ? C_WARN : C_MUTED,
+                  font = on_limit ? :bold : :regular, align = pl.align, offset = pl.offset)
         end
         line_loading[] = load
         floor = a isa ACOPF && solved ? Set(a.at_band) : Set{Symbol}()
@@ -263,8 +263,10 @@ function _build_network_dispatch_window_impl(; fixture::Symbol = :L89,
                                    color = solved ? C_MUTED : C_WARN, word_wrap_width = 520)
         xs = [p[1] for p in values(ND_POSITIONS)]; ys = [p[2] for p in values(ND_POSITIONS)]
         limits!(ax_g, minimum(xs) - 0.75, maximum(xs) + 0.75, minimum(ys) - 1.1, maximum(ys) + 0.6)
-        ax_g.title[] = "$(ND_ANSWER_NAMES[choice.answer[]]) — $label, " *
-                       _NDR.LOAD_NAMES[choice.loads[]]
+        # Two lines: as one title it ran under the bar chart's (the shipped figure read
+        # "constant-power loadswhat the network moves").
+        ax_g.title[] = ND_ANSWER_NAMES[choice.answer[]]
+        ax_g.subtitle[] = "$label, $(_NDR.LOAD_NAMES[choice.loads[]])"
         return nothing
     end
 

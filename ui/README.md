@@ -172,6 +172,23 @@ editing a read-out:
   `@sprintf("%8.3f")` only aligns into columns in a fixed-width face, and a
   system font name would make the picture depend on the machine.
 
+**The grid sketches share their geometry** (`src/grid_map.jl`). Three windows draw a grid
+as dots and lines — the editor, the double-outage window and the network-dispatch window —
+and one rule places every line's name: beside the line, on the side away from the grid's
+centre, pushed out by the label's own size until no corner touches the line. A second rule
+puts what hangs off a bus (a generator, a load) in the direction no line leaves it. Use
+`line_label_placement` and `free_directions` in any new sketch; do not write a fourth rule.
+
+**One script regenerates every figure** from the windows themselves:
+
+```
+julia --project=ui ui/scripts/figures.jl                         # into docs/images/
+julia --project=ui ui/scripts/figures.jl W:\temp\claude\figs     # somewhere else, to look first
+```
+
+After any change to `theme.jl` or `grid_map.jl`, run it into a scratch folder and look at
+every picture before running it for real: both files are global to the pictures.
+
 The `readout` observable each window returns is the composite of those two
 columns — exactly the rows the labels draw, joined — so a test that searches it
 is reading what the picture says.
@@ -598,7 +615,7 @@ notes: `docs/plans/m11-context.md`, "What step 5's report measured". Figure:
 julia --project=ui -e 'import Pkg; Pkg.test()'
 ```
 
-4388 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
+4966 tests, all offscreen. They drive the actual widgets (setting `b.clicks[]` runs
 the same handler a real click runs), so the click → queue → `inject!` path, the
 pause/stop/speed wiring, the rolling buffer, and the offscreen render are all
 covered — for both real-time windows, including that the two engines really do

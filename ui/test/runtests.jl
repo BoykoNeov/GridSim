@@ -1102,4 +1102,8 @@ end
     # --- the network-dispatch window (M11 step 5): the OPF report, drawn ------------
     include(joinpath(@__DIR__, "network_dispatch_tests.jl"))
 
+    # The grid sketches' shared geometry (line labels beside their lines, attachments
+    # where no line leaves the bus), 2026-11-13.
+    include(joinpath(@__DIR__, "grid_map_tests.jl"))
+
 end

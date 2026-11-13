@@ -116,11 +116,11 @@ function _build_network_window_impl(net::NetworkModel;
     # `n` counts every vertex, and since M7 step 3 a grid-forming inverter is one; the
     # status line says which is which rather than calling an inverter a machine.
     status = Observable(isempty(net.inverters) ?
-                        @sprintf("armed — %d machines, %d lines in service",
-                                 n, length(net.branches)) :
-                        @sprintf("armed — %d machines, %d inverters, %d lines in service",
-                                 length(net.machines), length(net.inverters),
-                                 length(net.branches)))
+                        "armed — $(counted(n, "machine")), " *
+                        "$(counted(length(net.branches), "line")) in service" :
+                        "armed — $(counted(length(net.machines), "machine")), " *
+                        "$(counted(length(net.inverters), "inverter")), " *
+                        "$(counted(length(net.branches), "line")) in service")
 
     f0 = net.f0
     w = Float64(window_seconds)
