@@ -1199,6 +1199,73 @@ end
 # is a data problem, and it is fixed where M1 fixed it — at the event boundary, by
 # re-initialising the state into the new limit. Our limits are constant model data
 # and cannot move, and `init!` refuses a dispatch outside them.
+#
+# THE GOVERNOR'S CAP IS LANDED ON BY A CALLBACK (2026-11-13, m11-context.md D13). What the
+# section above measured for the exciter — "the only excursion possible is the overshoot
+# of the single step that crosses" — holds for the governor too, and there the single step
+# is not small: a governor's lag is 0.3–1 s, the solver's steps after a trip are tenths of
+# a second, and `ΔPm` was measured up to 0.011 pu (1.1 MW on a 100 MVA base) ABOVE its
+# `headroom`, where the saturated derivative then held it for the rest of the run. Neither
+# device above fixes that: a domain guard cannot land (measured, above), and the
+# derivative cannot bring a crossed step back. A root-finding callback can: it stops the
+# step at the instant `ΔPm` reaches `headroom`, and puts it exactly there. That is not the
+# post-hoc clamp `CLAUDE.md` forbids — a clamp moves the state at an arbitrary step end,
+# where the true solution is somewhere else; this moves it by the rootfinder's own
+# tolerance at the one instant the true solution IS `headroom`.
+
+# How far below its cap a landed governor must fall before the landing root is armed again.
+const _CAP_REARM = 1.0e-8
+
+"""
+    _governor_cap_callbacks(ΔPm_idx, hr_pidx, invR_pidx) -> CallbackSet
+
+One upward-crossing `ContinuousCallback` per machine on `ΔPm − headroom`; its affect sets
+`ΔPm` to `headroom` exactly, where the saturation in the derivative then holds it (and
+releases it unaided when the governor's command falls back below the cap). One callback
+per machine rather than a vector one, for `shed_callbacks`' reason and one more: the
+vector form has no direction, and only the upward crossing is an event here — leaving the
+cap is the derivative's business.
+
+A governor-free machine (`invR == 0`: never governed, or tripped) reports a constant
+`−1`: its `ΔPm` is identically zero against a `headroom` of zero, and a root function that
+is identically zero is one round-off away from a crossing.
+"""
+function _governor_cap_callbacks(ΔPm_idx::Vector{Int}, hr_pidx::Vector{Int},
+                                 invR_pidx::Vector{Int})
+    cbs = Any[]                       # construction-time only, as in `shed_callbacks`
+    # THE LATCH, and the run that needed it. Landed, `ΔPm − headroom` is zero to round-off,
+    # and the rootfinder re-reads its sign just after an event from the solver's
+    # interpolant: with FBDF that read came back a hair negative, the next step crossed
+    # "again", and the mesh's G1 outage (both surviving governors capped) spent its whole
+    # iteration budget landing — a run that had completed before this callback existed
+    # (found by the screen capture, 2026-11-13). So a landed machine reports a constant
+    # `+1` — the sign it has just after an upward crossing, the shed ladder's latch rule
+    # (`load_shedding.jl`) — until its state is clearly back below the cap, where the
+    # root is armed again. Clearly = `_CAP_REARM` below: far above the interpolant's noise,
+    # far below anything a governor does on purpose.
+    landed = falses(length(ΔPm_idx))
+    for k in eachindex(ΔPm_idx)
+        iu, ih, ir = ΔPm_idx[k], hr_pidx[k], invR_pidx[k]
+        condition = function (u, t, integrator)
+            p = integrator.p
+            p[ir] == 0.0 && return -1.0
+            gap = u[iu] - p[ih]
+            if landed[k]
+                gap < -_CAP_REARM || return 1.0
+                landed[k] = false
+            end
+            return gap
+        end
+        affect! = function (integrator)
+            integrator.u[iu] = integrator.p[ih]
+            landed[k] = true
+            return nothing
+        end
+        push!(cbs, SciMLBase.ContinuousCallback(condition, affect!, nothing;
+                                                save_positions = (false, false)))
+    end
+    return SciMLBase.CallbackSet(cbs...)
+end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2213,7 +2280,8 @@ function init!(::Type{DetailedEngine}, net::NetworkModel; t0::Real = 0.0,
                                      dtmax = Float64(dtmax), maxiters = maxiters,
                                      callback = SciMLBase.CallbackSet(
                                          shed_callbacks(bound_shed, net.f0),
-                                         out_of_step_callbacks(bound_oos)),
+                                         out_of_step_callbacks(bound_oos),
+                                         _governor_cap_callbacks(ΔPm_idx, hr_pidx, invR_pidx)),
                                      save_everystep = false, dense = false,
                                      calck = _ENGINE_CALCK)
 

@@ -133,8 +133,7 @@ end
     @test abs(out - (g1.Pmax / S - s.Δω[k2] * D1)) ≤ 1e-9
     # The detailed tier: G1's governor runs onto its cap, and its mechanical power ends at
     # Pmax (Ra = 0, so the terminal and the mechanical power are one number).
-    eng = init!(DetailedEngine, net; powerflow = base, solver = OrdinaryDiffEq.FBDF(),
-                dtmax = 0.01)              # small steps: a small overshoot (below)
+    eng = init!(DetailedEngine, net; powerflow = base)
     hr1 = eng.params[eng.hr_pidx[1]]
     Pm1 = eng.params[eng.Pm_pidx[1]]
     @test abs(Pm1 + hr1 - g1.Pmax / S) ≤ 1e-12
@@ -142,17 +141,80 @@ end
     inject!(eng, TripGenerator(:G2))
     solve!(eng, (1.0, 30.0))
     st = current_state(eng)
-    # On its cap — and past it by one integrator step. The detailed tier's saturation stops
-    # `ΔPm` rising once it is at `headroom`, but does not bring back a step that crossed it
-    # (measured at step 5 on this fixture with 2 MW of schedule reserve: 0.0090 pu with FBDF,
-    # 0.0015 at dtmax 0.01; at 10 MW, 0.0075 with Rodas5P and up to 0.011 with FBDF's own steps;
-    # the swing tier has a domain guard for this, the detailed tier's was removed at M5).
-    # A defect of the tier, not of D12, named in m11-context.md D13. So the bound is the
-    # overshoot's, and it still separates the two rules: under the old one G1's cap sat
-    # 14.08 MW (0.1408 pu) higher, never reached here.
-    @test st.ΔPm[1] ≥ hr1                               # the cap was reached
-    @test st.ΔPm[1] - hr1 < 0.005                       # by at most the step overshoot
-    @test Pm1 + st.ΔPm[1] - g1.Pmax / S < 0.005         # at Pmax, not 14 MW below it
+    # ON its cap, to the bit: since D13's fix a governor lands on its cap (next testset).
+    # Under the old headroom rule G1's cap sat 14.08 MW (0.1408 pu) higher, never reached.
+    @test st.ΔPm[1] == hr1
+    @test abs(Pm1 + st.ΔPm[1] - g1.Pmax / S) ≤ 1e-12   # at Pmax
+end
+
+# ─────────────────────────────────────────────────────────────────────────────
+# D13 (m11-context.md), fixed 2026-11-13: the detailed tier's governor LANDS on its cap.
+#
+# Before: the saturation in the derivative stopped `ΔPm` rising once it was at `headroom`
+# but could not bring back the solver step that crossed it, so a capped governor sat ABOVE
+# its cap for the rest of the run — measured on this fixture 0.0075 pu with Rodas5P, up to
+# 0.011 with FBDF (0.75–1.1 MW). Now a root-finding callback stops the step at the
+# crossing and puts `ΔPm` exactly on the cap (`_governor_cap_callbacks`).
+#
+# The bounds below were measured AFTER the fix and are what it leaves: exactly 0 with
+# Rodas5P (a one-step method starts clean from the landed state); 1.1e-5 with FBDF's own
+# steps and 2.2e-7 at `dtmax = 0.01` (a multistep method's history still carries the
+# upward slope for a step or two after the landing, and the landed root is latched, so it
+# is not landed twice — three orders below what it was). Without the callback every
+# bound here is red (executed 2026-11-13, in the order below: 0.0028, 2.0e-9, 0.0065, 0.0014).
+# ─────────────────────────────────────────────────────────────────────────────
+@testset "D13 — a governor lands on its cap, and lets go of it" begin
+    net = _hr_capped_case9()
+    base = ac_powerflow(net)
+    @testset "never above the cap: $name" for (name, kw, bound) in (
+            ("Rodas5P", (;), 0.0),
+            ("Rodas5P, tight", (; reltol = 1e-10, abstol = 1e-12), 0.0),
+            ("FBDF", (; solver = OrdinaryDiffEq.FBDF()), 1e-4),
+            ("FBDF, dtmax 0.01", (; solver = OrdinaryDiffEq.FBDF(), dtmax = 0.01), 1e-5))
+        eng = init!(DetailedEngine, net; powerflow = base, kw...)
+        hr1 = eng.params[eng.hr_pidx[1]]
+        solve!(eng, (0.0, 1.0))
+        inject!(eng, TripGenerator(:G2))
+        over = -Inf; st = current_state(eng)
+        for T in 1.5:0.5:60.0
+            solve!(eng, (T - 0.5, T))
+            st = current_state(eng)
+            over = max(over, st.ΔPm[1] - hr1)
+        end
+        @test over ≤ bound                              # was 0.0075–0.011
+        @test st.ΔPm[1] ≥ hr1 - 1e-12                   # and it IS capped (anti-vacuity)
+        # The command is far above the cap, so this is a cap held, not a governor at rest.
+        @test -st.ω[1] * eng.params[eng.invR_pidx[1]] - hr1 > 0.1
+        # The machines that never cap are not touched: G3's governor follows its droop.
+        @test st.ΔPm[3] < eng.params[eng.hr_pidx[3]]
+    end
+
+    @testset "released unaided when frequency recovers" begin
+        # G3 ramps up 80 MW from t = 40 s; frequency rises and G1's command falls back
+        # below its cap. Landing must not latch: G1 leaves the cap and settles on its droop.
+        eng = init!(DetailedEngine, net; powerflow = base,
+                    ramp = [:G3 => GenerationRamp(0.08, 40.0, 10.0)])
+        hr1 = eng.params[eng.hr_pidx[1]]; invR1 = eng.params[eng.invR_pidx[1]]
+        solve!(eng, (0.0, 1.0))
+        inject!(eng, TripGenerator(:G2))
+        solve!(eng, (1.0, 39.0))
+        @test current_state(eng).ΔPm[1] == hr1          # capped before the ramp
+        solve!(eng, (39.0, 150.0))
+        st = current_state(eng)
+        @test st.ΔPm[1] < hr1 - 0.2                     # well off the cap (measured 0.2202)
+        @test abs(st.ΔPm[1] + st.ω[1] * invR1) < 1e-5   # on its droop line (measured 1.1e-6)
+    end
+
+    @testset "one upward root per machine; a governor-free machine has none" begin
+        cs = GridSim._governor_cap_callbacks([1, 2], [1, 2], [3, 4])
+        @test length(cs.continuous_callbacks) == 2
+        fake = (; p = [0.2, 0.1, 0.0, 20.0])            # headrooms 0.2, 0.1; invR 0, 20
+        # Machine 1: invR == 0 — a constant −1 whatever its state, never a crossing.
+        @test cs.continuous_callbacks[1].condition([0.5, 0.0], 0.0, fake) === -1.0
+        # Machine 2: ΔPm − headroom.
+        @test cs.continuous_callbacks[2].condition([0.5, 0.3], 0.0, fake) ≈ 0.2
+        @test all(cb -> cb.affect_neg! === nothing, cs.continuous_callbacks)   # upward only
+    end
 end
 
 end

@@ -711,7 +711,7 @@ probes, the capture script, M10's report diff).
   oracle capture is lossless only, while its M9-step-3 testsets compare both dynamic tiers
   with PowerDynamics on LOSSY grids — the tiers D12 changed; 177 of them, green).
 
-## D13 — Found at step 5: the detailed tier's governor overshoots its cap by one step
+## D13 — Found at step 5: the detailed tier's governor overshoots its cap by one step (FIXED 2026-11-13, below)
 
 Measured while writing the fix's dynamic check (case9, default loads, G1 given 10 MW of
 schedule reserve, G2 lost): G1's `ΔPm` passes its `headroom` and STAYS above it — 0.0075 pu
@@ -725,6 +725,55 @@ here (the dynamic-run capture is byte-identical). Which earlier detailed-tier ru
 governor, and so carry it, was not surveyed at step 5. **Not fixed in M11** — owed, with its own
 check (a callback that lands on the cap, measured against the swing tier's guard). The
 fix's test bounds the overshoot at `dtmax = 0.01` and says why.
+
+### D13 fixed (2026-11-13): a root-finding callback lands the governor on its cap
+
+`_governor_cap_callbacks` in `src/engines/detailed.jl`: one upward-crossing root per
+machine on `ΔPm − headroom`; at the crossing `ΔPm` is set to `headroom` exactly, and the
+saturation in the derivative holds it there and releases it unaided. Not the post-hoc
+clamp the project guide forbids: the state moves by the rootfinder's tolerance at the one
+instant the true solution *is* the cap. Tests: `test/m11_headroom.jl`, "D13 — a governor
+lands on its cap, and lets go of it" (23 checks; with the callback removed seven go red —
+executed).
+
+**What it leaves** (the fixture above, 60 s): 0 exactly with Rodas5P at both tolerances
+(was 0.0028 at the default tolerance); 1.1e-5 pu with FBDF's own steps (was 0.0065) and
+2.2e-7 at `dtmax = 0.01` (was 0.0014) — a multistep method's history carries the upward
+slope for a step or two after the landing.
+
+**The first version broke a run, and the capture caught it.** Landed, the root function is
+zero to round-off; the rootfinder re-reads its sign just after an event from the solver's
+interpolant, FBDF's read came back a hair negative, and the mesh's G1 outage (both
+surviving governors capped) spent its whole iteration budget re-landing: the outage
+report's two mesh-G1 rows turned from a measured dip into `solver_failure`. Fixed with a
+latch — a landed machine reports a constant `+1` until its state is 1e-8 below the cap —
+the shed ladder's latch-sign rule. With the latch the report is byte-identical.
+
+**What moved, measured on seven before/after captures** (before = `64bc695`):
+
+| capture | result |
+|---|---|
+| swing tier, AC power flows, M10's dynamic runs | byte-identical |
+| the printed outage report (`screen`) | byte-identical — no outcome and no verdict changed |
+| M9's dips, rates and verdicts at full precision (`verdict`) | 56 of 284 lines differ, the largest by 3.7e-6 relative; no non-numeric line differs |
+| the per-outage dip runs on Rodas5P (`dips`) | values to ≤ 3.6e-8 relative; **mesh, default loads, G2: a run that died (`Unstable at t = 5.60`) now completes** (dip −0.391 Hz) |
+| M5's Iberian criterion (`criterion`) | 88 of 182 lines differ: see below |
+
+**M5's criterion values are no longer the ones recorded at M5.** They had been
+byte-identical across every milestone since. Both areas' governors reach their caps in
+that run, so every cell carried the overshoot. The ratio the criterion is about (peak
+export over the classical tier's `P_max`) moves by at most 1.3e-3 relative — 1.0300 →
+1.0313 at `Xd = 1.5`, the largest — and stays above 1 in every cell; the slip boundary and
+every yes/no line are unchanged; one cell that needed a solver retry (`K_A = 100`) no
+longer does; the regulated run takes 4,211 steps where it took 9,538. The largest relative
+change, 6.8 %, is `Efd_over` — how far the *regulator's* output passes its own ceiling,
+which is the same one-step overshoot on a state this fix does not touch (owed:
+`next-steps.md` section C), and whose size depends on where the solver's steps fall.
+
+**Also true now, and not claimed before:** M8 and M9 chose FBDF "where Rodas5P stalls at
+a governor cap". The stall was this defect — a kink the solver kept stepping across.
+With the landing, the one capture run that died of it completes. The FBDF choices are
+left as they are (changing a solver moves numbers; nobody has asked).
 
 ## What step 5's report measured (2026-10-22)
 

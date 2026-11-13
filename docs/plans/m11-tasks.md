@@ -126,7 +126,8 @@ expected text, corrected, and that group re-run alone, 187/187).
       round-off, which was not); M8's tight-reserve fixture and M10's claim q revised;
       `test/m11_headroom.jl` (57), red in every testset under the old rule.
 - [x] Found while checking the fix: the detailed tier's governor overshoots its cap by
-      one step (D13). Owed, not fixed here.
+      one step (D13). Owed, not fixed here. **Fixed 2026-11-13** — a root-finding callback
+      lands it on the cap (`m11-context.md`, "D13 fixed"); M5's criterion values moved by ≤ 1.3e-3.
 - [x] `scripts/network_dispatch.jl`; claims s–x asserted at printed precision in
       `test/m11_report.jl` (162); prose after the table — three drafts corrected on
       re-reading it, two of them by the test (differences of rounded numbers), and claim u
